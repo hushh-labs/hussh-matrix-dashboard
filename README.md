@@ -69,6 +69,16 @@ For local developer runs, the Express proxy can also fall back to the authentica
    # Dashboard available at http://localhost:3001
    ```
 
+## Production Checks
+
+Run the Hushh AI production probe instead of manually clicking through the hosted dashboard:
+
+```bash
+npm run test:prod:hushh-ai
+```
+
+The probe verifies DNS, the dashboard root, `/api/health`, `/api/analytics/hushhai`, `/api/analytics/all`, no-store API cache headers, and the Hushh AI freshness payload. If a dictated alias such as `matrix.hush.ai` is provided, the check reports the literal DNS status and verifies the canonical `metrics.hushh.ai` deployment.
+
 ## Data Flow
 
 The dashboard fetches from `/api/analytics/all` which returns:
