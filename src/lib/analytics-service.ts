@@ -17,6 +17,7 @@ import type {
   HushhTechMetricsSummary,
   HushhAiSummary,
   KaiGa4Summary,
+  KaiProductionSummary,
   PlatformStatus,
   KpiStat,
   TrafficPoint,
@@ -24,6 +25,7 @@ import type {
   CountryData,
   DashboardData,
   HushhAiDailyStatusPoint,
+  KaiDailyStatusPoint,
 } from './types';
 
 const API_BASE = '/api';
@@ -33,6 +35,7 @@ interface AllAnalyticsResponse {
     uat: { environment: string; rows: FeedRow[]; error?: string | null };
     production: { environment: string; rows: FeedRow[]; error?: string | null };
     ga4?: { platform: string; data: KaiGa4Summary | null; error?: string | null };
+    productionProduct?: { platform: string; data: KaiProductionSummary | null; error?: string | null };
   };
   hushhAi?: { platform: string; data: HushhAiSummary | null; error?: string | null };
   hushhTech: { platform: string; data: HushhTechMetricsSummary | null; error?: string | null };
@@ -42,12 +45,16 @@ interface AllAnalyticsResponse {
 interface FetchAllAnalyticsOptions {
   hushhAiStartDate?: string;
   hushhAiEndDate?: string;
+  kaiStartDate?: string;
+  kaiEndDate?: string;
 }
 
 function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
   const params = new URLSearchParams();
   if (options?.hushhAiStartDate) params.set('hushh_ai_start_date', options.hushhAiStartDate);
   if (options?.hushhAiEndDate) params.set('hushh_ai_end_date', options.hushhAiEndDate);
+  if (options?.kaiStartDate) params.set('kai_start_date', options.kaiStartDate);
+  if (options?.kaiEndDate) params.set('kai_end_date', options.kaiEndDate);
   const query = params.toString();
   return `${API_BASE}/analytics/all${query ? `?${query}` : ''}`;
 }
@@ -162,6 +169,10 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     featureEngagement: [],
     instrumentationHealth: [],
     kaiGa4: null,
+    kaiProduction: null,
+    kaiProductionDailyStatus: [],
+    kaiProductionDailySummaryMetrics: [],
+    kaiProductionReadinessMetrics: [],
     hushhTech: null,
     hushhTechAudienceMetrics: [],
     hushhTechBusinessMetrics: [],
@@ -179,8 +190,8 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhAiDailySummaryMetrics: [],
     dataQualityWarnings: [],
     feedWarnings: [],
-    platforms: buildPlatforms(null, null, null, null),
-    kpiStats: buildKpiStats(null, null, null, null),
+    platforms: buildPlatforms(null, null, null, null, null),
+    kpiStats: buildKpiStats(null, null, null, null, null),
     trafficData: [],
     acquisitionChannels: [],
     topCountries: [],
@@ -361,9 +372,78 @@ function buildKaiGeoMetrics(kaiGa4: KaiGa4Summary | null): BreakdownMetric[] {
   ));
 }
 
+function buildKaiProductionDailyStatus(kaiProduction: KaiProductionSummary | null): KaiDailyStatusPoint[] {
+  const byDate = new Map<string, KaiDailyStatusPoint>();
+  const ensurePoint = (date: string, label = date.slice(5)) => {
+    const current = byDate.get(date) ?? {
+      date,
+      label,
+      users: 0,
+      sessions: 0,
+      events: 0,
+      requests: 0,
+      errors: 0,
+      errorRate: null,
+      p95LatencyMs: null,
+      instanceCount: null,
+    };
+    byDate.set(date, current);
+    return current;
+  };
+
+  for (const row of kaiProduction?.productionGa4?.daily ?? []) {
+    const date = String(row.eventDate);
+    const point = ensurePoint(date);
+    point.users = row.users;
+    point.sessions = row.sessions;
+    point.events = row.events;
+  }
+
+  for (const row of kaiProduction?.gcp?.daily ?? []) {
+    const point = ensurePoint(row.date, row.label);
+    point.requests = row.requests;
+    point.errors = row.errors;
+    point.errorRate = row.errorRate;
+    point.p95LatencyMs = row.p95LatencyMs;
+    point.instanceCount = row.instanceCount;
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function buildKaiProductionDailySummaryMetrics(kaiProduction: KaiProductionSummary | null): BreakdownMetric[] {
+  const ga4 = kaiProduction?.productionGa4;
+  const gcp = kaiProduction?.gcp;
+  const ga4Ready = Boolean(ga4?.available);
+  return [
+    metric('Production Users', asNumber(ga4?.rangeTotals?.users), ga4?.sourceDataset, ga4Ready ? undefined : 'Waiting'),
+    metric('Production Sessions', asNumber(ga4?.rangeTotals?.sessions), ga4?.sourceDataset, ga4Ready ? undefined : 'Waiting'),
+    metric('Production Events', asNumber(ga4?.rangeTotals?.events), ga4?.sourceDataset, ga4Ready ? undefined : 'Waiting'),
+    metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.serviceName),
+    metric('Cloud Run Non-2xx', asNumber(gcp?.errorCount), gcp?.serviceName),
+    metric('Cloud Run Error Rate', asNumber(gcp?.errorRate), gcp?.serviceName, formatPercent(gcp?.errorRate)),
+    metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.serviceName, formatLatency(gcp?.p95LatencyMs)),
+  ];
+}
+
+function buildKaiProductionReadinessMetrics(kaiProduction: KaiProductionSummary | null): BreakdownMetric[] {
+  const feed = kaiProduction?.productionFeed?.status;
+  const ga4 = kaiProduction?.productionGa4;
+  const uat = kaiProduction?.uatFeed?.status;
+  return [
+    metric('Production Ready', feed?.productionReady ? 1 : 0, feed?.sourceDataset, feed?.productionReady ? 'Ready' : 'Waiting'),
+    metric('Production Source Rows', asNumber(feed?.sourceEventRows), feed?.sourceProjectId),
+    metric('Production Freshness Lag', asNumber(feed?.freshnessLagMinutes), 'minutes', feed?.freshnessLagMinutes == null ? '—' : `${feed.freshnessLagMinutes}m`),
+    metric('Production GA4 Export', ga4?.available ? 1 : 0, ga4?.sourceDataset, ga4?.available ? 'Available' : 'Waiting'),
+    metric('UAT Validation Rows', asNumber(uat?.sourceEventRows), uat?.sourceDataset),
+    metric('UAT Production Ready Flag', uat?.productionReady ? 1 : 0, uat?.sourceDataset, uat?.productionReady ? 'Ready' : 'Validation'),
+  ];
+}
+
 function buildPlatforms(
   kaiFeed: FeedStatus | null,
   kaiUsage: UsageSummary | null,
+  kaiProduction: KaiProductionSummary | null,
   hushhAi: HushhAiSummary | null,
   hushhTech: HushhTechMetricsSummary | null,
 ): PlatformStatus[] {
@@ -373,6 +453,8 @@ function buildPlatforms(
   const traffic = hushhTech?.traffic?.overview;
   const audience = hushhTech?.audience;
   const search = hushhTech?.searchPerformance;
+  const kaiProdFeed = kaiProduction?.productionFeed?.status;
+  const kaiProdGcp = kaiProduction?.gcp;
   const hushhTechSessions = firstNumber(audience?.sessions, traffic?.sessions);
   const hushhTechMau = firstNumber(audience?.mau, traffic?.active28DayUsers);
   const hushhTechAvailable = Boolean(
@@ -401,14 +483,14 @@ function buildPlatforms(
       name: 'kai.hushh.ai',
       url: 'kai.hushh.ai',
       color: '#12b5cb',
-      available: (kaiUsage?.dau ?? 0) > 0,
-      environment: kaiFeed?.sourceEnvironment === 'production' ? 'production' : 'uat',
-      productionReady: kaiFeed?.productionReady ?? false,
-      knownBlockers: kaiFeed?.knownBlockers ?? null,
-      visitors: kaiUsage ? formatNumber(kaiUsage.dau) : '—',
-      change: kaiUsage ? `${formatNumber(kaiUsage.wau)} WAU` : '—',
-      avgSession: kaiUsage ? `${formatNumber(kaiUsage.sessions)} sessions` : '—',
-      bounceRate: kaiUsage ? `${formatNumber(kaiUsage.sourceEventRows)} rows` : '—',
+      available: Boolean(kaiProdGcp || (kaiUsage?.dau ?? 0) > 0),
+      environment: 'production',
+      productionReady: kaiProdFeed?.productionReady ?? false,
+      knownBlockers: kaiProdFeed?.knownBlockers ?? kaiFeed?.knownBlockers ?? null,
+      visitors: kaiProdGcp ? formatNumber(kaiProdGcp.requestCount) : kaiUsage ? formatNumber(kaiUsage.dau) : '—',
+      change: kaiProdGcp ? `${formatNumber(kaiProdGcp.errorCount)} non-2xx` : kaiUsage ? `${formatNumber(kaiUsage.wau)} UAT WAU` : '—',
+      avgSession: kaiProdGcp?.p95LatencyMs != null ? `${formatLatency(kaiProdGcp.p95LatencyMs)} p95` : kaiUsage ? `${formatNumber(kaiUsage.sessions)} UAT sessions` : '—',
+      bounceRate: kaiProdGcp ? formatPercent(kaiProdGcp.errorRate) : kaiUsage ? `${formatNumber(kaiUsage.sourceEventRows)} UAT rows` : '—',
     },
     {
       name: 'hushhtech.com',
@@ -429,6 +511,7 @@ function buildPlatforms(
 function buildKpiStats(
   kaiUsage: UsageSummary | null,
   kaiGa4: KaiGa4Summary | null,
+  kaiProduction: KaiProductionSummary | null,
   hushhAi: HushhAiSummary | null,
   hushhTech: HushhTechMetricsSummary | null,
 ): KpiStat[] {
@@ -443,24 +526,26 @@ function buildKpiStats(
   const authUsers = aiDatabaseMetric('auth_users');
   const userProfileSync = aiDatabaseMetric('user_profile_sync');
   const kaiTopEvent = kaiGa4?.topEvents?.[0];
+  const kaiProdGcp = kaiProduction?.gcp;
+  const kaiProdGa4 = kaiProduction?.productionGa4;
   const hushhTechSessions = firstNumber(audience?.sessions, traffic?.sessions);
   const hushhTechPageViews = firstNumber(audience?.pageViews, traffic?.screenPageViews);
 
   return [
     {
-      label: 'Kai DAU',
-      value: kaiUsage ? formatNumber(kaiUsage.dau) : '—',
+      label: 'Kai Requests',
+      value: kaiProdGcp ? formatNumber(kaiProdGcp.requestCount) : '—',
       icon: 'Users',
-      change: kaiUsage ? `WAU ${formatNumber(kaiUsage.wau)}` : undefined,
+      change: kaiProdGcp?.p95LatencyMs != null ? `${formatLatency(kaiProdGcp.p95LatencyMs)} p95` : undefined,
     },
     {
-      label: 'Kai Events',
-      value: kaiUsage ? formatNumber(kaiUsage.totalEvents) : '—',
+      label: 'Kai Prod Events',
+      value: kaiProdGa4?.available ? formatNumber(kaiProdGa4.rangeTotals?.events ?? 0) : '—',
       icon: 'Activity',
-      change: kaiUsage ? `${formatNumber(kaiUsage.sourceEventRows)} source rows` : undefined,
+      change: kaiProdGa4?.available ? `${formatNumber(kaiProdGa4.rangeTotals?.users ?? 0)} users` : 'GA4 waiting',
     },
     {
-      label: 'Kai Top Event',
+      label: 'Kai UAT Top Event',
       value: kaiTopEvent ? formatNumber(kaiTopEvent.events) : '—',
       icon: 'BarChart3',
       change: kaiTopEvent ? formatMetricLabel(kaiTopEvent.eventName) : undefined,
@@ -904,12 +989,14 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
   const activeRows = uatRows.length > 0 ? uatRows : prodRows;
   const allKaiRows = [...uatRows, ...prodRows];
   const kaiGa4 = result.kai.ga4?.data ?? null;
+  const kaiProduction = result.kai.productionProduct?.data ?? null;
   const hushhAi = result.hushhAi?.data ?? null;
   const hushhTech = result.hushhTech.data;
   const feedWarnings = [
     result.kai.uat.error,
     result.kai.production.error,
     result.kai.ga4?.error,
+    result.kai.productionProduct?.error,
     result.hushhAi?.error,
     result.hushhTech.error,
   ].filter((value): value is string => Boolean(value));
@@ -949,6 +1036,10 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     featureEngagement,
     instrumentationHealth,
     kaiGa4,
+    kaiProduction,
+    kaiProductionDailyStatus: buildKaiProductionDailyStatus(kaiProduction),
+    kaiProductionDailySummaryMetrics: buildKaiProductionDailySummaryMetrics(kaiProduction),
+    kaiProductionReadinessMetrics: buildKaiProductionReadinessMetrics(kaiProduction),
     hushhTech: hushhTech,
     hushhTechAudienceMetrics: buildHushhTechAudienceMetrics(hushhTech),
     hushhTechBusinessMetrics: buildHushhTechBusinessMetrics(hushhTech),
@@ -966,8 +1057,8 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     hushhAiDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAi),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
     feedWarnings,
-    platforms: buildPlatforms(kaiFeed, kaiUsage, hushhAi, hushhTech),
-    kpiStats: buildKpiStats(kaiUsage, kaiGa4, hushhAi, hushhTech),
+    platforms: buildPlatforms(kaiFeed, kaiUsage, kaiProduction, hushhAi, hushhTech),
+    kpiStats: buildKpiStats(kaiUsage, kaiGa4, kaiProduction, hushhAi, hushhTech),
     trafficData: buildTrafficData(allKaiRows, hushhAi, hushhTech),
     acquisitionChannels: buildAcquisitionChannels(hushhTech),
     topCountries: buildTopCountries(hushhTech),

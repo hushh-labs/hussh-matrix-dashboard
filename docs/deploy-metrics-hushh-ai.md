@@ -119,6 +119,11 @@ create_or_update_secret metrics-dashboard-bq-job-project hushh-ai-prod
 create_or_update_secret metrics-dashboard-bq-cli-fallback false
 create_or_update_secret metrics-dashboard-hushhtech-window-days 7
 create_or_update_secret metrics-dashboard-kai-ga4-window-days 14
+create_or_update_secret metrics-dashboard-kai-prod-ga4-project hushh-pda
+create_or_update_secret metrics-dashboard-kai-prod-ga4-dataset analytics_526603671
+create_or_update_secret metrics-dashboard-kai-prod-gcp-project hushh-pda
+create_or_update_secret metrics-dashboard-kai-prod-cloud-run-service hushh-webapp
+create_or_update_secret metrics-dashboard-kai-prod-window-days 7
 create_or_update_secret metrics-dashboard-hushh-ai-gcp-project hushh-ai-prod
 create_or_update_secret metrics-dashboard-hushh-ai-cloud-run-service hushh-ai-website
 create_or_update_secret metrics-dashboard-hushh-ai-window-days 7
@@ -154,7 +159,7 @@ gcloud run deploy "$SERVICE" \
   --min-instances=0 \
   --max-instances=3 \
   --clear-env-vars \
-  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_SUPABASE_PROJECT_REF=metrics-dashboard-hushh-ai-supabase-project-ref:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest,HUSHH_AI_SUPABASE_ACCESS_TOKEN=hushh-ai-supabase-access-token:latest"
+  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_SUPABASE_PROJECT_REF=metrics-dashboard-hushh-ai-supabase-project-ref:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest,HUSHH_AI_SUPABASE_ACCESS_TOKEN=hushh-ai-supabase-access-token:latest"
 ```
 
 ## Domain Mapping
