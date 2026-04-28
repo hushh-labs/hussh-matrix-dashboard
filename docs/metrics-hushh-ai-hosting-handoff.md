@@ -13,12 +13,11 @@ Last verified: 2026-04-28.
 | Public runtime URL | Healthy | `https://hushh-matrix-dashboard-yb3ojn3jxa-uc.a.run.app/api/health` returns `200` |
 | DNS | Configured | `metrics.hushh.ai` CNAME resolves to `ghs.googlehosted.com` |
 | Cloud Run domain mapping | Created | `metrics.hushh.ai` maps to `hushh-matrix-dashboard` |
-| HTTPS certificate | Provisioning | Google-managed certificate is pending until Cloud Run completes issuance |
+| HTTPS certificate | Ready | Cloud Run reports `CertificateProvisioned=True`; `https://metrics.hushh.ai` returns `200` |
 
-Until the certificate is ready, the Cloud Run `run.app` URL is the authoritative
-runtime verification endpoint. `http://metrics.hushh.ai` already redirects to
-HTTPS, but `https://metrics.hushh.ai` may fail the TLS handshake while the
-managed certificate is pending.
+The custom domain is the primary production URL. The Cloud Run `run.app` URL
+remains useful as a fallback verification endpoint if custom-domain routing is
+ever being debugged.
 
 ## Hosting Model
 
@@ -128,7 +127,6 @@ why some sections may show neutral empty states:
 
 | Area | Gap | Required action |
 | --- | --- | --- |
-| Cloud Run custom domain | Google-managed certificate may still be pending | Wait for certificate issuance after DNS propagation |
 | Kai production | `hushh-pda.analytics_526603671` is not materialized | Enable or repair the production GA4 BigQuery export |
 | Kai production | Hosted frontend still needs production web tag redeploy | Redeploy Kai with the production measurement ID already configured in secrets |
 | HushhTech GA4 | Numeric GA4 property ID is not configured | Add the numeric property ID, not only the `G-...` measurement ID |

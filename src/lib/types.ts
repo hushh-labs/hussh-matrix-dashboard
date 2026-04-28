@@ -20,7 +20,7 @@ export interface FeedRow {
   known_blockers: string | null;
   metric_group: MetricGroup;
   metric_name: string;
-  metric_date: string | null;
+  metric_date: string | { value: string } | null;
   dimension_name: string | null;
   dimension_value: string | null;
   metric_value: number | null;

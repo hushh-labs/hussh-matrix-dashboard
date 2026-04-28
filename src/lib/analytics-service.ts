@@ -99,16 +99,23 @@ function metricNumber(row: FeedRow | undefined): number {
   return Number(row?.metric_count ?? row?.metric_value ?? 0) || 0;
 }
 
+function metricDateValue(row: FeedRow | undefined): string | null {
+  const date = row?.metric_date;
+  if (typeof date === 'string') return date;
+  if (date && typeof date === 'object' && typeof date.value === 'string') return date.value;
+  return null;
+}
+
 function latestRowsForGroup(rows: FeedRow[], group: string): FeedRow[] {
-  const groupRows = rows.filter((r) => r.metric_group === group && r.metric_date);
+  const groupRows = rows.filter((r) => r.metric_group === group && metricDateValue(r));
   const latestDate = groupRows
-    .map((r) => r.metric_date)
-    .filter(Boolean)
+    .map(metricDateValue)
+    .filter((date): date is string => Boolean(date))
     .sort()
     .at(-1);
 
   if (!latestDate) return rows.filter((r) => r.metric_group === group);
-  return groupRows.filter((r) => r.metric_date === latestDate);
+  return groupRows.filter((r) => metricDateValue(r) === latestDate);
 }
 
 function metric(
@@ -215,16 +222,16 @@ function parseFunnel(rows: FeedRow[], group: string): FunnelStep[] {
 
 function parseDailyUsage(rows: FeedRow[]): DailyActiveUser[] {
   const usageRows = rows.filter(
-    (r) => r.metric_group === 'usage' && r.metric_name === 'daily_active_users' && r.metric_date,
+    (r) => r.metric_group === 'usage' && r.metric_name === 'daily_active_users' && metricDateValue(r),
   );
 
   const sorted = usageRows
-    .sort((a, b) => (a.metric_date ?? '').localeCompare(b.metric_date ?? ''))
+    .sort((a, b) => (metricDateValue(a) ?? '').localeCompare(metricDateValue(b) ?? ''))
     .slice(-7);
 
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return sorted.map((r) => {
-    const d = new Date(`${r.metric_date}T00:00:00Z`);
+    const d = new Date(`${metricDateValue(r)}T00:00:00Z`);
     return { day: dayNames[d.getUTCDay()], users: metricNumber(r) };
   });
 }
@@ -289,7 +296,7 @@ function parseInstrumentationHealth(rows: FeedRow[]): BreakdownMetric[] {
 function parseActivationMetrics(rows: FeedRow[]): BreakdownMetric[] {
   return latestRowsForGroup(rows, 'activation').map((row) => {
     const value = metricNumber(row);
-    return metric(formatMetricLabel(row.metric_name), value, row.metric_date ?? undefined, formatPercent(value));
+    return metric(formatMetricLabel(row.metric_name), value, metricDateValue(row) ?? undefined, formatPercent(value));
   });
 }
 
@@ -313,7 +320,7 @@ function parseUsageMetrics(rows: FeedRow[]): BreakdownMetric[] {
       return metric(
         formatMetricLabel(name),
         value,
-        row?.metric_date ?? undefined,
+        metricDateValue(row) ?? undefined,
         name.includes('stickiness') ? formatPercent(value) : undefined,
       );
     });
@@ -507,9 +514,11 @@ function buildTrafficData(
   };
 
   for (const row of rows.filter(
-    (r) => r.metric_group === 'usage' && r.metric_name === 'total_events' && r.metric_date,
+    (r) => r.metric_group === 'usage' && r.metric_name === 'total_events' && metricDateValue(r),
   )) {
-    const point = ensurePoint(row.metric_date as string);
+    const date = metricDateValue(row);
+    if (!date) continue;
+    const point = ensurePoint(date);
     if (row.source_environment === 'production') {
       point.ai = metricNumber(row);
     } else {
