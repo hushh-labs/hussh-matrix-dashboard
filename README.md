@@ -10,7 +10,7 @@ Unified engagement dashboard for **kai.hushh.ai**, **hushhtech.com**, and **hush
 
 ```
 React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
-                                     →  hushhtech.com Cloud Run endpoint
+                                     →  hushhtech.com public metrics endpoint
                                      →  Gemini API (AI insights)
 ```
 
@@ -19,7 +19,7 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
 - **Data sources**:
   - UAT: `hushh-pda-uat.analytics_public.kai_public_dashboard_feed` (live, full data)
   - Production: `hushh-pda.analytics_public.kai_public_dashboard_feed` (status-only until GA4 export materializes)
-  - hushhtech.com: Cloud Run analytics endpoint (blocked — needs numeric GA4 property ID)
+  - hushhtech.com: public Cloud Run summary endpoint with Supabase business funnel, first-party activity, Search Console shape, GA4 traffic shape, and GCP Cloud Run Monitoring
 
 ## Run Locally
 
@@ -37,6 +37,8 @@ If the BigQuery CLI works but the Express server returns `bigquery.jobs.create` 
 gcloud auth application-default login
 ```
 
+For local developer runs, the Express proxy can also fall back to the authenticated `bq` CLI when ADC and `gcloud` CLI auth differ. Set `BQ_CLI_FALLBACK=false` to disable that fallback.
+
 1. Install dependencies:
    ```bash
    npm install
@@ -45,7 +47,7 @@ gcloud auth application-default login
 2. Configure environment:
    ```bash
    cp .env.example .env.local
-   # Edit .env.local — set GEMINI_API_KEY and optionally HUSHHTECH_ANALYTICS_ENDPOINT
+   # Edit .env.local — set GEMINI_API_KEY and override HUSHHTECH_ANALYTICS_ENDPOINT only if needed
    ```
 
 3. Run the dashboard (dev mode with API proxy):
@@ -69,9 +71,9 @@ gcloud auth application-default login
 The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai UAT feed**: DAU, WAU, MAU, sessions, events, investor/RIA funnels, platform mix
 - **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
-- **hushhtech.com**: Traffic, sessions, bounce rate, Search Console metrics (when available)
+- **hushhtech.com**: Public-safe summary from `GET /api/metrics/summary?window_days=7`, including audience, search, business funnel, traffic, Search Console, GCP Monitoring, system health, data coverage, and quality warnings.
 
-When the API server is not running, the dashboard falls back to demo data and shows a banner indicating the data source.
+When the API server is not running, the dashboard shows unavailable states instead of synthetic metrics.
 
 ## Remaining Blockers
 

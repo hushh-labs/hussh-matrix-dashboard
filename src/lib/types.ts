@@ -111,6 +111,7 @@ export interface FunnelStep {
 export interface BreakdownMetric {
   label: string;
   value: number;
+  displayValue?: string;
   detail?: string;
   percentage?: number;
   color?: string;
@@ -128,24 +129,201 @@ export interface FeedStatus {
 }
 
 // ---------------------------------------------------------------------------
-// hushhtech.com analytics endpoint response
+// hushhtech.com public metrics endpoint response
 // ---------------------------------------------------------------------------
 
-export interface HushhTechAnalytics {
-  trafficAvailable: boolean;
-  stateAvailable: boolean;
-  searchConsoleAvailable: boolean;
-  visitors?: number;
-  sessions?: number;
-  bounceRate?: number;
-  avgSessionDuration?: number;
-  topPages?: Array<{ path: string; views: number }>;
-  searchMetrics?: {
-    clicks: number;
-    impressions: number;
-    ctr: number;
-    avgPosition: number;
+export interface HushhTechWindow {
+  days: number;
+  startDate: string;
+  endDate: string;
+  dates?: string[];
+}
+
+export interface HushhTechBusinessFunnel {
+  source: string;
+  overview: {
+    signups: number;
+    persistedUsers: number;
+    onboardingStarted: number;
+    onboardingCompleted: number;
+    profilesCreated: number;
+    profilesConfirmed: number;
   };
+  conversionRates: {
+    signupToPersistedUsers: number | null;
+    signupToOnboardingStarted: number | null;
+    onboardingCompletionRate: number | null;
+    profileConfirmationRate: number | null;
+  };
+  onboardingStepBreakdown: Array<{ step: string; users: number }>;
+  series: Array<{
+    date: string;
+    signups: number;
+    persistedUsers: number;
+    onboardingStarted: number;
+    onboardingCompleted: number;
+    profilesCreated: number;
+    profilesConfirmed: number;
+  }>;
+}
+
+export interface HushhTechAudience {
+  source: string;
+  dau: number;
+  wau: number;
+  mau: number;
+  sessions: number;
+  pageViews: number;
+  events: number;
+  note?: string;
+}
+
+export interface HushhTechSearch {
+  totalSearches: number;
+  resultClickRate: number | null;
+  noResultRate: number | null;
+  bySurface: Array<{ surface: string; searches: number | null }>;
+}
+
+export interface SearchPerformanceMetric {
+  clicks: number | null;
+  impressions: number | null;
+  ctr: number | null;
+  averagePosition: number | null;
+}
+
+export interface SearchPerformance extends SearchPerformanceMetric {
+  clicks: number;
+  impressions: number;
+}
+
+export interface HushhTechRegionalTraffic {
+  source: string;
+  available: boolean;
+  byRegion: Array<{
+    state: string;
+    activeUsers: number | null;
+    sessions: number | null;
+  }>;
+  note?: string;
+}
+
+export interface HushhTechSearchPerformance {
+  source: string;
+  available: boolean;
+  realtime: boolean;
+  dataState: string;
+  searchType: string;
+  overview: SearchPerformance;
+  queries: Array<SearchPerformanceMetric & { query: string }>;
+  pages: Array<SearchPerformanceMetric & { pageUrl: string }>;
+  countries: Array<SearchPerformanceMetric & { country: string }>;
+  devices: Array<SearchPerformanceMetric & { device: string }>;
+  searchAppearance: Array<SearchPerformanceMetric & { appearance: string }>;
+  state: HushhTechRegionalTraffic;
+  metadata?: Record<string, unknown>;
+  note?: string;
+}
+
+export interface HushhTechActivity {
+  topPages: Array<{ path: string; views: number | null }>;
+  byRouteGroup: Array<{ routeGroup: string; events: number | null }>;
+  byEvent: Array<{ eventName: string; events: number | null }>;
+}
+
+export interface HushhTechFunnelStep {
+  step: string;
+  eventName: string;
+  count: number | null;
+  conversionFromPrevious: number | null;
+  dropoffFromPrevious: number | null;
+}
+
+export interface HushhTechFunnels {
+  signup: HushhTechFunnelStep[];
+  onboarding: HushhTechFunnelStep[];
+  kyc: HushhTechFunnelStep[];
+  profile: HushhTechFunnelStep[];
+  chat: HushhTechFunnelStep[];
+}
+
+export interface HushhTechGcp {
+  source: string;
+  available: boolean;
+  services: Array<{
+    name: string;
+    region?: string;
+    available: boolean;
+    requestCount?: number;
+    errorRate?: number | null;
+    p95LatencyMs?: number | null;
+    instanceCount?: number | null;
+  }>;
+  requestCount: number;
+  errorRate: number | null;
+  p50LatencyMs: number | null;
+  p95LatencyMs: number | null;
+  instanceCount: number | null;
+  uptimeAvailability: number | null;
+  note?: string;
+}
+
+export interface HushhTechTraffic {
+  source: string;
+  available: boolean;
+  overview: {
+    active1DayUsers: number;
+    active7DayUsers: number;
+    active28DayUsers: number;
+    sessions: number;
+    engagedSessions: number;
+    screenPageViews: number;
+    newUsers: number;
+    engagementRate: number | null;
+    averageSessionDuration: number | null;
+    realtimeActiveUsers: number | null;
+  };
+  series: Array<{
+    date: string;
+    activeUsers: number;
+    sessions: number;
+    screenPageViews: number;
+    engagedSessions: number;
+    newUsers: number;
+  }>;
+  note?: string;
+  lookerStudioReportUrl?: string;
+}
+
+export interface HushhTechMetricsSummary {
+  generatedAt: string;
+  timezone: string;
+  window: HushhTechWindow;
+  businessFunnel: HushhTechBusinessFunnel;
+  audience?: HushhTechAudience;
+  search?: HushhTechSearch;
+  searchPerformance?: HushhTechSearchPerformance;
+  activity?: HushhTechActivity;
+  funnels?: HushhTechFunnels;
+  dropoff?: Record<string, Array<{
+    step: string;
+    eventName: string;
+    dropoffRate: number | null;
+    conversionRate: number | null;
+  }>>;
+  traffic: HushhTechTraffic;
+  gcp?: HushhTechGcp;
+  systemHealth?: Record<string, unknown>;
+  legacy?: {
+    source: string;
+    available: boolean;
+    overview: { usersCreated: number };
+    series: Array<{ date: string; usersCreated: number }>;
+    note?: string;
+  };
+  dataCoverage?: Record<string, unknown>;
+  dataQualityWarnings?: string[];
+  stale?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,8 +345,14 @@ export interface DashboardData {
   featureEngagement: BreakdownMetric[];
   instrumentationHealth: BreakdownMetric[];
 
-  // hushhtech.com
-  hushhTech: HushhTechAnalytics | null;
+  // hushhtech.com public metrics
+  hushhTech: HushhTechMetricsSummary | null;
+  hushhTechAudienceMetrics: BreakdownMetric[];
+  hushhTechBusinessMetrics: BreakdownMetric[];
+  hushhTechOpsMetrics: BreakdownMetric[];
+  hushhTechCoverageMetrics: BreakdownMetric[];
+  dataQualityWarnings: string[];
+  feedWarnings: string[];
 
   // Aggregate KPIs (computed from all sources)
   platforms: PlatformStatus[];
