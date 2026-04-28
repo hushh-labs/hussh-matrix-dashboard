@@ -1,0 +1,4 @@
+interface:
+  display_name: "metrics.hushh.ai Ops"
+  short_description: "Deploy and operate metrics.hushh.ai"
+  default_prompt: "Use $metrics-hushh-ai-ops for metrics.hushh.ai deployment, Cloud Run domain mapping, DNS, secrets, production probes, and development context."
