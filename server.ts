@@ -52,6 +52,78 @@ const HUSHH_AI_SUPABASE_PROJECT_REF =
   process.env.HUSHH_AI_SUPABASE_PROJECT_REF || 'ibsisfnjxeowvdtvgzff';
 const HUSHH_AI_SUPABASE_ACCESS_TOKEN =
   process.env.HUSHH_AI_SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_PAT || '';
+const MAX_HUSHH_AI_RANGE_DAYS = 90;
+
+interface HushhAiDateRange {
+  startDate: string;
+  endDate: string;
+  days: number;
+  startTime: string;
+  endTime: string;
+  windowSeconds: number;
+}
+
+function addUtcDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function formatUtcDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function parseUtcDate(value: unknown): Date | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return formatUtcDate(date) === value ? date : null;
+}
+
+function firstQueryValue(value: unknown): string | undefined {
+  if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : undefined;
+  return typeof value === 'string' ? value : undefined;
+}
+
+function parseHushhAiDateRange(query: Record<string, unknown>): HushhAiDateRange {
+  const today = new Date();
+  const endDefault = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const configuredDays = Number(firstQueryValue(query.hushh_ai_window_days) ?? firstQueryValue(query.window_days) ?? HUSHH_AI_METRICS_WINDOW_DAYS);
+  const defaultDays = Math.min(Math.max(Number.isFinite(configuredDays) ? Math.floor(configuredDays) : HUSHH_AI_METRICS_WINDOW_DAYS, 1), MAX_HUSHH_AI_RANGE_DAYS);
+  const explicitStart = parseUtcDate(firstQueryValue(query.hushh_ai_start_date) ?? firstQueryValue(query.start_date));
+  const explicitEnd = parseUtcDate(firstQueryValue(query.hushh_ai_end_date) ?? firstQueryValue(query.end_date));
+
+  let end = explicitEnd ?? endDefault;
+  let start = explicitStart ?? addUtcDays(end, -(defaultDays - 1));
+  if (start > end) [start, end] = [end, start];
+
+  const inclusiveDays = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  if (inclusiveDays > MAX_HUSHH_AI_RANGE_DAYS) {
+    start = addUtcDays(end, -(MAX_HUSHH_AI_RANGE_DAYS - 1));
+  }
+
+  const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  const endExclusive = addUtcDays(end, 1);
+  return {
+    startDate: formatUtcDate(start),
+    endDate: formatUtcDate(end),
+    days,
+    startTime: start.toISOString(),
+    endTime: endExclusive.toISOString(),
+    windowSeconds: Math.max(days * 86_400, 60),
+  };
+}
+
+function dateSpine(range: HushhAiDateRange): string[] {
+  const dates: string[] = [];
+  let cursor = parseUtcDate(range.startDate) as Date;
+  const end = parseUtcDate(range.endDate) as Date;
+  while (cursor <= end) {
+    dates.push(formatUtcDate(cursor));
+    cursor = addUtcDays(cursor, 1);
+  }
+  return dates;
+}
 
 // ---------------------------------------------------------------------------
 // BigQuery helper — uses Application Default Credentials (ADC)
@@ -307,10 +379,9 @@ async function fetchMonitoringSeries(
   perSeriesAligner: string,
   crossSeriesReducer: string,
   alignmentSeconds: number,
+  range: HushhAiDateRange,
   extraFilter = '',
 ): Promise<Array<Record<string, unknown>>> {
-  const end = new Date();
-  const start = new Date(end.getTime() - HUSHH_AI_METRICS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const url = new URL(`https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries`);
   url.searchParams.set(
     'filter',
@@ -321,8 +392,8 @@ async function fetchMonitoringSeries(
       extraFilter,
     ].filter(Boolean).join(' AND '),
   );
-  url.searchParams.set('interval.startTime', start.toISOString());
-  url.searchParams.set('interval.endTime', end.toISOString());
+  url.searchParams.set('interval.startTime', range.startTime);
+  url.searchParams.set('interval.endTime', range.endTime);
   url.searchParams.set('aggregation.alignmentPeriod', `${alignmentSeconds}s`);
   url.searchParams.set('aggregation.perSeriesAligner', perSeriesAligner);
   url.searchParams.set('aggregation.crossSeriesReducer', crossSeriesReducer);
@@ -350,43 +421,77 @@ async function fetchMonitoringSeries(
   }
 }
 
-async function fetchHushhAiCloudRun(): Promise<DataResult<Record<string, unknown>>> {
+function monitoringDailyMap(
+  timeSeries: Array<Record<string, unknown>>,
+  range: HushhAiDateRange,
+  reducer: 'sum' | 'max' = 'sum',
+): Map<string, number> {
+  const values = new Map<string, number>();
+  for (const series of timeSeries) {
+    for (const point of (series.points as Record<string, unknown>[] | undefined) ?? []) {
+      const interval = point.interval as Record<string, string> | undefined;
+      const date = (interval?.startTime ?? interval?.endTime ?? '').slice(0, 10);
+      if (date < range.startDate || date > range.endDate) continue;
+      const value = monitoringPointValue(point);
+      const current = values.get(date) ?? 0;
+      values.set(date, reducer === 'max' ? Math.max(current, value) : current + value);
+    }
+  }
+  return values;
+}
+
+async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   try {
     const serviceName = HUSHH_AI_CLOUD_RUN_SERVICE;
     const projectId = HUSHH_AI_GCP_PROJECT;
-    const windowSeconds = HUSHH_AI_METRICS_WINDOW_DAYS * 24 * 60 * 60;
-    const [requests, errors, latency, instances, dailyRequests] = await Promise.all([
-      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', windowSeconds),
-      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', windowSeconds, 'metric.labels.response_code_class="5xx"'),
-      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_latencies', 'ALIGN_PERCENTILE_95', 'REDUCE_PERCENTILE_95', windowSeconds),
-      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/container/instance_count', 'ALIGN_MAX', 'REDUCE_MAX', windowSeconds),
-      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', 86_400),
+    const [requests, errors, latency, instances, dailyRequests, dailyErrors, dailyLatency, dailyInstances] = await Promise.all([
+      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', range.windowSeconds, range),
+      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', range.windowSeconds, range, 'metric.labels.response_code_class="5xx"'),
+      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_latencies', 'ALIGN_PERCENTILE_95', 'REDUCE_PERCENTILE_95', range.windowSeconds, range),
+      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/container/instance_count', 'ALIGN_MAX', 'REDUCE_MAX', range.windowSeconds, range),
+      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', 86_400, range),
+      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', 86_400, range, 'metric.labels.response_code_class="5xx"'),
+      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_latencies', 'ALIGN_PERCENTILE_95', 'REDUCE_PERCENTILE_95', 86_400, range),
+      fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/container/instance_count', 'ALIGN_MAX', 'REDUCE_MAX', 86_400, range),
     ]);
     const requestCount = monitoringPointValue((requests[0]?.points as Record<string, unknown>[] | undefined)?.[0]);
     const errorCount = monitoringPointValue((errors[0]?.points as Record<string, unknown>[] | undefined)?.[0]);
     const p95LatencyMs = monitoringPointValue((latency[0]?.points as Record<string, unknown>[] | undefined)?.[0]);
     const instanceCount = monitoringPointValue((instances[0]?.points as Record<string, unknown>[] | undefined)?.[0]);
-    const series = ((dailyRequests[0]?.points as Record<string, unknown>[] | undefined) ?? [])
-      .map((point) => {
-        const interval = point.interval as Record<string, string> | undefined;
-        return {
-          label: (interval?.endTime ?? '').slice(5, 10),
-          value: monitoringPointValue(point),
-        };
-      })
-      .reverse();
+    const dailyRequestMap = monitoringDailyMap(dailyRequests, range);
+    const dailyErrorMap = monitoringDailyMap(dailyErrors, range);
+    const dailyLatencyMap = monitoringDailyMap(dailyLatency, range, 'max');
+    const dailyInstanceMap = monitoringDailyMap(dailyInstances, range, 'max');
+    const daily = dateSpine(range).map((date) => {
+      const requestsForDay = dailyRequestMap.get(date) ?? 0;
+      const errorsForDay = dailyErrorMap.get(date) ?? 0;
+      const p95ForDay = dailyLatencyMap.get(date);
+      const instancesForDay = dailyInstanceMap.get(date);
+      return {
+        date,
+        label: date.slice(5),
+        requests: requestsForDay,
+        errors: errorsForDay,
+        errorRate: requestsForDay > 0 ? errorsForDay / requestsForDay : null,
+        p95LatencyMs: p95ForDay ?? null,
+        instanceCount: instancesForDay ?? null,
+      };
+    });
 
     return {
       data: {
         sourceProjectId: projectId,
         serviceName,
-        windowDays: HUSHH_AI_METRICS_WINDOW_DAYS,
+        windowDays: range.days,
+        startDate: range.startDate,
+        endDate: range.endDate,
         requestCount,
         errorCount,
         errorRate: requestCount > 0 ? errorCount / requestCount : null,
         p95LatencyMs,
         instanceCount,
-        series,
+        series: daily.map((point) => ({ label: point.label, value: point.requests })),
+        daily,
       },
       error: null,
     };
@@ -397,7 +502,7 @@ async function fetchHushhAiCloudRun(): Promise<DataResult<Record<string, unknown
   }
 }
 
-async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, unknown>>> {
+async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   const queryProject = BQ_JOB_PROJECT || HUSHH_AI_SEARCH_PROJECT;
   const datasetRef = `\`${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}\``;
   const tableRows = await queryBigQuerySql(queryProject, `
@@ -414,6 +519,8 @@ async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, un
       data: {
         sourceProjectId: HUSHH_AI_SEARCH_PROJECT,
         sourceDataset: HUSHH_AI_SEARCH_DATASET,
+        startDate: range.startDate,
+        endDate: range.endDate,
         available: false,
         clicks: 0,
         impressions: 0,
@@ -436,7 +543,7 @@ async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, un
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
       SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
     FROM ${siteTable}
-    WHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+    WHERE data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
   `;
   const queryRowsQuery = `
     SELECT
@@ -446,7 +553,7 @@ async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, un
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
       SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
     FROM ${siteTable}
-    WHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+    WHERE data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
     GROUP BY query
     ORDER BY impressions DESC
     LIMIT 10
@@ -459,7 +566,7 @@ async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, un
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
       SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
     FROM ${siteTable}
-    WHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+    WHERE data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
     GROUP BY country
     ORDER BY impressions DESC
     LIMIT 10
@@ -472,7 +579,7 @@ async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, un
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
       SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
     FROM ${urlTable}
-    WHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+    WHERE data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
     GROUP BY pageUrl
     ORDER BY impressions DESC
     LIMIT 10
@@ -492,6 +599,8 @@ async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, un
     data: {
       sourceProjectId: HUSHH_AI_SEARCH_PROJECT,
       sourceDataset: HUSHH_AI_SEARCH_DATASET,
+      startDate: range.startDate,
+      endDate: range.endDate,
       available: toNumber(overview.impressions) > 0,
       clicks: toNumber(overview.clicks),
       impressions: toNumber(overview.impressions),
@@ -505,13 +614,25 @@ async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, un
   };
 }
 
-async function fetchHushhAiSupabaseSummary(): Promise<DataResult<Record<string, unknown>>> {
+function parseJsonField<T>(value: unknown, fallback: T): T {
+  if (value == null) return fallback;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return value as T;
+}
+
+async function fetchHushhAiSupabaseSummary(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   if (!HUSHH_AI_SUPABASE_ACCESS_TOKEN) {
     return { data: null, error: 'HUSHH_AI_SUPABASE_ACCESS_TOKEN is not configured' };
   }
 
   const query = `
-    SELECT * FROM (
+    WITH metrics AS (
       SELECT 1 AS sort_order, 'auth_users' AS metric_key, 'Auth Users' AS label,
         (SELECT COUNT(*) FROM auth.users)::bigint AS value,
         'auth.users' AS source_table,
@@ -552,8 +673,96 @@ async function fetchHushhAiSupabaseSummary(): Promise<DataResult<Record<string, 
         (SELECT COUNT(*) FROM public.plaid_transactions)::bigint,
         'public.plaid_transactions',
         'synced Plaid transaction rows'
-    ) metrics
-    ORDER BY sort_order
+    ),
+    params AS (
+      SELECT DATE '${range.startDate}' AS start_date, DATE '${range.endDate}' AS end_date
+    ),
+    days AS (
+      SELECT generate_series((SELECT start_date FROM params), (SELECT end_date FROM params), interval '1 day')::date AS day
+    ),
+    daily AS (
+      SELECT
+        d.day,
+        (SELECT COUNT(*) FROM auth.users u WHERE u.created_at::date <= d.day AND (u.deleted_at IS NULL OR u.deleted_at::date > d.day))::bigint AS total_users,
+        (SELECT COUNT(*) FROM auth.users u WHERE u.created_at::date = d.day)::bigint AS new_users,
+        (SELECT COUNT(*) FROM auth.users u WHERE COALESCE(u.confirmed_at, u.email_confirmed_at)::date = d.day)::bigint AS confirmed_users,
+        (SELECT COUNT(DISTINCT u.id) FROM auth.users u WHERE u.last_sign_in_at::date = d.day)::bigint AS active_users,
+        (SELECT COUNT(DISTINCT u.id) FROM auth.users u WHERE u.last_sign_in_at::date = d.day AND u.created_at::date < d.day)::bigint AS returning_users,
+        (SELECT COUNT(*) FROM auth.users u WHERE u.deleted_at::date = d.day)::bigint AS deleted_users,
+        (SELECT COUNT(*) FROM public.delete_requests dr WHERE dr.requested_at::date = d.day)::bigint AS delete_requests,
+        (SELECT COUNT(*) FROM auth.sessions s WHERE s.created_at::date = d.day)::bigint AS sessions_started,
+        (SELECT COUNT(DISTINCT s.user_id) FROM auth.sessions s WHERE s.created_at::date = d.day)::bigint AS session_users,
+        COALESCE((
+          SELECT ROUND((AVG(GREATEST(EXTRACT(EPOCH FROM (COALESCE(s.refreshed_at AT TIME ZONE 'UTC', s.updated_at, s.created_at) - s.created_at)), 0::double precision)) / 60)::numeric, 2)
+          FROM auth.sessions s
+          WHERE s.created_at::date = d.day
+        ), 0)::numeric AS avg_session_minutes,
+        (SELECT COUNT(DISTINCT upu.user_id) FROM public.user_product_usage upu WHERE upu.last_used_at::date = d.day)::bigint AS product_active_users,
+        (SELECT COUNT(*) FROM public.analytics_events ae WHERE ae.created_at::date = d.day)::bigint AS analytics_events,
+        (SELECT COUNT(DISTINCT ae.user_id) FROM public.analytics_events ae WHERE ae.created_at::date = d.day)::bigint AS analytics_event_users
+      FROM days d
+    ),
+    range_totals AS (
+      SELECT
+        (SELECT COUNT(*) FROM auth.users u WHERE u.created_at::date <= p.end_date AND (u.deleted_at IS NULL OR u.deleted_at::date > p.end_date))::bigint AS total_users,
+        (SELECT COUNT(*) FROM auth.users u WHERE u.created_at::date BETWEEN p.start_date AND p.end_date)::bigint AS new_users,
+        (SELECT COUNT(*) FROM auth.users u WHERE COALESCE(u.confirmed_at, u.email_confirmed_at)::date BETWEEN p.start_date AND p.end_date)::bigint AS confirmed_users,
+        (SELECT COUNT(DISTINCT u.id) FROM auth.users u WHERE u.last_sign_in_at::date BETWEEN p.start_date AND p.end_date)::bigint AS active_users,
+        (SELECT COUNT(DISTINCT u.id) FROM auth.users u WHERE u.last_sign_in_at::date BETWEEN p.start_date AND p.end_date AND u.created_at::date < p.start_date)::bigint AS returning_users,
+        (SELECT COUNT(*) FROM auth.users u WHERE u.deleted_at::date BETWEEN p.start_date AND p.end_date)::bigint AS deleted_users,
+        (SELECT COUNT(*) FROM public.delete_requests dr WHERE dr.requested_at::date BETWEEN p.start_date AND p.end_date)::bigint AS delete_requests,
+        (SELECT COUNT(*) FROM auth.sessions s WHERE s.created_at::date BETWEEN p.start_date AND p.end_date)::bigint AS sessions_started,
+        (SELECT COUNT(DISTINCT s.user_id) FROM auth.sessions s WHERE s.created_at::date BETWEEN p.start_date AND p.end_date)::bigint AS session_users,
+        COALESCE((
+          SELECT ROUND((AVG(GREATEST(EXTRACT(EPOCH FROM (COALESCE(s.refreshed_at AT TIME ZONE 'UTC', s.updated_at, s.created_at) - s.created_at)), 0::double precision)) / 60)::numeric, 2)
+          FROM auth.sessions s
+          WHERE s.created_at::date BETWEEN p.start_date AND p.end_date
+        ), 0)::numeric AS avg_session_minutes,
+        (SELECT COUNT(DISTINCT upu.user_id) FROM public.user_product_usage upu WHERE upu.last_used_at::date BETWEEN p.start_date AND p.end_date)::bigint AS product_active_users,
+        (SELECT COUNT(*) FROM public.analytics_events ae WHERE ae.created_at::date BETWEEN p.start_date AND p.end_date)::bigint AS analytics_events,
+        (SELECT COUNT(DISTINCT ae.user_id) FROM public.analytics_events ae WHERE ae.created_at::date BETWEEN p.start_date AND p.end_date)::bigint AS analytics_event_users
+      FROM params p
+    )
+    SELECT
+      (SELECT jsonb_agg(jsonb_build_object(
+        'metricKey', metric_key,
+        'label', label,
+        'value', value,
+        'sourceTable', source_table,
+        'detail', detail
+      ) ORDER BY sort_order) FROM metrics) AS metrics,
+      (SELECT jsonb_agg(jsonb_build_object(
+        'date', day::text,
+        'label', to_char(day, 'MM-DD'),
+        'totalUsers', total_users,
+        'newUsers', new_users,
+        'confirmedUsers', confirmed_users,
+        'activeUsers', active_users,
+        'returningUsers', returning_users,
+        'deletedUsers', deleted_users,
+        'deleteRequests', delete_requests,
+        'sessionsStarted', sessions_started,
+        'sessionUsers', session_users,
+        'avgSessionMinutes', avg_session_minutes,
+        'productActiveUsers', product_active_users,
+        'analyticsEvents', analytics_events,
+        'analyticsEventUsers', analytics_event_users
+      ) ORDER BY day) FROM daily) AS daily,
+      (SELECT jsonb_build_object(
+        'totalUsers', total_users,
+        'newUsers', new_users,
+        'confirmedUsers', confirmed_users,
+        'activeUsers', active_users,
+        'returningUsers', returning_users,
+        'deletedUsers', deleted_users,
+        'deleteRequests', delete_requests,
+        'sessionsStarted', sessions_started,
+        'sessionUsers', session_users,
+        'avgSessionMinutes', avg_session_minutes,
+        'productActiveUsers', product_active_users,
+        'analyticsEvents', analytics_events,
+        'analyticsEventUsers', analytics_event_users
+      ) FROM range_totals) AS range_totals
   `;
 
   try {
@@ -575,18 +784,59 @@ async function fetchHushhAiSupabaseSummary(): Promise<DataResult<Record<string, 
     }
 
     const rows = await res.json() as Array<Record<string, unknown>>;
+    const payload = rows[0] ?? {};
+    const metrics = parseJsonField<Array<Record<string, unknown>>>(payload.metrics, []);
+    const daily = parseJsonField<Array<Record<string, unknown>>>(payload.daily, []);
+    const rangeTotals = parseJsonField<Record<string, unknown>>(payload.range_totals, {});
     return {
       data: {
         sourceProjectRef: HUSHH_AI_SUPABASE_PROJECT_REF,
         sourceProjectName: 'hushh-ai',
         generatedAt: new Date().toISOString(),
-        metrics: rows.map((row) => ({
-          metricKey: row.metric_key,
+        range: {
+          startDate: range.startDate,
+          endDate: range.endDate,
+          days: range.days,
+        },
+        metrics: metrics.map((row) => ({
+          metricKey: row.metricKey,
           label: row.label,
           value: toNumber(row.value),
-          sourceTable: row.source_table,
+          sourceTable: row.sourceTable,
           detail: row.detail,
         })),
+        daily: daily.map((row) => ({
+          date: String(row.date),
+          label: String(row.label),
+          totalUsers: toNumber(row.totalUsers),
+          newUsers: toNumber(row.newUsers),
+          confirmedUsers: toNumber(row.confirmedUsers),
+          activeUsers: toNumber(row.activeUsers),
+          returningUsers: toNumber(row.returningUsers),
+          deletedUsers: toNumber(row.deletedUsers),
+          deleteRequests: toNumber(row.deleteRequests),
+          sessionsStarted: toNumber(row.sessionsStarted),
+          sessionUsers: toNumber(row.sessionUsers),
+          avgSessionMinutes: toNumber(row.avgSessionMinutes),
+          productActiveUsers: toNumber(row.productActiveUsers),
+          analyticsEvents: toNumber(row.analyticsEvents),
+          analyticsEventUsers: toNumber(row.analyticsEventUsers),
+        })),
+        rangeTotals: {
+          totalUsers: toNumber(rangeTotals.totalUsers),
+          newUsers: toNumber(rangeTotals.newUsers),
+          confirmedUsers: toNumber(rangeTotals.confirmedUsers),
+          activeUsers: toNumber(rangeTotals.activeUsers),
+          returningUsers: toNumber(rangeTotals.returningUsers),
+          deletedUsers: toNumber(rangeTotals.deletedUsers),
+          deleteRequests: toNumber(rangeTotals.deleteRequests),
+          sessionsStarted: toNumber(rangeTotals.sessionsStarted),
+          sessionUsers: toNumber(rangeTotals.sessionUsers),
+          avgSessionMinutes: toNumber(rangeTotals.avgSessionMinutes),
+          productActiveUsers: toNumber(rangeTotals.productActiveUsers),
+          analyticsEvents: toNumber(rangeTotals.analyticsEvents),
+          analyticsEventUsers: toNumber(rangeTotals.analyticsEventUsers),
+        },
       },
       error: null,
     };
@@ -641,11 +891,12 @@ app.get('/api/analytics/kai/ga4', async (_req, res) => {
   });
 });
 
-app.get('/api/analytics/hushhai', async (_req, res) => {
+app.get('/api/analytics/hushhai', async (req, res) => {
+  const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
   const [gcp, searchConsole, supabase] = await Promise.all([
-    fetchHushhAiCloudRun(),
-    fetchHushhAiSearchConsole(),
-    fetchHushhAiSupabaseSummary(),
+    fetchHushhAiCloudRun(hushhAiRange),
+    fetchHushhAiSearchConsole(hushhAiRange),
+    fetchHushhAiSupabaseSummary(hushhAiRange),
   ]);
   const error = [gcp.error, searchConsole.error, supabase.error].filter(Boolean).join('; ') || null;
   res.status(error && !gcp.data && !searchConsole.data && !supabase.data ? 502 : 200).json({
@@ -660,14 +911,15 @@ app.get('/api/analytics/hushhai', async (_req, res) => {
   });
 });
 
-app.get('/api/analytics/all', async (_req, res) => {
+app.get('/api/analytics/all', async (req, res) => {
+  const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
   const [uat, production, kaiGa4, hushhAiGcp, hushhAiSearchConsole, hushhAiSupabase, hushhTech] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     fetchKaiGa4Summary(),
-    fetchHushhAiCloudRun(),
-    fetchHushhAiSearchConsole(),
-    fetchHushhAiSupabaseSummary(),
+    fetchHushhAiCloudRun(hushhAiRange),
+    fetchHushhAiSearchConsole(hushhAiRange),
+    fetchHushhAiSupabaseSummary(hushhAiRange),
     fetchHushhTechAnalytics(),
   ]);
   res.json({

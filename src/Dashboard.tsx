@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowUpRight,
   BarChart3,
+  CalendarDays,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -34,7 +35,7 @@ import {
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { fetchAllAnalytics, formatNumber } from './lib/analytics-service';
 import { cn } from './lib/utils';
-import type { BreakdownMetric, DashboardData, FunnelStep, KpiStat, PlatformStatus } from './lib/types';
+import type { BreakdownMetric, DashboardData, FunnelStep, HushhAiDailyStatusPoint, KpiStat, PlatformStatus } from './lib/types';
 
 const iconMap: Record<string, typeof Activity> = {
   Activity,
@@ -51,6 +52,51 @@ const iconMap: Record<string, typeof Activity> = {
 };
 
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
+const oneDayMs = 86_400_000;
+
+type DatePreset = 7 | 14 | 30 | 90;
+
+interface HushhAiDateRangeState {
+  preset: DatePreset | 'custom';
+  startDate: string;
+  endDate: string;
+}
+
+function toDateInputValue(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function rangeForPreset(days: DatePreset): HushhAiDateRangeState {
+  const now = new Date();
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const start = new Date(end.getTime() - (days - 1) * oneDayMs);
+  return { preset: days, startDate: toDateInputValue(start), endDate: toDateInputValue(end) };
+}
+
+function normalizeCustomRange(range: HushhAiDateRangeState): HushhAiDateRangeState {
+  const start = new Date(`${range.startDate}T00:00:00Z`);
+  const end = new Date(`${range.endDate}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return rangeForPreset(7);
+  const orderedStart = start <= end ? start : end;
+  const orderedEnd = start <= end ? end : start;
+  const limitedStart = orderedEnd.getTime() - orderedStart.getTime() > 89 * oneDayMs
+    ? new Date(orderedEnd.getTime() - 89 * oneDayMs)
+    : orderedStart;
+  return {
+    preset: range.preset,
+    startDate: toDateInputValue(limitedStart),
+    endDate: toDateInputValue(orderedEnd),
+  };
+}
+
+function formatDurationFromMinutes(minutes: number | null | undefined): string {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return '—';
+  if (minutes < 1) return `${Math.round(minutes * 60)}s`;
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = Math.round(minutes % 60);
+  return `${hours}h ${remainder}m`;
+}
 
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
@@ -178,6 +224,128 @@ function MetricListCard({
   );
 }
 
+function DateRangeControl({
+  range,
+  onPreset,
+  onCustomRange,
+}: {
+  range: HushhAiDateRangeState;
+  onPreset: (days: DatePreset) => void;
+  onCustomRange: (next: HushhAiDateRangeState) => void;
+}) {
+  const today = toDateInputValue(new Date());
+  const presets: DatePreset[] = [7, 14, 30, 90];
+
+  return (
+    <div className="flex w-full flex-col gap-2 rounded-lg border border-black/5 bg-white p-2 shadow-sm md:w-auto">
+      <div className="inline-flex rounded-full bg-[#f5f5f7] p-1">
+        {presets.map((days) => (
+          <button
+            key={days}
+            onClick={() => onPreset(days)}
+            className={cn(
+              'min-h-9 flex-1 rounded-full px-3 text-xs font-bold transition md:flex-none',
+              range.preset === days ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+            )}
+          >
+            {days}D
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="flex min-h-10 items-center gap-2 rounded-lg bg-[#f5f5f7] px-2 text-xs font-bold text-[#6e6e73]">
+          <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+          <input
+            type="date"
+            value={range.startDate}
+            max={today}
+            onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', startDate: event.target.value }))}
+            className="min-w-0 flex-1 bg-transparent text-xs font-bold text-[#1d1d1f] outline-none"
+            aria-label="Hushh AI start date"
+          />
+        </label>
+        <label className="flex min-h-10 items-center rounded-lg bg-[#f5f5f7] px-2 text-xs font-bold text-[#6e6e73]">
+          <input
+            type="date"
+            value={range.endDate}
+            max={today}
+            onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', endDate: event.target.value }))}
+            className="min-w-0 flex-1 bg-transparent text-xs font-bold text-[#1d1d1f] outline-none"
+            aria-label="Hushh AI end date"
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function ChartShell({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+      <div className="mb-5">
+        <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">{title}</h3>
+        <p className="mt-1 text-sm font-medium text-[#86868b]">{subtitle}</p>
+      </div>
+      <div className="h-[300px] w-full">{children}</div>
+    </div>
+  );
+}
+
+function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
+  return (
+    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+      <div className="mb-5">
+        <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">Daily Status</h3>
+        <p className="mt-1 text-sm font-medium text-[#86868b]">Users, sessions, exits, traffic, and latency by date</p>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState>No Hushh AI daily rows available yet.</EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-[920px] w-full border-separate border-spacing-0 text-left text-sm">
+            <thead>
+              <tr className="text-xs font-bold uppercase tracking-[0.1em] text-[#86868b]">
+                <th className="border-b border-black/5 py-3 pr-4">Date</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Total</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">New</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Active</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Sessions</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Avg Session</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Exit Signals</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Requests</th>
+                <th className="border-b border-black/5 py-3 pl-4 text-right">P95</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.totalUsers)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.newUsers)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.activeUsers)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.sessionsStarted)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatDurationFromMinutes(row.avgSessionMinutes)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.deletedUsers + row.deleteRequests)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.requests)}</td>
+                  <td className="border-b border-black/5 py-3 pl-4 text-right">{row.p95LatencyMs ? `${Math.round(row.p95LatencyMs)}ms` : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
   const maxUsers = Math.max(...steps.map((step) => step.users), 1);
 
@@ -270,17 +438,21 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'overview' | 'platforms'>('overview');
+  const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [usingMock, setUsingMock] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const result = await fetchAllAnalytics();
+    const result = await fetchAllAnalytics({
+      hushhAiStartDate: hushhAiRange.startDate,
+      hushhAiEndDate: hushhAiRange.endDate,
+    });
     setUsingMock(Boolean(result.error));
     setData(result);
     setLoading(false);
-  }, []);
+  }, [hushhAiRange.endDate, hushhAiRange.startDate]);
 
   useEffect(() => {
     loadData();
@@ -304,6 +476,8 @@ export default function Dashboard() {
   const hushhAiOpsMetrics = data?.hushhAiOpsMetrics ?? [];
   const hushhAiSearchMetrics = data?.hushhAiSearchMetrics ?? [];
   const hushhAiDatabaseMetrics = data?.hushhAiDatabaseMetrics ?? [];
+  const hushhAiDailyStatus = data?.hushhAiDailyStatus ?? [];
+  const hushhAiDailySummaryMetrics = data?.hushhAiDailySummaryMetrics ?? [];
   const hushhTechAudienceMetrics = data?.hushhTechAudienceMetrics ?? [];
   const hushhTechBusinessMetrics = data?.hushhTechBusinessMetrics ?? [];
   const hushhTechOpsMetrics = data?.hushhTechOpsMetrics ?? [];
@@ -387,6 +561,99 @@ export default function Dashboard() {
                     <MetricCard stat={stat} index={index} />
                   </div>
                 ))}
+              </div>
+            </section>
+
+            <section>
+              <SectionHeader
+                kicker="hushh.ai"
+                title="Daily status matrix"
+                action={(
+                  <DateRangeControl
+                    range={hushhAiRange}
+                    onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
+                    onCustomRange={setHushhAiRange}
+                  />
+                )}
+              />
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
+                <MetricListCard
+                  title="Range Summary"
+                  subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
+                  items={hushhAiDailySummaryMetrics}
+                />
+                <ChartShell title="Users In, Active, Sessions" subtitle="Auth users created, last sign-ins, and auth sessions by day">
+                  {hushhAiDailyStatus.length === 0 ? (
+                    <EmptyState>No Hushh AI daily user rows available yet.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                        <CartesianGrid stroke="#ececf0" vertical={false} />
+                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                        <Bar dataKey="newUsers" name="New Users" fill="#007aff" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="activeUsers" name="Active Users" fill="#34c759" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="sessionsStarted" name="Sessions" fill="#af52de" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+                <ChartShell title="Growth Graph" subtitle="Total auth users and returning user activity">
+                  {hushhAiDailyStatus.length === 0 ? (
+                    <EmptyState>No Hushh AI growth rows available yet.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="hushhAiTotalUsers" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#007aff" stopOpacity={0.24} />
+                            <stop offset="95%" stopColor="#007aff" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="hushhAiReturningUsers" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#34c759" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="#ececf0" vertical={false} />
+                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Area type="monotone" dataKey="totalUsers" name="Total Users" stroke="#007aff" strokeWidth={2.5} fill="url(#hushhAiTotalUsers)" />
+                        <Area type="monotone" dataKey="returningUsers" name="Returning Users" stroke="#34c759" strokeWidth={2.5} fill="url(#hushhAiReturningUsers)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+                <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, non-2xx responses, and latency context">
+                  {hushhAiDailyStatus.length === 0 ? (
+                    <EmptyState>No Hushh AI traffic rows available yet.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="hushhAiRequests" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#007aff" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#007aff" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="hushhAiErrors" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
+                            <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="#ececf0" vertical={false} />
+                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Area type="monotone" dataKey="requests" name="Requests" stroke="#007aff" strokeWidth={2.5} fill="url(#hushhAiRequests)" />
+                        <Area type="monotone" dataKey="errors" name="Non-2xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiErrors)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+                <div className="xl:col-span-2">
+                  <DailyStatusTable rows={hushhAiDailyStatus} />
+                </div>
               </div>
             </section>
 

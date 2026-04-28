@@ -57,7 +57,7 @@ Current platform sources:
 | Platform | Source | Hosted behavior |
 | --- | --- | --- |
 | Hushh AI | Cloud Run Monitoring | Last 7 days request count, error count, error rate, p95 latency, instance count, and daily request series |
-| Hushh AI | Supabase Management API | Top aggregate database metrics only, including auth users, profile sync, community registrations, agents, onboarding, selections, NDAs, and Plaid transactions |
+| Hushh AI | Supabase Management API | Top aggregate database metrics plus date-range daily status for new users, active users, sessions, exit signals, product usage, and analytics events |
 | Hushh AI | Search Console BigQuery export | Search metrics appear when export tables are present in `hushh-pda.searchconsole_searchconsole_hushh_ai` |
 | Kai | BigQuery public feed | UAT dashboard metrics, funnel, usage, engagement, geo, and instrumentation health |
 | Kai | GA4 BigQuery export | UAT GA4 aggregates from `hushh-pda-uat.analytics_533362555` |

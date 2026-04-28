@@ -23,6 +23,7 @@ import type {
   AcquisitionChannel,
   CountryData,
   DashboardData,
+  HushhAiDailyStatusPoint,
 } from './types';
 
 const API_BASE = '/api';
@@ -36,6 +37,19 @@ interface AllAnalyticsResponse {
   hushhAi?: { platform: string; data: HushhAiSummary | null; error?: string | null };
   hushhTech: { platform: string; data: HushhTechMetricsSummary | null; error?: string | null };
   fetchedAt: string;
+}
+
+interface FetchAllAnalyticsOptions {
+  hushhAiStartDate?: string;
+  hushhAiEndDate?: string;
+}
+
+function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
+  const params = new URLSearchParams();
+  if (options?.hushhAiStartDate) params.set('hushh_ai_start_date', options.hushhAiStartDate);
+  if (options?.hushhAiEndDate) params.set('hushh_ai_end_date', options.hushhAiEndDate);
+  const query = params.toString();
+  return `${API_BASE}/analytics/all${query ? `?${query}` : ''}`;
 }
 
 async function fetchJson<T>(url: string): Promise<T | null> {
@@ -158,6 +172,8 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhAiOpsMetrics: [],
     hushhAiSearchMetrics: [],
     hushhAiDatabaseMetrics: [],
+    hushhAiDailyStatus: [],
+    hushhAiDailySummaryMetrics: [],
     dataQualityWarnings: [],
     feedWarnings: [],
     platforms: buildPlatforms(null, null, null, null),
@@ -581,6 +597,71 @@ function buildHushhAiDatabaseMetrics(hushhAi: HushhAiSummary | null): BreakdownM
   ));
 }
 
+function buildHushhAiDailyStatus(hushhAi: HushhAiSummary | null): HushhAiDailyStatusPoint[] {
+  const byDate = new Map<string, HushhAiDailyStatusPoint>();
+  const ensurePoint = (date: string, label = date.slice(5)) => {
+    const current = byDate.get(date) ?? {
+      date,
+      label,
+      totalUsers: 0,
+      newUsers: 0,
+      confirmedUsers: 0,
+      activeUsers: 0,
+      returningUsers: 0,
+      deletedUsers: 0,
+      deleteRequests: 0,
+      sessionsStarted: 0,
+      sessionUsers: 0,
+      avgSessionMinutes: 0,
+      productActiveUsers: 0,
+      analyticsEvents: 0,
+      analyticsEventUsers: 0,
+      requests: 0,
+      errors: 0,
+      errorRate: null,
+      p95LatencyMs: null,
+      instanceCount: null,
+    };
+    byDate.set(date, current);
+    return current;
+  };
+
+  for (const row of hushhAi?.supabase?.daily ?? []) {
+    Object.assign(ensurePoint(row.date, row.label), row);
+  }
+
+  for (const row of hushhAi?.gcp?.daily ?? []) {
+    const point = ensurePoint(row.date, row.label);
+    point.requests = row.requests;
+    point.errors = row.errors;
+    point.errorRate = row.errorRate;
+    point.p95LatencyMs = row.p95LatencyMs;
+    point.instanceCount = row.instanceCount;
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function buildHushhAiDailySummaryMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const totals = hushhAi?.supabase?.rangeTotals;
+  const gcp = hushhAi?.gcp;
+  if (!totals && !gcp) return [];
+  const exitSignals = asNumber(totals?.deletedUsers) + asNumber(totals?.deleteRequests);
+  return [
+    metric('Total Users', asNumber(totals?.totalUsers), 'auth.users at range end'),
+    metric('New Users', asNumber(totals?.newUsers), 'auth.users created in range'),
+    metric('Active Users', asNumber(totals?.activeUsers), 'distinct last sign-ins in range'),
+    metric('Sessions Started', asNumber(totals?.sessionsStarted), 'auth.sessions created in range'),
+    metric('Session Users', asNumber(totals?.sessionUsers), 'distinct session users in range'),
+    metric('Avg Session Age', asNumber(totals?.avgSessionMinutes), 'created_at to refreshed_at', formatDuration(asNumber(totals?.avgSessionMinutes) * 60)),
+    metric('Exit Signals', exitSignals, 'deleted users + delete requests'),
+    metric('Product Active Users', asNumber(totals?.productActiveUsers), 'user_product_usage.last_used_at'),
+    metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.serviceName),
+    metric('Cloud Run Error Rate', asNumber(gcp?.errorRate), gcp?.serviceName, formatPercent(gcp?.errorRate)),
+    metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.serviceName, formatLatency(gcp?.p95LatencyMs)),
+  ];
+}
+
 function buildAcquisitionChannels(hushhTech: HushhTechMetricsSummary | null): AcquisitionChannel[] {
   const colors = ['#1a73e8', '#12b5cb', '#9334e6', '#fbbc04', '#34a853'];
   const surfaces = (hushhTech?.search?.bySurface ?? [])
@@ -808,8 +889,8 @@ function buildHushhTechFunnelMetrics(hushhTech: HushhTechMetricsSummary | null):
   return metrics.slice(0, 18);
 }
 
-export async function fetchAllAnalytics(): Promise<DashboardData> {
-  const result = await fetchJson<AllAnalyticsResponse>(`${API_BASE}/analytics/all`);
+export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Promise<DashboardData> {
+  const result = await fetchJson<AllAnalyticsResponse>(buildAnalyticsUrl(options));
 
   if (!result) {
     return emptyDashboard('Failed to fetch analytics data. Is the server running?', null);
@@ -878,6 +959,8 @@ export async function fetchAllAnalytics(): Promise<DashboardData> {
     hushhAiOpsMetrics: buildHushhAiOpsMetrics(hushhAi),
     hushhAiSearchMetrics: buildHushhAiSearchMetrics(hushhAi),
     hushhAiDatabaseMetrics: buildHushhAiDatabaseMetrics(hushhAi),
+    hushhAiDailyStatus: buildHushhAiDailyStatus(hushhAi),
+    hushhAiDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAi),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
     feedWarnings,
     platforms: buildPlatforms(kaiFeed, kaiUsage, hushhAi, hushhTech),

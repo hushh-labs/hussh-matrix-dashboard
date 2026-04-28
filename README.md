@@ -20,7 +20,7 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
 - **Data sources**:
   - UAT: `hushh-pda-uat.analytics_public.kai_public_dashboard_feed` (live, full data)
   - Production: `hushh-pda.analytics_public.kai_public_dashboard_feed` (status-only until GA4 export materializes)
-  - hushh.ai: Cloud Run Monitoring, Search Console export readiness, and Supabase aggregate database counts
+  - hushh.ai: Cloud Run Monitoring, Search Console export readiness, Supabase aggregate database counts, and date-range daily status metrics
   - kai.hushh.ai: public BigQuery feed plus raw GA4 export aggregates
   - hushhtech.com: public Cloud Run summary endpoint with Supabase business funnel, first-party activity, Search Console shape, GA4 traffic shape, and GCP Cloud Run Monitoring
 
@@ -75,7 +75,7 @@ The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai UAT feed**: DAU, WAU, MAU, sessions, events, investor/RIA funnels, platform mix
 - **Kai raw GA4 export**: top events, users, sessions, country, device, and platform aggregates from `analytics_533362555`
 - **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
-- **hushh.ai**: Cloud Run request, latency, instance, Search Console export-table status, and top Supabase aggregate counts from `auth.users` plus selected public business tables
+- **hushh.ai**: Cloud Run request, latency, instance, Search Console export-table status, top Supabase aggregate counts, and date-range daily status from Auth users, Auth sessions, delete requests, product usage, and analytics events
 - **hushhtech.com**: Public-safe summary from `GET /api/metrics/summary?window_days=7`, including audience, search, business funnel, activity, traffic, Search Console shape, GCP Monitoring, system health, and data coverage.
 
 When a provider is not fully configured, the dashboard keeps raw diagnostic text out of the visible UI and shows neutral empty or syncing states instead of synthetic metrics.

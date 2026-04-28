@@ -361,21 +361,36 @@ export interface CloudRunMetricPoint {
   value: number;
 }
 
+export interface CloudRunDailyMetric {
+  date: string;
+  label: string;
+  requests: number;
+  errors: number;
+  errorRate: number | null;
+  p95LatencyMs: number | null;
+  instanceCount: number | null;
+}
+
 export interface CloudRunSummary {
   sourceProjectId: string;
   serviceName: string;
   windowDays: number;
+  startDate?: string;
+  endDate?: string;
   requestCount: number;
   errorCount: number;
   errorRate: number | null;
   p95LatencyMs: number | null;
   instanceCount: number | null;
   series: CloudRunMetricPoint[];
+  daily?: CloudRunDailyMetric[];
 }
 
 export interface SearchConsoleSummary {
   sourceProjectId: string;
   sourceDataset: string;
+  startDate?: string;
+  endDate?: string;
   available: boolean;
   clicks: number;
   impressions: number;
@@ -398,7 +413,48 @@ export interface HushhAiSupabaseSummary {
   sourceProjectRef: string;
   sourceProjectName: string;
   generatedAt: string;
+  range?: {
+    startDate: string;
+    endDate: string;
+    days: number;
+  };
   metrics: SupabaseMetricSummary[];
+  daily?: HushhAiSupabaseDailyMetric[];
+  rangeTotals?: HushhAiSupabaseRangeTotals;
+}
+
+export interface HushhAiSupabaseDailyMetric {
+  date: string;
+  label: string;
+  totalUsers: number;
+  newUsers: number;
+  confirmedUsers: number;
+  activeUsers: number;
+  returningUsers: number;
+  deletedUsers: number;
+  deleteRequests: number;
+  sessionsStarted: number;
+  sessionUsers: number;
+  avgSessionMinutes: number;
+  productActiveUsers: number;
+  analyticsEvents: number;
+  analyticsEventUsers: number;
+}
+
+export interface HushhAiSupabaseRangeTotals {
+  totalUsers: number;
+  newUsers: number;
+  confirmedUsers: number;
+  activeUsers: number;
+  returningUsers: number;
+  deletedUsers: number;
+  deleteRequests: number;
+  sessionsStarted: number;
+  sessionUsers: number;
+  avgSessionMinutes: number;
+  productActiveUsers: number;
+  analyticsEvents: number;
+  analyticsEventUsers: number;
 }
 
 export interface HushhAiSummary {
@@ -445,6 +501,8 @@ export interface DashboardData {
   hushhAiOpsMetrics: BreakdownMetric[];
   hushhAiSearchMetrics: BreakdownMetric[];
   hushhAiDatabaseMetrics: BreakdownMetric[];
+  hushhAiDailyStatus: HushhAiDailyStatusPoint[];
+  hushhAiDailySummaryMetrics: BreakdownMetric[];
   dataQualityWarnings: string[];
   feedWarnings: string[];
 
@@ -454,4 +512,27 @@ export interface DashboardData {
   trafficData: TrafficPoint[];
   acquisitionChannels: AcquisitionChannel[];
   topCountries: CountryData[];
+}
+
+export interface HushhAiDailyStatusPoint {
+  date: string;
+  label: string;
+  totalUsers: number;
+  newUsers: number;
+  confirmedUsers: number;
+  activeUsers: number;
+  returningUsers: number;
+  deletedUsers: number;
+  deleteRequests: number;
+  sessionsStarted: number;
+  sessionUsers: number;
+  avgSessionMinutes: number;
+  productActiveUsers: number;
+  analyticsEvents: number;
+  analyticsEventUsers: number;
+  requests: number;
+  errors: number;
+  errorRate: number | null;
+  p95LatencyMs: number | null;
+  instanceCount: number | null;
 }
