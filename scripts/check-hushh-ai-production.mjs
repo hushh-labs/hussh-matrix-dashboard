@@ -1,0 +1,162 @@
+#!/usr/bin/env node
+import { resolve4, resolveCname } from 'node:dns/promises';
+
+const DEFAULT_BASE_URL = 'https://metrics.hushh.ai';
+const DEFAULT_TIMEOUT_MS = 20_000;
+const HOST_ALIASES = new Map([
+  ['matrix.hush.ai', 'metrics.hushh.ai'],
+  ['matrix.hushh.ai', 'metrics.hushh.ai'],
+  ['metrics.hush.ai', 'metrics.hushh.ai'],
+  ['metric.hushh.ai', 'metrics.hushh.ai'],
+]);
+
+function parseArgs(argv) {
+  const options = {
+    baseUrl: process.env.HUSHH_AI_PRODUCTION_URL || DEFAULT_BASE_URL,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--base-url' && argv[index + 1]) {
+      options.baseUrl = argv[index + 1];
+      index += 1;
+    } else if (arg === '--timeout-ms' && argv[index + 1]) {
+      const parsed = Number(argv[index + 1]);
+      if (Number.isFinite(parsed) && parsed > 0) options.timeoutMs = parsed;
+      index += 1;
+    }
+  }
+
+  return options;
+}
+
+function normalizeBaseUrl(rawUrl) {
+  const url = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
+  const requestedHost = url.hostname.toLowerCase();
+  const canonicalHost = HOST_ALIASES.get(requestedHost) || requestedHost;
+  if (canonicalHost !== requestedHost) {
+    url.hostname = canonicalHost;
+  }
+
+  return {
+    requestedHost,
+    canonicalHost,
+    corrected: canonicalHost !== requestedHost,
+    url: url.origin,
+  };
+}
+
+async function fetchWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache',
+      },
+      signal: controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function checkDns(hostname) {
+  const [cnames, addresses] = await Promise.allSettled([resolveCname(hostname), resolve4(hostname)]);
+  return {
+    cnames: cnames.status === 'fulfilled' ? cnames.value : [],
+    addresses: addresses.status === 'fulfilled' ? addresses.value : [],
+  };
+}
+
+function assert(condition, message, details = undefined) {
+  if (!condition) {
+    throw new Error(details ? `${message}: ${details}` : message);
+  }
+}
+
+async function checkJsonEndpoint(baseUrl, path, timeoutMs) {
+  const response = await fetchWithTimeout(`${baseUrl}${path}`, timeoutMs);
+  const text = await response.text();
+  assert(response.ok, `${path} returned HTTP ${response.status}`, text.slice(0, 500));
+  const body = JSON.parse(text);
+  return { response, body };
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  const target = normalizeBaseUrl(options.baseUrl);
+  const results = [];
+
+  if (target.corrected) {
+    results.push({
+      check: 'domain-normalization',
+      status: 'corrected',
+      detail: `${target.requestedHost} -> ${target.canonicalHost}`,
+    });
+  }
+
+  if (target.requestedHost !== target.canonicalHost) {
+    const requestedDns = await checkDns(target.requestedHost);
+    results.push({
+      check: 'requested-domain-dns',
+      status: requestedDns.cnames.length || requestedDns.addresses.length ? 'resolves' : 'does-not-resolve',
+      detail: target.requestedHost,
+    });
+  }
+
+  const dns = await checkDns(target.canonicalHost);
+  assert(dns.cnames.length || dns.addresses.length, 'canonical domain does not resolve', target.canonicalHost);
+  results.push({
+    check: 'canonical-domain-dns',
+    status: 'ok',
+    detail: `${target.canonicalHost} ${dns.cnames.join(', ') || dns.addresses.join(', ')}`,
+  });
+
+  const pageResponse = await fetchWithTimeout(`${target.url}/`, options.timeoutMs);
+  assert(pageResponse.ok, `dashboard root returned HTTP ${pageResponse.status}`);
+  results.push({ check: 'dashboard-root', status: 'ok', detail: String(pageResponse.status) });
+
+  const health = await checkJsonEndpoint(target.url, '/api/health', options.timeoutMs);
+  assert(health.body?.status === 'ok', 'health endpoint did not return status ok', JSON.stringify(health.body));
+  results.push({ check: 'api-health', status: 'ok', detail: health.body.status });
+
+  const hushhAi = await checkJsonEndpoint(target.url, '/api/analytics/hushhai?window_days=7', options.timeoutMs);
+  const cacheControl = hushhAi.response.headers.get('cache-control') || '';
+  assert(cacheControl.includes('no-store'), 'Hushh AI analytics endpoint is cacheable', cacheControl);
+  assert(hushhAi.body?.platform === 'hushh.ai', 'Hushh AI analytics platform mismatch');
+  assert(Array.isArray(hushhAi.body?.data?.freshness?.sources), 'Hushh AI freshness sources missing');
+  results.push({
+    check: 'hushh-ai-analytics',
+    status: 'ok',
+    detail: `freshness=${hushhAi.body.data.freshness.sources.map((source) => `${source.key}:${source.state}`).join(',')}`,
+  });
+
+  const all = await checkJsonEndpoint(target.url, '/api/analytics/all?window_days=7', options.timeoutMs);
+  assert(all.body?.hushhAi?.data?.freshness, 'aggregate analytics missing Hushh AI freshness block');
+  results.push({ check: 'aggregate-analytics', status: 'ok', detail: 'contains Hushh AI freshness' });
+
+  console.log(JSON.stringify({
+    ok: true,
+    productionUp: true,
+    requestedHost: target.requestedHost,
+    canonicalHost: target.canonicalHost,
+    checkedUrl: target.url,
+    checkedAt: new Date().toISOString(),
+    results,
+  }, null, 2));
+}
+
+main().catch((error) => {
+  console.error(JSON.stringify({
+    ok: false,
+    productionUp: false,
+    checkedAt: new Date().toISOString(),
+    error: error instanceof Error ? error.message : String(error),
+  }, null, 2));
+  process.exit(1);
+});

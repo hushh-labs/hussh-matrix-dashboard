@@ -10,7 +10,8 @@ Unified engagement dashboard for **kai.hushh.ai**, **hushhtech.com**, and **hush
 
 ```
 React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
-                                     →  hushhtech.com Cloud Run endpoint
+                                     →  hushhtech.com public metrics endpoint
+                                     →  Supabase Management API (aggregate counts)
                                      →  Gemini API (AI insights)
 ```
 
@@ -19,7 +20,9 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
 - **Data sources**:
   - UAT: `hushh-pda-uat.analytics_public.kai_public_dashboard_feed` (live, full data)
   - Production: `hushh-pda.analytics_public.kai_public_dashboard_feed` (status-only until GA4 export materializes)
-  - hushhtech.com: Cloud Run analytics endpoint (blocked — needs numeric GA4 property ID)
+  - hushh.ai: Cloud Run Monitoring, Search Console export readiness, Supabase aggregate database counts, and date-range daily status metrics
+  - kai.hushh.ai: public BigQuery feed plus raw GA4 export aggregates
+  - hushhtech.com: public Cloud Run summary endpoint with Supabase business funnel, first-party activity, Search Console shape, GA4 traffic shape, and GCP Cloud Run Monitoring
 
 ## Run Locally
 
@@ -37,6 +40,8 @@ If the BigQuery CLI works but the Express server returns `bigquery.jobs.create` 
 gcloud auth application-default login
 ```
 
+For local developer runs, the Express proxy can also fall back to the authenticated `bq` CLI when ADC and `gcloud` CLI auth differ. Set `BQ_CLI_FALLBACK=false` to disable that fallback.
+
 1. Install dependencies:
    ```bash
    npm install
@@ -45,7 +50,7 @@ gcloud auth application-default login
 2. Configure environment:
    ```bash
    cp .env.example .env.local
-   # Edit .env.local — set GEMINI_API_KEY and optionally HUSHHTECH_ANALYTICS_ENDPOINT
+   # Edit .env.local — set GEMINI_API_KEY and server-side provider tokens only as needed
    ```
 
 3. Run the dashboard (dev mode with API proxy):
@@ -64,14 +69,26 @@ gcloud auth application-default login
    # Dashboard available at http://localhost:3001
    ```
 
+## Production Checks
+
+Run the Hushh AI production probe instead of manually clicking through the hosted dashboard:
+
+```bash
+npm run test:prod:hushh-ai
+```
+
+The probe verifies DNS, the dashboard root, `/api/health`, `/api/analytics/hushhai`, `/api/analytics/all`, no-store API cache headers, and the Hushh AI freshness payload. If a dictated alias such as `matrix.hush.ai` is provided, the check reports the literal DNS status and verifies the canonical `metrics.hushh.ai` deployment.
+
 ## Data Flow
 
 The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai UAT feed**: DAU, WAU, MAU, sessions, events, investor/RIA funnels, platform mix
+- **Kai raw GA4 export**: top events, users, sessions, country, device, and platform aggregates from `analytics_533362555`
 - **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
-- **hushhtech.com**: Traffic, sessions, bounce rate, Search Console metrics (when available)
+- **hushh.ai**: Cloud Run request, latency, instance, Search Console export-table status, top Supabase aggregate counts, and date-range daily status from Auth users, Auth sessions, delete requests, product usage, and analytics events
+- **hushhtech.com**: Public-safe summary from `GET /api/metrics/summary?window_days=7`, including audience, search, business funnel, activity, traffic, Search Console shape, GCP Monitoring, system health, and data coverage.
 
-When the API server is not running, the dashboard falls back to demo data and shows a banner indicating the data source.
+When a provider is not fully configured, the dashboard keeps raw diagnostic text out of the visible UI and shows neutral empty or syncing states instead of synthetic metrics.
 
 ## Remaining Blockers
 
