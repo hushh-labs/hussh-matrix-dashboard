@@ -117,7 +117,18 @@ create_or_update_secret metrics-dashboard-node-env production
 create_or_update_secret metrics-dashboard-app-url https://metrics.hushh.ai
 create_or_update_secret metrics-dashboard-bq-job-project hushh-ai-prod
 create_or_update_secret metrics-dashboard-bq-cli-fallback false
+create_or_update_secret metrics-dashboard-hushhtech-endpoint https://hushhtech.com/api/metrics/summary
 create_or_update_secret metrics-dashboard-hushhtech-window-days 7
+create_or_update_secret metrics-dashboard-hushhtech-gcp-project hushh-tech-prod
+create_or_update_secret metrics-dashboard-hushhtech-cloud-run-service hushh-tech-website
+create_or_update_secret metrics-dashboard-hushhtech-cloud-run-region us-central1
+create_or_update_secret metrics-dashboard-hushhtech-search-project hushh-ai-prod
+create_or_update_secret metrics-dashboard-hushhtech-search-dataset searchconsole_hushhtech_com
+create_or_update_secret metrics-dashboard-hushhtech-search-console-site-url sc-domain:hushhtech.com
+create_or_update_secret metrics-dashboard-hushhtech-search-console-type web
+create_or_update_secret metrics-dashboard-hushhtech-search-console-data-state all
+create_or_update_secret metrics-dashboard-hushhtech-search-console-row-limit 10
+create_or_update_secret metrics-dashboard-hushhtech-supabase-project-ref ibsisfnjxeowvdtvgzff
 create_or_update_secret metrics-dashboard-kai-ga4-window-days 14
 create_or_update_secret metrics-dashboard-kai-prod-ga4-project hushh-pda
 create_or_update_secret metrics-dashboard-kai-prod-ga4-dataset analytics_526603671
@@ -129,15 +140,15 @@ create_or_update_secret metrics-dashboard-hushh-ai-cloud-run-service hushh-ai-we
 create_or_update_secret metrics-dashboard-hushh-ai-window-days 7
 create_or_update_secret metrics-dashboard-hushh-ai-search-project hushh-pda
 create_or_update_secret metrics-dashboard-hushh-ai-search-dataset searchconsole_searchconsole_hushh_ai
-create_or_update_secret metrics-dashboard-hushh-ai-supabase-project-ref ibsisfnjxeowvdtvgzff
 create_or_update_secret metrics-dashboard-hushh-ai-live-refresh-seconds 30
 ```
 
-Create or rotate the Supabase management token secret. Do not print or commit
-the token.
+Create or rotate the HushhTech Supabase management token secret. Do not print
+or commit the token. `Hush AI` is the Supabase database name for
+`hushhtech.com`; do not wire this secret into `hushh.ai` metrics.
 
 ```bash
-create_or_update_secret hushh-ai-supabase-access-token "$HUSHH_AI_SUPABASE_ACCESS_TOKEN"
+create_or_update_secret hushhtech-supabase-access-token "$HUSHHTECH_SUPABASE_ACCESS_TOKEN"
 ```
 
 ## Build And Deploy
@@ -159,7 +170,7 @@ gcloud run deploy "$SERVICE" \
   --min-instances=0 \
   --max-instances=3 \
   --clear-env-vars \
-  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_SUPABASE_PROJECT_REF=metrics-dashboard-hushh-ai-supabase-project-ref:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest,HUSHH_AI_SUPABASE_ACCESS_TOKEN=hushh-ai-supabase-access-token:latest"
+  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_ANALYTICS_ENDPOINT=metrics-dashboard-hushhtech-endpoint:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,HUSHHTECH_GCP_PROJECT=metrics-dashboard-hushhtech-gcp-project:latest,HUSHHTECH_CLOUD_RUN_SERVICE=metrics-dashboard-hushhtech-cloud-run-service:latest,HUSHHTECH_CLOUD_RUN_REGION=metrics-dashboard-hushhtech-cloud-run-region:latest,HUSHHTECH_SEARCH_PROJECT=metrics-dashboard-hushhtech-search-project:latest,HUSHHTECH_SEARCH_DATASET=metrics-dashboard-hushhtech-search-dataset:latest,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushhtech-search-console-site-url:latest,HUSHHTECH_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushhtech-search-console-type:latest,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushhtech-search-console-data-state:latest,HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushhtech-search-console-row-limit:latest,HUSHHTECH_SUPABASE_PROJECT_REF=metrics-dashboard-hushhtech-supabase-project-ref:latest,HUSHHTECH_SUPABASE_ACCESS_TOKEN=hushhtech-supabase-access-token:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest"
 ```
 
 ## Domain Mapping

@@ -11,6 +11,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "test:prod:hushh-ai": "node scripts/check-hushh-ai-production.mjs",
+    "test:prod:hushhtech": "node scripts/check-hushhtech-production.mjs",
     "test:prod:kai": "node scripts/check-kai-production.mjs"
   },
   "dependencies": {

@@ -300,6 +300,7 @@ export interface HushhTechMetricsSummary {
   timezone: string;
   window: HushhTechWindow;
   businessFunnel: HushhTechBusinessFunnel;
+  supabase?: HushhTechSupabaseSummary | null;
   audience?: HushhTechAudience;
   search?: HushhTechSearch;
   searchPerformance?: HushhTechSearchPerformance;
@@ -429,9 +430,10 @@ export interface SupabaseMetricSummary {
   detail: string;
 }
 
-export interface HushhAiSupabaseSummary {
+export interface HushhTechSupabaseSummary {
   sourceProjectRef: string;
   sourceProjectName: string;
+  sourceDatabaseName?: string;
   generatedAt: string;
   range?: {
     startDate: string;
@@ -439,11 +441,11 @@ export interface HushhAiSupabaseSummary {
     days: number;
   };
   metrics: SupabaseMetricSummary[];
-  daily?: HushhAiSupabaseDailyMetric[];
-  rangeTotals?: HushhAiSupabaseRangeTotals;
+  daily?: HushhTechSupabaseDailyMetric[];
+  rangeTotals?: HushhTechSupabaseRangeTotals;
 }
 
-export interface HushhAiSupabaseDailyMetric {
+export interface HushhTechSupabaseDailyMetric {
   date: string;
   label: string;
   totalUsers: number;
@@ -461,7 +463,7 @@ export interface HushhAiSupabaseDailyMetric {
   analyticsEventUsers: number;
 }
 
-export interface HushhAiSupabaseRangeTotals {
+export interface HushhTechSupabaseRangeTotals {
   totalUsers: number;
   newUsers: number;
   confirmedUsers: number;
@@ -480,7 +482,6 @@ export interface HushhAiSupabaseRangeTotals {
 export interface HushhAiSummary {
   gcp: CloudRunSummary | null;
   searchConsole: SearchConsoleSummary | null;
-  supabase?: HushhAiSupabaseSummary | null;
   freshness?: HushhAiFreshness | null;
 }
 
@@ -568,10 +569,12 @@ export interface DashboardData {
   hushhTechCoverageMetrics: BreakdownMetric[];
   hushhTechActivityMetrics: BreakdownMetric[];
   hushhTechFunnelMetrics: BreakdownMetric[];
+  hushhTechDatabaseMetrics: BreakdownMetric[];
+  hushhTechDailyStatus: HushhAiDailyStatusPoint[];
+  hushhTechDailySummaryMetrics: BreakdownMetric[];
   hushhAi: HushhAiSummary | null;
   hushhAiOpsMetrics: BreakdownMetric[];
   hushhAiSearchMetrics: BreakdownMetric[];
-  hushhAiDatabaseMetrics: BreakdownMetric[];
   hushhAiDailyStatus: HushhAiDailyStatusPoint[];
   hushhAiDailySummaryMetrics: BreakdownMetric[];
   dataQualityWarnings: string[];

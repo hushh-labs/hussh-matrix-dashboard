@@ -182,10 +182,12 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhTechCoverageMetrics: [],
     hushhTechActivityMetrics: [],
     hushhTechFunnelMetrics: [],
+    hushhTechDatabaseMetrics: [],
+    hushhTechDailyStatus: [],
+    hushhTechDailySummaryMetrics: [],
     hushhAi: null,
     hushhAiOpsMetrics: [],
     hushhAiSearchMetrics: [],
-    hushhAiDatabaseMetrics: [],
     hushhAiDailyStatus: [],
     hushhAiDailySummaryMetrics: [],
     dataQualityWarnings: [],
@@ -449,16 +451,21 @@ function buildPlatforms(
 ): PlatformStatus[] {
   const aiGcp = hushhAi?.gcp;
   const aiSearch = hushhAi?.searchConsole;
-  const aiAuthUsers = hushhAi?.supabase?.metrics.find((row) => row.metricKey === 'auth_users');
+  const techAuthUsers = hushhTech?.supabase?.metrics.find((row) => row.metricKey === 'auth_users');
   const traffic = hushhTech?.traffic?.overview;
   const audience = hushhTech?.audience;
   const search = hushhTech?.searchPerformance;
+  const hushhTechSourceWarnings = [
+    !hushhTech?.gcp ? 'Cloud Monitoring coverage waiting' : null,
+    !search ? 'Search Console coverage waiting' : null,
+  ].filter(Boolean).join('; ') || null;
   const kaiProdFeed = kaiProduction?.productionFeed?.status;
   const kaiProdGcp = kaiProduction?.gcp;
   const hushhTechSessions = firstNumber(audience?.sessions, traffic?.sessions);
   const hushhTechMau = firstNumber(audience?.mau, traffic?.active28DayUsers);
+  const hushhTechVisitors = strongestNumber(techAuthUsers?.value, audience?.mau, traffic?.active28DayUsers, hushhTech?.businessFunnel.overview.persistedUsers);
   const hushhTechAvailable = Boolean(
-    hushhTech && (hushhTech.businessFunnel || hushhTech.gcp?.available || hushhTech.traffic?.available || hushhTech.audience),
+    hushhTech && (hushhTech.businessFunnel || hushhTech.gcp?.available || hushhTech.traffic?.available || hushhTech.audience || hushhTech.supabase),
   );
 
   return [
@@ -466,16 +473,14 @@ function buildPlatforms(
       name: 'hushh.ai',
       url: 'hushh.ai',
       color: '#1a73e8',
-      available: Boolean(aiGcp || aiSearch?.available || aiAuthUsers),
+      available: Boolean(aiGcp || aiSearch?.available),
       environment: 'production',
       productionReady: Boolean(aiGcp),
       knownBlockers: null,
-      visitors: aiGcp ? formatNumber(aiGcp.requestCount) : aiAuthUsers ? formatNumber(aiAuthUsers.value) : '—',
-      change: aiAuthUsers
-        ? `${formatNumber(aiAuthUsers.value)} auth users`
-        : aiSearch?.available
-          ? `${formatNumber(aiSearch.clicks)} search clicks`
-          : `${formatNumber(aiGcp?.errorCount ?? 0)} non-2xx`,
+      visitors: aiGcp ? formatNumber(aiGcp.requestCount) : aiSearch?.available ? formatNumber(aiSearch.clicks) : '—',
+      change: aiSearch?.available
+        ? `${formatNumber(aiSearch.impressions)} impressions`
+        : `${formatNumber(aiGcp?.errorCount ?? 0)} non-2xx`,
       avgSession: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : '—',
       bounceRate: formatPercent(aiGcp?.errorRate),
     },
@@ -497,10 +502,10 @@ function buildPlatforms(
       url: 'hushhtech.com',
       color: '#9334e6',
       available: hushhTechAvailable,
-      environment: 'uat',
-      productionReady: Boolean(hushhTech?.traffic?.available && search?.available),
-      knownBlockers: hushhTech?.dataQualityWarnings?.[0] ?? hushhTech?.traffic?.note ?? search?.note ?? null,
-      visitors: hushhTechMau ? formatNumber(hushhTechMau) : '—',
+      environment: 'production',
+      productionReady: Boolean(hushhTech?.businessFunnel && hushhTech?.traffic?.available),
+      knownBlockers: hushhTechSourceWarnings ?? hushhTech?.traffic?.note ?? search?.note ?? null,
+      visitors: hushhTechVisitors ? formatNumber(hushhTechVisitors) : hushhTechMau ? formatNumber(hushhTechMau) : '—',
       change: hushhTech ? `${formatNumber(hushhTech.businessFunnel.overview.signups)} signups` : '—',
       avgSession: hushhTechSessions ? `${formatNumber(hushhTechSessions)} sessions` : '—',
       bounceRate: formatPercent(traffic?.engagementRate),
@@ -522,9 +527,9 @@ function buildKpiStats(
   const gcp = hushhTech?.gcp;
   const aiGcp = hushhAi?.gcp;
   const aiSearch = hushhAi?.searchConsole;
-  const aiDatabaseMetric = (key: string) => hushhAi?.supabase?.metrics.find((row) => row.metricKey === key);
-  const authUsers = aiDatabaseMetric('auth_users');
-  const userProfileSync = aiDatabaseMetric('user_profile_sync');
+  const hushhTechDatabaseMetric = (key: string) => hushhTech?.supabase?.metrics.find((row) => row.metricKey === key);
+  const authUsers = hushhTechDatabaseMetric('auth_users');
+  const userProfileSync = hushhTechDatabaseMetric('user_profile_sync');
   const kaiTopEvent = kaiGa4?.topEvents?.[0];
   const kaiProdGcp = kaiProduction?.gcp;
   const kaiProdGa4 = kaiProduction?.productionGa4;
@@ -557,7 +562,7 @@ function buildKpiStats(
       change: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : undefined,
     },
     {
-      label: 'Auth Users',
+      label: 'hushhtech.com Users',
       value: authUsers ? formatNumber(authUsers.value) : '—',
       icon: 'ShieldCheck',
       change: userProfileSync ? `${formatNumber(userProfileSync.value)} profile sync` : undefined,
@@ -677,8 +682,33 @@ function buildHushhAiSearchMetrics(hushhAi: HushhAiSummary | null): BreakdownMet
   ];
 }
 
-function buildHushhAiDatabaseMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
-  return (hushhAi?.supabase?.metrics ?? []).slice(0, 10).map((row) => metric(
+function emptyDailyPoint(date: string, label = date.slice(5)): HushhAiDailyStatusPoint {
+  return {
+    date,
+    label,
+    totalUsers: 0,
+    newUsers: 0,
+    confirmedUsers: 0,
+    activeUsers: 0,
+    returningUsers: 0,
+    deletedUsers: 0,
+    deleteRequests: 0,
+    sessionsStarted: 0,
+    sessionUsers: 0,
+    avgSessionMinutes: 0,
+    productActiveUsers: 0,
+    analyticsEvents: 0,
+    analyticsEventUsers: 0,
+    requests: 0,
+    errors: 0,
+    errorRate: null,
+    p95LatencyMs: null,
+    instanceCount: null,
+  };
+}
+
+function buildHushhTechDatabaseMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+  return (hushhTech?.supabase?.metrics ?? []).slice(0, 10).map((row) => metric(
     row.label,
     row.value,
     [row.sourceTable, row.detail].filter(Boolean).join(' · '),
@@ -688,35 +718,10 @@ function buildHushhAiDatabaseMetrics(hushhAi: HushhAiSummary | null): BreakdownM
 function buildHushhAiDailyStatus(hushhAi: HushhAiSummary | null): HushhAiDailyStatusPoint[] {
   const byDate = new Map<string, HushhAiDailyStatusPoint>();
   const ensurePoint = (date: string, label = date.slice(5)) => {
-    const current = byDate.get(date) ?? {
-      date,
-      label,
-      totalUsers: 0,
-      newUsers: 0,
-      confirmedUsers: 0,
-      activeUsers: 0,
-      returningUsers: 0,
-      deletedUsers: 0,
-      deleteRequests: 0,
-      sessionsStarted: 0,
-      sessionUsers: 0,
-      avgSessionMinutes: 0,
-      productActiveUsers: 0,
-      analyticsEvents: 0,
-      analyticsEventUsers: 0,
-      requests: 0,
-      errors: 0,
-      errorRate: null,
-      p95LatencyMs: null,
-      instanceCount: null,
-    };
+    const current = byDate.get(date) ?? emptyDailyPoint(date, label);
     byDate.set(date, current);
     return current;
   };
-
-  for (const row of hushhAi?.supabase?.daily ?? []) {
-    Object.assign(ensurePoint(row.date, row.label), row);
-  }
 
   for (const row of hushhAi?.gcp?.daily ?? []) {
     const point = ensurePoint(row.date, row.label);
@@ -731,22 +736,43 @@ function buildHushhAiDailyStatus(hushhAi: HushhAiSummary | null): HushhAiDailySt
 }
 
 function buildHushhAiDailySummaryMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
-  const totals = hushhAi?.supabase?.rangeTotals;
   const gcp = hushhAi?.gcp;
-  if (!totals && !gcp) return [];
-  const exitSignals = asNumber(totals?.deletedUsers) + asNumber(totals?.deleteRequests);
+  if (!gcp) return [];
   return [
-    metric('Total Users', asNumber(totals?.totalUsers), 'auth.users at range end'),
-    metric('New Users', asNumber(totals?.newUsers), 'auth.users created in range'),
-    metric('Active Users', asNumber(totals?.activeUsers), 'distinct last sign-ins in range'),
-    metric('Sessions Started', asNumber(totals?.sessionsStarted), 'auth.sessions created in range'),
-    metric('Session Users', asNumber(totals?.sessionUsers), 'distinct session users in range'),
-    metric('Avg Session Age', asNumber(totals?.avgSessionMinutes), 'created_at to refreshed_at', formatDuration(asNumber(totals?.avgSessionMinutes) * 60)),
-    metric('Exit Signals', exitSignals, 'deleted users + delete requests'),
-    metric('Product Active Users', asNumber(totals?.productActiveUsers), 'user_product_usage.last_used_at'),
     metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.serviceName),
     metric('Cloud Run Error Rate', asNumber(gcp?.errorRate), gcp?.serviceName, formatPercent(gcp?.errorRate)),
     metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.serviceName, formatLatency(gcp?.p95LatencyMs)),
+  ];
+}
+
+function buildHushhTechDailyStatus(hushhTech: HushhTechMetricsSummary | null): HushhAiDailyStatusPoint[] {
+  const byDate = new Map<string, HushhAiDailyStatusPoint>();
+  const ensurePoint = (date: string, label = date.slice(5)) => {
+    const current = byDate.get(date) ?? emptyDailyPoint(date, label);
+    byDate.set(date, current);
+    return current;
+  };
+
+  for (const row of hushhTech?.supabase?.daily ?? []) {
+    Object.assign(ensurePoint(row.date, row.label), row);
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function buildHushhTechDailySummaryMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+  const totals = hushhTech?.supabase?.rangeTotals;
+  if (!totals) return [];
+  const exitSignals = asNumber(totals.deletedUsers) + asNumber(totals.deleteRequests);
+  return [
+    metric('Total Users', asNumber(totals.totalUsers), 'hushhtech.com Supabase auth.users at range end'),
+    metric('New Users', asNumber(totals.newUsers), 'hushhtech.com auth.users created in range'),
+    metric('Active Users', asNumber(totals.activeUsers), 'hushhtech.com distinct last sign-ins in range'),
+    metric('Sessions Started', asNumber(totals.sessionsStarted), 'hushhtech.com auth.sessions created in range'),
+    metric('Session Users', asNumber(totals.sessionUsers), 'hushhtech.com distinct session users in range'),
+    metric('Avg Session Age', asNumber(totals.avgSessionMinutes), 'created_at to refreshed_at', formatDuration(asNumber(totals.avgSessionMinutes) * 60)),
+    metric('Exit Signals', exitSignals, 'deleted users + delete requests'),
+    metric('Product Active Users', asNumber(totals.productActiveUsers), 'user_product_usage.last_used_at'),
   ];
 }
 
@@ -1049,10 +1075,12 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     hushhTechCoverageMetrics: buildHushhTechCoverageMetrics(hushhTech),
     hushhTechActivityMetrics: buildHushhTechActivityMetrics(hushhTech),
     hushhTechFunnelMetrics: buildHushhTechFunnelMetrics(hushhTech),
+    hushhTechDatabaseMetrics: buildHushhTechDatabaseMetrics(hushhTech),
+    hushhTechDailyStatus: buildHushhTechDailyStatus(hushhTech),
+    hushhTechDailySummaryMetrics: buildHushhTechDailySummaryMetrics(hushhTech),
     hushhAi,
     hushhAiOpsMetrics: buildHushhAiOpsMetrics(hushhAi),
     hushhAiSearchMetrics: buildHushhAiSearchMetrics(hushhAi),
-    hushhAiDatabaseMetrics: buildHushhAiDatabaseMetrics(hushhAi),
     hushhAiDailyStatus: buildHushhAiDailyStatus(hushhAi),
     hushhAiDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAi),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
