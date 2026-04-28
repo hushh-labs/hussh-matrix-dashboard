@@ -10,7 +10,7 @@ Unified engagement dashboard for **kai.hushh.ai**, **hushhtech.com**, and **hush
 
 ```
 React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
-                                     →  hushhtech.com public metrics endpoint
+                                     →  hushhtech.com summary endpoint + GCP provider APIs
                                      →  Supabase Management API (aggregate counts)
                                      →  Gemini API (AI insights)
 ```
@@ -20,9 +20,17 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
 - **Data sources**:
   - UAT: `hushh-pda-uat.analytics_public.kai_public_dashboard_feed` (live, full data)
   - Production: `hushh-pda.analytics_public.kai_public_dashboard_feed` (status-only until GA4 export materializes)
-  - hushh.ai: Cloud Run Monitoring, Search Console export readiness, Supabase aggregate database counts, and date-range daily status metrics
+  - hushh.ai: Cloud Run Monitoring and Search Console export readiness only
   - kai.hushh.ai: public BigQuery feed plus raw GA4 export aggregates
-  - hushhtech.com: public Cloud Run summary endpoint with Supabase business funnel, first-party activity, Search Console shape, GA4 traffic shape, and GCP Cloud Run Monitoring
+  - hushhtech.com: Supabase database aggregates, canonical production summary endpoint for business/GA4, metrics.hushh.ai-owned Cloud Run Monitoring, and Search Console BigQuery bulk export coverage
+
+## Product Boundaries
+
+| Product | Canonical metrics source |
+| --- | --- |
+| `kai.hushh.ai` | BigQuery public dashboard feeds, GA4 export aggregates, and Cloud Run Monitoring |
+| `hushh.ai` | Analytics only: Cloud Run Monitoring and Search Console export readiness. No Supabase database is attached to this product. |
+| `hushhtech.com` | Supabase database aggregates plus HushhTech business/GA4 summary, Cloud Run Monitoring, and Search Console BigQuery bulk export coverage from `hushh-ai-prod.searchconsole_hushhtech_com`. The Supabase database is named `Hush AI`; that name belongs to the `hushhtech.com` data source in this dashboard. |
 
 ## Run Locally
 
@@ -75,6 +83,7 @@ Run the Hushh AI production probe instead of manually clicking through the hoste
 
 ```bash
 npm run test:prod:hushh-ai
+npm run test:prod:hushhtech
 npm run test:prod:kai
 ```
 
@@ -87,8 +96,8 @@ The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai raw GA4 export**: top events, users, sessions, country, device, and platform aggregates from `analytics_533362555`
 - **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
 - **Kai Production Cloud Run**: `kai.hushh.ai` requests, non-2xx, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp`
-- **hushh.ai**: Cloud Run request, latency, instance, Search Console export-table status, top Supabase aggregate counts, and date-range daily status from Auth users, Auth sessions, delete requests, product usage, and analytics events
-- **hushhtech.com**: Public-safe summary from `GET /api/metrics/summary?window_days=7`, including audience, search, business funnel, activity, traffic, Search Console shape, GCP Monitoring, system health, and data coverage.
+- **hushh.ai**: Cloud Run request, latency, instance, and Search Console export-table status. No Supabase database is attached to this product.
+- **hushhtech.com**: Supabase database aggregates, public-safe summary from `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic, plus direct Cloud Run Monitoring and Search Console BigQuery bulk export coverage fetched by `metrics.hushh.ai`.
 
 When a provider is not fully configured, the dashboard keeps raw diagnostic text out of the visible UI and shows neutral empty or syncing states instead of synthetic metrics.
 
@@ -98,5 +107,4 @@ When a provider is not fully configured, the dashboard keeps raw diagnostic text
 | --- | --- | --- |
 | kai.hushh.ai (prod) | GA4 export dataset not materialized | Resolve `hushh-pda.analytics_526603671` materialization |
 | kai.hushh.ai (prod) | Web tag not deployed | Redeploy frontend with `G-2PCECPSKCR` |
-| hushhtech.com | Numeric GA4 property ID missing | Provide the property ID (not measurement ID `G-R58S9WWPM0`) |
-| hushhtech.com | Search Console access | Add `175298245599-compute@developer.gserviceaccount.com` to `sc-domain:hushhtech.com` |
+| hushhtech.com | Search Console bulk export is configured, but the first export can take up to 48 hours | Wait for `hushh-ai-prod.searchconsole_hushhtech_com.searchdata_site_impression` and `searchdata_url_impression` |

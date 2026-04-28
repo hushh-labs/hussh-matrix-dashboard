@@ -671,7 +671,6 @@ export default function Dashboard() {
   const instrumentationHealth = data?.instrumentationHealth ?? [];
   const hushhAiOpsMetrics = data?.hushhAiOpsMetrics ?? [];
   const hushhAiSearchMetrics = data?.hushhAiSearchMetrics ?? [];
-  const hushhAiDatabaseMetrics = data?.hushhAiDatabaseMetrics ?? [];
   const hushhAiDailyStatus = data?.hushhAiDailyStatus ?? [];
   const hushhAiDailySummaryMetrics = data?.hushhAiDailySummaryMetrics ?? [];
   const hushhAiFreshness = data?.hushhAi?.freshness;
@@ -683,6 +682,12 @@ export default function Dashboard() {
   const hushhTechCoverageMetrics = data?.hushhTechCoverageMetrics ?? [];
   const hushhTechActivityMetrics = data?.hushhTechActivityMetrics ?? [];
   const hushhTechFunnelMetrics = data?.hushhTechFunnelMetrics ?? [];
+  const hushhTechDatabaseMetrics = data?.hushhTechDatabaseMetrics ?? [];
+  const hushhTechDailyStatus = data?.hushhTechDailyStatus ?? [];
+  const hushhTechDailySummaryMetrics = data?.hushhTechDailySummaryMetrics ?? [];
+  const hushhTechRangeLabel = data?.hushhTech?.window
+    ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
+    : 'Selected range';
   const statusText = usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
 
   return (
@@ -845,7 +850,7 @@ export default function Dashboard() {
             <section>
               <SectionHeader
                 kicker="hushh.ai"
-                title="Daily status matrix"
+                title="Analytics status matrix"
                 action={(
                   <DateRangeControl
                     range={hushhAiRange}
@@ -873,49 +878,6 @@ export default function Dashboard() {
                   subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
                   items={hushhAiDailySummaryMetrics}
                 />
-                <ChartShell title="Users In, Active, Sessions" subtitle="Auth users created, last sign-ins, and auth sessions by day">
-                  {hushhAiDailyStatus.length === 0 ? (
-                    <EmptyState>No Hushh AI daily user rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="newUsers" name="New Users" fill="#007aff" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="activeUsers" name="Active Users" fill="#34c759" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="sessionsStarted" name="Sessions" fill="#af52de" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-                <ChartShell title="Growth Graph" subtitle="Total auth users and returning user activity">
-                  {hushhAiDailyStatus.length === 0 ? (
-                    <EmptyState>No Hushh AI growth rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="hushhAiTotalUsers" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#007aff" stopOpacity={0.24} />
-                            <stop offset="95%" stopColor="#007aff" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="hushhAiReturningUsers" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#34c759" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Area type="monotone" dataKey="totalUsers" name="Total Users" stroke="#007aff" strokeWidth={2.5} fill="url(#hushhAiTotalUsers)" />
-                        <Area type="monotone" dataKey="returningUsers" name="Returning Users" stroke="#34c759" strokeWidth={2.5} fill="url(#hushhAiReturningUsers)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
                 <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, non-2xx responses, and latency context">
                   {hushhAiDailyStatus.length === 0 ? (
                     <EmptyState>No Hushh AI traffic rows available yet.</EmptyState>
@@ -942,9 +904,6 @@ export default function Dashboard() {
                     </ResponsiveContainer>
                   )}
                 </ChartShell>
-                <div className="xl:col-span-2">
-                  <DailyStatusTable rows={hushhAiDailyStatus} />
-                </div>
               </div>
             </section>
 
@@ -957,8 +916,14 @@ export default function Dashboard() {
             </section>
 
             <section>
-              <SectionHeader kicker="hushh.ai Supabase" title="Database truth metrics" />
-              <MetricListCard title="Top 10 Database Metrics" subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts" items={hushhAiDatabaseMetrics} />
+              <SectionHeader kicker="hushhtech.com Supabase" title="Database truth metrics" />
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <MetricListCard title="Top 10 Database Metrics" subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts" items={hushhTechDatabaseMetrics} />
+                <MetricListCard title="Database Range Summary" subtitle={hushhTechRangeLabel} items={hushhTechDailySummaryMetrics} />
+              </div>
+              <div className="mt-4">
+                <DailyStatusTable rows={hushhTechDailyStatus} />
+              </div>
             </section>
 
             <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_0.95fr]">
@@ -1136,7 +1101,7 @@ export default function Dashboard() {
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <MetricListCard title="Instrumentation Health" subtitle="Governed event schema coverage" items={instrumentationHealth} />
               <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
-              <MetricListCard title="hushh.ai Database" subtitle="Top Supabase aggregate counts" items={hushhAiDatabaseMetrics} />
+              <MetricListCard title="hushhtech.com Database" subtitle="Top Supabase aggregate counts" items={hushhTechDatabaseMetrics} />
               <MetricListCard title="hushhtech.com Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} />
             </section>
           </main>

@@ -36,9 +36,23 @@ const BQ_PROD_VIEW = process.env.BQ_PROD_VIEW || 'kai_public_dashboard_feed';
 const BQ_JOB_PROJECT = process.env.BQ_JOB_PROJECT || '';
 const BQ_CLI_FALLBACK = process.env.BQ_CLI_FALLBACK !== 'false';
 const DEFAULT_HUSHHTECH_ENDPOINT =
-  'https://hushh-tech-website-bmrh3cdxwa-uc.a.run.app/api/metrics/summary';
+  'https://hushhtech.com/api/metrics/summary';
 const HUSHHTECH_ENDPOINT = process.env.HUSHHTECH_ANALYTICS_ENDPOINT || DEFAULT_HUSHHTECH_ENDPOINT;
 const HUSHHTECH_WINDOW_DAYS = process.env.HUSHHTECH_METRICS_WINDOW_DAYS || '7';
+const HUSHHTECH_METRICS_WINDOW_DAYS = parseInt(HUSHHTECH_WINDOW_DAYS, 10);
+const HUSHHTECH_GCP_PROJECT = process.env.HUSHHTECH_GCP_PROJECT || 'hushh-tech-prod';
+const HUSHHTECH_CLOUD_RUN_SERVICE = process.env.HUSHHTECH_CLOUD_RUN_SERVICE || 'hushh-tech-website';
+const HUSHHTECH_CLOUD_RUN_REGION = process.env.HUSHHTECH_CLOUD_RUN_REGION || 'us-central1';
+const HUSHHTECH_SEARCH_PROJECT = process.env.HUSHHTECH_SEARCH_PROJECT || 'hushh-ai-prod';
+const HUSHHTECH_SEARCH_DATASET = process.env.HUSHHTECH_SEARCH_DATASET || 'searchconsole_hushhtech_com';
+const HUSHHTECH_SEARCH_CONSOLE_SITE_URL =
+  process.env.HUSHHTECH_SEARCH_CONSOLE_SITE_URL || 'sc-domain:hushhtech.com';
+const HUSHHTECH_SEARCH_CONSOLE_TYPE = process.env.HUSHHTECH_SEARCH_CONSOLE_TYPE || 'web';
+const HUSHHTECH_SEARCH_CONSOLE_DATA_STATE = process.env.HUSHHTECH_SEARCH_CONSOLE_DATA_STATE || 'all';
+const HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT = Math.max(
+  1,
+  Math.min(parseInt(process.env.HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT || '10', 10) || 10, 25),
+);
 const KAI_GA4_PROJECT = process.env.KAI_GA4_PROJECT || BQ_UAT_PROJECT;
 const KAI_GA4_DATASET = process.env.KAI_GA4_DATASET || 'analytics_533362555';
 const KAI_GA4_WINDOW_DAYS = parseInt(process.env.KAI_GA4_WINDOW_DAYS || '14', 10);
@@ -53,10 +67,10 @@ const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDO
 const HUSHH_AI_SEARCH_PROJECT = process.env.HUSHH_AI_SEARCH_PROJECT || BQ_PROD_PROJECT;
 const HUSHH_AI_SEARCH_DATASET =
   process.env.HUSHH_AI_SEARCH_DATASET || 'searchconsole_searchconsole_hushh_ai';
-const HUSHH_AI_SUPABASE_PROJECT_REF =
-  process.env.HUSHH_AI_SUPABASE_PROJECT_REF || 'ibsisfnjxeowvdtvgzff';
-const HUSHH_AI_SUPABASE_ACCESS_TOKEN =
-  process.env.HUSHH_AI_SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_PAT || '';
+const HUSHHTECH_SUPABASE_PROJECT_REF =
+  process.env.HUSHHTECH_SUPABASE_PROJECT_REF || 'ibsisfnjxeowvdtvgzff';
+const HUSHHTECH_SUPABASE_ACCESS_TOKEN =
+  process.env.HUSHHTECH_SUPABASE_ACCESS_TOKEN || '';
 const MAX_HUSHH_AI_RANGE_DAYS = 90;
 const HUSHH_AI_LIVE_REFRESH_SECONDS = Math.max(
   10,
@@ -141,6 +155,10 @@ function parseHushhAiDateRange(query: Record<string, unknown>): HushhAiDateRange
 
 function parseKaiDateRange(query: Record<string, unknown>): HushhAiDateRange {
   return parseProductDateRange(query, 'kai', KAI_PROD_METRICS_WINDOW_DAYS);
+}
+
+function parseHushhTechDateRange(query: Record<string, unknown>): HushhAiDateRange {
+  return parseProductDateRange(query, 'hushhtech', HUSHHTECH_METRICS_WINDOW_DAYS);
 }
 
 function dateSpine(range: HushhAiDateRange): string[] {
@@ -272,17 +290,17 @@ async function queryBigQuery(
 // hushhtech.com analytics proxy
 // ---------------------------------------------------------------------------
 
-function buildHushhTechUrl(): string {
+function buildHushhTechUrl(range?: HushhAiDateRange): string {
   const url = new URL(HUSHHTECH_ENDPOINT);
   if (!url.searchParams.has('window_days')) {
-    url.searchParams.set('window_days', HUSHHTECH_WINDOW_DAYS);
+    url.searchParams.set('window_days', String(range?.days ?? HUSHHTECH_WINDOW_DAYS));
   }
   return url.toString();
 }
 
-async function fetchHushhTechAnalytics(): Promise<{ data: Record<string, unknown> | null; error: string | null }> {
+async function fetchHushhTechPublicAnalytics(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   try {
-    const res = await fetch(buildHushhTechUrl(), {
+    const res = await fetch(buildHushhTechUrl(range), {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(10_000),
     });
@@ -297,6 +315,378 @@ async function fetchHushhTechAnalytics(): Promise<{ data: Record<string, unknown
     console.error('hushhtech.com fetch failed:', message);
     return { data: null, error: message };
   }
+}
+
+function emptyHushhTechSummary(range: HushhAiDateRange, warning: string): Record<string, unknown> {
+  return {
+    generatedAt: new Date().toISOString(),
+    timezone: 'UTC',
+    window: {
+      days: range.days,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      dates: dateSpine(range),
+    },
+    businessFunnel: {
+      source: 'unavailable',
+      overview: {
+        signups: 0,
+        persistedUsers: 0,
+        onboardingStarted: 0,
+        onboardingCompleted: 0,
+        profilesCreated: 0,
+        profilesConfirmed: 0,
+      },
+      conversionRates: {
+        signupToPersistedUsers: null,
+        signupToOnboardingStarted: null,
+        onboardingCompletionRate: null,
+        profileConfirmationRate: null,
+      },
+      onboardingStepBreakdown: [],
+      series: dateSpine(range).map((date) => ({
+        date,
+        signups: 0,
+        persistedUsers: 0,
+        onboardingStarted: 0,
+        onboardingCompleted: 0,
+        profilesCreated: 0,
+        profilesConfirmed: 0,
+      })),
+    },
+    traffic: {
+      source: 'unavailable',
+      available: false,
+      overview: {
+        active1DayUsers: 0,
+        active7DayUsers: 0,
+        active28DayUsers: 0,
+        sessions: 0,
+        engagedSessions: 0,
+        screenPageViews: 0,
+        newUsers: 0,
+        engagementRate: null,
+        averageSessionDuration: null,
+        realtimeActiveUsers: null,
+      },
+      series: dateSpine(range).map((date) => ({
+        date,
+        activeUsers: 0,
+        sessions: 0,
+        screenPageViews: 0,
+        engagedSessions: 0,
+        newUsers: 0,
+      })),
+      note: warning,
+    },
+    dataQualityWarnings: [warning],
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function mapCloudRunToHushhTechGcp(gcp: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!gcp) return null;
+  const requestCount = toNumber(gcp.requestCount);
+  const errorRate = gcp.errorRate == null ? null : toNumber(gcp.errorRate);
+  const p95LatencyMs = gcp.p95LatencyMs == null ? null : toNumber(gcp.p95LatencyMs);
+  const instanceCount = gcp.instanceCount == null ? null : toNumber(gcp.instanceCount);
+  return {
+    source: 'metrics-hushh-ai-cloud-monitoring',
+    available: true,
+    services: [
+      {
+        name: HUSHHTECH_CLOUD_RUN_SERVICE,
+        region: HUSHHTECH_CLOUD_RUN_REGION,
+        available: true,
+        requestCount,
+        errorRate,
+        p95LatencyMs,
+        instanceCount,
+      },
+    ],
+    requestCount,
+    errorRate,
+    p50LatencyMs: null,
+    p95LatencyMs,
+    instanceCount,
+    uptimeAvailability: errorRate == null ? null : 1 - errorRate,
+    note: 'Read directly by metrics.hushh.ai from Google Cloud Monitoring.',
+  };
+}
+
+async function fetchHushhTechCloudRun(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  const result = await fetchCloudRunSummary(
+    HUSHHTECH_GCP_PROJECT,
+    HUSHHTECH_CLOUD_RUN_SERVICE,
+    range,
+    'HushhTech production',
+  );
+  return {
+    data: mapCloudRunToHushhTechGcp(result.data),
+    error: result.error,
+  };
+}
+
+function unavailableHushhTechSearchConsole(range: HushhAiDateRange, note: string): Record<string, unknown> {
+  return {
+    source: 'metrics-hushh-ai-search-console-bigquery',
+    available: false,
+    realtime: false,
+    dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
+    searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
+    overview: {
+      clicks: 0,
+      impressions: 0,
+      ctr: null,
+      averagePosition: null,
+    },
+    queries: [],
+    pages: [],
+    countries: [],
+    devices: [],
+    searchAppearance: [],
+    state: {
+      source: 'metrics-hushh-ai-search-console-bigquery',
+      available: false,
+      byRegion: [],
+      note,
+    },
+    metadata: {
+      siteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
+      sourceProjectId: HUSHHTECH_SEARCH_PROJECT,
+      sourceDataset: HUSHHTECH_SEARCH_DATASET,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      expectedLagSeconds: 86_400,
+    },
+    note,
+  };
+}
+
+function searchConsoleMetric(row: Record<string, unknown> | undefined) {
+  return {
+    clicks: row ? toNumber(row.clicks) : 0,
+    impressions: row ? toNumber(row.impressions) : 0,
+    ctr: row?.ctr == null ? null : toNumber(row.ctr),
+    averagePosition: row?.position == null ? null : toNumber(row.position),
+  };
+}
+
+function sqlStringLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  const generatedAt = new Date().toISOString();
+  const queryProject = BQ_JOB_PROJECT || HUSHHTECH_SEARCH_PROJECT;
+  const datasetRef = `\`${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}\``;
+  const sourceLabel = `${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`;
+  const tableRows = await queryBigQuerySql(queryProject, `
+    SELECT table_name AS tableName
+    FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
+    WHERE table_name IN ('searchdata_site_impression', 'searchdata_url_impression')
+  `);
+
+  if (tableRows.error) {
+    const waitingNote = `Search Console bulk export for hushhtech.com is configured, but ${sourceLabel} is not queryable yet.`;
+    if (/not found|notfound/i.test(tableRows.error)) {
+      return { data: unavailableHushhTechSearchConsole(range, waitingNote), error: null };
+    }
+    return { data: null, error: tableRows.error };
+  }
+
+  const tableNames = new Set(tableRows.rows.map((row) => String(row.tableName)));
+  if (!tableNames.has('searchdata_site_impression')) {
+    return {
+      data: unavailableHushhTechSearchConsole(
+        range,
+        `Search Console bulk export is set up; waiting for ${sourceLabel}.searchdata_site_impression. Google says the first export can take up to 48 hours.`,
+      ),
+      error: null,
+    };
+  }
+
+  const siteTable = `${datasetRef}.searchdata_site_impression`;
+  const urlTable = `${datasetRef}.searchdata_url_impression`;
+  const rowLimit = HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT;
+  const dateFilter = `data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'`;
+  const searchTypeFilter = `LOWER(search_type) = LOWER(${sqlStringLiteral(HUSHHTECH_SEARCH_CONSOLE_TYPE)})`;
+  const whereClause = `${dateFilter} AND ${searchTypeFilter}`;
+  const aggregateQuery = `
+    SELECT
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+    FROM ${siteTable}
+    WHERE ${whereClause}
+  `;
+  const queryRowsQuery = `
+    SELECT
+      COALESCE(query, '(anonymous)') AS query,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+    FROM ${siteTable}
+    WHERE ${whereClause}
+    GROUP BY query
+    ORDER BY impressions DESC
+    LIMIT ${rowLimit}
+  `;
+  const countryRowsQuery = `
+    SELECT
+      country,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+    FROM ${siteTable}
+    WHERE ${whereClause}
+    GROUP BY country
+    ORDER BY impressions DESC
+    LIMIT ${rowLimit}
+  `;
+  const deviceRowsQuery = `
+    SELECT
+      device,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+    FROM ${siteTable}
+    WHERE ${whereClause}
+    GROUP BY device
+    ORDER BY impressions DESC
+    LIMIT ${rowLimit}
+  `;
+  const pageRowsQuery = tableNames.has('searchdata_url_impression') ? `
+    SELECT
+      url AS pageUrl,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+    FROM ${urlTable}
+    WHERE ${whereClause}
+    GROUP BY pageUrl
+    ORDER BY impressions DESC
+    LIMIT ${rowLimit}
+  ` : null;
+
+  const [aggregate, queries, countries, devices, pages] = await Promise.all([
+    queryBigQuerySql(queryProject, aggregateQuery),
+    queryBigQuerySql(queryProject, queryRowsQuery),
+    queryBigQuerySql(queryProject, countryRowsQuery),
+    queryBigQuerySql(queryProject, deviceRowsQuery),
+    pageRowsQuery ? queryBigQuerySql(queryProject, pageRowsQuery) : Promise.resolve({ rows: [], error: null }),
+  ]);
+  const errors = [aggregate.error, queries.error, countries.error, devices.error, pages.error].filter(Boolean);
+  if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
+
+  const overview = searchConsoleMetric(aggregate.rows[0]);
+  return {
+    data: {
+      source: 'metrics-hushh-ai-search-console-bigquery',
+      available: overview.clicks > 0 || overview.impressions > 0,
+      realtime: false,
+      dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
+      searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
+      overview,
+      queries: queries.rows.map((row) => ({
+        query: String(row.query ?? ''),
+        ...searchConsoleMetric(row),
+      })),
+      pages: pages.rows.map((row) => ({
+        pageUrl: String(row.pageUrl ?? ''),
+        ...searchConsoleMetric(row),
+      })),
+      countries: countries.rows.map((row) => ({
+        country: String(row.country ?? ''),
+        ...searchConsoleMetric(row),
+      })),
+      devices: devices.rows.map((row) => ({
+        device: String(row.device ?? ''),
+        ...searchConsoleMetric(row),
+      })),
+      searchAppearance: [],
+      state: {
+        source: 'metrics-hushh-ai-search-console-bigquery',
+        available: false,
+        byRegion: [],
+        note: 'Search Console bulk export does not provide US state-level rows.',
+      },
+      metadata: {
+        siteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
+        sourceProjectId: HUSHHTECH_SEARCH_PROJECT,
+        sourceDataset: HUSHHTECH_SEARCH_DATASET,
+        generatedAt,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        expectedLagSeconds: 86_400,
+      },
+      note: overview.clicks > 0 || overview.impressions > 0
+        ? 'Read by metrics.hushh.ai from the Search Console BigQuery bulk export.'
+        : 'Search Console bulk export returned no rows for this range.',
+    },
+    error: errors.length > 0 ? errors.join('; ') : null,
+  };
+}
+
+function mergeHushhTechCoverage(summary: Record<string, unknown>): Record<string, unknown> {
+  const coverage = { ...(asRecord(summary.dataCoverage) ?? {}) };
+  const traffic = asRecord(summary.traffic);
+  const gcp = asRecord(summary.gcp);
+  const searchPerformance = asRecord(summary.searchPerformance);
+  const supabase = asRecord(summary.supabase);
+  coverage.ga4Available = Boolean(traffic?.available);
+  coverage.gcpAvailable = Boolean(gcp?.available);
+  coverage.searchConsoleAvailable = Boolean(searchPerformance?.available);
+  coverage.supabaseAvailable = Boolean(supabase);
+  coverage.supabaseAggregateTables = Array.isArray(supabase?.metrics)
+    ? (supabase.metrics as unknown[]).length
+    : toNumber(coverage.supabaseAggregateTables);
+  coverage.note = coverage.note ?? 'Provider coverage is assembled by metrics.hushh.ai.';
+  return coverage;
+}
+
+async function fetchHushhTechAnalytics(range: HushhAiDateRange): Promise<{ data: Record<string, unknown> | null; error: string | null }> {
+  const [publicSummary, gcp, searchConsole, supabase] = await Promise.all([
+    fetchHushhTechPublicAnalytics(range),
+    fetchHushhTechCloudRun(range),
+    fetchHushhTechSearchConsole(range),
+    fetchHushhTechSupabaseSummary(range),
+  ]);
+  const summary = publicSummary.data
+    ? { ...publicSummary.data }
+    : emptyHushhTechSummary(range, 'HushhTech public summary endpoint is unavailable.');
+
+  if (gcp.data) summary.gcp = gcp.data;
+  if (searchConsole.data) summary.searchPerformance = searchConsole.data;
+  if (supabase.data) summary.supabase = supabase.data;
+  summary.dataCoverage = mergeHushhTechCoverage(summary);
+
+  const warnings = new Set(
+    (Array.isArray(summary.dataQualityWarnings) ? summary.dataQualityWarnings : [])
+      .filter((value): value is string => typeof value === 'string'),
+  );
+  if (publicSummary.error) warnings.add('HushhTech public summary endpoint is unavailable.');
+  if (gcp.error) warnings.add('Cloud Run Monitoring is unavailable to metrics.hushh.ai.');
+  if (supabase.error) warnings.add('HushhTech Supabase database aggregates are unavailable.');
+  if (searchConsole.data && asRecord(searchConsole.data)?.available === false) {
+    warnings.add(String(asRecord(searchConsole.data)?.note ?? 'Search Console is waiting.'));
+  }
+  summary.dataQualityWarnings = Array.from(warnings);
+
+  return {
+    data: summary,
+    error: publicSummary.data || gcp.data || searchConsole.data ? null : publicSummary.error ?? gcp.error ?? null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -837,7 +1227,6 @@ function buildHushhAiFreshness(
   fetchedAt: string,
   gcp: Record<string, unknown> | null,
   searchConsole: Record<string, unknown> | null,
-  supabase: Record<string, unknown> | null,
 ) {
   const searchAvailable = Boolean(searchConsole?.available);
   return {
@@ -845,15 +1234,6 @@ function buildHushhAiFreshness(
     refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
     fetchedAt,
     sources: [
-      {
-        key: 'supabase',
-        label: 'Supabase',
-        state: supabase ? 'live' : 'unavailable',
-        realtimeLevel: supabase ? 'request_time' : 'unavailable',
-        generatedAt: typeof supabase?.generatedAt === 'string' ? supabase.generatedAt : fetchedAt,
-        expectedLagSeconds: 0,
-        detail: supabase ? 'queried fresh on every refresh' : 'Supabase aggregate query unavailable',
-      },
       {
         key: 'gcp',
         label: 'Cloud Run',
@@ -885,9 +1265,9 @@ function buildHushhAiFreshness(
   };
 }
 
-async function fetchHushhAiSupabaseSummary(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
-  if (!HUSHH_AI_SUPABASE_ACCESS_TOKEN) {
-    return { data: null, error: 'HUSHH_AI_SUPABASE_ACCESS_TOKEN is not configured' };
+async function fetchHushhTechSupabaseSummary(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  if (!HUSHHTECH_SUPABASE_ACCESS_TOKEN) {
+    return { data: null, error: 'HUSHHTECH_SUPABASE_ACCESS_TOKEN is not configured' };
   }
 
   const query = `
@@ -1025,11 +1405,11 @@ async function fetchHushhAiSupabaseSummary(range: HushhAiDateRange): Promise<Dat
   `;
 
   try {
-    const res = await fetch(`https://api.supabase.com/v1/projects/${HUSHH_AI_SUPABASE_PROJECT_REF}/database/query`, {
+    const res = await fetch(`https://api.supabase.com/v1/projects/${HUSHHTECH_SUPABASE_PROJECT_REF}/database/query`, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${HUSHH_AI_SUPABASE_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${HUSHHTECH_SUPABASE_ACCESS_TOKEN}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ query }),
@@ -1037,7 +1417,7 @@ async function fetchHushhAiSupabaseSummary(range: HushhAiDateRange): Promise<Dat
     });
 
     if (!res.ok) {
-      const message = `Hushh AI Supabase metrics returned ${res.status}`;
+      const message = `HushhTech Supabase metrics returned ${res.status}`;
       console.error(message);
       return { data: null, error: message };
     }
@@ -1049,8 +1429,9 @@ async function fetchHushhAiSupabaseSummary(range: HushhAiDateRange): Promise<Dat
     const rangeTotals = parseJsonField<Record<string, unknown>>(payload.range_totals, {});
     return {
       data: {
-        sourceProjectRef: HUSHH_AI_SUPABASE_PROJECT_REF,
-        sourceProjectName: 'hushh-ai',
+        sourceProjectRef: HUSHHTECH_SUPABASE_PROJECT_REF,
+        sourceProjectName: 'hushhtech',
+        sourceDatabaseName: 'Hush AI',
         generatedAt: new Date().toISOString(),
         range: {
           startDate: range.startDate,
@@ -1101,7 +1482,7 @@ async function fetchHushhAiSupabaseSummary(range: HushhAiDateRange): Promise<Dat
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('Hushh AI Supabase metrics failed:', message);
+    console.error('HushhTech Supabase metrics failed:', message);
     return { data: null, error: message };
   }
 }
@@ -1130,8 +1511,9 @@ app.get('/api/analytics/kai/production', async (_req, res) => {
   });
 });
 
-app.get('/api/analytics/hushhtech', async (_req, res) => {
-  const result = await fetchHushhTechAnalytics();
+app.get('/api/analytics/hushhtech', async (req, res) => {
+  const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
+  const result = await fetchHushhTechAnalytics(hushhTechRange);
   res.status(result.error ? 502 : 200).json({
     platform: 'hushhtech.com',
     data: result.data,
@@ -1184,20 +1566,18 @@ app.get('/api/analytics/kai', async (req, res) => {
 
 app.get('/api/analytics/hushhai', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
-  const [gcp, searchConsole, supabase] = await Promise.all([
+  const [gcp, searchConsole] = await Promise.all([
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
-    fetchHushhAiSupabaseSummary(hushhAiRange),
   ]);
-  const error = [gcp.error, searchConsole.error, supabase.error].filter(Boolean).join('; ') || null;
+  const error = [gcp.error, searchConsole.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
-  res.status(error && !gcp.data && !searchConsole.data && !supabase.data ? 502 : 200).json({
+  res.status(error && !gcp.data && !searchConsole.data ? 502 : 200).json({
     platform: 'hushh.ai',
     data: {
       gcp: gcp.data,
       searchConsole: searchConsole.data,
-      supabase: supabase.data,
-      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data, supabase.data),
+      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data),
     },
     error,
     fetchedAt,
@@ -1207,7 +1587,8 @@ app.get('/api/analytics/hushhai', async (req, res) => {
 app.get('/api/analytics/all', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
-  const [uat, production, kaiGa4, kaiProductionGa4, kaiProductionGcp, hushhAiGcp, hushhAiSearchConsole, hushhAiSupabase, hushhTech] = await Promise.all([
+  const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
+  const [uat, production, kaiGa4, kaiProductionGa4, kaiProductionGcp, hushhAiGcp, hushhAiSearchConsole, hushhTech] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     fetchKaiGa4Summary(),
@@ -1215,8 +1596,7 @@ app.get('/api/analytics/all', async (req, res) => {
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
-    fetchHushhAiSupabaseSummary(hushhAiRange),
-    fetchHushhTechAnalytics(),
+    fetchHushhTechAnalytics(hushhTechRange),
   ]);
   const fetchedAt = new Date().toISOString();
   res.json({
@@ -1248,10 +1628,9 @@ app.get('/api/analytics/all', async (req, res) => {
       data: {
         gcp: hushhAiGcp.data,
         searchConsole: hushhAiSearchConsole.data,
-        supabase: hushhAiSupabase.data,
-        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiSupabase.data),
+        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data),
       },
-      error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiSupabase.error].filter(Boolean).join('; ') || null,
+      error: [hushhAiGcp.error, hushhAiSearchConsole.error].filter(Boolean).join('; ') || null,
     },
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
     fetchedAt,
@@ -1271,8 +1650,11 @@ app.get('/api/health', (_req, res) => {
       kaiProductionCloudRun: `${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`,
       hushhAiCloudRun: `${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`,
       hushhAiSearchConsole: `${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}`,
-      hushhAiSupabase: HUSHH_AI_SUPABASE_PROJECT_REF,
       hushhTechEndpoint: buildHushhTechUrl(),
+      hushhTechCloudRun: `${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`,
+      hushhTechSearchConsole: `${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`,
+      hushhTechSearchConsoleSiteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
+      hushhTechSupabase: HUSHHTECH_SUPABASE_PROJECT_REF,
     },
   });
 });
@@ -1295,6 +1677,8 @@ app.listen(PORT, () => {
   console.log(`  Kai Prod GA4:  ${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`);
   console.log(`  Kai GCP:       ${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`);
   console.log(`  Hush AI GCP:   ${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`);
-  console.log(`  Hush AI DB:    ${HUSHH_AI_SUPABASE_PROJECT_REF}`);
   console.log(`  hushhtech.com: ${buildHushhTechUrl()}`);
+  console.log(`  HushhTech GCP: ${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`);
+  console.log(`  HushhTech GSC: ${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`);
+  console.log(`  HushhTech DB:  ${HUSHHTECH_SUPABASE_PROJECT_REF}`);
 });
