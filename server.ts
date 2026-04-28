@@ -45,6 +45,10 @@ const HUSHHTECH_CLOUD_RUN_SERVICE = process.env.HUSHHTECH_CLOUD_RUN_SERVICE || '
 const HUSHHTECH_CLOUD_RUN_REGION = process.env.HUSHHTECH_CLOUD_RUN_REGION || 'us-central1';
 const HUSHHTECH_SEARCH_PROJECT = process.env.HUSHHTECH_SEARCH_PROJECT || 'hushh-ai-prod';
 const HUSHHTECH_SEARCH_DATASET = process.env.HUSHHTECH_SEARCH_DATASET || 'searchconsole_hushhtech_com';
+const HUSHHTECH_SEARCH_FALLBACK_PROJECT =
+  process.env.HUSHHTECH_SEARCH_FALLBACK_PROJECT || HUSHHTECH_SEARCH_PROJECT;
+const HUSHHTECH_SEARCH_FALLBACK_DATASET =
+  process.env.HUSHHTECH_SEARCH_FALLBACK_DATASET || 'hushhtech_search_console_api';
 const HUSHHTECH_SEARCH_CONSOLE_SITE_URL =
   process.env.HUSHHTECH_SEARCH_CONSOLE_SITE_URL || 'sc-domain:hushhtech.com';
 const HUSHHTECH_SEARCH_CONSOLE_TYPE = process.env.HUSHHTECH_SEARCH_CONSOLE_TYPE || 'web';
@@ -469,16 +473,146 @@ function unavailableHushhTechSearchConsole(range: HushhAiDateRange, note: string
 }
 
 function searchConsoleMetric(row: Record<string, unknown> | undefined) {
+  const averagePosition = row?.averagePosition ?? row?.average_position ?? row?.position;
   return {
     clicks: row ? toNumber(row.clicks) : 0,
     impressions: row ? toNumber(row.impressions) : 0,
     ctr: row?.ctr == null ? null : toNumber(row.ctr),
-    averagePosition: row?.position == null ? null : toNumber(row.position),
+    averagePosition: averagePosition == null ? null : toNumber(averagePosition),
   };
 }
 
 function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+async function fetchHushhTechSearchConsoleFallback(
+  range: HushhAiDateRange,
+  officialExportNote: string,
+): Promise<DataResult<Record<string, unknown>>> {
+  const generatedAt = new Date().toISOString();
+  const queryProject = BQ_JOB_PROJECT || HUSHHTECH_SEARCH_FALLBACK_PROJECT;
+  const datasetRef = `\`${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}\``;
+  const sourceLabel = `${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}`;
+  const tableRows = await queryBigQuerySql(queryProject, `
+    SELECT table_name AS tableName
+    FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
+    WHERE table_name IN ('site_daily', 'query_daily', 'page_daily', 'country_daily', 'device_daily')
+  `);
+
+  if (tableRows.error) {
+    const note = `Search Console GCP fallback dataset ${sourceLabel} is not queryable yet. ${officialExportNote}`;
+    if (/not found|notfound/i.test(tableRows.error)) {
+      return { data: unavailableHushhTechSearchConsole(range, note), error: null };
+    }
+    return { data: null, error: tableRows.error };
+  }
+
+  const tableNames = new Set(tableRows.rows.map((row) => String(row.tableName)));
+  if (!tableNames.has('site_daily')) {
+    return {
+      data: unavailableHushhTechSearchConsole(
+        range,
+        `Search Console GCP fallback is configured, but ${sourceLabel}.site_daily has not been created or populated yet. ${officialExportNote}`,
+      ),
+      error: null,
+    };
+  }
+
+  const rowLimit = HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT;
+  const dateFilter = `data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'`;
+  const searchTypeFilter = `LOWER(search_type) = LOWER(${sqlStringLiteral(HUSHHTECH_SEARCH_CONSOLE_TYPE)})`;
+  const siteFilter = `site_url = ${sqlStringLiteral(HUSHHTECH_SEARCH_CONSOLE_SITE_URL)}`;
+  const whereClause = `${dateFilter} AND ${searchTypeFilter} AND ${siteFilter}`;
+  const weightedPosition = 'SAFE_DIVIDE(SUM(average_position * impressions), SUM(impressions))';
+  const aggregateQuery = `
+    SELECT
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      ${weightedPosition} AS averagePosition
+    FROM ${datasetRef}.site_daily
+    WHERE ${whereClause}
+  `;
+  const dimensionQuery = (table: string, field: string, alias: string) => tableNames.has(table) ? `
+    SELECT
+      ${field} AS ${alias},
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      ${weightedPosition} AS averagePosition
+    FROM ${datasetRef}.${table}
+    WHERE ${whereClause}
+    GROUP BY ${alias}
+    ORDER BY impressions DESC
+    LIMIT ${rowLimit}
+  ` : null;
+
+  const queryRowsQuery = dimensionQuery('query_daily', 'query', 'query');
+  const pageRowsQuery = dimensionQuery('page_daily', 'page_url', 'pageUrl');
+  const countryRowsQuery = dimensionQuery('country_daily', 'country', 'country');
+  const deviceRowsQuery = dimensionQuery('device_daily', 'device', 'device');
+
+  const [aggregate, queries, pages, countries, devices] = await Promise.all([
+    queryBigQuerySql(queryProject, aggregateQuery),
+    queryRowsQuery ? queryBigQuerySql(queryProject, queryRowsQuery) : Promise.resolve({ rows: [], error: null }),
+    pageRowsQuery ? queryBigQuerySql(queryProject, pageRowsQuery) : Promise.resolve({ rows: [], error: null }),
+    countryRowsQuery ? queryBigQuerySql(queryProject, countryRowsQuery) : Promise.resolve({ rows: [], error: null }),
+    deviceRowsQuery ? queryBigQuerySql(queryProject, deviceRowsQuery) : Promise.resolve({ rows: [], error: null }),
+  ]);
+  const errors = [aggregate.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
+  if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
+
+  const overview = searchConsoleMetric(aggregate.rows[0]);
+  const available = overview.clicks > 0 || overview.impressions > 0;
+  return {
+    data: {
+      source: 'metrics-hushh-ai-search-console-gcp-fallback',
+      available,
+      realtime: false,
+      dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
+      searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
+      overview,
+      queries: queries.rows.map((row) => ({
+        query: String(row.query ?? ''),
+        ...searchConsoleMetric(row),
+      })),
+      pages: pages.rows.map((row) => ({
+        pageUrl: String(row.pageUrl ?? ''),
+        ...searchConsoleMetric(row),
+      })),
+      countries: countries.rows.map((row) => ({
+        country: String(row.country ?? ''),
+        ...searchConsoleMetric(row),
+      })),
+      devices: devices.rows.map((row) => ({
+        device: String(row.device ?? ''),
+        ...searchConsoleMetric(row),
+      })),
+      searchAppearance: [],
+      state: {
+        source: 'metrics-hushh-ai-search-console-gcp-fallback',
+        available: false,
+        byRegion: [],
+        note: 'Search Console fallback tables do not provide US state-level rows.',
+      },
+      metadata: {
+        siteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
+        sourceProjectId: HUSHHTECH_SEARCH_FALLBACK_PROJECT,
+        sourceDataset: HUSHHTECH_SEARCH_FALLBACK_DATASET,
+        officialExportProjectId: HUSHHTECH_SEARCH_PROJECT,
+        officialExportDataset: HUSHHTECH_SEARCH_DATASET,
+        generatedAt,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        expectedLagSeconds: 86_400,
+      },
+      note: available
+        ? 'Read by metrics.hushh.ai from GCP fallback Search Console tables while the official bulk export is warming up.'
+        : `Search Console GCP fallback returned no rows for this range. ${officialExportNote}`,
+    },
+    error: errors.length > 0 ? errors.join('; ') : null,
+  };
 }
 
 async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
@@ -495,20 +629,17 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
   if (tableRows.error) {
     const waitingNote = `Search Console bulk export for hushhtech.com is configured, but ${sourceLabel} is not queryable yet.`;
     if (/not found|notfound/i.test(tableRows.error)) {
-      return { data: unavailableHushhTechSearchConsole(range, waitingNote), error: null };
+      return fetchHushhTechSearchConsoleFallback(range, waitingNote);
     }
     return { data: null, error: tableRows.error };
   }
 
   const tableNames = new Set(tableRows.rows.map((row) => String(row.tableName)));
   if (!tableNames.has('searchdata_site_impression')) {
-    return {
-      data: unavailableHushhTechSearchConsole(
-        range,
-        `Search Console bulk export is set up; waiting for ${sourceLabel}.searchdata_site_impression. Google says the first export can take up to 48 hours.`,
-      ),
-      error: null,
-    };
+    return fetchHushhTechSearchConsoleFallback(
+      range,
+      `Official Search Console bulk export is set up; waiting for ${sourceLabel}.searchdata_site_impression.`,
+    );
   }
 
   const siteTable = `${datasetRef}.searchdata_site_impression`;
@@ -1653,6 +1784,7 @@ app.get('/api/health', (_req, res) => {
       hushhTechEndpoint: buildHushhTechUrl(),
       hushhTechCloudRun: `${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`,
       hushhTechSearchConsole: `${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`,
+      hushhTechSearchConsoleFallback: `${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}`,
       hushhTechSearchConsoleSiteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
       hushhTechSupabase: HUSHHTECH_SUPABASE_PROJECT_REF,
     },
@@ -1680,5 +1812,6 @@ app.listen(PORT, () => {
   console.log(`  hushhtech.com: ${buildHushhTechUrl()}`);
   console.log(`  HushhTech GCP: ${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`);
   console.log(`  HushhTech GSC: ${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`);
+  console.log(`  HushhTech GSC Fallback: ${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}`);
   console.log(`  HushhTech DB:  ${HUSHHTECH_SUPABASE_PROJECT_REF}`);
 });

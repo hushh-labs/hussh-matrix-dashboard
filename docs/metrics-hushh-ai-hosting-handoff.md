@@ -43,8 +43,8 @@ required for this subdomain.
 | Service | `hushh-matrix-dashboard` |
 | Runtime identity | `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com` |
 | Image repo | `us-central1-docker.pkg.dev/hushh-ai-prod/website-images` |
-| Current deployed revision | `hushh-matrix-dashboard-00010-mcg` |
-| Current deployed image tag | `hushh-matrix-dashboard:65b7a0d-hushhtech-ops-20260428220719` |
+| Current deployed revision | `hushh-matrix-dashboard-00015-fkk` |
+| Current deployed image tag | `hushh-matrix-dashboard:4125b6f-hushhtech-gsc-fallback-20260428232037` |
 | Runtime config | Secret Manager-backed env vars only |
 | Public access | Enabled, aggregate-only |
 
@@ -68,7 +68,8 @@ Current platform sources:
 | HushhTech | Public summary endpoint | `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic |
 | HushhTech | Supabase Management API | Top aggregate database metrics plus date-range daily status for new users, active users, sessions, exit signals, product usage, and analytics events |
 | HushhTech | Cloud Run Monitoring | `metrics.hushh.ai` reads `hushh-tech-prod/hushh-tech-website` directly through Google Cloud Monitoring |
-| HushhTech | Search Console BigQuery export | Search metrics appear when export tables are present in `hushh-ai-prod.searchconsole_hushhtech_com` |
+| HushhTech | Search Console BigQuery export | Preferred source. Search metrics appear when export tables are present in `hushh-ai-prod.searchconsole_hushhtech_com` |
+| HushhTech | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.hushhtech_search_console_api`; populated by Cloud Run Job `hushhtech-search-console-ingest` while the official export is waiting |
 
 ## DNS Record
 
@@ -135,7 +136,7 @@ why some sections may show neutral empty states:
 | --- | --- | --- |
 | Kai production | `hushh-pda.analytics_526603671` is not materialized | Enable or repair the production GA4 BigQuery export; Cloud Run production metrics are still available |
 | Kai production | Hosted frontend still needs production web tag redeploy | Redeploy Kai with the production measurement ID already configured in secrets |
-| HushhTech Search Console | Bulk export is configured, but first tables can take up to 48 hours | Wait for `hushh-ai-prod.searchconsole_hushhtech_com.searchdata_site_impression` and `searchdata_url_impression` |
+| HushhTech Search Console | Bulk export is configured, but first tables have not materialized; fallback tables exist but are empty | Add a Search Console owner/full-user OAuth credential as a version of `hushhtech-search-console-oauth`, run the 90-day backfill, then resume scheduler job `hushhtech-search-console-ingest-daily` |
 | Hushh AI Search Console | Export dataset exists, but export tables may not be present yet | Wait for Search Console export tables or repair the export configuration |
 
 ## Operational Commands
@@ -180,6 +181,36 @@ The Cloud Run service consumes `hushhtech-supabase-access-token:latest`, so a ne
 secret version is picked up by the next instance start or revision deploy. The
 `Hush AI` Supabase database name is used for `hushhtech.com`; keep this token out
 of the `hushh.ai` analytics-only path.
+
+Check HushhTech Search Console fallback tables:
+
+```bash
+bq query --project_id=hushh-ai-prod --use_legacy_sql=false '
+SELECT "site_daily" AS table_name, COUNT(*) AS rows FROM `hushh-ai-prod.hushhtech_search_console_api.site_daily`
+UNION ALL SELECT "query_daily", COUNT(*) FROM `hushh-ai-prod.hushhtech_search_console_api.query_daily`
+UNION ALL SELECT "page_daily", COUNT(*) FROM `hushh-ai-prod.hushhtech_search_console_api.page_daily`
+UNION ALL SELECT "country_daily", COUNT(*) FROM `hushh-ai-prod.hushhtech_search_console_api.country_daily`
+UNION ALL SELECT "device_daily", COUNT(*) FROM `hushh-ai-prod.hushhtech_search_console_api.device_daily`
+'
+```
+
+Run the Search Console API ingestion job after the OAuth secret is valid:
+
+```bash
+gcloud run jobs execute hushhtech-search-console-ingest \
+  --project=hushh-ai-prod \
+  --region=us-central1 \
+  --args=scripts/ingest-hushhtech-search-console.mjs,--days,90 \
+  --wait
+```
+
+Resume the daily fallback only after that backfill writes rows:
+
+```bash
+gcloud scheduler jobs resume hushhtech-search-console-ingest-daily \
+  --project=hushh-ai-prod \
+  --location=us-central1
+```
 
 Check that runtime config is still Secret Manager-backed:
 
