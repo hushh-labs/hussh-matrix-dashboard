@@ -3,6 +3,10 @@
 This runbook deploys the Hussh Matrix Dashboard to Cloud Run as
 `https://metrics.hushh.ai`.
 
+For the hosted-site operating handoff, current go-live state, and post-DNS
+verification checklist, see
+[Hosted `metrics.hushh.ai` Handoff](./metrics-hushh-ai-hosting-handoff.md).
+
 ## Target
 
 - Google Cloud project: `hushh-ai-prod`
@@ -41,7 +45,7 @@ IMAGE="us-central1-docker.pkg.dev/$PROJECT/website-images/$SERVICE:$(git rev-par
 ```bash
 npm run lint
 npm run build
-rg "sbp_|SUPABASE_ACCESS_TOKEN=.+" . --glob '!node_modules/**' --glob '!dist/**' --glob '!package-lock.json'
+rg "sbp""_|SUPABASE_ACCESS_TOKEN=.+" . --glob '!node_modules/**' --glob '!dist/**' --glob '!package-lock.json'
 ```
 
 ## Runtime Identity
