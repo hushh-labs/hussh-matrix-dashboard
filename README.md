@@ -22,7 +22,7 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
   - Production: `hushh-pda.analytics_public.kai_public_dashboard_feed` (status-only until GA4 export materializes)
   - hushh.ai: Cloud Run Monitoring and Search Console export readiness only
   - kai.hushh.ai: public BigQuery feed plus raw GA4 export aggregates
-  - hushhtech.com: Supabase database aggregates, canonical production summary endpoint for business/GA4, metrics.hushh.ai-owned Cloud Run Monitoring, and Search Console BigQuery bulk export coverage
+  - hushhtech.com: Supabase database aggregates, canonical production summary endpoint for business/GA4, metrics.hushh.ai-owned Cloud Run Monitoring, and GCP-backed Search Console coverage
 
 ## Product Boundaries
 
@@ -30,7 +30,7 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
 | --- | --- |
 | `kai.hushh.ai` | BigQuery public dashboard feeds, GA4 export aggregates, and Cloud Run Monitoring |
 | `hushh.ai` | Analytics only: Cloud Run Monitoring and Search Console export readiness. No Supabase database is attached to this product. |
-| `hushhtech.com` | Supabase database aggregates plus HushhTech business/GA4 summary, Cloud Run Monitoring, and Search Console BigQuery bulk export coverage from `hushh-ai-prod.searchconsole_hushhtech_com`. The Supabase database is named `Hush AI`; that name belongs to the `hushhtech.com` data source in this dashboard. |
+| `hushhtech.com` | Supabase database aggregates plus HushhTech business/GA4 summary, Cloud Run Monitoring, and Search Console metrics from GCP. The dashboard prefers the official bulk export in `hushh-ai-prod.searchconsole_hushhtech_com`, then falls back to aggregate-only API-ingested tables in `hushh-ai-prod.hushhtech_search_console_api`. The Supabase database is named `Hush AI`; that name belongs to the `hushhtech.com` data source in this dashboard. |
 
 ## Run Locally
 
@@ -97,7 +97,7 @@ The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
 - **Kai Production Cloud Run**: `kai.hushh.ai` requests, non-2xx, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp`
 - **hushh.ai**: Cloud Run request, latency, instance, and Search Console export-table status. No Supabase database is attached to this product.
-- **hushhtech.com**: Supabase database aggregates, public-safe summary from `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic, plus direct Cloud Run Monitoring and Search Console BigQuery bulk export coverage fetched by `metrics.hushh.ai`.
+- **hushhtech.com**: Supabase database aggregates, public-safe summary from `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic, plus direct Cloud Run Monitoring and GCP-backed Search Console metrics fetched by `metrics.hushh.ai`. Search Console clicks, impressions, CTR, queries, pages, countries, and devices must not come from Supabase.
 
 When a provider is not fully configured, the dashboard keeps raw diagnostic text out of the visible UI and shows neutral empty or syncing states instead of synthetic metrics.
 
@@ -107,4 +107,4 @@ When a provider is not fully configured, the dashboard keeps raw diagnostic text
 | --- | --- | --- |
 | kai.hushh.ai (prod) | GA4 export dataset not materialized | Resolve `hushh-pda.analytics_526603671` materialization |
 | kai.hushh.ai (prod) | Web tag not deployed | Redeploy frontend with `G-2PCECPSKCR` |
-| hushhtech.com | Search Console bulk export is configured, but the first export can take up to 48 hours | Wait for `hushh-ai-prod.searchconsole_hushhtech_com.searchdata_site_impression` and `searchdata_url_impression` |
+| hushhtech.com | Official Search Console bulk export has not produced `searchdata_site_impression` / `searchdata_url_impression` yet | Use the GCP-only fallback dataset `hushh-ai-prod.hushhtech_search_console_api`; the ingestion job still requires a Search Console owner/full-user OAuth credential in Secret Manager |

@@ -34,6 +34,8 @@ const SECRET_BACKED_ENV = new Set([
   'HUSHHTECH_GCP_PROJECT',
   'HUSHHTECH_METRICS_WINDOW_DAYS',
   'HUSHHTECH_SEARCH_DATASET',
+  'HUSHHTECH_SEARCH_FALLBACK_DATASET',
+  'HUSHHTECH_SEARCH_FALLBACK_PROJECT',
   'HUSHHTECH_SEARCH_PROJECT',
   'HUSHHTECH_SEARCH_CONSOLE_DATA_STATE',
   'HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT',
@@ -195,6 +197,8 @@ async function checkCloudRunRuntime(options) {
       'HUSHHTECH_CLOUD_RUN_REGION',
       'HUSHHTECH_SEARCH_PROJECT',
       'HUSHHTECH_SEARCH_DATASET',
+      'HUSHHTECH_SEARCH_FALLBACK_PROJECT',
+      'HUSHHTECH_SEARCH_FALLBACK_DATASET',
       'HUSHHTECH_SEARCH_CONSOLE_SITE_URL',
       'HUSHHTECH_SUPABASE_PROJECT_REF',
       'HUSHHTECH_SUPABASE_ACCESS_TOKEN',
@@ -369,6 +373,11 @@ async function main() {
     String(health.body?.config?.hushhTechCloudRun || '').includes('hushh-tech-website'),
     'dashboard health is missing HushhTech Cloud Run config',
     String(health.body?.config?.hushhTechCloudRun || ''),
+  );
+  assert(
+    String(health.body?.config?.hushhTechSearchConsoleFallback || '').includes('hushhtech_search_console_api'),
+    'dashboard health is missing HushhTech Search Console GCP fallback config',
+    String(health.body?.config?.hushhTechSearchConsoleFallback || ''),
   );
   results.push({ check: 'dashboard-health', status: 'ok', detail: health.body.status });
 

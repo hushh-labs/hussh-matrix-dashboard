@@ -38,6 +38,11 @@ DOMAIN=metrics.hushh.ai
 SA_NAME=metrics-dashboard-runtime
 SA_EMAIL="$SA_NAME@$PROJECT.iam.gserviceaccount.com"
 IMAGE="us-central1-docker.pkg.dev/$PROJECT/website-images/$SERVICE:$(git rev-parse --short HEAD)"
+HUSHHTECH_SEARCH_FALLBACK_DATASET=hushhtech_search_console_api
+HUSHHTECH_SEARCH_INGEST_JOB=hushhtech-search-console-ingest
+HUSHHTECH_SEARCH_INGEST_SA="hushhtech-gsc-ingest@$PROJECT.iam.gserviceaccount.com"
+HUSHHTECH_SEARCH_SCHEDULER_SA="hushhtech-gsc-scheduler@$PROJECT.iam.gserviceaccount.com"
+HUSHHTECH_SEARCH_OAUTH_SECRET=hushhtech-search-console-oauth
 ```
 
 ## Preflight
@@ -84,6 +89,16 @@ bq add-iam-policy-binding hushh-pda:searchconsole_searchconsole_hushh_ai \
   --role="roles/bigquery.dataViewer"
 ```
 
+The HushhTech Search Console fallback tables are created by the ingestion script
+below. Grant the dashboard read access through project-level BigQuery viewer
+because dataset-level IAM is not enabled in this project:
+
+```bash
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member="serviceAccount:$SA_EMAIL" \
+  --role="roles/bigquery.dataViewer"
+```
+
 ## Secret Manager
 
 Store all Cloud Run runtime config in Secret Manager. The Supabase management
@@ -124,6 +139,8 @@ create_or_update_secret metrics-dashboard-hushhtech-cloud-run-service hushh-tech
 create_or_update_secret metrics-dashboard-hushhtech-cloud-run-region us-central1
 create_or_update_secret metrics-dashboard-hushhtech-search-project hushh-ai-prod
 create_or_update_secret metrics-dashboard-hushhtech-search-dataset searchconsole_hushhtech_com
+create_or_update_secret metrics-dashboard-hushhtech-search-fallback-project hushh-ai-prod
+create_or_update_secret metrics-dashboard-hushhtech-search-fallback-dataset hushhtech_search_console_api
 create_or_update_secret metrics-dashboard-hushhtech-search-console-site-url sc-domain:hushhtech.com
 create_or_update_secret metrics-dashboard-hushhtech-search-console-type web
 create_or_update_secret metrics-dashboard-hushhtech-search-console-data-state all
@@ -151,6 +168,115 @@ or commit the token. `Hush AI` is the Supabase database name for
 create_or_update_secret hushhtech-supabase-access-token "$HUSHHTECH_SUPABASE_ACCESS_TOKEN"
 ```
 
+Create or rotate the HushhTech Search Console OAuth credential secret for the
+Cloud Run Job. The value must be an OAuth authorized-user JSON object from a
+Search Console owner/full user for `sc-domain:hushhtech.com`; do not use
+Supabase for Search Console metrics.
+
+```bash
+create_or_update_secret "$HUSHHTECH_SEARCH_OAUTH_SECRET" "$HUSHHTECH_SEARCH_CONSOLE_OAUTH_JSON"
+```
+
+Grant the ingestion job service account access only to the OAuth secret:
+
+```bash
+gcloud iam service-accounts create hushhtech-gsc-ingest \
+  --project="$PROJECT" \
+  --display-name="HushhTech Search Console Ingest"
+
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member="serviceAccount:$HUSHHTECH_SEARCH_INGEST_SA" \
+  --role="roles/bigquery.jobUser"
+
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member="serviceAccount:$HUSHHTECH_SEARCH_INGEST_SA" \
+  --role="roles/bigquery.dataEditor"
+
+gcloud secrets add-iam-policy-binding "$HUSHHTECH_SEARCH_OAUTH_SECRET" \
+  --project="$PROJECT" \
+  --member="serviceAccount:$HUSHHTECH_SEARCH_INGEST_SA" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+## HushhTech Search Console Fallback
+
+The official Search Console bulk export remains the preferred source. The
+fallback uses the Search Console API only to populate aggregate tables in
+BigQuery while the official export is waiting:
+
+```bash
+HUSHHTECH_SEARCH_FALLBACK_PROJECT="$PROJECT" \
+HUSHHTECH_SEARCH_FALLBACK_DATASET="$HUSHHTECH_SEARCH_FALLBACK_DATASET" \
+HUSHHTECH_SEARCH_CONSOLE_SITE_URL="sc-domain:hushhtech.com" \
+npm run ingest:hushhtech-search-console -- --ensure-only
+```
+
+Deploy the same dashboard image as a Cloud Run Job:
+
+```bash
+gcloud run jobs deploy "$HUSHHTECH_SEARCH_INGEST_JOB" \
+  --project="$PROJECT" \
+  --region="$REGION" \
+  --image="$IMAGE" \
+  --service-account="$HUSHHTECH_SEARCH_INGEST_SA" \
+  --memory=1Gi \
+  --cpu=1 \
+  --max-retries=1 \
+  --task-timeout=1800s \
+  --command=node \
+  --args=scripts/ingest-hushhtech-search-console.mjs,--days,16 \
+  --set-env-vars="HUSHHTECH_SEARCH_FALLBACK_PROJECT=$PROJECT,HUSHHTECH_SEARCH_FALLBACK_DATASET=$HUSHHTECH_SEARCH_FALLBACK_DATASET,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=sc-domain:hushhtech.com,HUSHHTECH_SEARCH_CONSOLE_TYPE=web,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=all" \
+  --set-secrets="HUSHHTECH_SEARCH_CONSOLE_OAUTH_JSON=$HUSHHTECH_SEARCH_OAUTH_SECRET:latest"
+```
+
+Run the one-time 90-day backfill after the OAuth secret is valid:
+
+```bash
+gcloud run jobs execute "$HUSHHTECH_SEARCH_INGEST_JOB" \
+  --project="$PROJECT" \
+  --region="$REGION" \
+  --args=scripts/ingest-hushhtech-search-console.mjs,--days,90 \
+  --wait
+```
+
+Schedule the recurring 16-day backfill:
+
+```bash
+gcloud iam service-accounts create hushhtech-gsc-scheduler \
+  --project="$PROJECT" \
+  --display-name="HushhTech Search Console Scheduler"
+
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member="serviceAccount:$HUSHHTECH_SEARCH_SCHEDULER_SA" \
+  --role="roles/run.developer"
+
+gcloud iam service-accounts add-iam-policy-binding "$HUSHHTECH_SEARCH_INGEST_SA" \
+  --project="$PROJECT" \
+  --member="serviceAccount:$HUSHHTECH_SEARCH_SCHEDULER_SA" \
+  --role="roles/iam.serviceAccountUser"
+
+gcloud scheduler jobs create http hushhtech-search-console-ingest-daily \
+  --project="$PROJECT" \
+  --location="$REGION" \
+  --schedule="20 9 * * *" \
+  --time-zone="Etc/UTC" \
+  --uri="https://run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT/jobs/${HUSHHTECH_SEARCH_INGEST_JOB}:run" \
+  --http-method=POST \
+  --oauth-service-account-email="$HUSHHTECH_SEARCH_SCHEDULER_SA" \
+  --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
+  --headers="Content-Type=application/json" \
+  --message-body='{"overrides":{"containerOverrides":[{"args":["scripts/ingest-hushhtech-search-console.mjs","--days","16"]}]}}'
+```
+
+If the OAuth secret exists but has no enabled version yet, keep the scheduler
+paused until the 90-day backfill succeeds:
+
+```bash
+gcloud scheduler jobs pause hushhtech-search-console-ingest-daily \
+  --project="$PROJECT" \
+  --location="$REGION"
+```
+
 ## Build And Deploy
 
 ```bash
@@ -170,7 +296,7 @@ gcloud run deploy "$SERVICE" \
   --min-instances=0 \
   --max-instances=3 \
   --clear-env-vars \
-  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_ANALYTICS_ENDPOINT=metrics-dashboard-hushhtech-endpoint:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,HUSHHTECH_GCP_PROJECT=metrics-dashboard-hushhtech-gcp-project:latest,HUSHHTECH_CLOUD_RUN_SERVICE=metrics-dashboard-hushhtech-cloud-run-service:latest,HUSHHTECH_CLOUD_RUN_REGION=metrics-dashboard-hushhtech-cloud-run-region:latest,HUSHHTECH_SEARCH_PROJECT=metrics-dashboard-hushhtech-search-project:latest,HUSHHTECH_SEARCH_DATASET=metrics-dashboard-hushhtech-search-dataset:latest,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushhtech-search-console-site-url:latest,HUSHHTECH_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushhtech-search-console-type:latest,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushhtech-search-console-data-state:latest,HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushhtech-search-console-row-limit:latest,HUSHHTECH_SUPABASE_PROJECT_REF=metrics-dashboard-hushhtech-supabase-project-ref:latest,HUSHHTECH_SUPABASE_ACCESS_TOKEN=hushhtech-supabase-access-token:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest"
+  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_ANALYTICS_ENDPOINT=metrics-dashboard-hushhtech-endpoint:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,HUSHHTECH_GCP_PROJECT=metrics-dashboard-hushhtech-gcp-project:latest,HUSHHTECH_CLOUD_RUN_SERVICE=metrics-dashboard-hushhtech-cloud-run-service:latest,HUSHHTECH_CLOUD_RUN_REGION=metrics-dashboard-hushhtech-cloud-run-region:latest,HUSHHTECH_SEARCH_PROJECT=metrics-dashboard-hushhtech-search-project:latest,HUSHHTECH_SEARCH_DATASET=metrics-dashboard-hushhtech-search-dataset:latest,HUSHHTECH_SEARCH_FALLBACK_PROJECT=metrics-dashboard-hushhtech-search-fallback-project:latest,HUSHHTECH_SEARCH_FALLBACK_DATASET=metrics-dashboard-hushhtech-search-fallback-dataset:latest,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushhtech-search-console-site-url:latest,HUSHHTECH_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushhtech-search-console-type:latest,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushhtech-search-console-data-state:latest,HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushhtech-search-console-row-limit:latest,HUSHHTECH_SUPABASE_PROJECT_REF=metrics-dashboard-hushhtech-supabase-project-ref:latest,HUSHHTECH_SUPABASE_ACCESS_TOKEN=hushhtech-supabase-access-token:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest"
 ```
 
 ## Domain Mapping
@@ -213,6 +339,7 @@ RUN_URL="$(gcloud run services describe hushh-matrix-dashboard --project=hushh-a
 
 curl -fsS "$RUN_URL/api/health"
 curl -fsS "$RUN_URL/api/analytics/all"
+bq ls "$PROJECT:$HUSHHTECH_SEARCH_FALLBACK_DATASET"
 ```
 
 After DNS:
@@ -228,5 +355,7 @@ Acceptance checks:
 - `https://metrics.hushh.ai` loads the dashboard.
 - `/api/analytics/all` returns HTTP 200.
 - Supabase top 10 database metrics show aggregate counts only.
+- HushhTech Search Console metrics come from the official GCP export or
+  `hushh-ai-prod.hushhtech_search_console_api`, never Supabase.
 - OTP rows, emails, raw diagnostics, and tokens are not visible.
 - Cloud Run revision logs show no auth or IAM failures.
