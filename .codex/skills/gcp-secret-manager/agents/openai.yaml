@@ -1,0 +1,4 @@
+interface:
+  display_name: "GCP Secret Manager"
+  short_description: "Store and wire secrets through GCP"
+  default_prompt: "Use $gcp-secret-manager whenever a token, key, password, or runtime secret needs to be stored, rotated, or deployed through Google Cloud Secret Manager."
