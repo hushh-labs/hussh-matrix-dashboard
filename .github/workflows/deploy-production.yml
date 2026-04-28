@@ -1,0 +1,112 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: production-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: hushh-ai-prod
+  REGION: us-central1
+  SERVICE: hushh-matrix-dashboard
+  ARTIFACT_REGISTRY_REPOSITORY: website-images
+  RUNTIME_SERVICE_ACCOUNT: metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com
+  METRICS_DASHBOARD_URL: https://metrics.hushh.ai
+  HUSHHTECH_PRODUCTION_URL: https://hushhtech.com
+  KAI_PRODUCTION_URL: https://kai.hushh.ai
+
+jobs:
+  deploy:
+    name: Build, Deploy, Verify
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Dependency Audit
+        run: npm audit --audit-level=high
+
+      - name: Secret Scan
+        run: npm run check:secrets
+
+      - name: Whitespace Check
+        run: git diff --check
+
+      - name: Validate Google Cloud OIDC Inputs
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+        run: |
+          test -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" || (echo "Missing GCP_WORKLOAD_IDENTITY_PROVIDER GitHub variable" && exit 1)
+          test -n "${GCP_DEPLOY_SERVICE_ACCOUNT}" || (echo "Missing GCP_DEPLOY_SERVICE_ACCOUNT GitHub variable" && exit 1)
+
+      - name: Authenticate To Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Artifact Registry Auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build Image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
+          echo "IMAGE=${IMAGE}" >> "${GITHUB_ENV}"
+          gcloud builds submit --project="${PROJECT_ID}" --tag="${IMAGE}" .
+
+      - name: Deploy To Cloud Run
+        run: |
+          gcloud run deploy "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --image="${IMAGE}" \
+            --service-account="${RUNTIME_SERVICE_ACCOUNT}" \
+            --allow-unauthenticated \
+            --port=8080 \
+            --memory=1Gi \
+            --cpu=1 \
+            --min-instances=0 \
+            --max-instances=3 \
+            --clear-env-vars \
+            --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_ANALYTICS_ENDPOINT=metrics-dashboard-hushhtech-endpoint:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,HUSHHTECH_GCP_PROJECT=metrics-dashboard-hushhtech-gcp-project:latest,HUSHHTECH_CLOUD_RUN_SERVICE=metrics-dashboard-hushhtech-cloud-run-service:latest,HUSHHTECH_CLOUD_RUN_REGION=metrics-dashboard-hushhtech-cloud-run-region:latest,HUSHHTECH_SEARCH_PROJECT=metrics-dashboard-hushhtech-search-project:latest,HUSHHTECH_SEARCH_DATASET=metrics-dashboard-hushhtech-search-dataset:latest,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushhtech-search-console-site-url:latest,HUSHHTECH_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushhtech-search-console-type:latest,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushhtech-search-console-data-state:latest,HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushhtech-search-console-row-limit:latest,HUSHHTECH_SUPABASE_PROJECT_REF=metrics-dashboard-hushhtech-supabase-project-ref:latest,HUSHHTECH_SUPABASE_ACCESS_TOKEN=hushhtech-supabase-access-token:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest"
+
+      - name: Verify Cloud Run Secret Bindings
+        run: npm run check:cloud-run:secrets
+
+      - name: Show Ready Revision
+        run: |
+          gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format="value(status.latestReadyRevisionName)"
+
+      - name: Production Probes
+        run: npm run test:prod

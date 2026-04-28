@@ -53,6 +53,9 @@ Give Codex the production and development context needed to safely change, deplo
    - Use a branch, PR against `main`, and merge after validation.
    - If adding or updating skills, commit repo-local copies under `.codex/skills` and keep global copies in `~/.codex/skills` aligned.
 
+7. Produce dashboard demo videos.
+   - Use `$dashboard-demo-video-production` for MP4 walkthroughs, terminology explainers, capture assets, narration scripts, captions, and video verification.
+
 ## References
 
 - Read [references/production-context.md](references/production-context.md) for exact deployment, DNS, domain mapping, and verification commands.

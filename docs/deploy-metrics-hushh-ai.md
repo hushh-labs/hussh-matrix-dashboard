@@ -42,15 +42,48 @@ HUSHHTECH_SEARCH_FALLBACK_DATASET=hushhtech_search_console_api
 HUSHHTECH_SEARCH_INGEST_JOB=hushhtech-search-console-ingest
 HUSHHTECH_SEARCH_INGEST_SA="hushhtech-gsc-ingest@$PROJECT.iam.gserviceaccount.com"
 HUSHHTECH_SEARCH_SCHEDULER_SA="hushhtech-gsc-scheduler@$PROJECT.iam.gserviceaccount.com"
-HUSHHTECH_SEARCH_OAUTH_SECRET=hushhtech-search-console-oauth
+HUSHHTECH_SEARCH_OAUTH_SECRET="<hushhtech-search-console-oauth-secret-id>"
 ```
+
+The current Secret Manager naming convention uses
+`hushhtech-search-console-oauth` for the HushhTech Search Console OAuth secret
+ID.
+
+## Deploy On Main
+
+The repo includes `.github/workflows/deploy-production.yml` to make `main` the
+auditable production path. On every push to `main`, and on manual
+`workflow_dispatch`, the workflow installs dependencies, typechecks, builds,
+runs a high-severity dependency audit, scans tracked files for leaked secrets,
+builds a commit-tagged container image, deploys Cloud Run with Secret
+Manager-backed environment variables, verifies the Cloud Run secret bindings,
+and runs all production probes:
+
+```bash
+npm run test:prod
+```
+
+Configure these GitHub environment or repository variables before enabling the
+workflow:
+
+| Variable | Value |
+| --- | --- |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Workload Identity Federation provider resource for GitHub Actions |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | Deploy service account email used by GitHub OIDC |
+
+The deploy service account needs permission to submit Cloud Build jobs, deploy
+the `hushh-matrix-dashboard` Cloud Run service, write to the
+`website-images` Artifact Registry repository, and act as
+`metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com`. Do not use a
+long-lived service account JSON key for the workflow.
 
 ## Preflight
 
 ```bash
 npm run lint
 npm run build
-rg "sbp_|SUPABASE_ACCESS_TOKEN=.+" . --glob '!node_modules/**' --glob '!dist/**' --glob '!package-lock.json'
+npm audit --audit-level=high
+npm run check:secrets
 ```
 
 ## Runtime Identity
@@ -359,3 +392,5 @@ Acceptance checks:
   `hushh-ai-prod.hushhtech_search_console_api`, never Supabase.
 - OTP rows, emails, raw diagnostics, and tokens are not visible.
 - Cloud Run revision logs show no auth or IAM failures.
+- Cloud Run runtime config is still backed by Secret Manager:
+  `npm run check:cloud-run:secrets`

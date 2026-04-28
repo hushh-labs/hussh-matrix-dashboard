@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dashboard Demo Video Production"
+  short_description: "Capture and render Hussh Matrix Dashboard demo videos"
+  default_prompt: "Use $dashboard-demo-video-production when creating, updating, verifying, or publishing Hussh Matrix Dashboard MP4 demos, walkthroughs, terminology explainers, captions, narration, or capture assets."
