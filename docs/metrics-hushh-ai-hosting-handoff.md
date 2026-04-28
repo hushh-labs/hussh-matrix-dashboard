@@ -136,7 +136,7 @@ why some sections may show neutral empty states:
 | --- | --- | --- |
 | Kai production | `hushh-pda.analytics_526603671` is not materialized | Enable or repair the production GA4 BigQuery export; Cloud Run production metrics are still available |
 | Kai production | Hosted frontend still needs production web tag redeploy | Redeploy Kai with the production measurement ID already configured in secrets |
-| HushhTech Search Console | Bulk export is configured, but first tables have not materialized; fallback tables exist but are empty | Add a Search Console owner/full-user OAuth credential as a version of `hushhtech-search-console-oauth`, run the 90-day backfill, then resume scheduler job `hushhtech-search-console-ingest-daily` |
+| HushhTech Search Console | Official bulk export tables have not materialized yet | GCP-only fallback is active in `hushh-ai-prod.hushhtech_search_console_api`; daily Scheduler job `hushhtech-search-console-ingest-daily` refreshes the last 16 days |
 | Hushh AI Search Console | Export dataset exists, but export tables may not be present yet | Wait for Search Console export tables or repair the export configuration |
 
 ## Operational Commands
@@ -194,7 +194,7 @@ UNION ALL SELECT "device_daily", COUNT(*) FROM `hushh-ai-prod.hushhtech_search_c
 '
 ```
 
-Run the Search Console API ingestion job after the OAuth secret is valid:
+Run the Search Console API ingestion job manually:
 
 ```bash
 gcloud run jobs execute hushhtech-search-console-ingest \
@@ -204,7 +204,7 @@ gcloud run jobs execute hushhtech-search-console-ingest \
   --wait
 ```
 
-Resume the daily fallback only after that backfill writes rows:
+Resume the daily fallback if it has been paused:
 
 ```bash
 gcloud scheduler jobs resume hushhtech-search-console-ingest-daily \

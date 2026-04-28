@@ -107,4 +107,4 @@ When a provider is not fully configured, the dashboard keeps raw diagnostic text
 | --- | --- | --- |
 | kai.hushh.ai (prod) | GA4 export dataset not materialized | Resolve `hushh-pda.analytics_526603671` materialization |
 | kai.hushh.ai (prod) | Web tag not deployed | Redeploy frontend with `G-2PCECPSKCR` |
-| hushhtech.com | Official Search Console bulk export has not produced `searchdata_site_impression` / `searchdata_url_impression` yet | Use the GCP-only fallback dataset `hushh-ai-prod.hushhtech_search_console_api`; the ingestion job still requires a Search Console owner/full-user OAuth credential in Secret Manager |
+| hushhtech.com | Official Search Console bulk export has not produced `searchdata_site_impression` / `searchdata_url_impression` yet | The GCP-only fallback dataset `hushh-ai-prod.hushhtech_search_console_api` is active until Google's official export tables appear |
