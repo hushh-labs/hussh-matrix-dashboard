@@ -1,7 +1,6 @@
 import { motion } from 'motion/react';
 import {
   Activity,
-  AlertCircle,
   ArrowUpRight,
   BarChart3,
   CheckCircle2,
@@ -17,7 +16,6 @@ import {
   ShieldCheck,
   TrendingUp,
   Users,
-  XCircle,
 } from 'lucide-react';
 import {
   Area,
@@ -229,8 +227,8 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
                 </>
               ) : (
                 <>
-                  <XCircle className="h-3.5 w-3.5 text-[#b25000]" />
-                  <span className="text-[#b25000]">{platform.environment.toUpperCase()} pending</span>
+                  <Clock className="h-3.5 w-3.5 text-[#86868b]" />
+                  <span className="text-[#86868b]">Syncing metrics</span>
                 </>
               )}
             </div>
@@ -266,11 +264,6 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
         </div>
       </div>
 
-      {platform.knownBlockers && (
-        <p className="mt-4 rounded-lg border border-[#ffd8a8] bg-[#fff8eb] px-3 py-2 text-xs font-semibold text-[#9a4f00]">
-          {platform.knownBlockers}
-        </p>
-      )}
     </div>
   );
 }
@@ -301,17 +294,22 @@ export default function Dashboard() {
   const dailyActiveUsers = data?.kaiDailyUsage ?? [];
   const investorFunnel = data?.kaiInvestorFunnel ?? [];
   const riaFunnel = data?.kaiRiaFunnel ?? [];
+  const kaiActivationMetrics = data?.kaiActivationMetrics ?? [];
+  const kaiUsageMetrics = data?.kaiUsageMetrics ?? [];
+  const kaiEventMetrics = data?.kaiEventMetrics ?? [];
+  const kaiGeoMetrics = data?.kaiGeoMetrics ?? [];
   const platformMix = data?.platformMix ?? [];
   const featureEngagement = data?.featureEngagement ?? [];
   const instrumentationHealth = data?.instrumentationHealth ?? [];
+  const hushhAiOpsMetrics = data?.hushhAiOpsMetrics ?? [];
+  const hushhAiSearchMetrics = data?.hushhAiSearchMetrics ?? [];
   const hushhTechAudienceMetrics = data?.hushhTechAudienceMetrics ?? [];
   const hushhTechBusinessMetrics = data?.hushhTechBusinessMetrics ?? [];
   const hushhTechOpsMetrics = data?.hushhTechOpsMetrics ?? [];
   const hushhTechCoverageMetrics = data?.hushhTechCoverageMetrics ?? [];
-  const warnings = [...(data?.feedWarnings ?? []), ...(data?.dataQualityWarnings ?? [])];
-  const statusText = usingMock
-    ? data?.error ?? 'No live aggregate metrics are available.'
-    : `Live from Kai public feed and hushhtech.com metrics${data?.kaiFeed?.productionReady === false ? ' - production not ready' : ''}`;
+  const hushhTechActivityMetrics = data?.hushhTechActivityMetrics ?? [];
+  const hushhTechFunnelMetrics = data?.hushhTechFunnelMetrics ?? [];
+  const statusText = usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#cce4ff] selection:text-[#003b76]">
@@ -329,9 +327,9 @@ export default function Dashboard() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className={cn(
               'flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-bold',
-              usingMock ? 'bg-[#fff8eb] text-[#9a4f00]' : 'bg-[#ecfdf3] text-[#1f7a36]',
+              usingMock ? 'bg-[#f5f5f7] text-[#6e6e73]' : 'bg-[#ecfdf3] text-[#1f7a36]',
             )}>
-              {usingMock ? <AlertCircle className="h-4 w-4 shrink-0" /> : <CheckCircle2 className="h-4 w-4 shrink-0" />}
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
               <span className="min-w-0">{statusText}</span>
             </div>
             <button
@@ -347,7 +345,7 @@ export default function Dashboard() {
         <header className="mb-8 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-lg border border-black/5 bg-white shadow-sm">
-              <span className="text-2xl font-bold text-[#007aff]">H</span>
+              <span className="text-3xl" aria-label="Hussh logo">🤫</span>
             </div>
             <p className="text-sm font-bold uppercase tracking-[0.14em] text-[#86868b]">Hussh Matrix</p>
             <h1 className="mt-2 max-w-3xl text-4xl font-semibold tracking-[-0.05em] text-[#1d1d1f] sm:text-5xl lg:text-6xl">
@@ -434,6 +432,8 @@ export default function Dashboard() {
               </div>
 
               <div className="grid grid-cols-1 gap-4">
+                <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
+                <MetricListCard title="hushh.ai Search" subtitle="Search Console export metrics" items={hushhAiSearchMetrics} />
                 <MetricListCard title="hushhtech.com Audience" subtitle="Public endpoint audience and traffic" items={hushhTechAudienceMetrics} />
                 <MetricListCard title="Search + Ops" subtitle="Search Console, GA4, and Cloud Run" items={hushhTechOpsMetrics} />
               </div>
@@ -519,9 +519,20 @@ export default function Dashboard() {
               </div>
             </section>
 
+            <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <MetricListCard title="Kai GA4 Events" subtitle="Raw GA4 export, top events" items={kaiEventMetrics} />
+              <MetricListCard title="Kai Geo + Device" subtitle="Country, device, and platform mix" items={kaiGeoMetrics} />
+              <MetricListCard title="Kai Usage Snapshot" subtitle="Latest public feed usage rows" items={kaiUsageMetrics} />
+            </section>
+
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <MetricListCard title="hushhtech.com Funnel" subtitle="Supabase business funnel aggregates" items={hushhTechBusinessMetrics} />
-              <MetricListCard title="Data Coverage" subtitle="Provider availability and collection status" items={hushhTechCoverageMetrics} />
+              <MetricListCard title="hushhtech.com Activity" subtitle="Pages, routes, and event aggregates" items={hushhTechActivityMetrics} />
+            </section>
+
+            <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <MetricListCard title="hushhtech.com Funnel Detail" subtitle="Signup, onboarding, KYC, profile, and chat steps" items={hushhTechFunnelMetrics} />
+              <MetricListCard title="Data Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} />
             </section>
           </main>
         ) : (
@@ -543,27 +554,17 @@ export default function Dashboard() {
             </section>
 
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <MetricListCard title="Activation Rates" subtitle="Investor and RIA activation" items={kaiActivationMetrics} />
               <MetricListCard title="Platform Mix" subtitle="Users by platform, latest feed day" items={platformMix} />
               <MetricListCard title="Feature Engagement" subtitle="Governed feature events" items={featureEngagement} />
-              <MetricListCard title="Instrumentation Health" subtitle="Missing params and stream coverage" items={instrumentationHealth} />
+            </section>
+
+            <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <MetricListCard title="Instrumentation Health" subtitle="Governed event schema coverage" items={instrumentationHealth} />
+              <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
+              <MetricListCard title="hushhtech.com Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} />
             </section>
           </main>
-        )}
-
-        {warnings.length > 0 && (
-          <section className="mt-8 rounded-lg border border-[#ffd8a8] bg-[#fff8eb] p-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-              <AlertCircle className="h-5 w-5 shrink-0 text-[#9a4f00]" />
-              <div>
-                <h3 className="text-sm font-bold text-[#6b3700]">Live data warnings</h3>
-                <div className="mt-3 space-y-2">
-                  {warnings.map((warning) => (
-                    <p key={warning} className="text-sm font-semibold leading-6 text-[#7a4300]">{warning}</p>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
         )}
       </div>
     </div>

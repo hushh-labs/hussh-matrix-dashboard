@@ -19,6 +19,8 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
 - **Data sources**:
   - UAT: `hushh-pda-uat.analytics_public.kai_public_dashboard_feed` (live, full data)
   - Production: `hushh-pda.analytics_public.kai_public_dashboard_feed` (status-only until GA4 export materializes)
+  - hushh.ai: Cloud Run Monitoring and Search Console export readiness
+  - kai.hushh.ai: public BigQuery feed plus raw GA4 export aggregates
   - hushhtech.com: public Cloud Run summary endpoint with Supabase business funnel, first-party activity, Search Console shape, GA4 traffic shape, and GCP Cloud Run Monitoring
 
 ## Run Locally
@@ -70,10 +72,12 @@ For local developer runs, the Express proxy can also fall back to the authentica
 
 The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai UAT feed**: DAU, WAU, MAU, sessions, events, investor/RIA funnels, platform mix
+- **Kai raw GA4 export**: top events, users, sessions, country, device, and platform aggregates from `analytics_533362555`
 - **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
-- **hushhtech.com**: Public-safe summary from `GET /api/metrics/summary?window_days=7`, including audience, search, business funnel, traffic, Search Console, GCP Monitoring, system health, data coverage, and quality warnings.
+- **hushh.ai**: Cloud Run request, latency, instance, and Search Console export-table status
+- **hushhtech.com**: Public-safe summary from `GET /api/metrics/summary?window_days=7`, including audience, search, business funnel, activity, traffic, Search Console shape, GCP Monitoring, system health, and data coverage.
 
-When the API server is not running, the dashboard shows unavailable states instead of synthetic metrics.
+When a provider is not fully configured, the dashboard keeps raw diagnostic text out of the visible UI and shows neutral empty or syncing states instead of synthetic metrics.
 
 ## Remaining Blockers
 

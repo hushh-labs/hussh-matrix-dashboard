@@ -326,6 +326,71 @@ export interface HushhTechMetricsSummary {
   stale?: boolean;
 }
 
+export interface KaiGa4DailyMetric {
+  eventDate: string;
+  events: number;
+  users: number;
+  sessions: number;
+}
+
+export interface KaiGa4EventMetric {
+  eventName: string;
+  events: number;
+  users: number;
+}
+
+export interface KaiGa4GeoMetric {
+  platform: string;
+  deviceCategory: string;
+  country: string;
+  events: number;
+  users: number;
+}
+
+export interface KaiGa4Summary {
+  sourceProjectId: string;
+  sourceDataset: string;
+  windowDays: number;
+  daily: KaiGa4DailyMetric[];
+  topEvents: KaiGa4EventMetric[];
+  geo: KaiGa4GeoMetric[];
+}
+
+export interface CloudRunMetricPoint {
+  label: string;
+  value: number;
+}
+
+export interface CloudRunSummary {
+  sourceProjectId: string;
+  serviceName: string;
+  windowDays: number;
+  requestCount: number;
+  errorCount: number;
+  errorRate: number | null;
+  p95LatencyMs: number | null;
+  instanceCount: number | null;
+  series: CloudRunMetricPoint[];
+}
+
+export interface SearchConsoleSummary {
+  sourceProjectId: string;
+  sourceDataset: string;
+  available: boolean;
+  clicks: number;
+  impressions: number;
+  ctr: number | null;
+  averagePosition: number | null;
+  queries: Array<SearchPerformanceMetric & { query: string }>;
+  pages: Array<SearchPerformanceMetric & { pageUrl: string }>;
+  countries: Array<SearchPerformanceMetric & { country: string }>;
+}
+
+export interface HushhAiSummary {
+  gcp: CloudRunSummary | null;
+  searchConsole: SearchConsoleSummary | null;
+}
+
 // ---------------------------------------------------------------------------
 // Aggregated dashboard state
 // ---------------------------------------------------------------------------
@@ -341,9 +406,14 @@ export interface DashboardData {
   kaiInvestorFunnel: FunnelStep[];
   kaiRiaFunnel: FunnelStep[];
   kaiDailyUsage: DailyActiveUser[];
+  kaiActivationMetrics: BreakdownMetric[];
+  kaiUsageMetrics: BreakdownMetric[];
+  kaiEventMetrics: BreakdownMetric[];
+  kaiGeoMetrics: BreakdownMetric[];
   platformMix: BreakdownMetric[];
   featureEngagement: BreakdownMetric[];
   instrumentationHealth: BreakdownMetric[];
+  kaiGa4: KaiGa4Summary | null;
 
   // hushhtech.com public metrics
   hushhTech: HushhTechMetricsSummary | null;
@@ -351,6 +421,11 @@ export interface DashboardData {
   hushhTechBusinessMetrics: BreakdownMetric[];
   hushhTechOpsMetrics: BreakdownMetric[];
   hushhTechCoverageMetrics: BreakdownMetric[];
+  hushhTechActivityMetrics: BreakdownMetric[];
+  hushhTechFunnelMetrics: BreakdownMetric[];
+  hushhAi: HushhAiSummary | null;
+  hushhAiOpsMetrics: BreakdownMetric[];
+  hushhAiSearchMetrics: BreakdownMetric[];
   dataQualityWarnings: string[];
   feedWarnings: string[];
 

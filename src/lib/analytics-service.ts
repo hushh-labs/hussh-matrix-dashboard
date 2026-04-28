@@ -15,6 +15,8 @@ import type {
   DailyActiveUser,
   BreakdownMetric,
   HushhTechMetricsSummary,
+  HushhAiSummary,
+  KaiGa4Summary,
   PlatformStatus,
   KpiStat,
   TrafficPoint,
@@ -29,7 +31,9 @@ interface AllAnalyticsResponse {
   kai: {
     uat: { environment: string; rows: FeedRow[]; error?: string | null };
     production: { environment: string; rows: FeedRow[]; error?: string | null };
+    ga4?: { platform: string; data: KaiGa4Summary | null; error?: string | null };
   };
+  hushhAi?: { platform: string; data: HushhAiSummary | null; error?: string | null };
   hushhTech: { platform: string; data: HushhTechMetricsSummary | null; error?: string | null };
   fetchedAt: string;
 }
@@ -127,18 +131,28 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     kaiInvestorFunnel: [],
     kaiRiaFunnel: [],
     kaiDailyUsage: [],
+    kaiActivationMetrics: [],
+    kaiUsageMetrics: [],
+    kaiEventMetrics: [],
+    kaiGeoMetrics: [],
     platformMix: [],
     featureEngagement: [],
     instrumentationHealth: [],
+    kaiGa4: null,
     hushhTech: null,
     hushhTechAudienceMetrics: [],
     hushhTechBusinessMetrics: [],
     hushhTechOpsMetrics: [],
     hushhTechCoverageMetrics: [],
+    hushhTechActivityMetrics: [],
+    hushhTechFunnelMetrics: [],
+    hushhAi: null,
+    hushhAiOpsMetrics: [],
+    hushhAiSearchMetrics: [],
     dataQualityWarnings: [],
     feedWarnings: [],
-    platforms: buildPlatforms(null, null, null),
-    kpiStats: buildKpiStats(null, null),
+    platforms: buildPlatforms(null, null, null, null),
+    kpiStats: buildKpiStats(null, null, null, null),
     trafficData: [],
     acquisitionChannels: [],
     topCountries: [],
@@ -270,11 +284,63 @@ function parseInstrumentationHealth(rows: FeedRow[]): BreakdownMetric[] {
   ].map((name) => metric(formatMetricLabel(name), metricNumber(get(name))));
 }
 
+function parseActivationMetrics(rows: FeedRow[]): BreakdownMetric[] {
+  return latestRowsForGroup(rows, 'activation').map((row) => {
+    const value = metricNumber(row);
+    return metric(formatMetricLabel(row.metric_name), value, row.metric_date ?? undefined, formatPercent(value));
+  });
+}
+
+function parseUsageMetrics(rows: FeedRow[]): BreakdownMetric[] {
+  const latestUsageRows = latestRowsForGroup(rows, 'usage');
+  const preferredOrder = [
+    'daily_active_users',
+    'weekly_active_users',
+    'monthly_active_users',
+    'sessions',
+    'total_events',
+    'dau_mau_stickiness',
+  ];
+  const byName = new Map(latestUsageRows.map((row) => [row.metric_name, row]));
+
+  return preferredOrder
+    .filter((name) => byName.has(name))
+    .map((name) => {
+      const row = byName.get(name);
+      const value = metricNumber(row);
+      return metric(
+        formatMetricLabel(name),
+        value,
+        row?.metric_date ?? undefined,
+        name.includes('stickiness') ? formatPercent(value) : undefined,
+      );
+    });
+}
+
+function buildKaiEventMetrics(kaiGa4: KaiGa4Summary | null): BreakdownMetric[] {
+  return (kaiGa4?.topEvents ?? []).map((row) => metric(
+    formatMetricLabel(row.eventName),
+    row.events,
+    `${formatNumber(row.users)} users`,
+  ));
+}
+
+function buildKaiGeoMetrics(kaiGa4: KaiGa4Summary | null): BreakdownMetric[] {
+  return (kaiGa4?.geo ?? []).map((row) => metric(
+    `${row.country || 'Unknown'} · ${formatMetricLabel(row.deviceCategory || 'unknown')}`,
+    row.events,
+    `${formatNumber(row.users)} users · ${row.platform || 'unknown'}`,
+  ));
+}
+
 function buildPlatforms(
   kaiFeed: FeedStatus | null,
   kaiUsage: UsageSummary | null,
+  hushhAi: HushhAiSummary | null,
   hushhTech: HushhTechMetricsSummary | null,
 ): PlatformStatus[] {
+  const aiGcp = hushhAi?.gcp;
+  const aiSearch = hushhAi?.searchConsole;
   const traffic = hushhTech?.traffic?.overview;
   const audience = hushhTech?.audience;
   const search = hushhTech?.searchPerformance;
@@ -289,14 +355,14 @@ function buildPlatforms(
       name: 'hushh.ai',
       url: 'hushh.ai',
       color: '#1a73e8',
-      available: kaiFeed?.productionReady ?? false,
-      environment: kaiFeed?.sourceEnvironment === 'production' ? 'production' : 'uat',
-      productionReady: kaiFeed?.productionReady ?? false,
-      knownBlockers: kaiFeed?.knownBlockers ?? 'Production GA4 export not materialized',
-      visitors: kaiUsage ? formatNumber(kaiUsage.mau) : '—',
-      change: kaiUsage ? `${formatNumber(kaiUsage.totalEvents)} events` : '—',
-      avgSession: kaiUsage ? `${formatNumber(kaiUsage.sessions)} sessions` : '—',
-      bounceRate: kaiUsage ? `${(kaiUsage.dauMauStickiness * 100).toFixed(1)}% sticky` : '—',
+      available: Boolean(aiGcp || aiSearch?.available),
+      environment: 'production',
+      productionReady: Boolean(aiGcp),
+      knownBlockers: null,
+      visitors: aiGcp ? formatNumber(aiGcp.requestCount) : '—',
+      change: aiSearch?.available ? `${formatNumber(aiSearch.clicks)} search clicks` : `${formatNumber(aiGcp?.errorCount ?? 0)} non-2xx`,
+      avgSession: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : '—',
+      bounceRate: formatPercent(aiGcp?.errorRate),
     },
     {
       name: 'kai.hushh.ai',
@@ -329,6 +395,8 @@ function buildPlatforms(
 
 function buildKpiStats(
   kaiUsage: UsageSummary | null,
+  kaiGa4: KaiGa4Summary | null,
+  hushhAi: HushhAiSummary | null,
   hushhTech: HushhTechMetricsSummary | null,
 ): KpiStat[] {
   const business = hushhTech?.businessFunnel.overview;
@@ -336,6 +404,9 @@ function buildKpiStats(
   const audience = hushhTech?.audience;
   const search = hushhTech?.searchPerformance?.overview;
   const gcp = hushhTech?.gcp;
+  const aiGcp = hushhAi?.gcp;
+  const aiSearch = hushhAi?.searchConsole;
+  const kaiTopEvent = kaiGa4?.topEvents?.[0];
   const hushhTechSessions = firstNumber(audience?.sessions, traffic?.sessions);
   const hushhTechPageViews = firstNumber(audience?.pageViews, traffic?.screenPageViews);
 
@@ -353,6 +424,24 @@ function buildKpiStats(
       change: kaiUsage ? `${formatNumber(kaiUsage.sourceEventRows)} source rows` : undefined,
     },
     {
+      label: 'Kai Top Event',
+      value: kaiTopEvent ? formatNumber(kaiTopEvent.events) : '—',
+      icon: 'BarChart3',
+      change: kaiTopEvent ? formatMetricLabel(kaiTopEvent.eventName) : undefined,
+    },
+    {
+      label: 'hushh.ai Requests',
+      value: aiGcp ? formatNumber(aiGcp.requestCount) : '—',
+      icon: 'Server',
+      change: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : undefined,
+    },
+    {
+      label: 'hushh.ai Search',
+      value: aiSearch?.available ? formatNumber(aiSearch.clicks) : '—',
+      icon: 'Search',
+      change: aiSearch?.available ? `${formatNumber(aiSearch.impressions)} impressions` : undefined,
+    },
+    {
       label: 'hushhtech.com Signups',
       value: business ? formatNumber(business.signups) : '—',
       icon: 'MousePointerClick',
@@ -368,7 +457,7 @@ function buildKpiStats(
       label: 'Cloud Run Requests',
       value: gcp ? formatNumber(gcp.requestCount) : '—',
       icon: 'TrendingUp',
-      suffix: gcp?.available ? 'requests' : 'unavailable',
+      suffix: gcp?.available ? 'requests' : 'pending',
     },
     {
       label: 'Search Clicks',
@@ -387,7 +476,11 @@ function buildKpiStats(
   ];
 }
 
-function buildTrafficData(rows: FeedRow[], hushhTech: HushhTechMetricsSummary | null): TrafficPoint[] {
+function buildTrafficData(
+  rows: FeedRow[],
+  hushhAi: HushhAiSummary | null,
+  hushhTech: HushhTechMetricsSummary | null,
+): TrafficPoint[] {
   const byDate = new Map<string, TrafficPoint & { sortKey: string }>();
 
   const ensurePoint = (date: string) => {
@@ -413,10 +506,46 @@ function buildTrafficData(rows: FeedRow[], hushhTech: HushhTechMetricsSummary | 
     point.tech = firstNumber(row.sessions, row.activeUsers, row.screenPageViews);
   }
 
+  for (const row of hushhAi?.gcp?.series ?? []) {
+    if (!row.label) continue;
+    const point = ensurePoint(row.label);
+    point.ai = row.value;
+  }
+
   return Array.from(byDate.values())
     .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
     .slice(-14)
     .map(({ sortKey: _sortKey, ...point }) => point);
+}
+
+function buildHushhAiOpsMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const gcp = hushhAi?.gcp;
+  if (!gcp) return [];
+
+  return [
+    metric('Cloud Run Requests', gcp.requestCount, gcp.serviceName),
+    metric('Cloud Run Non-2xx', gcp.errorCount, gcp.serviceName),
+    metric('Cloud Run Non-2xx Rate', gcp.errorRate ?? 0, gcp.serviceName, formatPercent(gcp.errorRate)),
+    metric('Cloud Run P95 Latency', gcp.p95LatencyMs ?? 0, gcp.serviceName, formatLatency(gcp.p95LatencyMs)),
+    metric('Cloud Run Max Instances', gcp.instanceCount ?? 0, gcp.sourceProjectId),
+  ];
+}
+
+function buildHushhAiSearchMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const search = hushhAi?.searchConsole;
+  if (!search) return [];
+
+  return [
+    metric('Search Clicks', search.clicks, search.sourceDataset),
+    metric('Search Impressions', search.impressions, search.sourceDataset),
+    metric('Search CTR', search.ctr ?? 0, search.sourceDataset, formatPercent(search.ctr)),
+    metric('Search Avg Position', search.averagePosition ?? 0, search.sourceDataset, search.averagePosition?.toFixed(1) ?? '—'),
+    ...search.queries.slice(0, 6).map((row) => metric(
+      row.query,
+      firstNumber(row.clicks, row.impressions),
+      `${formatNumber(asNumber(row.impressions))} impressions`,
+    )),
+  ];
 }
 
 function buildAcquisitionChannels(hushhTech: HushhTechMetricsSummary | null): AcquisitionChannel[] {
@@ -507,7 +636,7 @@ function buildHushhTechOpsMetrics(hushhTech: HushhTechMetricsSummary | null): Br
 
   return [
     metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.note),
-    metric('Cloud Run Error Rate', asNumber(gcp?.errorRate), gcp?.source, formatPercent(gcp?.errorRate)),
+    metric('Cloud Run Non-2xx Rate', asNumber(gcp?.errorRate), gcp?.source, formatPercent(gcp?.errorRate)),
     metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.source, formatLatency(gcp?.p95LatencyMs)),
     metric('Cloud Run Instances', asNumber(gcp?.instanceCount), gcp?.source),
     metric('Search Clicks', asNumber(search?.overview.clicks), search?.source),
@@ -534,6 +663,52 @@ function buildHushhTechCoverageMetrics(hushhTech: HushhTechMetricsSummary | null
   ];
 }
 
+function buildHushhTechActivityMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+  if (!hushhTech?.activity) return [];
+  const topPages = hushhTech.activity.topPages.map((row) => metric(
+    row.path,
+    asNumber(row.views),
+    'top page',
+  ));
+  const routeGroups = hushhTech.activity.byRouteGroup.map((row) => metric(
+    formatMetricLabel(row.routeGroup),
+    asNumber(row.events),
+    'route group',
+  ));
+  const events = hushhTech.activity.byEvent.map((row) => metric(
+    formatMetricLabel(row.eventName),
+    asNumber(row.events),
+    'event',
+  ));
+
+  return [...topPages, ...routeGroups, ...events].slice(0, 16);
+}
+
+function buildHushhTechFunnelMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+  if (!hushhTech?.funnels) return [];
+  const metrics: BreakdownMetric[] = [];
+  for (const [funnelName, steps] of Object.entries(hushhTech.funnels)) {
+    for (const step of steps.slice(0, 4)) {
+      metrics.push(metric(
+        `${formatMetricLabel(funnelName)} · ${formatMetricLabel(step.step)}`,
+        asNumber(step.count),
+        step.conversionFromPrevious != null ? `conversion ${formatPercent(step.conversionFromPrevious)}` : step.eventName,
+      ));
+    }
+  }
+  for (const [funnelName, steps] of Object.entries(hushhTech.dropoff ?? {})) {
+    for (const step of steps.slice(0, 2)) {
+      metrics.push(metric(
+        `${formatMetricLabel(funnelName)} · ${formatMetricLabel(step.step)} dropoff`,
+        asNumber(step.dropoffRate),
+        step.eventName,
+        formatPercent(step.dropoffRate),
+      ));
+    }
+  }
+  return metrics.slice(0, 18);
+}
+
 export async function fetchAllAnalytics(): Promise<DashboardData> {
   const result = await fetchJson<AllAnalyticsResponse>(`${API_BASE}/analytics/all`);
 
@@ -544,10 +719,15 @@ export async function fetchAllAnalytics(): Promise<DashboardData> {
   const uatRows = result.kai.uat.rows ?? [];
   const prodRows = result.kai.production.rows ?? [];
   const activeRows = uatRows.length > 0 ? uatRows : prodRows;
+  const allKaiRows = [...uatRows, ...prodRows];
+  const kaiGa4 = result.kai.ga4?.data ?? null;
+  const hushhAi = result.hushhAi?.data ?? null;
   const hushhTech = result.hushhTech.data;
   const feedWarnings = [
     result.kai.uat.error,
     result.kai.production.error,
+    result.kai.ga4?.error,
+    result.hushhAi?.error,
     result.hushhTech.error,
   ].filter((value): value is string => Boolean(value));
 
@@ -563,6 +743,8 @@ export async function fetchAllAnalytics(): Promise<DashboardData> {
   const kaiInvestorFunnel = parseFunnel(activeRows, 'investor_funnel');
   const kaiRiaFunnel = parseFunnel(activeRows, 'ria_funnel');
   const kaiDailyUsage = parseDailyUsage(activeRows);
+  const kaiActivationMetrics = parseActivationMetrics(activeRows);
+  const kaiUsageMetrics = parseUsageMetrics(activeRows);
   const platformMix = parsePlatformMix(activeRows);
   const featureEngagement = parseFeatureEngagement(activeRows);
   const instrumentationHealth = parseInstrumentationHealth(activeRows);
@@ -576,19 +758,29 @@ export async function fetchAllAnalytics(): Promise<DashboardData> {
     kaiInvestorFunnel,
     kaiRiaFunnel,
     kaiDailyUsage,
+    kaiActivationMetrics,
+    kaiUsageMetrics,
+    kaiEventMetrics: buildKaiEventMetrics(kaiGa4),
+    kaiGeoMetrics: buildKaiGeoMetrics(kaiGa4),
     platformMix,
     featureEngagement,
     instrumentationHealth,
+    kaiGa4,
     hushhTech: hushhTech,
     hushhTechAudienceMetrics: buildHushhTechAudienceMetrics(hushhTech),
     hushhTechBusinessMetrics: buildHushhTechBusinessMetrics(hushhTech),
     hushhTechOpsMetrics: buildHushhTechOpsMetrics(hushhTech),
     hushhTechCoverageMetrics: buildHushhTechCoverageMetrics(hushhTech),
+    hushhTechActivityMetrics: buildHushhTechActivityMetrics(hushhTech),
+    hushhTechFunnelMetrics: buildHushhTechFunnelMetrics(hushhTech),
+    hushhAi,
+    hushhAiOpsMetrics: buildHushhAiOpsMetrics(hushhAi),
+    hushhAiSearchMetrics: buildHushhAiSearchMetrics(hushhAi),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
     feedWarnings,
-    platforms: buildPlatforms(kaiFeed, kaiUsage, hushhTech),
-    kpiStats: buildKpiStats(kaiUsage, hushhTech),
-    trafficData: buildTrafficData(activeRows, hushhTech),
+    platforms: buildPlatforms(kaiFeed, kaiUsage, hushhAi, hushhTech),
+    kpiStats: buildKpiStats(kaiUsage, kaiGa4, hushhAi, hushhTech),
+    trafficData: buildTrafficData(allKaiRows, hushhAi, hushhTech),
     acquisitionChannels: buildAcquisitionChannels(hushhTech),
     topCountries: buildTopCountries(hushhTech),
   };
