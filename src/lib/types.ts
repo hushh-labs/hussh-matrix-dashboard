@@ -374,6 +374,9 @@ export interface CloudRunDailyMetric {
 export interface CloudRunSummary {
   sourceProjectId: string;
   serviceName: string;
+  generatedAt?: string;
+  realtimeMode?: string;
+  expectedLagSeconds?: number | null;
   windowDays: number;
   startDate?: string;
   endDate?: string;
@@ -389,6 +392,9 @@ export interface CloudRunSummary {
 export interface SearchConsoleSummary {
   sourceProjectId: string;
   sourceDataset: string;
+  generatedAt?: string;
+  realtimeMode?: string;
+  expectedLagSeconds?: number | null;
   startDate?: string;
   endDate?: string;
   available: boolean;
@@ -461,6 +467,24 @@ export interface HushhAiSummary {
   gcp: CloudRunSummary | null;
   searchConsole: SearchConsoleSummary | null;
   supabase?: HushhAiSupabaseSummary | null;
+  freshness?: HushhAiFreshness | null;
+}
+
+export interface HushhAiFreshnessSource {
+  key: string;
+  label: string;
+  state: 'live' | 'near_live' | 'delayed' | 'waiting' | 'unavailable' | 'collecting_not_ingested' | string;
+  realtimeLevel: string;
+  generatedAt: string;
+  expectedLagSeconds: number | null;
+  detail: string;
+}
+
+export interface HushhAiFreshness {
+  mode: 'polling' | string;
+  refreshIntervalSeconds: number;
+  fetchedAt: string;
+  sources: HushhAiFreshnessSource[];
 }
 
 // ---------------------------------------------------------------------------

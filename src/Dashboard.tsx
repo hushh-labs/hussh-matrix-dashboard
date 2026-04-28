@@ -11,6 +11,8 @@ import {
   Loader2,
   MapPin,
   MousePointerClick,
+  Pause,
+  Play,
   RefreshCw,
   Search,
   Server,
@@ -35,7 +37,16 @@ import {
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { fetchAllAnalytics, formatNumber } from './lib/analytics-service';
 import { cn } from './lib/utils';
-import type { BreakdownMetric, DashboardData, FunnelStep, HushhAiDailyStatusPoint, KpiStat, PlatformStatus } from './lib/types';
+import type {
+  BreakdownMetric,
+  DashboardData,
+  FunnelStep,
+  HushhAiDailyStatusPoint,
+  HushhAiFreshness,
+  HushhAiFreshnessSource,
+  KpiStat,
+  PlatformStatus,
+} from './lib/types';
 
 const iconMap: Record<string, typeof Activity> = {
   Activity,
@@ -96,6 +107,42 @@ function formatDurationFromMinutes(minutes: number | null | undefined): string {
   const hours = Math.floor(minutes / 60);
   const remainder = Math.round(minutes % 60);
   return `${hours}h ${remainder}m`;
+}
+
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatAge(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m ago`;
+}
+
+function freshnessLabel(source: HushhAiFreshnessSource): string {
+  if (source.state === 'live') return 'Live';
+  if (source.state === 'near_live') return 'Near-live';
+  if (source.state === 'delayed') return 'Delayed';
+  if (source.state === 'waiting') return 'Waiting';
+  if (source.state === 'collecting_not_ingested') return 'Collecting';
+  return 'Unavailable';
+}
+
+function freshnessClass(source: HushhAiFreshnessSource): string {
+  if (source.state === 'live') return 'bg-[#ecfdf3] text-[#1f7a36]';
+  if (source.state === 'near_live') return 'bg-[#e8f2ff] text-[#005eb8]';
+  if (source.state === 'collecting_not_ingested') return 'bg-[#f4edff] text-[#6d38a8]';
+  if (source.state === 'delayed' || source.state === 'waiting') return 'bg-[#fff7e6] text-[#9a5b00]';
+  return 'bg-[#f5f5f7] text-[#6e6e73]';
 }
 
 function CustomTooltip({ active, payload, label }: any) {
@@ -299,6 +346,73 @@ function ChartShell({
   );
 }
 
+function HushhAiLivePanel({
+  freshness,
+  lastUpdated,
+  autoRefresh,
+  isRefreshing,
+  onToggleAutoRefresh,
+}: {
+  freshness: HushhAiFreshness | null | undefined;
+  lastUpdated: string | null | undefined;
+  autoRefresh: boolean;
+  isRefreshing: boolean;
+  onToggleAutoRefresh: () => void;
+}) {
+  const sources = freshness?.sources ?? [];
+  const refreshSeconds = freshness?.refreshIntervalSeconds ?? 30;
+
+  return (
+    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#86868b]">Hushh AI live mode</p>
+          <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-[#1d1d1f]">Fresh on refresh, auto-updating every {refreshSeconds}s</h3>
+          <p className="mt-2 text-sm font-medium leading-6 text-[#6e6e73]">
+            Last dashboard pull: {formatTimestamp(lastUpdated)} · {formatAge(lastUpdated)}
+          </p>
+        </div>
+        <button
+          onClick={onToggleAutoRefresh}
+          className={cn(
+            'inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-4 text-sm font-bold transition',
+            autoRefresh
+              ? 'bg-[#1d1d1f] text-white hover:bg-[#323236]'
+              : 'bg-[#f5f5f7] text-[#1d1d1f] hover:bg-[#e8e8ed]',
+          )}
+        >
+          {autoRefresh ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+          {autoRefresh ? 'Pause live refresh' : 'Resume live refresh'}
+        </button>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {sources.map((source) => (
+          <div key={source.key} className="rounded-lg border border-black/5 bg-[#fbfbfd] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-[#1d1d1f]">{source.label}</p>
+                <p className="mt-1 text-xs font-semibold text-[#86868b]">{formatAge(source.generatedAt)}</p>
+              </div>
+              <span className={cn('rounded-full px-2.5 py-1 text-xs font-bold', freshnessClass(source))}>
+                {freshnessLabel(source)}
+              </span>
+            </div>
+            <p className="mt-3 text-xs font-medium leading-5 text-[#6e6e73]">{source.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      {isRefreshing && (
+        <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#e8f2ff] px-3 py-1.5 text-xs font-bold text-[#005eb8]">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          Refreshing Hushh AI sources
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
   return (
     <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
@@ -441,10 +555,16 @@ export default function Dashboard() {
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const [usingMock, setUsingMock] = useState(false);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (options: { background?: boolean } = {}) => {
+    if (options.background) {
+      setIsRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     const result = await fetchAllAnalytics({
       hushhAiStartDate: hushhAiRange.startDate,
       hushhAiEndDate: hushhAiRange.endDate,
@@ -452,11 +572,22 @@ export default function Dashboard() {
     setUsingMock(Boolean(result.error));
     setData(result);
     setLoading(false);
+    setIsRefreshing(false);
   }, [hushhAiRange.endDate, hushhAiRange.startDate]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const liveRefreshSeconds = data?.hushhAi?.freshness?.refreshIntervalSeconds ?? 30;
+
+  useEffect(() => {
+    if (!autoRefresh) return undefined;
+    const refreshId = window.setInterval(() => {
+      void loadData({ background: true });
+    }, liveRefreshSeconds * 1000);
+    return () => window.clearInterval(refreshId);
+  }, [autoRefresh, liveRefreshSeconds, loadData]);
 
   const platforms = data?.platforms ?? [];
   const kpiStats = data?.kpiStats ?? [];
@@ -478,6 +609,7 @@ export default function Dashboard() {
   const hushhAiDatabaseMetrics = data?.hushhAiDatabaseMetrics ?? [];
   const hushhAiDailyStatus = data?.hushhAiDailyStatus ?? [];
   const hushhAiDailySummaryMetrics = data?.hushhAiDailySummaryMetrics ?? [];
+  const hushhAiFreshness = data?.hushhAi?.freshness;
   const hushhTechAudienceMetrics = data?.hushhTechAudienceMetrics ?? [];
   const hushhTechBusinessMetrics = data?.hushhTechBusinessMetrics ?? [];
   const hushhTechOpsMetrics = data?.hushhTechOpsMetrics ?? [];
@@ -510,10 +642,10 @@ export default function Dashboard() {
               <span className="min-w-0">{statusText}</span>
             </div>
             <button
-              onClick={loadData}
+              onClick={() => loadData()}
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#007aff] px-4 text-sm font-bold text-white shadow-[0_6px_18px_rgba(0,122,255,0.25)] transition hover:bg-[#006adc]"
             >
-              <RefreshCw className="h-4 w-4" />
+              <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
               Refresh
             </button>
           </div>
@@ -576,6 +708,15 @@ export default function Dashboard() {
                   />
                 )}
               />
+              <div className="mb-4">
+                <HushhAiLivePanel
+                  freshness={hushhAiFreshness}
+                  lastUpdated={data?.lastUpdated}
+                  autoRefresh={autoRefresh}
+                  isRefreshing={isRefreshing}
+                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
+                />
+              </div>
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
                 <MetricListCard
                   title="Range Summary"

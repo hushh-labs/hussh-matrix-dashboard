@@ -54,7 +54,10 @@ function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
 
 async function fetchJson<T>(url: string): Promise<T | null> {
   try {
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+    });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

@@ -53,6 +53,18 @@ const HUSHH_AI_SUPABASE_PROJECT_REF =
 const HUSHH_AI_SUPABASE_ACCESS_TOKEN =
   process.env.HUSHH_AI_SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_PAT || '';
 const MAX_HUSHH_AI_RANGE_DAYS = 90;
+const HUSHH_AI_LIVE_REFRESH_SECONDS = Math.max(
+  10,
+  Math.min(parseInt(process.env.HUSHH_AI_LIVE_REFRESH_SECONDS || '30', 10) || 30, 300),
+);
+
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+  next();
+});
 
 interface HushhAiDateRange {
   startDate: string;
@@ -442,6 +454,7 @@ function monitoringDailyMap(
 
 async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   try {
+    const generatedAt = new Date().toISOString();
     const serviceName = HUSHH_AI_CLOUD_RUN_SERVICE;
     const projectId = HUSHH_AI_GCP_PROJECT;
     const [requests, errors, latency, instances, dailyRequests, dailyErrors, dailyLatency, dailyInstances] = await Promise.all([
@@ -482,6 +495,9 @@ async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult
       data: {
         sourceProjectId: projectId,
         serviceName,
+        generatedAt,
+        realtimeMode: 'near_live',
+        expectedLagSeconds: 300,
         windowDays: range.days,
         startDate: range.startDate,
         endDate: range.endDate,
@@ -503,6 +519,7 @@ async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult
 }
 
 async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  const generatedAt = new Date().toISOString();
   const queryProject = BQ_JOB_PROJECT || HUSHH_AI_SEARCH_PROJECT;
   const datasetRef = `\`${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}\``;
   const tableRows = await queryBigQuerySql(queryProject, `
@@ -519,6 +536,9 @@ async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataR
       data: {
         sourceProjectId: HUSHH_AI_SEARCH_PROJECT,
         sourceDataset: HUSHH_AI_SEARCH_DATASET,
+        generatedAt,
+        realtimeMode: 'delayed_export',
+        expectedLagSeconds: 86_400,
         startDate: range.startDate,
         endDate: range.endDate,
         available: false,
@@ -599,6 +619,9 @@ async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataR
     data: {
       sourceProjectId: HUSHH_AI_SEARCH_PROJECT,
       sourceDataset: HUSHH_AI_SEARCH_DATASET,
+      generatedAt,
+      realtimeMode: 'delayed_export',
+      expectedLagSeconds: 86_400,
       startDate: range.startDate,
       endDate: range.endDate,
       available: toNumber(overview.impressions) > 0,
@@ -624,6 +647,58 @@ function parseJsonField<T>(value: unknown, fallback: T): T {
     }
   }
   return value as T;
+}
+
+function buildHushhAiFreshness(
+  fetchedAt: string,
+  gcp: Record<string, unknown> | null,
+  searchConsole: Record<string, unknown> | null,
+  supabase: Record<string, unknown> | null,
+) {
+  const searchAvailable = Boolean(searchConsole?.available);
+  return {
+    mode: 'polling',
+    refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
+    fetchedAt,
+    sources: [
+      {
+        key: 'supabase',
+        label: 'Supabase',
+        state: supabase ? 'live' : 'unavailable',
+        realtimeLevel: supabase ? 'request_time' : 'unavailable',
+        generatedAt: typeof supabase?.generatedAt === 'string' ? supabase.generatedAt : fetchedAt,
+        expectedLagSeconds: 0,
+        detail: supabase ? 'queried fresh on every refresh' : 'Supabase aggregate query unavailable',
+      },
+      {
+        key: 'gcp',
+        label: 'Cloud Run',
+        state: gcp ? 'near_live' : 'unavailable',
+        realtimeLevel: gcp ? 'monitoring_lag' : 'unavailable',
+        generatedAt: typeof gcp?.generatedAt === 'string' ? gcp.generatedAt : fetchedAt,
+        expectedLagSeconds: 300,
+        detail: gcp ? 'Google Cloud Monitoring can lag by a few minutes' : 'Cloud Run Monitoring unavailable',
+      },
+      {
+        key: 'search_console',
+        label: 'Search Console',
+        state: searchAvailable ? 'delayed' : 'waiting',
+        realtimeLevel: 'delayed_export',
+        generatedAt: typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : fetchedAt,
+        expectedLagSeconds: 86_400,
+        detail: searchAvailable ? 'Search Console exports are delayed' : 'export tables/data not ready for this window',
+      },
+      {
+        key: 'mixpanel',
+        label: 'Mixpanel',
+        state: 'collecting_not_ingested',
+        realtimeLevel: 'not_in_dashboard_yet',
+        generatedAt: fetchedAt,
+        expectedLagSeconds: null,
+        detail: 'hushh.ai events are live on the website; dashboard ingestion is the next step',
+      },
+    ],
+  };
 }
 
 async function fetchHushhAiSupabaseSummary(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
@@ -899,15 +974,17 @@ app.get('/api/analytics/hushhai', async (req, res) => {
     fetchHushhAiSupabaseSummary(hushhAiRange),
   ]);
   const error = [gcp.error, searchConsole.error, supabase.error].filter(Boolean).join('; ') || null;
+  const fetchedAt = new Date().toISOString();
   res.status(error && !gcp.data && !searchConsole.data && !supabase.data ? 502 : 200).json({
     platform: 'hushh.ai',
     data: {
       gcp: gcp.data,
       searchConsole: searchConsole.data,
       supabase: supabase.data,
+      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data, supabase.data),
     },
     error,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt,
   });
 });
 
@@ -922,6 +999,7 @@ app.get('/api/analytics/all', async (req, res) => {
     fetchHushhAiSupabaseSummary(hushhAiRange),
     fetchHushhTechAnalytics(),
   ]);
+  const fetchedAt = new Date().toISOString();
   res.json({
     kai: {
       uat: { environment: 'uat', rows: uat.rows, error: uat.error },
@@ -930,11 +1008,16 @@ app.get('/api/analytics/all', async (req, res) => {
     },
     hushhAi: {
       platform: 'hushh.ai',
-      data: { gcp: hushhAiGcp.data, searchConsole: hushhAiSearchConsole.data, supabase: hushhAiSupabase.data },
+      data: {
+        gcp: hushhAiGcp.data,
+        searchConsole: hushhAiSearchConsole.data,
+        supabase: hushhAiSupabase.data,
+        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiSupabase.data),
+      },
       error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiSupabase.error].filter(Boolean).join('; ') || null,
     },
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
-    fetchedAt: new Date().toISOString(),
+    fetchedAt,
   });
 });
 
