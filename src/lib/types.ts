@@ -420,6 +420,8 @@ export interface DashboardData {
   hushhTechAudienceMetrics: BreakdownMetric[];
   hushhTechBusinessMetrics: BreakdownMetric[];
   hushhTechOpsMetrics: BreakdownMetric[];
+  hushhTechReportTotals: BreakdownMetric[];
+  hushhTechSevenDayMetrics: BreakdownMetric[];
   hushhTechCoverageMetrics: BreakdownMetric[];
   hushhTechActivityMetrics: BreakdownMetric[];
   hushhTechFunnelMetrics: BreakdownMetric[];

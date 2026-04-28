@@ -306,6 +306,8 @@ export default function Dashboard() {
   const hushhTechAudienceMetrics = data?.hushhTechAudienceMetrics ?? [];
   const hushhTechBusinessMetrics = data?.hushhTechBusinessMetrics ?? [];
   const hushhTechOpsMetrics = data?.hushhTechOpsMetrics ?? [];
+  const hushhTechReportTotals = data?.hushhTechReportTotals ?? [];
+  const hushhTechSevenDayMetrics = data?.hushhTechSevenDayMetrics ?? [];
   const hushhTechCoverageMetrics = data?.hushhTechCoverageMetrics ?? [];
   const hushhTechActivityMetrics = data?.hushhTechActivityMetrics ?? [];
   const hushhTechFunnelMetrics = data?.hushhTechFunnelMetrics ?? [];
@@ -384,6 +386,14 @@ export default function Dashboard() {
                     <MetricCard stat={stat} index={index} />
                   </div>
                 ))}
+              </div>
+            </section>
+
+            <section>
+              <SectionHeader kicker="hushhtech.com" title="Complete report" />
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <MetricListCard title="Total Report" subtitle="Users, funnel, search, infra, and stored aggregates" items={hushhTechReportTotals} />
+                <MetricListCard title="Last 7 Days" subtitle="DAU, WAU, MAU, sessions, views, events, and engagement" items={hushhTechSevenDayMetrics} />
               </div>
             </section>
 

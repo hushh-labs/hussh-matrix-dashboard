@@ -85,6 +85,10 @@ function firstNumber(...values: Array<number | null | undefined>): number {
   return asNumber(values.find((value) => typeof value === 'number' && Number.isFinite(value)));
 }
 
+function strongestNumber(...values: Array<number | null | undefined>): number {
+  return values.reduce((max, value) => Math.max(max, asNumber(value)), 0);
+}
+
 function formatMetricLabel(value: string): string {
   return value
     .replace(/[_-]/g, ' ')
@@ -116,11 +120,6 @@ function metric(
   return { label, value, detail, displayValue };
 }
 
-function booleanMetric(label: string, value: unknown, detail?: string): BreakdownMetric {
-  const enabled = value === true;
-  return metric(label, enabled ? 1 : 0, detail, enabled ? 'Yes' : 'No');
-}
-
 function emptyDashboard(error: string | null, lastUpdated: string | null): DashboardData {
   return {
     loading: false,
@@ -143,6 +142,8 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhTechAudienceMetrics: [],
     hushhTechBusinessMetrics: [],
     hushhTechOpsMetrics: [],
+    hushhTechReportTotals: [],
+    hushhTechSevenDayMetrics: [],
     hushhTechCoverageMetrics: [],
     hushhTechActivityMetrics: [],
     hushhTechFunnelMetrics: [],
@@ -599,16 +600,17 @@ function buildHushhTechAudienceMetrics(hushhTech: HushhTechMetricsSummary | null
   const audience = hushhTech.audience;
   const traffic = hushhTech.traffic.overview;
   const search = hushhTech.search;
+  const source = audience?.source ?? hushhTech.traffic.source;
 
   return [
-    metric('DAU', firstNumber(audience?.dau, traffic.active1DayUsers), audience?.source ?? hushhTech.traffic.source),
-    metric('WAU', firstNumber(audience?.wau, traffic.active7DayUsers), audience?.source ?? hushhTech.traffic.source),
-    metric('MAU', firstNumber(audience?.mau, traffic.active28DayUsers), audience?.source ?? hushhTech.traffic.source),
+    metric('DAU', firstNumber(audience?.dau, traffic.active1DayUsers), source),
+    metric('WAU', firstNumber(audience?.wau, traffic.active7DayUsers), source),
+    metric('MAU', firstNumber(audience?.mau, traffic.active28DayUsers), source),
     metric('Sessions', firstNumber(audience?.sessions, traffic.sessions), hushhTech.traffic.source),
     metric('Page Views', firstNumber(audience?.pageViews, traffic.screenPageViews), hushhTech.traffic.source),
-    metric('Events', asNumber(audience?.events), audience?.note),
+    metric('Events', asNumber(audience?.events), source),
     metric('Searches', asNumber(search?.totalSearches), 'first-party safe search events'),
-    metric('Realtime Active', asNumber(traffic.realtimeActiveUsers), hushhTech.traffic.available ? 'GA4 realtime' : hushhTech.traffic.note),
+    metric('Realtime Active', asNumber(traffic.realtimeActiveUsers), 'GA4 realtime'),
   ];
 }
 
@@ -633,33 +635,98 @@ function buildHushhTechOpsMetrics(hushhTech: HushhTechMetricsSummary | null): Br
   const gcp = hushhTech.gcp;
   const search = hushhTech.searchPerformance;
   const traffic = hushhTech.traffic.overview;
+  const successRate = gcp?.errorRate != null ? 1 - gcp.errorRate : null;
 
   return [
-    metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.note),
-    metric('Cloud Run Non-2xx Rate', asNumber(gcp?.errorRate), gcp?.source, formatPercent(gcp?.errorRate)),
+    metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.source),
+    metric('Cloud Run Success Rate', asNumber(successRate), gcp?.source, formatPercent(successRate)),
     metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.source, formatLatency(gcp?.p95LatencyMs)),
     metric('Cloud Run Instances', asNumber(gcp?.instanceCount), gcp?.source),
     metric('Search Clicks', asNumber(search?.overview.clicks), search?.source),
-    metric('Search Impressions', asNumber(search?.overview.impressions), search?.dataState),
-    metric('Search CTR', asNumber(search?.overview.ctr), search?.available ? search.source : search?.note, formatPercent(search?.overview.ctr)),
+    metric('Search Impressions', asNumber(search?.overview.impressions), search?.source),
+    metric('Search CTR', asNumber(search?.overview.ctr), search?.source, formatPercent(search?.overview.ctr)),
     metric('Search Avg Position', asNumber(search?.overview.averagePosition), search?.source, search?.overview.averagePosition?.toFixed(1) ?? '—'),
     metric('Avg Session Duration', asNumber(traffic.averageSessionDuration), hushhTech.traffic.source, formatDuration(traffic.averageSessionDuration)),
+  ];
+}
+
+function buildHushhTechReportTotals(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+  if (!hushhTech) return [];
+  const business = hushhTech.businessFunnel.overview;
+  const traffic = hushhTech.traffic.overview;
+  const audience = hushhTech.audience;
+  const coverage = hushhTech.dataCoverage ?? {};
+  const search = hushhTech.searchPerformance?.overview;
+  const legacyUsers = hushhTech.legacy?.overview.usersCreated;
+  const totalUsers = strongestNumber(
+    legacyUsers,
+    business.persistedUsers,
+    audience?.mau,
+    traffic.active28DayUsers,
+  );
+  const windowLabel = `${hushhTech.window.startDate} to ${hushhTech.window.endDate}`;
+  const totalUsersDetail = asNumber(legacyUsers) > 0 ? 'all-time user aggregate' : `${hushhTech.window.days}d persisted fallback`;
+
+  return [
+    metric('Total Users', totalUsers, totalUsersDetail),
+    metric('Total Signups', business.signups, windowLabel),
+    metric('Persisted Users', business.persistedUsers, windowLabel),
+    metric('Onboarding Started', business.onboardingStarted, windowLabel),
+    metric('Onboarding Completed', business.onboardingCompleted, windowLabel),
+    metric('Profiles Created', business.profilesCreated, windowLabel),
+    metric('Profiles Confirmed', business.profilesConfirmed, windowLabel),
+    metric('Cloud Run Requests', asNumber(hushhTech.gcp?.requestCount), windowLabel),
+    metric('Collected Events', asNumber(coverage.collectedEvents as number | undefined), 'first-party analytics'),
+    metric('Collected Sessions', asNumber(coverage.collectedSessions as number | undefined), 'first-party analytics'),
+    metric('Search Clicks', asNumber(search?.clicks), 'Search Console'),
+    metric('Search Impressions', asNumber(search?.impressions), 'Search Console'),
+    metric('Supabase Aggregate Tables', asNumber(coverage.supabaseAggregateTables as number | undefined), 'public-safe tables'),
+  ];
+}
+
+function buildHushhTechSevenDayMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+  if (!hushhTech) return [];
+  const audience = hushhTech.audience;
+  const traffic = hushhTech.traffic.overview;
+  const business = hushhTech.businessFunnel.overview;
+  const search = hushhTech.searchPerformance?.overview;
+  const source = audience?.source ?? hushhTech.traffic.source;
+
+  return [
+    metric('7d DAU', firstNumber(audience?.dau, traffic.active1DayUsers), source),
+    metric('7d WAU', firstNumber(audience?.wau, traffic.active7DayUsers), source),
+    metric('7d MAU', firstNumber(audience?.mau, traffic.active28DayUsers), source),
+    metric('7d Sessions', firstNumber(audience?.sessions, traffic.sessions), hushhTech.traffic.source),
+    metric('7d Engaged Sessions', asNumber(traffic.engagedSessions), hushhTech.traffic.source),
+    metric('7d Page Views', firstNumber(audience?.pageViews, traffic.screenPageViews), hushhTech.traffic.source),
+    metric('7d New Users', asNumber(traffic.newUsers), hushhTech.traffic.source),
+    metric('7d Events', asNumber(audience?.events), source),
+    metric('7d Signups', business.signups, hushhTech.businessFunnel.source),
+    metric('7d Persisted Users', business.persistedUsers, hushhTech.businessFunnel.source),
+    metric('7d Cloud Run Requests', asNumber(hushhTech.gcp?.requestCount), hushhTech.gcp?.source),
+    metric('Engagement Rate', asNumber(traffic.engagementRate), hushhTech.traffic.source, formatPercent(traffic.engagementRate)),
+    metric('Avg Session Duration', asNumber(traffic.averageSessionDuration), hushhTech.traffic.source, formatDuration(traffic.averageSessionDuration)),
+    metric('Search CTR', asNumber(search?.ctr), 'Search Console', formatPercent(search?.ctr)),
   ];
 }
 
 function buildHushhTechCoverageMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
   if (!hushhTech) return [];
   const coverage = hushhTech.dataCoverage ?? {};
+  const connectedProviders = [
+    coverage.firstPartyEventsAvailable,
+    coverage.ga4Available,
+    coverage.gcpAvailable,
+    coverage.searchConsoleAvailable,
+    coverage.ga4RegionAvailable,
+  ].filter(Boolean).length;
 
   return [
-    booleanMetric('First-party Events Available', coverage.firstPartyEventsAvailable),
+    metric('Connected Providers', connectedProviders, 'analytics, search, and infra feeds'),
     metric('Collected Events', asNumber(coverage.collectedEvents as number | undefined), 'site_analytics_events'),
     metric('Collected Sessions', asNumber(coverage.collectedSessions as number | undefined), 'site_analytics_sessions'),
-    booleanMetric('GA4 Available', coverage.ga4Available),
-    booleanMetric('GCP Available', coverage.gcpAvailable),
-    booleanMetric('Search Console Available', coverage.searchConsoleAvailable),
-    booleanMetric('GA4 Region Available', coverage.ga4RegionAvailable),
     metric('Supabase Aggregate Tables', asNumber(coverage.supabaseAggregateTables as number | undefined), 'public-safe tables'),
+    metric('Suppression Threshold', asNumber(coverage.suppressedMinimumCount as number | undefined), 'minimum public count'),
   ];
 }
 
@@ -770,6 +837,8 @@ export async function fetchAllAnalytics(): Promise<DashboardData> {
     hushhTechAudienceMetrics: buildHushhTechAudienceMetrics(hushhTech),
     hushhTechBusinessMetrics: buildHushhTechBusinessMetrics(hushhTech),
     hushhTechOpsMetrics: buildHushhTechOpsMetrics(hushhTech),
+    hushhTechReportTotals: buildHushhTechReportTotals(hushhTech),
+    hushhTechSevenDayMetrics: buildHushhTechSevenDayMetrics(hushhTech),
     hushhTechCoverageMetrics: buildHushhTechCoverageMetrics(hushhTech),
     hushhTechActivityMetrics: buildHushhTechActivityMetrics(hushhTech),
     hushhTechFunnelMetrics: buildHushhTechFunnelMetrics(hushhTech),
