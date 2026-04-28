@@ -43,7 +43,9 @@ required for this subdomain.
 | Service | `hushh-matrix-dashboard` |
 | Runtime identity | `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com` |
 | Image repo | `us-central1-docker.pkg.dev/hushh-ai-prod/website-images` |
-| Current deployed image tag | `hushh-matrix-dashboard:5c849ac` |
+| Current deployed revision | `hushh-matrix-dashboard-00005-wk8` |
+| Current deployed image tag | `hushh-matrix-dashboard:live-hushh-20260429015355` |
+| Runtime config | Secret Manager-backed env vars only |
 | Public access | Enabled, aggregate-only |
 
 ## Public Data Contract
@@ -174,6 +176,18 @@ printf '%s' "$HUSHH_AI_SUPABASE_ACCESS_TOKEN" | \
 
 The Cloud Run service consumes `hushh-ai-supabase-access-token:latest`, so a new
 secret version is picked up by the next instance start or revision deploy.
+
+Check that runtime config is still Secret Manager-backed:
+
+```bash
+gcloud run services describe hushh-matrix-dashboard \
+  --project=hushh-ai-prod \
+  --region=us-central1 \
+  --format="yaml(spec.template.spec.containers[0].env)"
+```
+
+Every configured variable should use `valueFrom.secretKeyRef`; do not deploy
+this service with plain `--set-env-vars`.
 
 ## Rollback
 

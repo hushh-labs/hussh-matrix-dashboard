@@ -45,7 +45,7 @@ IMAGE="us-central1-docker.pkg.dev/$PROJECT/website-images/$SERVICE:$(git rev-par
 ```bash
 npm run lint
 npm run build
-rg "sbp""_|SUPABASE_ACCESS_TOKEN=.+" . --glob '!node_modules/**' --glob '!dist/**' --glob '!package-lock.json'
+rg "sbp_|SUPABASE_ACCESS_TOKEN=.+" . --glob '!node_modules/**' --glob '!dist/**' --glob '!package-lock.json'
 ```
 
 ## Runtime Identity
@@ -86,18 +86,53 @@ bq add-iam-policy-binding hushh-pda:searchconsole_searchconsole_hushh_ai \
 
 ## Secret Manager
 
-Store the Supabase management token only in Secret Manager. Do not commit it.
+Store all Cloud Run runtime config in Secret Manager. The Supabase management
+token is the sensitive value; the other entries are deployment config kept in
+Secret Manager so future revisions do not reintroduce plain environment values.
+
+Create or rotate the config secrets:
 
 ```bash
-printf '%s' "$HUSHH_AI_SUPABASE_ACCESS_TOKEN" | \
-  gcloud secrets create hushh-ai-supabase-access-token \
-  --project="$PROJECT" \
-  --data-file=-
+create_or_update_secret() {
+  local name="$1"
+  local value="$2"
+  if gcloud secrets describe "$name" --project="$PROJECT" >/dev/null 2>&1; then
+    printf '%s' "$value" | gcloud secrets versions add "$name" \
+      --project="$PROJECT" \
+      --data-file=-
+  else
+    printf '%s' "$value" | gcloud secrets create "$name" \
+      --project="$PROJECT" \
+      --replication-policy="automatic" \
+      --data-file=-
+  fi
 
-gcloud secrets add-iam-policy-binding hushh-ai-supabase-access-token \
-  --project="$PROJECT" \
-  --member="serviceAccount:$SA_EMAIL" \
-  --role="roles/secretmanager.secretAccessor"
+  gcloud secrets add-iam-policy-binding "$name" \
+    --project="$PROJECT" \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/secretmanager.secretAccessor"
+}
+
+create_or_update_secret metrics-dashboard-node-env production
+create_or_update_secret metrics-dashboard-app-url https://metrics.hushh.ai
+create_or_update_secret metrics-dashboard-bq-job-project hushh-ai-prod
+create_or_update_secret metrics-dashboard-bq-cli-fallback false
+create_or_update_secret metrics-dashboard-hushhtech-window-days 7
+create_or_update_secret metrics-dashboard-kai-ga4-window-days 14
+create_or_update_secret metrics-dashboard-hushh-ai-gcp-project hushh-ai-prod
+create_or_update_secret metrics-dashboard-hushh-ai-cloud-run-service hushh-ai-website
+create_or_update_secret metrics-dashboard-hushh-ai-window-days 7
+create_or_update_secret metrics-dashboard-hushh-ai-search-project hushh-pda
+create_or_update_secret metrics-dashboard-hushh-ai-search-dataset searchconsole_searchconsole_hushh_ai
+create_or_update_secret metrics-dashboard-hushh-ai-supabase-project-ref ibsisfnjxeowvdtvgzff
+create_or_update_secret metrics-dashboard-hushh-ai-live-refresh-seconds 30
+```
+
+Create or rotate the Supabase management token secret. Do not print or commit
+the token.
+
+```bash
+create_or_update_secret hushh-ai-supabase-access-token "$HUSHH_AI_SUPABASE_ACCESS_TOKEN"
 ```
 
 ## Build And Deploy
@@ -118,8 +153,8 @@ gcloud run deploy "$SERVICE" \
   --cpu=1 \
   --min-instances=0 \
   --max-instances=3 \
-  --set-env-vars="NODE_ENV=production,APP_URL=https://metrics.hushh.ai,BQ_JOB_PROJECT=hushh-ai-prod,BQ_CLI_FALLBACK=false,HUSHHTECH_METRICS_WINDOW_DAYS=7,KAI_GA4_WINDOW_DAYS=14,HUSHH_AI_GCP_PROJECT=hushh-ai-prod,HUSHH_AI_CLOUD_RUN_SERVICE=hushh-ai-website,HUSHH_AI_METRICS_WINDOW_DAYS=7,HUSHH_AI_SEARCH_PROJECT=hushh-pda,HUSHH_AI_SEARCH_DATASET=searchconsole_searchconsole_hushh_ai,HUSHH_AI_SUPABASE_PROJECT_REF=ibsisfnjxeowvdtvgzff" \
-  --set-secrets="HUSHH_AI_SUPABASE_ACCESS_TOKEN=hushh-ai-supabase-access-token:latest"
+  --clear-env-vars \
+  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_SUPABASE_PROJECT_REF=metrics-dashboard-hushh-ai-supabase-project-ref:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest,HUSHH_AI_SUPABASE_ACCESS_TOKEN=hushh-ai-supabase-access-token:latest"
 ```
 
 ## Domain Mapping
