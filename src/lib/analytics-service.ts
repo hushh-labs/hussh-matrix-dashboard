@@ -150,6 +150,7 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhAi: null,
     hushhAiOpsMetrics: [],
     hushhAiSearchMetrics: [],
+    hushhAiDatabaseMetrics: [],
     dataQualityWarnings: [],
     feedWarnings: [],
     platforms: buildPlatforms(null, null, null, null),
@@ -342,6 +343,7 @@ function buildPlatforms(
 ): PlatformStatus[] {
   const aiGcp = hushhAi?.gcp;
   const aiSearch = hushhAi?.searchConsole;
+  const aiAuthUsers = hushhAi?.supabase?.metrics.find((row) => row.metricKey === 'auth_users');
   const traffic = hushhTech?.traffic?.overview;
   const audience = hushhTech?.audience;
   const search = hushhTech?.searchPerformance;
@@ -356,12 +358,16 @@ function buildPlatforms(
       name: 'hushh.ai',
       url: 'hushh.ai',
       color: '#1a73e8',
-      available: Boolean(aiGcp || aiSearch?.available),
+      available: Boolean(aiGcp || aiSearch?.available || aiAuthUsers),
       environment: 'production',
       productionReady: Boolean(aiGcp),
       knownBlockers: null,
-      visitors: aiGcp ? formatNumber(aiGcp.requestCount) : '—',
-      change: aiSearch?.available ? `${formatNumber(aiSearch.clicks)} search clicks` : `${formatNumber(aiGcp?.errorCount ?? 0)} non-2xx`,
+      visitors: aiGcp ? formatNumber(aiGcp.requestCount) : aiAuthUsers ? formatNumber(aiAuthUsers.value) : '—',
+      change: aiAuthUsers
+        ? `${formatNumber(aiAuthUsers.value)} auth users`
+        : aiSearch?.available
+          ? `${formatNumber(aiSearch.clicks)} search clicks`
+          : `${formatNumber(aiGcp?.errorCount ?? 0)} non-2xx`,
       avgSession: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : '—',
       bounceRate: formatPercent(aiGcp?.errorRate),
     },
@@ -407,6 +413,9 @@ function buildKpiStats(
   const gcp = hushhTech?.gcp;
   const aiGcp = hushhAi?.gcp;
   const aiSearch = hushhAi?.searchConsole;
+  const aiDatabaseMetric = (key: string) => hushhAi?.supabase?.metrics.find((row) => row.metricKey === key);
+  const authUsers = aiDatabaseMetric('auth_users');
+  const userProfileSync = aiDatabaseMetric('user_profile_sync');
   const kaiTopEvent = kaiGa4?.topEvents?.[0];
   const hushhTechSessions = firstNumber(audience?.sessions, traffic?.sessions);
   const hushhTechPageViews = firstNumber(audience?.pageViews, traffic?.screenPageViews);
@@ -435,6 +444,12 @@ function buildKpiStats(
       value: aiGcp ? formatNumber(aiGcp.requestCount) : '—',
       icon: 'Server',
       change: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : undefined,
+    },
+    {
+      label: 'Auth Users',
+      value: authUsers ? formatNumber(authUsers.value) : '—',
+      icon: 'ShieldCheck',
+      change: userProfileSync ? `${formatNumber(userProfileSync.value)} profile sync` : undefined,
     },
     {
       label: 'hushh.ai Search',
@@ -547,6 +562,14 @@ function buildHushhAiSearchMetrics(hushhAi: HushhAiSummary | null): BreakdownMet
       `${formatNumber(asNumber(row.impressions))} impressions`,
     )),
   ];
+}
+
+function buildHushhAiDatabaseMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  return (hushhAi?.supabase?.metrics ?? []).slice(0, 10).map((row) => metric(
+    row.label,
+    row.value,
+    [row.sourceTable, row.detail].filter(Boolean).join(' · '),
+  ));
 }
 
 function buildAcquisitionChannels(hushhTech: HushhTechMetricsSummary | null): AcquisitionChannel[] {
@@ -845,6 +868,7 @@ export async function fetchAllAnalytics(): Promise<DashboardData> {
     hushhAi,
     hushhAiOpsMetrics: buildHushhAiOpsMetrics(hushhAi),
     hushhAiSearchMetrics: buildHushhAiSearchMetrics(hushhAi),
+    hushhAiDatabaseMetrics: buildHushhAiDatabaseMetrics(hushhAi),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
     feedWarnings,
     platforms: buildPlatforms(kaiFeed, kaiUsage, hushhAi, hushhTech),

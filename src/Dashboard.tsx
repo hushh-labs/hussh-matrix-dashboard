@@ -303,6 +303,7 @@ export default function Dashboard() {
   const instrumentationHealth = data?.instrumentationHealth ?? [];
   const hushhAiOpsMetrics = data?.hushhAiOpsMetrics ?? [];
   const hushhAiSearchMetrics = data?.hushhAiSearchMetrics ?? [];
+  const hushhAiDatabaseMetrics = data?.hushhAiDatabaseMetrics ?? [];
   const hushhTechAudienceMetrics = data?.hushhTechAudienceMetrics ?? [];
   const hushhTechBusinessMetrics = data?.hushhTechBusinessMetrics ?? [];
   const hushhTechOpsMetrics = data?.hushhTechOpsMetrics ?? [];
@@ -395,6 +396,11 @@ export default function Dashboard() {
                 <MetricListCard title="Total Report" subtitle="Users, funnel, search, infra, and stored aggregates" items={hushhTechReportTotals} />
                 <MetricListCard title="Last 7 Days" subtitle="DAU, WAU, MAU, sessions, views, events, and engagement" items={hushhTechSevenDayMetrics} />
               </div>
+            </section>
+
+            <section>
+              <SectionHeader kicker="hushh.ai Supabase" title="Database truth metrics" />
+              <MetricListCard title="Top 10 Database Metrics" subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts" items={hushhAiDatabaseMetrics} />
             </section>
 
             <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_0.95fr]">
@@ -572,6 +578,7 @@ export default function Dashboard() {
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <MetricListCard title="Instrumentation Health" subtitle="Governed event schema coverage" items={instrumentationHealth} />
               <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
+              <MetricListCard title="hushh.ai Database" subtitle="Top Supabase aggregate counts" items={hushhAiDatabaseMetrics} />
               <MetricListCard title="hushhtech.com Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} />
             </section>
           </main>

@@ -386,9 +386,25 @@ export interface SearchConsoleSummary {
   countries: Array<SearchPerformanceMetric & { country: string }>;
 }
 
+export interface SupabaseMetricSummary {
+  metricKey: string;
+  label: string;
+  value: number;
+  sourceTable: string;
+  detail: string;
+}
+
+export interface HushhAiSupabaseSummary {
+  sourceProjectRef: string;
+  sourceProjectName: string;
+  generatedAt: string;
+  metrics: SupabaseMetricSummary[];
+}
+
 export interface HushhAiSummary {
   gcp: CloudRunSummary | null;
   searchConsole: SearchConsoleSummary | null;
+  supabase?: HushhAiSupabaseSummary | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +444,7 @@ export interface DashboardData {
   hushhAi: HushhAiSummary | null;
   hushhAiOpsMetrics: BreakdownMetric[];
   hushhAiSearchMetrics: BreakdownMetric[];
+  hushhAiDatabaseMetrics: BreakdownMetric[];
   dataQualityWarnings: string[];
   feedWarnings: string[];
 

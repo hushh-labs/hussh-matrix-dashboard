@@ -48,6 +48,10 @@ const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDO
 const HUSHH_AI_SEARCH_PROJECT = process.env.HUSHH_AI_SEARCH_PROJECT || BQ_PROD_PROJECT;
 const HUSHH_AI_SEARCH_DATASET =
   process.env.HUSHH_AI_SEARCH_DATASET || 'searchconsole_searchconsole_hushh_ai';
+const HUSHH_AI_SUPABASE_PROJECT_REF =
+  process.env.HUSHH_AI_SUPABASE_PROJECT_REF || 'ibsisfnjxeowvdtvgzff';
+const HUSHH_AI_SUPABASE_ACCESS_TOKEN =
+  process.env.HUSHH_AI_SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_PAT || '';
 
 // ---------------------------------------------------------------------------
 // BigQuery helper — uses Application Default Credentials (ADC)
@@ -501,6 +505,98 @@ async function fetchHushhAiSearchConsole(): Promise<DataResult<Record<string, un
   };
 }
 
+async function fetchHushhAiSupabaseSummary(): Promise<DataResult<Record<string, unknown>>> {
+  if (!HUSHH_AI_SUPABASE_ACCESS_TOKEN) {
+    return { data: null, error: 'HUSHH_AI_SUPABASE_ACCESS_TOKEN is not configured' };
+  }
+
+  const query = `
+    SELECT * FROM (
+      SELECT 1 AS sort_order, 'auth_users' AS metric_key, 'Auth Users' AS label,
+        (SELECT COUNT(*) FROM auth.users)::bigint AS value,
+        'auth.users' AS source_table,
+        'Supabase Authentication users' AS detail
+      UNION ALL SELECT 2, 'user_profile_sync', 'User Profile Sync',
+        LEAST((SELECT COUNT(*) FROM public.users), (SELECT COUNT(*) FROM public.consumer_profiles))::bigint,
+        'public.users + public.consumer_profiles',
+        CONCAT((SELECT COUNT(*) FROM public.users), ' users / ', (SELECT COUNT(*) FROM public.consumer_profiles), ' consumer profiles')
+      UNION ALL SELECT 3, 'community_registrations', 'Community Registrations',
+        (SELECT COUNT(*) FROM public.community_registrations)::bigint,
+        'public.community_registrations',
+        'community demand capture'
+      UNION ALL SELECT 4, 'agent_profiles', 'Agent Profiles',
+        (SELECT COUNT(*) FROM public.agent_profiles)::bigint,
+        'public.agent_profiles',
+        CONCAT((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'agent_profiles'), ' columns in profile schema')
+      UNION ALL SELECT 5, 'agent_catalog', 'Agent Catalog',
+        (SELECT COUNT(*) FROM public.kirkland_agents)::bigint,
+        'public.kirkland_agents',
+        'available Kirkland agent catalog'
+      UNION ALL SELECT 6, 'investor_profiles', 'Investor Profiles',
+        (SELECT COUNT(*) FROM public.investor_profiles)::bigint,
+        'public.investor_profiles',
+        'investor profile records'
+      UNION ALL SELECT 7, 'onboarding_records', 'Onboarding Records',
+        (SELECT COUNT(*) FROM public.onboarding_data)::bigint,
+        'public.onboarding_data',
+        'submitted onboarding records'
+      UNION ALL SELECT 8, 'agent_selections', 'Agent Selections',
+        (SELECT COUNT(*) FROM public.user_agent_selections)::bigint,
+        'public.user_agent_selections',
+        'user-agent selections'
+      UNION ALL SELECT 9, 'nda_signatures', 'NDA Signatures',
+        (SELECT COUNT(*) FROM public.nda_signatures)::bigint,
+        'public.nda_signatures',
+        'signed NDA records'
+      UNION ALL SELECT 10, 'plaid_transactions', 'Plaid Transactions',
+        (SELECT COUNT(*) FROM public.plaid_transactions)::bigint,
+        'public.plaid_transactions',
+        'synced Plaid transaction rows'
+    ) metrics
+    ORDER BY sort_order
+  `;
+
+  try {
+    const res = await fetch(`https://api.supabase.com/v1/projects/${HUSHH_AI_SUPABASE_PROJECT_REF}/database/query`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${HUSHH_AI_SUPABASE_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) {
+      const message = `Hushh AI Supabase metrics returned ${res.status}`;
+      console.error(message);
+      return { data: null, error: message };
+    }
+
+    const rows = await res.json() as Array<Record<string, unknown>>;
+    return {
+      data: {
+        sourceProjectRef: HUSHH_AI_SUPABASE_PROJECT_REF,
+        sourceProjectName: 'hushh-ai',
+        generatedAt: new Date().toISOString(),
+        metrics: rows.map((row) => ({
+          metricKey: row.metric_key,
+          label: row.label,
+          value: toNumber(row.value),
+          sourceTable: row.source_table,
+          detail: row.detail,
+        })),
+      },
+      error: null,
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('Hushh AI Supabase metrics failed:', message);
+    return { data: null, error: message };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // API routes
 // ---------------------------------------------------------------------------
@@ -546,16 +642,18 @@ app.get('/api/analytics/kai/ga4', async (_req, res) => {
 });
 
 app.get('/api/analytics/hushhai', async (_req, res) => {
-  const [gcp, searchConsole] = await Promise.all([
+  const [gcp, searchConsole, supabase] = await Promise.all([
     fetchHushhAiCloudRun(),
     fetchHushhAiSearchConsole(),
+    fetchHushhAiSupabaseSummary(),
   ]);
-  const error = [gcp.error, searchConsole.error].filter(Boolean).join('; ') || null;
-  res.status(error && !gcp.data && !searchConsole.data ? 502 : 200).json({
+  const error = [gcp.error, searchConsole.error, supabase.error].filter(Boolean).join('; ') || null;
+  res.status(error && !gcp.data && !searchConsole.data && !supabase.data ? 502 : 200).json({
     platform: 'hushh.ai',
     data: {
       gcp: gcp.data,
       searchConsole: searchConsole.data,
+      supabase: supabase.data,
     },
     error,
     fetchedAt: new Date().toISOString(),
@@ -563,12 +661,13 @@ app.get('/api/analytics/hushhai', async (_req, res) => {
 });
 
 app.get('/api/analytics/all', async (_req, res) => {
-  const [uat, production, kaiGa4, hushhAiGcp, hushhAiSearchConsole, hushhTech] = await Promise.all([
+  const [uat, production, kaiGa4, hushhAiGcp, hushhAiSearchConsole, hushhAiSupabase, hushhTech] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     fetchKaiGa4Summary(),
     fetchHushhAiCloudRun(),
     fetchHushhAiSearchConsole(),
+    fetchHushhAiSupabaseSummary(),
     fetchHushhTechAnalytics(),
   ]);
   res.json({
@@ -579,8 +678,8 @@ app.get('/api/analytics/all', async (_req, res) => {
     },
     hushhAi: {
       platform: 'hushh.ai',
-      data: { gcp: hushhAiGcp.data, searchConsole: hushhAiSearchConsole.data },
-      error: [hushhAiGcp.error, hushhAiSearchConsole.error].filter(Boolean).join('; ') || null,
+      data: { gcp: hushhAiGcp.data, searchConsole: hushhAiSearchConsole.data, supabase: hushhAiSupabase.data },
+      error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiSupabase.error].filter(Boolean).join('; ') || null,
     },
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
     fetchedAt: new Date().toISOString(),
@@ -598,6 +697,7 @@ app.get('/api/health', (_req, res) => {
       kaiGa4: `${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`,
       hushhAiCloudRun: `${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`,
       hushhAiSearchConsole: `${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}`,
+      hushhAiSupabase: HUSHH_AI_SUPABASE_PROJECT_REF,
       hushhTechEndpoint: buildHushhTechUrl(),
     },
   });
@@ -619,5 +719,6 @@ app.listen(PORT, () => {
   console.log(`  BigQuery Prod: ${BQ_PROD_PROJECT}.${BQ_PROD_DATASET}.${BQ_PROD_VIEW}`);
   console.log(`  Kai GA4:       ${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`);
   console.log(`  Hush AI GCP:   ${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`);
+  console.log(`  Hush AI DB:    ${HUSHH_AI_SUPABASE_PROJECT_REF}`);
   console.log(`  hushhtech.com: ${buildHushhTechUrl()}`);
 });
