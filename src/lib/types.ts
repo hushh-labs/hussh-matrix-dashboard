@@ -350,7 +350,21 @@ export interface KaiGa4GeoMetric {
 export interface KaiGa4Summary {
   sourceProjectId: string;
   sourceDataset: string;
+  generatedAt?: string;
+  realtimeMode?: string;
+  expectedLagSeconds?: number | null;
+  available?: boolean;
   windowDays: number;
+  range?: {
+    startDate: string;
+    endDate: string;
+    days: number;
+  };
+  rangeTotals?: {
+    users: number;
+    sessions: number;
+    events: number;
+  };
   daily: KaiGa4DailyMetric[];
   topEvents: KaiGa4EventMetric[];
   geo: KaiGa4GeoMetric[];
@@ -487,6 +501,35 @@ export interface HushhAiFreshness {
   sources: HushhAiFreshnessSource[];
 }
 
+export type ProductFreshness = HushhAiFreshness;
+
+export interface KaiProductionFeedSummary {
+  rows: FeedRow[];
+  status: FeedStatus;
+}
+
+export interface KaiProductionSummary {
+  productionFeed: KaiProductionFeedSummary;
+  uatFeed: KaiProductionFeedSummary;
+  uatGa4: KaiGa4Summary | null;
+  productionGa4: KaiGa4Summary | null;
+  gcp: CloudRunSummary | null;
+  freshness?: ProductFreshness | null;
+}
+
+export interface KaiDailyStatusPoint {
+  date: string;
+  label: string;
+  users: number;
+  sessions: number;
+  events: number;
+  requests: number;
+  errors: number;
+  errorRate: number | null;
+  p95LatencyMs: number | null;
+  instanceCount: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // Aggregated dashboard state
 // ---------------------------------------------------------------------------
@@ -510,6 +553,10 @@ export interface DashboardData {
   featureEngagement: BreakdownMetric[];
   instrumentationHealth: BreakdownMetric[];
   kaiGa4: KaiGa4Summary | null;
+  kaiProduction: KaiProductionSummary | null;
+  kaiProductionDailyStatus: KaiDailyStatusPoint[];
+  kaiProductionDailySummaryMetrics: BreakdownMetric[];
+  kaiProductionReadinessMetrics: BreakdownMetric[];
 
   // hushhtech.com public metrics
   hushhTech: HushhTechMetricsSummary | null;

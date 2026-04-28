@@ -65,6 +65,7 @@ Current platform sources:
 | Kai | BigQuery public feed | UAT dashboard metrics, funnel, usage, engagement, geo, and instrumentation health |
 | Kai | GA4 BigQuery export | UAT GA4 aggregates from `hushh-pda-uat.analytics_533362555` |
 | Kai | Production feed | Status-only until the production GA4 export dataset materializes |
+| Kai | Production Cloud Run Monitoring | `kai.hushh.ai` requests, non-2xx, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp` |
 | HushhTech | Public summary endpoint | `GET /api/metrics/summary?window_days=7` from the HushhTech Cloud Run service |
 
 ## DNS Record
@@ -130,7 +131,7 @@ why some sections may show neutral empty states:
 
 | Area | Gap | Required action |
 | --- | --- | --- |
-| Kai production | `hushh-pda.analytics_526603671` is not materialized | Enable or repair the production GA4 BigQuery export |
+| Kai production | `hushh-pda.analytics_526603671` is not materialized | Enable or repair the production GA4 BigQuery export; Cloud Run production metrics are still available |
 | Kai production | Hosted frontend still needs production web tag redeploy | Redeploy Kai with the production measurement ID already configured in secrets |
 | HushhTech GA4 | Numeric GA4 property ID is not configured | Add the numeric property ID, not only the `G-...` measurement ID |
 | HushhTech Search Console | Runtime service account still needs property access | Grant the Cloud Run runtime identity access to the correct Search Console property |

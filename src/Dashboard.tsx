@@ -44,6 +44,7 @@ import type {
   HushhAiDailyStatusPoint,
   HushhAiFreshness,
   HushhAiFreshnessSource,
+  KaiDailyStatusPoint,
   KpiStat,
   PlatformStatus,
 } from './lib/types';
@@ -275,10 +276,12 @@ function DateRangeControl({
   range,
   onPreset,
   onCustomRange,
+  ariaLabelPrefix = 'Product',
 }: {
   range: HushhAiDateRangeState;
   onPreset: (days: DatePreset) => void;
   onCustomRange: (next: HushhAiDateRangeState) => void;
+  ariaLabelPrefix?: string;
 }) {
   const today = toDateInputValue(new Date());
   const presets: DatePreset[] = [7, 14, 30, 90];
@@ -308,7 +311,7 @@ function DateRangeControl({
             max={today}
             onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', startDate: event.target.value }))}
             className="min-w-0 flex-1 bg-transparent text-xs font-bold text-[#1d1d1f] outline-none"
-            aria-label="Hushh AI start date"
+            aria-label={`${ariaLabelPrefix} start date`}
           />
         </label>
         <label className="flex min-h-10 items-center rounded-lg bg-[#f5f5f7] px-2 text-xs font-bold text-[#6e6e73]">
@@ -318,7 +321,7 @@ function DateRangeControl({
             max={today}
             onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', endDate: event.target.value }))}
             className="min-w-0 flex-1 bg-transparent text-xs font-bold text-[#1d1d1f] outline-none"
-            aria-label="Hushh AI end date"
+            aria-label={`${ariaLabelPrefix} end date`}
           />
         </label>
       </div>
@@ -346,13 +349,19 @@ function ChartShell({
   );
 }
 
-function HushhAiLivePanel({
+function ProductLivePanel({
+  kicker,
+  title,
+  refreshingLabel,
   freshness,
   lastUpdated,
   autoRefresh,
   isRefreshing,
   onToggleAutoRefresh,
 }: {
+  kicker: string;
+  title: string;
+  refreshingLabel: string;
   freshness: HushhAiFreshness | null | undefined;
   lastUpdated: string | null | undefined;
   autoRefresh: boolean;
@@ -366,8 +375,8 @@ function HushhAiLivePanel({
     <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#86868b]">Hushh AI live mode</p>
-          <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-[#1d1d1f]">Fresh on refresh, auto-updating every {refreshSeconds}s</h3>
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#86868b]">{kicker}</p>
+          <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-[#1d1d1f]">{title} · auto-updating every {refreshSeconds}s</h3>
           <p className="mt-2 text-sm font-medium leading-6 text-[#6e6e73]">
             Last dashboard pull: {formatTimestamp(lastUpdated)} · {formatAge(lastUpdated)}
           </p>
@@ -406,7 +415,7 @@ function HushhAiLivePanel({
       {isRefreshing && (
         <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#e8f2ff] px-3 py-1.5 text-xs font-bold text-[#005eb8]">
           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-          Refreshing Hushh AI sources
+          {refreshingLabel}
         </div>
       )}
     </div>
@@ -449,6 +458,51 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatDurationFromMinutes(row.avgSessionMinutes)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.deletedUsers + row.deleteRequests)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.requests)}</td>
+                  <td className="border-b border-black/5 py-3 pl-4 text-right">{row.p95LatencyMs ? `${Math.round(row.p95LatencyMs)}ms` : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
+  return (
+    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+      <div className="mb-5">
+        <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">Kai Daily Status</h3>
+        <p className="mt-1 text-sm font-medium text-[#86868b]">Production users, sessions, events, requests, and reliability by date</p>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState>No Kai production daily rows available yet.</EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
+            <thead>
+              <tr className="text-xs font-bold uppercase tracking-[0.1em] text-[#86868b]">
+                <th className="border-b border-black/5 py-3 pr-4">Date</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Users</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Sessions</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Events</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Requests</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Non-2xx</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">Error Rate</th>
+                <th className="border-b border-black/5 py-3 pl-4 text-right">P95</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.users)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.sessions)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.events)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.requests)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.errors)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{row.errorRate == null ? '—' : `${(row.errorRate * 100).toFixed(3)}%`}</td>
                   <td className="border-b border-black/5 py-3 pl-4 text-right">{row.p95LatencyMs ? `${Math.round(row.p95LatencyMs)}ms` : '—'}</td>
                 </tr>
               ))}
@@ -552,6 +606,7 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'overview' | 'platforms'>('overview');
+  const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -566,6 +621,8 @@ export default function Dashboard() {
       setLoading(true);
     }
     const result = await fetchAllAnalytics({
+      kaiStartDate: kaiRange.startDate,
+      kaiEndDate: kaiRange.endDate,
       hushhAiStartDate: hushhAiRange.startDate,
       hushhAiEndDate: hushhAiRange.endDate,
     });
@@ -573,13 +630,16 @@ export default function Dashboard() {
     setData(result);
     setLoading(false);
     setIsRefreshing(false);
-  }, [hushhAiRange.endDate, hushhAiRange.startDate]);
+  }, [hushhAiRange.endDate, hushhAiRange.startDate, kaiRange.endDate, kaiRange.startDate]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const liveRefreshSeconds = data?.hushhAi?.freshness?.refreshIntervalSeconds ?? 30;
+  const liveRefreshSeconds = Math.min(
+    data?.kaiProduction?.freshness?.refreshIntervalSeconds ?? 30,
+    data?.hushhAi?.freshness?.refreshIntervalSeconds ?? 30,
+  );
 
   useEffect(() => {
     if (!autoRefresh) return undefined;
@@ -601,6 +661,11 @@ export default function Dashboard() {
   const kaiUsageMetrics = data?.kaiUsageMetrics ?? [];
   const kaiEventMetrics = data?.kaiEventMetrics ?? [];
   const kaiGeoMetrics = data?.kaiGeoMetrics ?? [];
+  const kaiProductionDailyStatus = data?.kaiProductionDailyStatus ?? [];
+  const kaiProductionDailySummaryMetrics = data?.kaiProductionDailySummaryMetrics ?? [];
+  const kaiProductionReadinessMetrics = data?.kaiProductionReadinessMetrics ?? [];
+  const kaiProductionFreshness = data?.kaiProduction?.freshness;
+  const kaiProductionGa4Available = Boolean(data?.kaiProduction?.productionGa4?.available);
   const platformMix = data?.platformMix ?? [];
   const featureEngagement = data?.featureEngagement ?? [];
   const instrumentationHealth = data?.instrumentationHealth ?? [];
@@ -698,6 +763,87 @@ export default function Dashboard() {
 
             <section>
               <SectionHeader
+                kicker="kai.hushh.ai"
+                title="Production daily status matrix"
+                action={(
+                  <DateRangeControl
+                    range={kaiRange}
+                    onPreset={(days) => setKaiRange(rangeForPreset(days))}
+                    onCustomRange={setKaiRange}
+                    ariaLabelPrefix="Kai production"
+                  />
+                )}
+              />
+              <div className="mb-4">
+                <ProductLivePanel
+                  kicker="Kai live mode"
+                  title="Fresh on refresh"
+                  refreshingLabel="Refreshing Kai production sources"
+                  freshness={kaiProductionFreshness}
+                  lastUpdated={data?.lastUpdated}
+                  autoRefresh={autoRefresh}
+                  isRefreshing={isRefreshing}
+                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
+                <MetricListCard
+                  title="Production Range Summary"
+                  subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
+                  items={kaiProductionDailySummaryMetrics}
+                />
+                <ChartShell title="Users, Sessions, Events" subtitle="Production GA4 export; shows waiting until analytics_526603671 materializes">
+                  {!kaiProductionGa4Available ? (
+                    <EmptyState>Production GA4 export is not ready yet. Cloud Run production traffic is shown below.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                        <CartesianGrid stroke="#ececf0" vertical={false} />
+                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                        <Bar dataKey="users" name="Users" fill="#12b5cb" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="sessions" name="Sessions" fill="#007aff" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="events" name="Events" fill="#af52de" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+                <ChartShell title="Production Traffic + Reliability" subtitle="Cloud Run requests, non-2xx responses, and latency context">
+                  {kaiProductionDailyStatus.length === 0 ? (
+                    <EmptyState>No Kai production traffic rows available yet.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="kaiProdRequests" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#12b5cb" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#12b5cb" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="kaiProdErrors" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
+                            <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="#ececf0" vertical={false} />
+                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Area type="monotone" dataKey="requests" name="Requests" stroke="#12b5cb" strokeWidth={2.5} fill="url(#kaiProdRequests)" />
+                        <Area type="monotone" dataKey="errors" name="Non-2xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#kaiProdErrors)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+                <MetricListCard title="Production Readiness" subtitle="GA4 export, production feed, and UAT validation context" items={kaiProductionReadinessMetrics} />
+                <div className="xl:col-span-2">
+                  <KaiDailyStatusTable rows={kaiProductionDailyStatus} />
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <SectionHeader
                 kicker="hushh.ai"
                 title="Daily status matrix"
                 action={(
@@ -705,11 +851,15 @@ export default function Dashboard() {
                     range={hushhAiRange}
                     onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
                     onCustomRange={setHushhAiRange}
+                    ariaLabelPrefix="Hushh AI"
                   />
                 )}
               />
               <div className="mb-4">
-                <HushhAiLivePanel
+                <ProductLivePanel
+                  kicker="Hushh AI live mode"
+                  title="Fresh on refresh"
+                  refreshingLabel="Refreshing Hushh AI sources"
                   freshness={hushhAiFreshness}
                   lastUpdated={data?.lastUpdated}
                   autoRefresh={autoRefresh}

@@ -75,9 +75,10 @@ Run the Hushh AI production probe instead of manually clicking through the hoste
 
 ```bash
 npm run test:prod:hushh-ai
+npm run test:prod:kai
 ```
 
-The probe verifies DNS, the dashboard root, `/api/health`, `/api/analytics/hushhai`, `/api/analytics/all`, no-store API cache headers, and the Hushh AI freshness payload. If a dictated alias such as `matrix.hush.ai` is provided, the check reports the literal DNS status and verifies the canonical `metrics.hushh.ai` deployment.
+The probes verify DNS, product roots, the dashboard health endpoint, product analytics endpoints, `/api/analytics/all`, no-store API cache headers, and product freshness payloads. If a dictated alias such as `matrix.hush.ai` or `kai.hush.ai` is provided, the checks report the literal DNS status and verify the canonical deployment.
 
 ## Data Flow
 
@@ -85,6 +86,7 @@ The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai UAT feed**: DAU, WAU, MAU, sessions, events, investor/RIA funnels, platform mix
 - **Kai raw GA4 export**: top events, users, sessions, country, device, and platform aggregates from `analytics_533362555`
 - **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
+- **Kai Production Cloud Run**: `kai.hushh.ai` requests, non-2xx, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp`
 - **hushh.ai**: Cloud Run request, latency, instance, Search Console export-table status, top Supabase aggregate counts, and date-range daily status from Auth users, Auth sessions, delete requests, product usage, and analytics events
 - **hushhtech.com**: Public-safe summary from `GET /api/metrics/summary?window_days=7`, including audience, search, business funnel, activity, traffic, Search Console shape, GCP Monitoring, system health, and data coverage.
 

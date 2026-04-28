@@ -42,6 +42,11 @@ const HUSHHTECH_WINDOW_DAYS = process.env.HUSHHTECH_METRICS_WINDOW_DAYS || '7';
 const KAI_GA4_PROJECT = process.env.KAI_GA4_PROJECT || BQ_UAT_PROJECT;
 const KAI_GA4_DATASET = process.env.KAI_GA4_DATASET || 'analytics_533362555';
 const KAI_GA4_WINDOW_DAYS = parseInt(process.env.KAI_GA4_WINDOW_DAYS || '14', 10);
+const KAI_PROD_GA4_PROJECT = process.env.KAI_PROD_GA4_PROJECT || BQ_PROD_PROJECT;
+const KAI_PROD_GA4_DATASET = process.env.KAI_PROD_GA4_DATASET || 'analytics_526603671';
+const KAI_PROD_GCP_PROJECT = process.env.KAI_PROD_GCP_PROJECT || BQ_PROD_PROJECT;
+const KAI_PROD_CLOUD_RUN_SERVICE = process.env.KAI_PROD_CLOUD_RUN_SERVICE || 'hushh-webapp';
+const KAI_PROD_METRICS_WINDOW_DAYS = parseInt(process.env.KAI_PROD_METRICS_WINDOW_DAYS || '7', 10);
 const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod';
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
@@ -97,13 +102,17 @@ function firstQueryValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-function parseHushhAiDateRange(query: Record<string, unknown>): HushhAiDateRange {
+function parseProductDateRange(
+  query: Record<string, unknown>,
+  prefix: string,
+  configuredWindowDays: number,
+): HushhAiDateRange {
   const today = new Date();
   const endDefault = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  const configuredDays = Number(firstQueryValue(query.hushh_ai_window_days) ?? firstQueryValue(query.window_days) ?? HUSHH_AI_METRICS_WINDOW_DAYS);
-  const defaultDays = Math.min(Math.max(Number.isFinite(configuredDays) ? Math.floor(configuredDays) : HUSHH_AI_METRICS_WINDOW_DAYS, 1), MAX_HUSHH_AI_RANGE_DAYS);
-  const explicitStart = parseUtcDate(firstQueryValue(query.hushh_ai_start_date) ?? firstQueryValue(query.start_date));
-  const explicitEnd = parseUtcDate(firstQueryValue(query.hushh_ai_end_date) ?? firstQueryValue(query.end_date));
+  const configuredDays = Number(firstQueryValue(query[`${prefix}_window_days`]) ?? firstQueryValue(query.window_days) ?? configuredWindowDays);
+  const defaultDays = Math.min(Math.max(Number.isFinite(configuredDays) ? Math.floor(configuredDays) : configuredWindowDays, 1), MAX_HUSHH_AI_RANGE_DAYS);
+  const explicitStart = parseUtcDate(firstQueryValue(query[`${prefix}_start_date`]) ?? firstQueryValue(query.start_date));
+  const explicitEnd = parseUtcDate(firstQueryValue(query[`${prefix}_end_date`]) ?? firstQueryValue(query.end_date));
 
   let end = explicitEnd ?? endDefault;
   let start = explicitStart ?? addUtcDays(end, -(defaultDays - 1));
@@ -124,6 +133,14 @@ function parseHushhAiDateRange(query: Record<string, unknown>): HushhAiDateRange
     endTime: endExclusive.toISOString(),
     windowSeconds: Math.max(days * 86_400, 60),
   };
+}
+
+function parseHushhAiDateRange(query: Record<string, unknown>): HushhAiDateRange {
+  return parseProductDateRange(query, 'hushh_ai', HUSHH_AI_METRICS_WINDOW_DAYS);
+}
+
+function parseKaiDateRange(query: Record<string, unknown>): HushhAiDateRange {
+  return parseProductDateRange(query, 'kai', KAI_PROD_METRICS_WINDOW_DAYS);
 }
 
 function dateSpine(range: HushhAiDateRange): string[] {
@@ -292,11 +309,31 @@ function toNumber(value: unknown): number {
 }
 
 async function fetchKaiGa4Summary(): Promise<DataResult<Record<string, unknown>>> {
+  const end = new Date();
+  const endDate = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
   const windowDays = Number.isFinite(KAI_GA4_WINDOW_DAYS) ? KAI_GA4_WINDOW_DAYS : 14;
-  const table = `\`${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}.events_*\``;
-  const suffixStart = `FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL ${windowDays} DAY))`;
-  const suffixEnd = `FORMAT_DATE('%Y%m%d', CURRENT_DATE())`;
-  const dateFilter = `_TABLE_SUFFIX BETWEEN ${suffixStart} AND ${suffixEnd}`;
+  const range: HushhAiDateRange = {
+    startDate: formatUtcDate(addUtcDays(endDate, -(windowDays - 1))),
+    endDate: formatUtcDate(endDate),
+    days: windowDays,
+    startTime: addUtcDays(endDate, -(windowDays - 1)).toISOString(),
+    endTime: addUtcDays(endDate, 1).toISOString(),
+    windowSeconds: windowDays * 86_400,
+  };
+  return fetchKaiGa4ExportSummary(KAI_GA4_PROJECT, KAI_GA4_DATASET, range, false);
+}
+
+async function fetchKaiGa4ExportSummary(
+  projectId: string,
+  dataset: string,
+  range: HushhAiDateRange,
+  tolerateMissingDataset: boolean,
+): Promise<DataResult<Record<string, unknown>>> {
+  const generatedAt = new Date().toISOString();
+  const table = `\`${projectId}.${dataset}.events_*\``;
+  const suffixStart = range.startDate.replaceAll('-', '');
+  const suffixEnd = range.endDate.replaceAll('-', '');
+  const dateFilter = `_TABLE_SUFFIX BETWEEN '${suffixStart}' AND '${suffixEnd}'`;
 
   const dailyQuery = `
     SELECT
@@ -307,8 +344,15 @@ async function fetchKaiGa4Summary(): Promise<DataResult<Record<string, unknown>>
     FROM ${table}
     WHERE ${dateFilter}
     GROUP BY eventDate
-    ORDER BY eventDate DESC
-    LIMIT 30
+    ORDER BY eventDate
+  `;
+  const totalsQuery = `
+    SELECT
+      COUNT(*) AS events,
+      COUNT(DISTINCT user_pseudo_id) AS users,
+      COUNT(DISTINCT (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')) AS sessions
+    FROM ${table}
+    WHERE ${dateFilter}
   `;
   const eventsQuery = `
     SELECT
@@ -335,29 +379,81 @@ async function fetchKaiGa4Summary(): Promise<DataResult<Record<string, unknown>>
     LIMIT 20
   `;
 
-  const queryProject = BQ_JOB_PROJECT || KAI_GA4_PROJECT;
-  const [daily, topEvents, geo] = await Promise.all([
+  const queryProject = BQ_JOB_PROJECT || projectId;
+  const [daily, totals, topEvents, geo] = await Promise.all([
     queryBigQuerySql(queryProject, dailyQuery),
+    queryBigQuerySql(queryProject, totalsQuery),
     queryBigQuerySql(queryProject, eventsQuery),
     queryBigQuerySql(queryProject, geoQuery),
   ]);
-  const errors = [daily.error, topEvents.error, geo.error].filter(Boolean);
+  const errors = [daily.error, totals.error, topEvents.error, geo.error].filter(Boolean);
 
   if (daily.rows.length === 0 && topEvents.rows.length === 0 && geo.rows.length === 0 && errors.length > 0) {
+    if (tolerateMissingDataset) {
+      return {
+        data: {
+          sourceProjectId: projectId,
+          sourceDataset: dataset,
+          generatedAt,
+          realtimeMode: 'delayed_export',
+          expectedLagSeconds: 86_400,
+          available: false,
+          range: {
+            startDate: range.startDate,
+            endDate: range.endDate,
+            days: range.days,
+          },
+          rangeTotals: {
+            users: 0,
+            sessions: 0,
+            events: 0,
+          },
+          daily: dateSpine(range).map((date) => ({
+            eventDate: date,
+            events: 0,
+            users: 0,
+            sessions: 0,
+          })),
+          topEvents: [],
+          geo: [],
+        },
+        error: null,
+      };
+    }
     return { data: null, error: errors.join('; ') };
   }
 
+  const dailyByDate = new Map(daily.rows.map((row) => [String(row.eventDate), row]));
+  const totalsRow = totals.rows[0] ?? {};
+
   return {
     data: {
-      sourceProjectId: KAI_GA4_PROJECT,
-      sourceDataset: KAI_GA4_DATASET,
-      windowDays,
-      daily: daily.rows.map((row) => ({
-        eventDate: row.eventDate,
-        events: toNumber(row.events),
-        users: toNumber(row.users),
-        sessions: toNumber(row.sessions),
-      })),
+      sourceProjectId: projectId,
+      sourceDataset: dataset,
+      generatedAt,
+      realtimeMode: 'delayed_export',
+      expectedLagSeconds: 86_400,
+      available: daily.rows.length > 0 || topEvents.rows.length > 0 || geo.rows.length > 0,
+      windowDays: range.days,
+      range: {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        days: range.days,
+      },
+      rangeTotals: {
+        users: toNumber(totalsRow.users),
+        sessions: toNumber(totalsRow.sessions),
+        events: toNumber(totalsRow.events),
+      },
+      daily: dateSpine(range).map((date) => {
+        const row = dailyByDate.get(date) ?? {};
+        return {
+          eventDate: date,
+          events: toNumber(row.events),
+          users: toNumber(row.users),
+          sessions: toNumber(row.sessions),
+        };
+      }),
       topEvents: topEvents.rows.map((row) => ({
         eventName: row.eventName,
         events: toNumber(row.events),
@@ -452,11 +548,14 @@ function monitoringDailyMap(
   return values;
 }
 
-async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+async function fetchCloudRunSummary(
+  projectId: string,
+  serviceName: string,
+  range: HushhAiDateRange,
+  logLabel: string,
+): Promise<DataResult<Record<string, unknown>>> {
   try {
     const generatedAt = new Date().toISOString();
-    const serviceName = HUSHH_AI_CLOUD_RUN_SERVICE;
-    const projectId = HUSHH_AI_GCP_PROJECT;
     const [requests, errors, latency, instances, dailyRequests, dailyErrors, dailyLatency, dailyInstances] = await Promise.all([
       fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', range.windowSeconds, range),
       fetchMonitoringSeries(projectId, serviceName, 'run.googleapis.com/request_count', 'ALIGN_DELTA', 'REDUCE_SUM', range.windowSeconds, range, 'metric.labels.response_code_class="5xx"'),
@@ -513,9 +612,13 @@ async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('Hush AI Cloud Run metrics failed:', message);
+    console.error(`${logLabel} Cloud Run metrics failed:`, message);
     return { data: null, error: message };
   }
+}
+
+async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  return fetchCloudRunSummary(HUSHH_AI_GCP_PROJECT, HUSHH_AI_CLOUD_RUN_SERVICE, range, 'Hushh AI');
 }
 
 async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
@@ -647,6 +750,87 @@ function parseJsonField<T>(value: unknown, fallback: T): T {
     }
   }
   return value as T;
+}
+
+function timestampString(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && 'value' in value && typeof (value as { value?: unknown }).value === 'string') {
+    return (value as { value: string }).value;
+  }
+  return null;
+}
+
+function buildKaiFeedStatus(rows: Record<string, unknown>[]) {
+  const statusRows = rows.filter((row) => row.metric_group === 'status');
+  const get = (name: string) => statusRows.find((row) => row.metric_name === name);
+  return {
+    sourceEnvironment: String(get('source_environment')?.metric_string_value ?? ''),
+    sourceProjectId: String(get('source_project_id')?.metric_string_value ?? ''),
+    sourceDataset: String(get('source_dataset')?.metric_string_value ?? ''),
+    productionReady: get('production_ready')?.metric_string_value === 'true',
+    knownBlockers: typeof get('known_blockers')?.metric_string_value === 'string'
+      ? String(get('known_blockers')?.metric_string_value)
+      : null,
+    latestEventAt: timestampString(get('latest_event_at')?.metric_timestamp),
+    freshnessLagMinutes: get('freshness_lag_minutes')?.metric_value == null
+      ? null
+      : toNumber(get('freshness_lag_minutes')?.metric_value),
+    sourceEventRows: toNumber(get('source_event_rows')?.metric_count ?? get('source_event_rows')?.metric_value),
+    asOfTimestamp: timestampString(statusRows[0]?.as_of_timestamp),
+  };
+}
+
+function buildKaiFreshness(
+  fetchedAt: string,
+  productionRows: Record<string, unknown>[],
+  gcp: Record<string, unknown> | null,
+  productionGa4: Record<string, unknown> | null,
+) {
+  const feedStatus = buildKaiFeedStatus(productionRows);
+  const ga4Available = Boolean(productionGa4?.available);
+  return {
+    mode: 'polling',
+    refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
+    fetchedAt,
+    sources: [
+      {
+        key: 'cloud_run',
+        label: 'Cloud Run',
+        state: gcp ? 'near_live' : 'unavailable',
+        realtimeLevel: gcp ? 'monitoring_lag' : 'unavailable',
+        generatedAt: typeof gcp?.generatedAt === 'string' ? gcp.generatedAt : fetchedAt,
+        expectedLagSeconds: 300,
+        detail: gcp ? 'kai.hushh.ai Cloud Run metrics can lag by a few minutes' : 'Kai Cloud Run Monitoring unavailable',
+      },
+      {
+        key: 'production_feed',
+        label: 'Production Feed',
+        state: feedStatus.productionReady ? 'live' : 'waiting',
+        realtimeLevel: feedStatus.productionReady ? 'public_feed' : 'status_only',
+        generatedAt: feedStatus.asOfTimestamp ?? fetchedAt,
+        expectedLagSeconds: feedStatus.productionReady ? null : 86_400,
+        detail: feedStatus.productionReady ? 'production public feed is ready' : 'production feed is status-only until GA4 export materializes',
+      },
+      {
+        key: 'production_ga4',
+        label: 'Production GA4',
+        state: ga4Available ? 'delayed' : 'waiting',
+        realtimeLevel: 'delayed_export',
+        generatedAt: typeof productionGa4?.generatedAt === 'string' ? productionGa4.generatedAt : fetchedAt,
+        expectedLagSeconds: 86_400,
+        detail: ga4Available ? 'production GA4 export is available with daily export lag' : 'hushh-pda.analytics_526603671 is not visible/materialized yet',
+      },
+      {
+        key: 'uat_validation',
+        label: 'UAT Validation',
+        state: 'live',
+        realtimeLevel: 'validation_feed',
+        generatedAt: fetchedAt,
+        expectedLagSeconds: 86_400,
+        detail: 'UAT Kai feed remains available for validation, separate from production truth',
+      },
+    ],
+  };
 }
 
 function buildHushhAiFreshness(
@@ -966,6 +1150,38 @@ app.get('/api/analytics/kai/ga4', async (_req, res) => {
   });
 });
 
+app.get('/api/analytics/kai', async (req, res) => {
+  const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
+  const [production, uat, uatGa4, productionGa4, gcp] = await Promise.all([
+    queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
+    queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
+    fetchKaiGa4Summary(),
+    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
+    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
+  ]);
+  const fetchedAt = new Date().toISOString();
+  const error = [production.error, uat.error, uatGa4.error, productionGa4.error, gcp.error].filter(Boolean).join('; ') || null;
+  res.status(error && production.rows.length === 0 && !gcp.data && !productionGa4.data ? 502 : 200).json({
+    platform: 'kai.hushh.ai',
+    data: {
+      productionFeed: {
+        rows: production.rows,
+        status: buildKaiFeedStatus(production.rows),
+      },
+      uatFeed: {
+        rows: uat.rows,
+        status: buildKaiFeedStatus(uat.rows),
+      },
+      uatGa4: uatGa4.data,
+      productionGa4: productionGa4.data,
+      gcp: gcp.data,
+      freshness: buildKaiFreshness(fetchedAt, production.rows, gcp.data, productionGa4.data),
+    },
+    error,
+    fetchedAt,
+  });
+});
+
 app.get('/api/analytics/hushhai', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
   const [gcp, searchConsole, supabase] = await Promise.all([
@@ -990,10 +1206,13 @@ app.get('/api/analytics/hushhai', async (req, res) => {
 
 app.get('/api/analytics/all', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
-  const [uat, production, kaiGa4, hushhAiGcp, hushhAiSearchConsole, hushhAiSupabase, hushhTech] = await Promise.all([
+  const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
+  const [uat, production, kaiGa4, kaiProductionGa4, kaiProductionGcp, hushhAiGcp, hushhAiSearchConsole, hushhAiSupabase, hushhTech] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     fetchKaiGa4Summary(),
+    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
+    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
     fetchHushhAiSupabaseSummary(hushhAiRange),
@@ -1005,6 +1224,24 @@ app.get('/api/analytics/all', async (req, res) => {
       uat: { environment: 'uat', rows: uat.rows, error: uat.error },
       production: { environment: 'production', rows: production.rows, error: production.error },
       ga4: { platform: 'kai.hushh.ai', data: kaiGa4.data, error: kaiGa4.error },
+      productionProduct: {
+        platform: 'kai.hushh.ai',
+        data: {
+          productionFeed: {
+            rows: production.rows,
+            status: buildKaiFeedStatus(production.rows),
+          },
+          uatFeed: {
+            rows: uat.rows,
+            status: buildKaiFeedStatus(uat.rows),
+          },
+          uatGa4: kaiGa4.data,
+          productionGa4: kaiProductionGa4.data,
+          gcp: kaiProductionGcp.data,
+          freshness: buildKaiFreshness(fetchedAt, production.rows, kaiProductionGcp.data, kaiProductionGa4.data),
+        },
+        error: [production.error, uat.error, kaiGa4.error, kaiProductionGa4.error, kaiProductionGcp.error].filter(Boolean).join('; ') || null,
+      },
     },
     hushhAi: {
       platform: 'hushh.ai',
@@ -1030,6 +1267,8 @@ app.get('/api/health', (_req, res) => {
       bqProd: `${BQ_PROD_PROJECT}.${BQ_PROD_DATASET}.${BQ_PROD_VIEW}`,
       bqJobProject: BQ_JOB_PROJECT || '(feed project)',
       kaiGa4: `${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`,
+      kaiProductionGa4: `${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`,
+      kaiProductionCloudRun: `${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`,
       hushhAiCloudRun: `${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`,
       hushhAiSearchConsole: `${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}`,
       hushhAiSupabase: HUSHH_AI_SUPABASE_PROJECT_REF,
@@ -1053,6 +1292,8 @@ app.listen(PORT, () => {
   console.log(`  BigQuery UAT:  ${BQ_UAT_PROJECT}.${BQ_UAT_DATASET}.${BQ_UAT_VIEW}`);
   console.log(`  BigQuery Prod: ${BQ_PROD_PROJECT}.${BQ_PROD_DATASET}.${BQ_PROD_VIEW}`);
   console.log(`  Kai GA4:       ${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`);
+  console.log(`  Kai Prod GA4:  ${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`);
+  console.log(`  Kai GCP:       ${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`);
   console.log(`  Hush AI GCP:   ${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`);
   console.log(`  Hush AI DB:    ${HUSHH_AI_SUPABASE_PROJECT_REF}`);
   console.log(`  hushhtech.com: ${buildHushhTechUrl()}`);
