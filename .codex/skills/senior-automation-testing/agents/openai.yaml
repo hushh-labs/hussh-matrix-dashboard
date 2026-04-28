@@ -1,0 +1,4 @@
+interface:
+  display_name: "Senior Automation Testing"
+  short_description: "Build reliable automated test workflows"
+  default_prompt: "Use $senior-automation-testing to replace manual checks with API, UI, deployment, and production smoke automation."

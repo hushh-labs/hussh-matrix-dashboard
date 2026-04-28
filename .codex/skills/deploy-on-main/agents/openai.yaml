@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deploy On Main"
+  short_description: "Automate production deploys after merge"
+  default_prompt: "Use $deploy-on-main to set up or verify production deployment automation whenever a PR is merged to main."
