@@ -121,6 +121,32 @@ function assertNoSensitivePayload(body, label) {
   assert(!matched, `${label} payload appears to contain a raw secret`);
 }
 
+function assertPublicSafePayload(body, label) {
+  const text = JSON.stringify(body);
+  const unsafePattern = /sourceDataset|sourceProjectId|sourceProjectRef|sourceTable|analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda|ibsisfnjxeowvdtvgzff/i;
+  assert(!unsafePattern.test(text), `${label} exposes unsafe source identifiers`);
+}
+
+function metricFromCard(card, key) {
+  return card?.metrics?.find((metric) => metric.key === key);
+}
+
+function assertCardMetricEquals(card, key, expected) {
+  const metric = metricFromCard(card, key);
+  assert(metric, `${card?.key || 'source card'} missing ${key}`);
+  assert(toNumber(metric.value) === toNumber(expected), `${card.key} ${key} does not match source value`, `${metric.value} !== ${expected}`);
+}
+
+function assertSourceSections(card, label, requiredKeys) {
+  assert(card, `${label} source card missing`);
+  const sections = Array.isArray(card.sections) ? card.sections : [];
+  for (const key of requiredKeys) {
+    const section = sections.find((item) => item.key === key);
+    assert(section, `${label} missing ${key} section`);
+    assert(Array.isArray(section.metrics) && section.metrics.length > 0, `${label} ${key} section has no metrics`);
+  }
+}
+
 async function fetchJson(url, timeoutMs) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -199,13 +225,15 @@ async function checkDashboardFlow(options) {
   const results = [];
   const health = await fetchJson(`${options.dashboardUrl}/api/health`, options.timeoutMs);
   assert(health.body?.status === 'ok', 'metrics dashboard health is not ok');
-  assert(String(health.body?.config?.hushhTechSearchConsoleFallback || '').includes(options.fallbackDataset), 'dashboard health missing fallback dataset config');
+  assert(health.body?.config?.hushhTechSearchConsoleFallback, 'dashboard health missing fallback config');
+  assertPublicSafePayload(health.body, 'dashboard health');
   results.push(result('dashboard-health-config', 'ok', `fallback=${health.body.config.hushhTechSearchConsoleFallback}`));
 
   const analytics = await fetchJson(`${options.dashboardUrl}/api/analytics/hushhtech?window_days=${options.windowDays}`, options.timeoutMs);
   assert(hasNoStore(analytics.response), 'dashboard HushhTech analytics endpoint is cacheable', analytics.response.headers.get('cache-control') || '');
   assert(analytics.body?.platform === 'hushhtech.com', 'dashboard HushhTech platform mismatch');
   assertNoSensitivePayload(analytics.body, 'dashboard HushhTech analytics');
+  assertPublicSafePayload(analytics.body, 'dashboard HushhTech analytics');
 
   const data = analytics.body?.data || {};
   const search = data.searchPerformance || {};
@@ -213,20 +241,33 @@ async function checkDashboardFlow(options) {
   assert(['metrics-hushh-ai-search-console-gcp-fallback', 'metrics-hushh-ai-search-console-bigquery'].includes(search.source), 'unexpected Search Console source', String(search.source || 'missing'));
   assert(search.metadata?.siteUrl === options.siteUrl, 'Search Console site URL mismatch', String(search.metadata?.siteUrl || 'missing'));
   assert(toNumber(search.overview?.impressions) >= options.minSearchImpressions, 'Search Console impressions are below the configured minimum', String(search.overview?.impressions ?? 0));
+  assert(search.overview.clicks >= 0, 'Search Console clicks must be numeric');
+  assert(search.overview.ctr == null || (search.overview.ctr >= 0 && search.overview.ctr <= 1), 'Search Console CTR out of range');
+  assert(search.overview.averagePosition == null || search.overview.averagePosition >= 1, 'Search Console average position invalid');
+  assert(Array.isArray(search.daily) && search.daily.length > 0, 'Search Console daily timeline rows are missing');
   assert(Array.isArray(search.queries) && search.queries.length > 0, 'Search Console query rows are missing');
   assert(Array.isArray(search.pages) && search.pages.length > 0, 'Search Console page rows are missing');
   assert(Array.isArray(search.countries) && search.countries.length > 0, 'Search Console country rows are missing');
   assert(Array.isArray(search.devices) && search.devices.length > 0, 'Search Console device rows are missing');
-
-  if (search.source === 'metrics-hushh-ai-search-console-gcp-fallback') {
-    assert(search.metadata?.sourceDataset === options.fallbackDataset, 'fallback Search Console dataset mismatch', String(search.metadata?.sourceDataset || 'missing'));
-  }
 
   const coverage = data.dataCoverage || {};
   assert(coverage.ga4Available === true, 'dashboard coverage says GA4 is unavailable');
   assert(coverage.gcpAvailable === true, 'dashboard coverage says GCP monitoring is unavailable');
   assert(coverage.searchConsoleAvailable === true, 'dashboard coverage says Search Console is unavailable');
   assert(coverage.supabaseAvailable === true, 'dashboard coverage says HushhTech database metrics are unavailable');
+
+  const cards = data.sourceCards || [];
+  const searchCard = cards.find((card) => card.key === 'search_console');
+  const ga4Card = cards.find((card) => card.key === 'ga4');
+  const eventsCard = cards.find((card) => card.key === 'product_events');
+  assertCardMetricEquals(searchCard, 'clicks', search.overview.clicks);
+  assertCardMetricEquals(searchCard, 'impressions', search.overview.impressions);
+  assertSourceSections(searchCard, 'HushhTech Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
+  assertCardMetricEquals(ga4Card, 'sessions', data.traffic?.overview?.sessions);
+  assert(Array.isArray(ga4Card?.sections) && ga4Card.sections.length >= 4, 'HushhTech GA4 sections missing');
+  assertSourceSections(ga4Card, 'HushhTech GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
+  assertCardMetricEquals(eventsCard, 'total_users', data.supabase?.rangeTotals?.totalUsers);
+  assertCardMetricEquals(eventsCard, 'analytics_events', data.supabase?.rangeTotals?.analyticsEvents);
 
   results.push(result(
     'dashboard-search-console',
@@ -237,6 +278,7 @@ async function checkDashboardFlow(options) {
 
   const aggregate = await fetchJson(`${options.dashboardUrl}/api/analytics/all?window_days=${options.windowDays}`, options.timeoutMs);
   assertNoSensitivePayload(aggregate.body?.hushhTech, 'aggregate HushhTech analytics');
+  assertPublicSafePayload(aggregate.body, 'aggregate analytics');
   assert(aggregate.body?.hushhTech?.data?.searchPerformance?.available === true, 'aggregate endpoint is missing HushhTech Search Console data');
   assert(!aggregate.body?.hushhAi?.data?.supabase, 'aggregate endpoint incorrectly attaches Supabase to hushh.ai');
   results.push(result('aggregate-metrics-flow', 'ok', 'HushhTech Search Console is present and hushh.ai has no Supabase block'));

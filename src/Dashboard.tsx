@@ -300,6 +300,7 @@ function MetricListCard({
 
 function SourceCard({ card }: { card: ProductSourceCard }) {
   const metricItems = card.metrics.slice(0, 4);
+  const sections = (card.sections ?? []).filter((section) => section.metrics.length > 0 || section.blocker);
   return (
     <div className="min-h-[214px] rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
       <div className="flex items-start justify-between gap-3">
@@ -312,22 +313,52 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
         </span>
       </div>
 
-      <div className="mt-5 grid grid-cols-2 gap-2">
-        {metricItems.length === 0 ? (
-          <div className="col-span-2 flex min-h-[84px] items-center rounded-lg bg-[#f5f5f7] px-3 text-sm font-semibold text-[#86868b]">
-            Waiting for aggregate event rows.
-          </div>
-        ) : (
-          metricItems.map((metricItem) => (
-            <div key={metricItem.key} className="min-h-[72px] rounded-lg bg-[#f5f5f7] p-3">
-              <p className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{metricItem.label}</p>
-              <p className="mt-2 truncate text-lg font-semibold tracking-[-0.03em] text-[#1d1d1f]">
-                {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
-              </p>
+      {sections.length > 0 ? (
+        <div className="mt-5 space-y-3">
+          {sections.map((section) => (
+            <div key={section.key} className="rounded-lg bg-[#f5f5f7] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{section.label}</p>
+                {section.status ? (
+                  <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', sourceStatusClass(section.status))}>
+                    {sourceStatusLabel(section.status)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {section.metrics.slice(0, 3).map((metricItem) => (
+                  <div key={`${section.key}-${metricItem.key}`} className="min-h-[54px] rounded-md bg-white/70 p-2">
+                    <p className="truncate text-[10px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{metricItem.label}</p>
+                    <p className="mt-1 truncate text-base font-semibold tracking-[-0.03em] text-[#1d1d1f]">
+                      {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {section.blocker ? (
+                <p className="mt-2 text-xs font-medium leading-5 text-[#6e6e73]">{section.blocker}</p>
+              ) : null}
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          {metricItems.length === 0 ? (
+            <div className="col-span-2 flex min-h-[84px] items-center rounded-lg bg-[#f5f5f7] px-3 text-sm font-semibold text-[#86868b]">
+              Waiting for aggregate event rows.
+            </div>
+          ) : (
+            metricItems.map((metricItem) => (
+              <div key={metricItem.key} className="min-h-[72px] rounded-lg bg-[#f5f5f7] p-3">
+                <p className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{metricItem.label}</p>
+                <p className="mt-2 truncate text-lg font-semibold tracking-[-0.03em] text-[#1d1d1f]">
+                  {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       <div className="mt-4 min-h-[40px] text-xs font-medium leading-5 text-[#6e6e73]">
         {card.blocker ? card.blocker : `Freshness: ${formatAge(card.freshness.generatedAt)}`}

@@ -134,6 +134,20 @@ export interface ProductSourceCardMetric {
   displayValue?: string;
 }
 
+export interface ProductSourceCardSection {
+  key: string;
+  label: string;
+  status?: ProductSourceStatus;
+  stateClass?: string;
+  source?: string;
+  freshness?: {
+    generatedAt: string;
+    expectedLagSeconds: number | null;
+  };
+  metrics: ProductSourceCardMetric[];
+  blocker?: string | null;
+}
+
 export interface ProductSourceCard {
   key: 'search_console' | 'ga4' | 'product_events' | string;
   label: string;
@@ -145,6 +159,7 @@ export interface ProductSourceCard {
     expectedLagSeconds: number | null;
   };
   metrics: ProductSourceCardMetric[];
+  sections?: ProductSourceCardSection[];
   blocker?: string | null;
 }
 
@@ -249,11 +264,19 @@ export interface HushhTechRegionalTraffic {
 
 export interface HushhTechSearchPerformance {
   source: string;
+  sourceLabel?: string;
   available: boolean;
   realtime: boolean;
   dataState: string;
   searchType: string;
   overview: SearchPerformance;
+  range?: {
+    startDate: string;
+    endDate: string;
+    days: number;
+  };
+  rangeTotals?: SearchPerformance;
+  daily?: Array<SearchPerformanceMetric & { date: string; label: string }>;
   queries: Array<SearchPerformanceMetric & { query: string }>;
   pages: Array<SearchPerformanceMetric & { pageUrl: string }>;
   countries: Array<SearchPerformanceMetric & { country: string }>;
@@ -389,8 +412,7 @@ export interface KaiGa4GeoMetric {
 }
 
 export interface KaiGa4Summary {
-  sourceProjectId: string;
-  sourceDataset: string;
+  sourceLabel?: string;
   generatedAt?: string;
   realtimeMode?: string;
   expectedLagSeconds?: number | null;
@@ -406,6 +428,7 @@ export interface KaiGa4Summary {
     sessions: number;
     events: number;
   };
+  sections?: ProductSourceCardSection[];
   daily: KaiGa4DailyMetric[];
   topEvents: KaiGa4EventMetric[];
   geo: KaiGa4GeoMetric[];
@@ -445,27 +468,30 @@ export interface CloudRunSummary {
 }
 
 export interface SearchConsoleSummary {
-  sourceProjectId: string;
-  sourceDataset: string;
+  sourceLabel?: string;
   generatedAt?: string;
   realtimeMode?: string;
   expectedLagSeconds?: number | null;
   startDate?: string;
   endDate?: string;
+  range?: {
+    startDate: string;
+    endDate: string;
+    days: number;
+  };
+  rangeTotals?: SearchPerformanceMetric;
   available: boolean;
   clicks: number;
   impressions: number;
   ctr: number | null;
   averagePosition: number | null;
+  daily?: Array<SearchPerformanceMetric & { date: string; label: string }>;
   queries: Array<SearchPerformanceMetric & { query: string }>;
   pages: Array<SearchPerformanceMetric & { pageUrl: string }>;
   countries: Array<SearchPerformanceMetric & { country: string }>;
   devices?: Array<SearchPerformanceMetric & { device: string }>;
   source?: string;
-  fallbackProjectId?: string;
-  fallbackDataset?: string;
   siteUrl?: string;
-  pageFilterRegex?: string | null;
   note?: string;
 }
 
@@ -473,12 +499,10 @@ export interface SupabaseMetricSummary {
   metricKey: string;
   label: string;
   value: number;
-  sourceTable: string;
   detail: string;
 }
 
 export interface HushhTechSupabaseSummary {
-  sourceProjectRef: string;
   sourceProjectName: string;
   sourceDatabaseName?: string;
   generatedAt: string;

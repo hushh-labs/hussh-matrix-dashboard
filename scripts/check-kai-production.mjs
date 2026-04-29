@@ -73,6 +73,27 @@ function assert(condition, message, details = undefined) {
   if (!condition) throw new Error(details ? `${message}: ${details}` : message);
 }
 
+function assertPublicSafePayload(body, label) {
+  const text = JSON.stringify(body);
+  const unsafePattern = /sourceDataset|sourceProjectId|sourceProjectRef|sourceTable|analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda|ibsisfnjxeowvdtvgzff/i;
+  assert(!unsafePattern.test(text), `${label} exposes unsafe source identifiers`);
+}
+
+function assertCardMetricPresent(card, key) {
+  assert(card, `source card missing for ${key}`);
+  assert(card.metrics?.some((metric) => metric.key === key), `${card.key} missing metric ${key}`);
+}
+
+function assertSourceSections(card, label, requiredKeys) {
+  assert(card, `${label} source card missing`);
+  const sections = Array.isArray(card.sections) ? card.sections : [];
+  for (const key of requiredKeys) {
+    const section = sections.find((item) => item.key === key);
+    assert(section, `${label} missing ${key} section`);
+    assert(Array.isArray(section.metrics) && section.metrics.length > 0, `${label} ${key} section has no metrics`);
+  }
+}
+
 async function checkJsonEndpoint(baseUrl, path, timeoutMs) {
   const response = await fetchWithTimeout(`${baseUrl}${path}`, timeoutMs);
   const text = await response.text();
@@ -124,6 +145,21 @@ async function main() {
   assert(kai.body?.platform === 'kai.hushh.ai', 'Kai analytics platform mismatch');
   assert(Array.isArray(kai.body?.data?.freshness?.sources), 'Kai freshness sources missing');
   assert(kai.body?.data?.gcp, 'Kai production Cloud Run metrics missing');
+  assertPublicSafePayload(kai.body, 'Kai analytics');
+  const data = kai.body?.data || {};
+  const search = data.searchConsole;
+  assert(search, 'Kai Search Console block missing');
+  assert(Number.isFinite(Number(search.clicks)), 'Kai Search Console clicks not numeric');
+  assert(Number.isFinite(Number(search.impressions)), 'Kai Search Console impressions not numeric');
+  assert(Array.isArray(search.daily), 'Kai Search Console daily timeline missing');
+  const searchCard = data.sourceCards?.find((card) => card.key === 'search_console');
+  const ga4Card = data.sourceCards?.find((card) => card.key === 'ga4');
+  const eventsCard = data.sourceCards?.find((card) => card.key === 'product_events');
+  assertSourceSections(searchCard, 'Kai Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
+  assert(Array.isArray(ga4Card?.sections) && ga4Card.sections.length >= 4, 'Kai GA4 sections missing');
+  assertSourceSections(ga4Card, 'Kai GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
+  for (const key of ['users', 'sessions', 'events']) assertCardMetricPresent(ga4Card, key);
+  for (const key of ['dau', 'wau', 'sessions', 'events']) assertCardMetricPresent(eventsCard, key);
   results.push({
     check: 'kai-analytics',
     status: 'ok',

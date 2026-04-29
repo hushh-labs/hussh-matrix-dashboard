@@ -79,6 +79,22 @@ function assert(condition, message, details = undefined) {
   }
 }
 
+function assertPublicSafePayload(body, label) {
+  const text = JSON.stringify(body);
+  const unsafePattern = /sourceDataset|sourceProjectId|sourceProjectRef|sourceTable|analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda|ibsisfnjxeowvdtvgzff/i;
+  assert(!unsafePattern.test(text), `${label} exposes unsafe source identifiers`);
+}
+
+function assertSourceSections(card, label, requiredKeys) {
+  assert(card, `${label} source card missing`);
+  const sections = Array.isArray(card.sections) ? card.sections : [];
+  for (const key of requiredKeys) {
+    const section = sections.find((item) => item.key === key);
+    assert(section, `${label} missing ${key} section`);
+    assert(Array.isArray(section.metrics) && section.metrics.length > 0, `${label} ${key} section has no metrics`);
+  }
+}
+
 async function checkJsonEndpoint(baseUrl, path, timeoutMs) {
   const response = await fetchWithTimeout(`${baseUrl}${path}`, timeoutMs);
   const text = await response.text();
@@ -130,6 +146,23 @@ async function main() {
   assert(cacheControl.includes('no-store'), 'Hushh AI analytics endpoint is cacheable', cacheControl);
   assert(hushhAi.body?.platform === 'hushh.ai', 'Hushh AI analytics platform mismatch');
   assert(Array.isArray(hushhAi.body?.data?.freshness?.sources), 'Hushh AI freshness sources missing');
+  assertPublicSafePayload(hushhAi.body, 'Hushh AI analytics');
+  const search = hushhAi.body?.data?.searchConsole;
+  assert(search, 'Hushh AI Search Console block missing');
+  assert(typeof search.available === 'boolean', 'Hushh AI Search Console availability missing');
+  assert(Number.isFinite(Number(search.clicks)), 'Hushh AI Search Console clicks not numeric');
+  assert(Number.isFinite(Number(search.impressions)), 'Hushh AI Search Console impressions not numeric');
+  assert(Array.isArray(search.daily), 'Hushh AI Search Console daily timeline missing');
+  const searchCard = hushhAi.body?.data?.sourceCards?.find((card) => card.key === 'search_console');
+  assertSourceSections(searchCard, 'Hushh AI Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
+  const ga4 = hushhAi.body?.data?.ga4;
+  assert(ga4, 'Hushh AI GA4 block missing');
+  assert(typeof ga4.available === 'boolean', 'Hushh AI GA4 availability missing');
+  assert(Array.isArray(ga4.sections) && ga4.sections.length >= 4, 'Hushh AI GA4 sections missing');
+  const ga4Card = hushhAi.body?.data?.sourceCards?.find((card) => card.key === 'ga4');
+  assertSourceSections(ga4Card, 'Hushh AI GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
+  const events = hushhAi.body?.data?.productEvents;
+  assert(events?.status === 'not_configured', 'Hushh AI DB product-events should be not_configured');
   results.push({
     check: 'hushh-ai-analytics',
     status: 'ok',
