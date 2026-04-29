@@ -43,6 +43,15 @@ HUSHHTECH_SEARCH_INGEST_JOB=hushhtech-search-console-ingest
 HUSHHTECH_SEARCH_INGEST_SA="hushhtech-gsc-ingest@$PROJECT.iam.gserviceaccount.com"
 HUSHHTECH_SEARCH_SCHEDULER_SA="hushhtech-gsc-scheduler@$PROJECT.iam.gserviceaccount.com"
 HUSHHTECH_SEARCH_OAUTH_SECRET=hushhtech-search-console-oauth
+SEARCH_CONSOLE_OAUTH_SECRET=metrics-dashboard-search-console-oauth
+HUSHH_AI_SEARCH_FALLBACK_DATASET=hushh_ai_search_console_api
+HUSHH_AI_SEARCH_INGEST_JOB=hushh-ai-search-console-ingest
+HUSHH_AI_SEARCH_INGEST_SA="hushh-ai-gsc-ingest@$PROJECT.iam.gserviceaccount.com"
+HUSHH_AI_SEARCH_SCHEDULER_SA="hushh-ai-gsc-scheduler@$PROJECT.iam.gserviceaccount.com"
+KAI_SEARCH_FALLBACK_DATASET=kai_search_console_api
+KAI_SEARCH_INGEST_JOB=kai-search-console-ingest
+KAI_SEARCH_INGEST_SA="kai-gsc-ingest@$PROJECT.iam.gserviceaccount.com"
+KAI_SEARCH_SCHEDULER_SA="kai-gsc-scheduler@$PROJECT.iam.gserviceaccount.com"
 ```
 
 ## Preflight
@@ -157,7 +166,23 @@ create_or_update_secret metrics-dashboard-hushh-ai-cloud-run-service hushh-ai-we
 create_or_update_secret metrics-dashboard-hushh-ai-window-days 7
 create_or_update_secret metrics-dashboard-hushh-ai-search-project hushh-pda
 create_or_update_secret metrics-dashboard-hushh-ai-search-dataset searchconsole_searchconsole_hushh_ai
+create_or_update_secret metrics-dashboard-hushh-ai-search-fallback-project hushh-ai-prod
+create_or_update_secret metrics-dashboard-hushh-ai-search-fallback-dataset hushh_ai_search_console_api
+create_or_update_secret metrics-dashboard-hushh-ai-search-console-site-url sc-domain:hushh.ai
+create_or_update_secret metrics-dashboard-hushh-ai-search-console-page-filter-regex '^https://(www\.)?hushh\.ai(/|$)'
+create_or_update_secret metrics-dashboard-hushh-ai-search-console-type web
+create_or_update_secret metrics-dashboard-hushh-ai-search-console-data-state all
+create_or_update_secret metrics-dashboard-hushh-ai-search-console-row-limit 10
 create_or_update_secret metrics-dashboard-hushh-ai-live-refresh-seconds 30
+create_or_update_secret metrics-dashboard-kai-search-project hushh-pda
+create_or_update_secret metrics-dashboard-kai-search-dataset searchconsole_searchconsole_hushh_ai
+create_or_update_secret metrics-dashboard-kai-search-fallback-project hushh-ai-prod
+create_or_update_secret metrics-dashboard-kai-search-fallback-dataset kai_search_console_api
+create_or_update_secret metrics-dashboard-kai-search-console-site-url sc-domain:hushh.ai
+create_or_update_secret metrics-dashboard-kai-search-console-page-filter-regex '^https://(uat\.)?kai\.hushh\.ai(/|$)'
+create_or_update_secret metrics-dashboard-kai-search-console-type web
+create_or_update_secret metrics-dashboard-kai-search-console-data-state all
+create_or_update_secret metrics-dashboard-kai-search-console-row-limit 10
 ```
 
 Create or rotate the HushhTech Supabase management token secret. Do not print
@@ -175,6 +200,14 @@ Supabase for Search Console metrics.
 
 ```bash
 create_or_update_secret "$HUSHHTECH_SEARCH_OAUTH_SECRET" "$HUSHHTECH_SEARCH_CONSOLE_OAUTH_JSON"
+```
+
+The reusable Hushh AI and Kai Search Console ingestion jobs use
+`metrics-dashboard-search-console-oauth`. Seed or rotate it from an owner/full
+Search Console authorized-user JSON for `sc-domain:hushh.ai`:
+
+```bash
+create_or_update_secret "$SEARCH_CONSOLE_OAUTH_SECRET" "$SEARCH_CONSOLE_OAUTH_JSON"
 ```
 
 Grant the ingestion job service account access only to the OAuth secret:
@@ -277,6 +310,68 @@ gcloud scheduler jobs pause hushhtech-search-console-ingest-daily \
   --location="$REGION"
 ```
 
+## Hushh AI and Kai Search Console Fallbacks
+
+Use the same aggregate-only ingestion script for Hushh AI and Kai. Both read
+from the `sc-domain:hushh.ai` domain property and separate products through
+page URL regex filters:
+
+```bash
+SEARCH_CONSOLE_FALLBACK_PROJECT="$PROJECT" \
+SEARCH_CONSOLE_FALLBACK_DATASET="$HUSHH_AI_SEARCH_FALLBACK_DATASET" \
+SEARCH_CONSOLE_SITE_URL="sc-domain:hushh.ai" \
+SEARCH_CONSOLE_PAGE_FILTER_REGEX='^https://(www\.)?hushh\.ai(/|$)' \
+npm run ingest:search-console -- --ensure-only
+
+SEARCH_CONSOLE_FALLBACK_PROJECT="$PROJECT" \
+SEARCH_CONSOLE_FALLBACK_DATASET="$KAI_SEARCH_FALLBACK_DATASET" \
+SEARCH_CONSOLE_SITE_URL="sc-domain:hushh.ai" \
+SEARCH_CONSOLE_PAGE_FILTER_REGEX='^https://(uat\.)?kai\.hushh\.ai(/|$)' \
+npm run ingest:search-console -- --ensure-only
+```
+
+Deploy the jobs from the same dashboard image. Use
+`metrics-dashboard-search-console-oauth` as `SEARCH_CONSOLE_OAUTH_JSON`, and set
+`SEARCH_CONSOLE_QUOTA_PROJECT=hushh-ai-prod`:
+
+```bash
+gcloud run jobs deploy "$HUSHH_AI_SEARCH_INGEST_JOB" \
+  --project="$PROJECT" \
+  --region="$REGION" \
+  --image="$IMAGE" \
+  --service-account="$HUSHH_AI_SEARCH_INGEST_SA" \
+  --memory=1Gi \
+  --cpu=1 \
+  --max-retries=1 \
+  --task-timeout=1800s \
+  --command=node \
+  --args=scripts/ingest-hushhtech-search-console.mjs,--days,16 \
+  --set-env-vars="SEARCH_CONSOLE_QUOTA_PROJECT=$PROJECT,SEARCH_CONSOLE_FALLBACK_PROJECT=$PROJECT,SEARCH_CONSOLE_FALLBACK_DATASET=$HUSHH_AI_SEARCH_FALLBACK_DATASET,SEARCH_CONSOLE_SITE_URL=sc-domain:hushh.ai,SEARCH_CONSOLE_PAGE_FILTER_REGEX=^https://(www\\.)?hushh\\.ai(/|$),SEARCH_CONSOLE_TYPE=web,SEARCH_CONSOLE_DATA_STATE=all" \
+  --set-secrets="SEARCH_CONSOLE_OAUTH_JSON=$SEARCH_CONSOLE_OAUTH_SECRET:latest"
+
+gcloud run jobs deploy "$KAI_SEARCH_INGEST_JOB" \
+  --project="$PROJECT" \
+  --region="$REGION" \
+  --image="$IMAGE" \
+  --service-account="$KAI_SEARCH_INGEST_SA" \
+  --memory=1Gi \
+  --cpu=1 \
+  --max-retries=1 \
+  --task-timeout=1800s \
+  --command=node \
+  --args=scripts/ingest-hushhtech-search-console.mjs,--days,16 \
+  --set-env-vars="SEARCH_CONSOLE_QUOTA_PROJECT=$PROJECT,SEARCH_CONSOLE_FALLBACK_PROJECT=$PROJECT,SEARCH_CONSOLE_FALLBACK_DATASET=$KAI_SEARCH_FALLBACK_DATASET,SEARCH_CONSOLE_SITE_URL=sc-domain:hushh.ai,SEARCH_CONSOLE_PAGE_FILTER_REGEX=^https://(uat\\.)?kai\\.hushh\\.ai(/|$),SEARCH_CONSOLE_TYPE=web,SEARCH_CONSOLE_DATA_STATE=all" \
+  --set-secrets="SEARCH_CONSOLE_OAUTH_JSON=$SEARCH_CONSOLE_OAUTH_SECRET:latest"
+```
+
+Run the one-time 90-day backfill once per job, then schedule the daily 16-day
+refresh through Cloud Scheduler:
+
+```bash
+gcloud run jobs execute "$HUSHH_AI_SEARCH_INGEST_JOB" --project="$PROJECT" --region="$REGION" --args=scripts/ingest-hushhtech-search-console.mjs,--days,90 --wait
+gcloud run jobs execute "$KAI_SEARCH_INGEST_JOB" --project="$PROJECT" --region="$REGION" --args=scripts/ingest-hushhtech-search-console.mjs,--days,90 --wait
+```
+
 ## Build And Deploy
 
 ```bash
@@ -296,7 +391,7 @@ gcloud run deploy "$SERVICE" \
   --min-instances=0 \
   --max-instances=3 \
   --clear-env-vars \
-  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_ANALYTICS_ENDPOINT=metrics-dashboard-hushhtech-endpoint:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,HUSHHTECH_GCP_PROJECT=metrics-dashboard-hushhtech-gcp-project:latest,HUSHHTECH_CLOUD_RUN_SERVICE=metrics-dashboard-hushhtech-cloud-run-service:latest,HUSHHTECH_CLOUD_RUN_REGION=metrics-dashboard-hushhtech-cloud-run-region:latest,HUSHHTECH_SEARCH_PROJECT=metrics-dashboard-hushhtech-search-project:latest,HUSHHTECH_SEARCH_DATASET=metrics-dashboard-hushhtech-search-dataset:latest,HUSHHTECH_SEARCH_FALLBACK_PROJECT=metrics-dashboard-hushhtech-search-fallback-project:latest,HUSHHTECH_SEARCH_FALLBACK_DATASET=metrics-dashboard-hushhtech-search-fallback-dataset:latest,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushhtech-search-console-site-url:latest,HUSHHTECH_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushhtech-search-console-type:latest,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushhtech-search-console-data-state:latest,HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushhtech-search-console-row-limit:latest,HUSHHTECH_SUPABASE_PROJECT_REF=metrics-dashboard-hushhtech-supabase-project-ref:latest,HUSHHTECH_SUPABASE_ACCESS_TOKEN=hushhtech-supabase-access-token:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest"
+  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_ANALYTICS_ENDPOINT=metrics-dashboard-hushhtech-endpoint:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,HUSHHTECH_GCP_PROJECT=metrics-dashboard-hushhtech-gcp-project:latest,HUSHHTECH_CLOUD_RUN_SERVICE=metrics-dashboard-hushhtech-cloud-run-service:latest,HUSHHTECH_CLOUD_RUN_REGION=metrics-dashboard-hushhtech-cloud-run-region:latest,HUSHHTECH_SEARCH_PROJECT=metrics-dashboard-hushhtech-search-project:latest,HUSHHTECH_SEARCH_DATASET=metrics-dashboard-hushhtech-search-dataset:latest,HUSHHTECH_SEARCH_FALLBACK_PROJECT=metrics-dashboard-hushhtech-search-fallback-project:latest,HUSHHTECH_SEARCH_FALLBACK_DATASET=metrics-dashboard-hushhtech-search-fallback-dataset:latest,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushhtech-search-console-site-url:latest,HUSHHTECH_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushhtech-search-console-type:latest,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushhtech-search-console-data-state:latest,HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushhtech-search-console-row-limit:latest,HUSHHTECH_SUPABASE_PROJECT_REF=metrics-dashboard-hushhtech-supabase-project-ref:latest,HUSHHTECH_SUPABASE_ACCESS_TOKEN=hushhtech-supabase-access-token:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,KAI_SEARCH_PROJECT=metrics-dashboard-kai-search-project:latest,KAI_SEARCH_DATASET=metrics-dashboard-kai-search-dataset:latest,KAI_SEARCH_FALLBACK_PROJECT=metrics-dashboard-kai-search-fallback-project:latest,KAI_SEARCH_FALLBACK_DATASET=metrics-dashboard-kai-search-fallback-dataset:latest,KAI_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-kai-search-console-site-url:latest,KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX=metrics-dashboard-kai-search-console-page-filter-regex:latest,KAI_SEARCH_CONSOLE_TYPE=metrics-dashboard-kai-search-console-type:latest,KAI_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-kai-search-console-data-state:latest,KAI_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-kai-search-console-row-limit:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_SEARCH_FALLBACK_PROJECT=metrics-dashboard-hushh-ai-search-fallback-project:latest,HUSHH_AI_SEARCH_FALLBACK_DATASET=metrics-dashboard-hushh-ai-search-fallback-dataset:latest,HUSHH_AI_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushh-ai-search-console-site-url:latest,HUSHH_AI_SEARCH_CONSOLE_PAGE_FILTER_REGEX=metrics-dashboard-hushh-ai-search-console-page-filter-regex:latest,HUSHH_AI_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushh-ai-search-console-type:latest,HUSHH_AI_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushh-ai-search-console-data-state:latest,HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushh-ai-search-console-row-limit:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest"
 ```
 
 ## Domain Mapping
@@ -357,5 +452,7 @@ Acceptance checks:
 - Supabase top 10 database metrics show aggregate counts only.
 - HushhTech Search Console metrics come from the official GCP export or
   `hushh-ai-prod.hushhtech_search_console_api`, never Supabase.
+- `/api/analytics/all` returns a normalized three-source matrix for Hushh AI,
+  Kai, and HushhTech with `search_console`, `ga4`, and `product_events` cards.
 - OTP rows, emails, raw diagnostics, and tokens are not visible.
 - Cloud Run revision logs show no auth or IAM failures.

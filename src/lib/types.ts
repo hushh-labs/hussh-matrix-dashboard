@@ -117,6 +117,45 @@ export interface BreakdownMetric {
   color?: string;
 }
 
+export type ProductSourceStatus =
+  | 'live'
+  | 'near_live'
+  | 'delayed'
+  | 'waiting'
+  | 'unavailable'
+  | 'not_configured'
+  | 'collecting_not_ingested'
+  | string;
+
+export interface ProductSourceCardMetric {
+  key: string;
+  label: string;
+  value: number | null;
+  displayValue?: string;
+}
+
+export interface ProductSourceCard {
+  key: 'search_console' | 'ga4' | 'product_events' | string;
+  label: string;
+  status: ProductSourceStatus;
+  stateClass?: string;
+  source: string;
+  freshness: {
+    generatedAt: string;
+    expectedLagSeconds: number | null;
+  };
+  metrics: ProductSourceCardMetric[];
+  blocker?: string | null;
+}
+
+export interface ProductSourceGroup {
+  productKey: 'hushh_ai' | 'kai' | 'hushhtech' | string;
+  productName: string;
+  domain: string;
+  primaryEnvironment: 'production' | 'uat' | string;
+  sourceCards: ProductSourceCard[];
+}
+
 export interface FeedStatus {
   sourceEnvironment: string;
   sourceProjectId: string;
@@ -324,6 +363,7 @@ export interface HushhTechMetricsSummary {
   };
   dataCoverage?: Record<string, unknown>;
   dataQualityWarnings?: string[];
+  sourceCards?: ProductSourceCard[];
   stale?: boolean;
 }
 
@@ -420,6 +460,13 @@ export interface SearchConsoleSummary {
   queries: Array<SearchPerformanceMetric & { query: string }>;
   pages: Array<SearchPerformanceMetric & { pageUrl: string }>;
   countries: Array<SearchPerformanceMetric & { country: string }>;
+  devices?: Array<SearchPerformanceMetric & { device: string }>;
+  source?: string;
+  fallbackProjectId?: string;
+  fallbackDataset?: string;
+  siteUrl?: string;
+  pageFilterRegex?: string | null;
+  note?: string;
 }
 
 export interface SupabaseMetricSummary {
@@ -482,7 +529,10 @@ export interface HushhTechSupabaseRangeTotals {
 export interface HushhAiSummary {
   gcp: CloudRunSummary | null;
   searchConsole: SearchConsoleSummary | null;
+  ga4?: KaiGa4Summary | null;
+  productEvents?: Record<string, unknown> | null;
   freshness?: HushhAiFreshness | null;
+  sourceCards?: ProductSourceCard[];
 }
 
 export interface HushhAiFreshnessSource {
@@ -514,8 +564,10 @@ export interface KaiProductionSummary {
   uatFeed: KaiProductionFeedSummary;
   uatGa4: KaiGa4Summary | null;
   productionGa4: KaiGa4Summary | null;
+  searchConsole?: SearchConsoleSummary | null;
   gcp: CloudRunSummary | null;
   freshness?: ProductFreshness | null;
+  sourceCards?: ProductSourceCard[];
 }
 
 export interface KaiDailyStatusPoint {
@@ -579,6 +631,7 @@ export interface DashboardData {
   hushhAiDailySummaryMetrics: BreakdownMetric[];
   dataQualityWarnings: string[];
   feedWarnings: string[];
+  sourceGroups: ProductSourceGroup[];
 
   // Aggregate KPIs (computed from all sources)
   platforms: PlatformStatus[];

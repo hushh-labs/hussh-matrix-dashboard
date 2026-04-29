@@ -47,6 +47,8 @@ import type {
   KaiDailyStatusPoint,
   KpiStat,
   PlatformStatus,
+  ProductSourceCard,
+  ProductSourceGroup,
 } from './lib/types';
 
 const iconMap: Record<string, typeof Activity> = {
@@ -144,6 +146,30 @@ function freshnessClass(source: HushhAiFreshnessSource): string {
   if (source.state === 'collecting_not_ingested') return 'bg-[#f4edff] text-[#6d38a8]';
   if (source.state === 'delayed' || source.state === 'waiting') return 'bg-[#fff7e6] text-[#9a5b00]';
   return 'bg-[#f5f5f7] text-[#6e6e73]';
+}
+
+function sourceStatusLabel(status: string): string {
+  if (status === 'live') return 'Live';
+  if (status === 'near_live') return 'Near-live';
+  if (status === 'delayed') return 'Delayed';
+  if (status === 'waiting') return 'Waiting';
+  if (status === 'not_configured') return 'Not configured';
+  if (status === 'collecting_not_ingested') return 'Collecting';
+  return 'Unavailable';
+}
+
+function sourceStatusClass(status: string): string {
+  if (status === 'live' || status === 'near_live') return 'bg-[#ecfdf3] text-[#1f7a36]';
+  if (status === 'delayed') return 'bg-[#e8f2ff] text-[#005eb8]';
+  if (status === 'collecting_not_ingested') return 'bg-[#f4edff] text-[#6d38a8]';
+  if (status === 'waiting' || status === 'not_configured') return 'bg-[#fff7e6] text-[#9a5b00]';
+  return 'bg-[#f5f5f7] text-[#6e6e73]';
+}
+
+function formatSourceMetricValue(card: ProductSourceCard, value: number | null, displayValue?: string): string {
+  if (displayValue) return displayValue;
+  if (value == null) return card.status === 'waiting' || card.status === 'not_configured' ? 'Waiting' : '—';
+  return formatNumber(value);
 }
 
 function CustomTooltip({ active, payload, label }: any) {
@@ -269,6 +295,77 @@ function MetricListCard({
         </div>
       )}
     </div>
+  );
+}
+
+function SourceCard({ card }: { card: ProductSourceCard }) {
+  const metricItems = card.metrics.slice(0, 4);
+  return (
+    <div className="min-h-[214px] rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-base font-semibold tracking-[-0.01em] text-[#1d1d1f]">{card.label}</p>
+          <p className="mt-1 truncate text-xs font-bold text-[#86868b]">{card.source}</p>
+        </div>
+        <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-bold', sourceStatusClass(card.status))}>
+          {sourceStatusLabel(card.status)}
+        </span>
+      </div>
+
+      <div className="mt-5 grid grid-cols-2 gap-2">
+        {metricItems.length === 0 ? (
+          <div className="col-span-2 flex min-h-[84px] items-center rounded-lg bg-[#f5f5f7] px-3 text-sm font-semibold text-[#86868b]">
+            Waiting for aggregate event rows.
+          </div>
+        ) : (
+          metricItems.map((metricItem) => (
+            <div key={metricItem.key} className="min-h-[72px] rounded-lg bg-[#f5f5f7] p-3">
+              <p className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{metricItem.label}</p>
+              <p className="mt-2 truncate text-lg font-semibold tracking-[-0.03em] text-[#1d1d1f]">
+                {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
+              </p>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="mt-4 min-h-[40px] text-xs font-medium leading-5 text-[#6e6e73]">
+        {card.blocker ? card.blocker : `Freshness: ${formatAge(card.freshness.generatedAt)}`}
+      </div>
+    </div>
+  );
+}
+
+function SourceMatrix({ groups }: { groups: ProductSourceGroup[] }) {
+  const orderedKeys = ['search_console', 'ga4', 'product_events'];
+  return (
+    <section>
+      <SectionHeader kicker="Simplified sources" title="Three-source metrics matrix" />
+      <div className="space-y-6">
+        {groups.map((group) => {
+          const cards = orderedKeys
+            .map((key) => group.sourceCards.find((card) => card.key === key))
+            .filter((card): card is ProductSourceCard => Boolean(card));
+          return (
+            <div key={group.productKey}>
+              <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold tracking-[-0.02em] text-[#1d1d1f]">{group.productName}</h3>
+                  <p className="text-sm font-bold text-[#86868b]">{group.domain} · primary: {group.primaryEnvironment.toUpperCase()}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                {cards.map((card) => (
+                  <div key={`${group.productKey}-${card.key}`}>
+                    <SourceCard card={card} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -650,6 +747,7 @@ export default function Dashboard() {
   }, [autoRefresh, liveRefreshSeconds, loadData]);
 
   const platforms = data?.platforms ?? [];
+  const sourceGroups = data?.sourceGroups ?? [];
   const kpiStats = data?.kpiStats ?? [];
   const trafficData = data?.trafficData ?? [];
   const acquisitionChannels = data?.acquisitionChannels ?? [];
@@ -755,6 +853,8 @@ export default function Dashboard() {
 
         {activeTab === 'overview' ? (
           <main className="space-y-8">
+            <SourceMatrix groups={sourceGroups} />
+
             <section>
               <SectionHeader kicker="Today" title="Key metrics" />
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

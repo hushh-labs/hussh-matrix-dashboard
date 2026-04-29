@@ -102,9 +102,9 @@ const TABLES = {
 
 function parseArgs(argv) {
   const args = {
-    days: numberFromEnv('HUSHHTECH_SEARCH_BACKFILL_DAYS', 16),
-    startDate: process.env.HUSHHTECH_SEARCH_START_DATE || '',
-    endDate: process.env.HUSHHTECH_SEARCH_END_DATE || '',
+    days: numberFromEnv(['SEARCH_CONSOLE_BACKFILL_DAYS', 'HUSHHTECH_SEARCH_BACKFILL_DAYS'], 16),
+    startDate: envValue('SEARCH_CONSOLE_START_DATE', 'HUSHHTECH_SEARCH_START_DATE'),
+    endDate: envValue('SEARCH_CONSOLE_END_DATE', 'HUSHHTECH_SEARCH_END_DATE'),
     ensureOnly: false,
     skipApi: false,
   };
@@ -135,8 +135,17 @@ function parsePositiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
-function numberFromEnv(name, fallback) {
-  return parsePositiveInt(process.env[name], fallback);
+function envValue(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function numberFromEnv(names, fallback) {
+  const normalizedNames = Array.isArray(names) ? names : [names];
+  return parsePositiveInt(envValue(...normalizedNames), fallback);
 }
 
 function formatDate(date) {
@@ -163,9 +172,9 @@ function tableRef(projectId, datasetId, tableId) {
 }
 
 function parseOauthJson() {
-  const raw = process.env.HUSHHTECH_SEARCH_CONSOLE_OAUTH_JSON || process.env.SEARCH_CONSOLE_OAUTH_JSON || '';
+  const raw = envValue('SEARCH_CONSOLE_OAUTH_JSON', 'HUSHHTECH_SEARCH_CONSOLE_OAUTH_JSON');
   if (!raw) {
-    throw new Error('HUSHHTECH_SEARCH_CONSOLE_OAUTH_JSON is not configured');
+    throw new Error('SEARCH_CONSOLE_OAUTH_JSON is not configured');
   }
   const parsed = JSON.parse(raw);
   const installed = parsed.installed || parsed.web || parsed;
@@ -207,13 +216,30 @@ async function ensureDatasetAndTables(bigquery, projectId, datasetId) {
   return { projectId, datasetId, tables: Object.keys(TABLES) };
 }
 
-async function searchConsoleQuery(client, { siteUrl, startDate, endDate, searchType, dataState, dimensions, rowLimit, startRow }) {
+function buildDimensionFilterGroups(pageFilterRegex) {
+  if (!pageFilterRegex) return undefined;
+  return [
+    {
+      groupType: 'and',
+      filters: [
+        {
+          dimension: 'page',
+          operator: 'includingRegex',
+          expression: pageFilterRegex,
+        },
+      ],
+    },
+  ];
+}
+
+async function searchConsoleQuery(client, { siteUrl, startDate, endDate, searchType, dataState, dimensions, rowLimit, startRow, pageFilterRegex }) {
   const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
+  const dimensionFilterGroups = buildDimensionFilterGroups(pageFilterRegex);
   const response = await client.request({
     url,
     method: 'POST',
-    headers: process.env.HUSHHTECH_SEARCH_QUOTA_PROJECT
-      ? { 'x-goog-user-project': process.env.HUSHHTECH_SEARCH_QUOTA_PROJECT }
+    headers: envValue('SEARCH_CONSOLE_QUOTA_PROJECT', 'HUSHHTECH_SEARCH_QUOTA_PROJECT')
+      ? { 'x-goog-user-project': envValue('SEARCH_CONSOLE_QUOTA_PROJECT', 'HUSHHTECH_SEARCH_QUOTA_PROJECT') }
       : undefined,
     data: {
       startDate,
@@ -223,6 +249,7 @@ async function searchConsoleQuery(client, { siteUrl, startDate, endDate, searchT
       startRow,
       searchType,
       dataState,
+      ...(dimensionFilterGroups ? { dimensionFilterGroups, aggregationType: 'auto' } : {}),
     },
     timeout: 60_000,
   });
@@ -230,7 +257,10 @@ async function searchConsoleQuery(client, { siteUrl, startDate, endDate, searchT
 }
 
 async function fetchAllRows(client, options) {
-  const rowLimit = Math.min(numberFromEnv('HUSHHTECH_SEARCH_CONSOLE_API_ROW_LIMIT', DEFAULT_ROW_LIMIT), MAX_PAGE_LIMIT);
+  const rowLimit = Math.min(
+    numberFromEnv(['SEARCH_CONSOLE_API_ROW_LIMIT', 'HUSHHTECH_SEARCH_CONSOLE_API_ROW_LIMIT'], DEFAULT_ROW_LIMIT),
+    MAX_PAGE_LIMIT,
+  );
   const rows = [];
   for (let startRow = 0; ; startRow += rowLimit) {
     const batch = await searchConsoleQuery(client, { ...options, rowLimit, startRow });
@@ -312,11 +342,12 @@ async function writeRows(bigquery, projectId, datasetId, tableId, config, rows) 
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const projectId = process.env.HUSHHTECH_SEARCH_FALLBACK_PROJECT || process.env.HUSHHTECH_SEARCH_PROJECT || DEFAULT_PROJECT;
-  const datasetId = process.env.HUSHHTECH_SEARCH_FALLBACK_DATASET || DEFAULT_DATASET;
-  const siteUrl = process.env.HUSHHTECH_SEARCH_CONSOLE_SITE_URL || DEFAULT_SITE_URL;
-  const searchType = process.env.HUSHHTECH_SEARCH_CONSOLE_TYPE || DEFAULT_SEARCH_TYPE;
-  const dataState = process.env.HUSHHTECH_SEARCH_CONSOLE_DATA_STATE || DEFAULT_DATA_STATE;
+  const projectId = envValue('SEARCH_CONSOLE_FALLBACK_PROJECT', 'HUSHHTECH_SEARCH_FALLBACK_PROJECT', 'HUSHHTECH_SEARCH_PROJECT') || DEFAULT_PROJECT;
+  const datasetId = envValue('SEARCH_CONSOLE_FALLBACK_DATASET', 'HUSHHTECH_SEARCH_FALLBACK_DATASET') || DEFAULT_DATASET;
+  const siteUrl = envValue('SEARCH_CONSOLE_SITE_URL', 'HUSHHTECH_SEARCH_CONSOLE_SITE_URL') || DEFAULT_SITE_URL;
+  const searchType = envValue('SEARCH_CONSOLE_TYPE', 'HUSHHTECH_SEARCH_CONSOLE_TYPE') || DEFAULT_SEARCH_TYPE;
+  const dataState = envValue('SEARCH_CONSOLE_DATA_STATE', 'HUSHHTECH_SEARCH_CONSOLE_DATA_STATE') || DEFAULT_DATA_STATE;
+  const pageFilterRegex = envValue('SEARCH_CONSOLE_PAGE_FILTER_REGEX', 'HUSHHTECH_SEARCH_CONSOLE_PAGE_FILTER_REGEX');
   const range = resolveDateRange(args);
   const bigquery = new BigQuery({ projectId });
   const setup = await ensureDatasetAndTables(bigquery, projectId, datasetId);
@@ -336,6 +367,7 @@ async function main() {
       searchType,
       dataState,
       dimensions: config.dimensions,
+      pageFilterRegex,
     });
     const rows = apiRows
       .map((row) => normalizeRow(tableId, row, config, { siteUrl, searchType, dataState }))
@@ -350,6 +382,7 @@ async function main() {
     siteUrl,
     searchType,
     dataState,
+    pageFilterRegex: pageFilterRegex || null,
     range,
     summary,
   }, null, 2));
