@@ -26,6 +26,7 @@ import type {
   DashboardData,
   HushhAiDailyStatusPoint,
   KaiDailyStatusPoint,
+  ProductSourceGroup,
 } from './types';
 
 const API_BASE = '/api';
@@ -192,6 +193,7 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhAiDailySummaryMetrics: [],
     dataQualityWarnings: [],
     feedWarnings: [],
+    sourceGroups: [],
     platforms: buildPlatforms(null, null, null, null, null),
     kpiStats: buildKpiStats(null, null, null, null, null),
     trafficData: [],
@@ -604,6 +606,36 @@ function buildKpiStats(
         : '—',
       icon: 'Clock',
       suffix: 'Kai lag',
+    },
+  ];
+}
+
+function buildSourceGroups(
+  kaiProduction: KaiProductionSummary | null,
+  hushhAi: HushhAiSummary | null,
+  hushhTech: HushhTechMetricsSummary | null,
+): ProductSourceGroup[] {
+  return [
+    {
+      productKey: 'hushh_ai',
+      productName: 'Hushh AI',
+      domain: 'hushh.ai',
+      primaryEnvironment: 'production',
+      sourceCards: hushhAi?.sourceCards ?? [],
+    },
+    {
+      productKey: 'kai',
+      productName: 'Kai',
+      domain: 'kai.hushh.ai',
+      primaryEnvironment: 'uat',
+      sourceCards: kaiProduction?.sourceCards ?? [],
+    },
+    {
+      productKey: 'hushhtech',
+      productName: 'HushhTech',
+      domain: 'hushhtech.com',
+      primaryEnvironment: 'production',
+      sourceCards: hushhTech?.sourceCards ?? [],
     },
   ];
 }
@@ -1085,6 +1117,7 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     hushhAiDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAi),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
     feedWarnings,
+    sourceGroups: buildSourceGroups(kaiProduction, hushhAi, hushhTech),
     platforms: buildPlatforms(kaiFeed, kaiUsage, kaiProduction, hushhAi, hushhTech),
     kpiStats: buildKpiStats(kaiUsage, kaiGa4, kaiProduction, hushhAi, hushhTech),
     trafficData: buildTrafficData(allKaiRows, hushhAi, hushhTech),

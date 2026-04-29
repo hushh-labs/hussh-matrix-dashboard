@@ -71,6 +71,39 @@ const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDO
 const HUSHH_AI_SEARCH_PROJECT = process.env.HUSHH_AI_SEARCH_PROJECT || BQ_PROD_PROJECT;
 const HUSHH_AI_SEARCH_DATASET =
   process.env.HUSHH_AI_SEARCH_DATASET || 'searchconsole_searchconsole_hushh_ai';
+const HUSHH_AI_SEARCH_FALLBACK_PROJECT =
+  process.env.HUSHH_AI_SEARCH_FALLBACK_PROJECT || 'hushh-ai-prod';
+const HUSHH_AI_SEARCH_FALLBACK_DATASET =
+  process.env.HUSHH_AI_SEARCH_FALLBACK_DATASET || 'hushh_ai_search_console_api';
+const HUSHH_AI_SEARCH_CONSOLE_SITE_URL =
+  process.env.HUSHH_AI_SEARCH_CONSOLE_SITE_URL || 'sc-domain:hushh.ai';
+const HUSHH_AI_SEARCH_CONSOLE_PAGE_FILTER_REGEX =
+  process.env.HUSHH_AI_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://(www\\.)?hushh\\.ai(/|$)';
+const HUSHH_AI_SEARCH_CONSOLE_TYPE = process.env.HUSHH_AI_SEARCH_CONSOLE_TYPE || 'web';
+const HUSHH_AI_SEARCH_CONSOLE_DATA_STATE = process.env.HUSHH_AI_SEARCH_CONSOLE_DATA_STATE || 'all';
+const HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT = Math.max(
+  1,
+  Math.min(parseInt(process.env.HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT || '10', 10) || 10, 25),
+);
+const HUSHH_AI_GA4_PROJECT = process.env.HUSHH_AI_GA4_PROJECT || '';
+const HUSHH_AI_GA4_DATASET = process.env.HUSHH_AI_GA4_DATASET || '';
+const HUSHH_AI_GA4_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_GA4_WINDOW_DAYS || '7', 10);
+const KAI_SEARCH_PROJECT = process.env.KAI_SEARCH_PROJECT || HUSHH_AI_SEARCH_PROJECT;
+const KAI_SEARCH_DATASET = process.env.KAI_SEARCH_DATASET || HUSHH_AI_SEARCH_DATASET;
+const KAI_SEARCH_FALLBACK_PROJECT =
+  process.env.KAI_SEARCH_FALLBACK_PROJECT || 'hushh-ai-prod';
+const KAI_SEARCH_FALLBACK_DATASET =
+  process.env.KAI_SEARCH_FALLBACK_DATASET || 'kai_search_console_api';
+const KAI_SEARCH_CONSOLE_SITE_URL =
+  process.env.KAI_SEARCH_CONSOLE_SITE_URL || 'sc-domain:hushh.ai';
+const KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX =
+  process.env.KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://(uat\\.)?kai\\.hushh\\.ai(/|$)';
+const KAI_SEARCH_CONSOLE_TYPE = process.env.KAI_SEARCH_CONSOLE_TYPE || 'web';
+const KAI_SEARCH_CONSOLE_DATA_STATE = process.env.KAI_SEARCH_CONSOLE_DATA_STATE || 'all';
+const KAI_SEARCH_CONSOLE_ROW_LIMIT = Math.max(
+  1,
+  Math.min(parseInt(process.env.KAI_SEARCH_CONSOLE_ROW_LIMIT || '10', 10) || 10, 25),
+);
 const HUSHHTECH_SUPABASE_PROJECT_REF =
   process.env.HUSHHTECH_SUPABASE_PROJECT_REF || 'ibsisfnjxeowvdtvgzff';
 const HUSHHTECH_SUPABASE_ACCESS_TOKEN =
@@ -486,6 +519,285 @@ function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+interface ProductSearchConsoleConfig {
+  productLabel: string;
+  sourceProjectId: string;
+  sourceDataset: string;
+  fallbackProjectId: string;
+  fallbackDataset: string;
+  siteUrl: string;
+  searchType: string;
+  dataState: string;
+  rowLimit: number;
+  pageFilterRegex?: string;
+}
+
+function unavailableProductSearchConsole(
+  config: ProductSearchConsoleConfig,
+  range: HushhAiDateRange,
+  note: string,
+): Record<string, unknown> {
+  return {
+    source: 'metrics-hushh-ai-search-console-waiting',
+    sourceProjectId: config.sourceProjectId,
+    sourceDataset: config.sourceDataset,
+    fallbackProjectId: config.fallbackProjectId,
+    fallbackDataset: config.fallbackDataset,
+    siteUrl: config.siteUrl,
+    pageFilterRegex: config.pageFilterRegex || null,
+    generatedAt: new Date().toISOString(),
+    realtimeMode: 'delayed_export',
+    expectedLagSeconds: 86_400,
+    startDate: range.startDate,
+    endDate: range.endDate,
+    available: false,
+    clicks: 0,
+    impressions: 0,
+    ctr: null,
+    averagePosition: null,
+    queries: [],
+    pages: [],
+    countries: [],
+    devices: [],
+    note,
+  };
+}
+
+function productSearchConsolePayload(
+  config: ProductSearchConsoleConfig,
+  range: HushhAiDateRange,
+  source: string,
+  sourceProjectId: string,
+  sourceDataset: string,
+  aggregateRow: Record<string, unknown> | undefined,
+  queries: Record<string, unknown>[],
+  pages: Record<string, unknown>[],
+  countries: Record<string, unknown>[],
+  devices: Record<string, unknown>[],
+  note: string,
+): Record<string, unknown> {
+  const overview = searchConsoleMetric(aggregateRow);
+  return {
+    source,
+    sourceProjectId,
+    sourceDataset,
+    fallbackProjectId: config.fallbackProjectId,
+    fallbackDataset: config.fallbackDataset,
+    siteUrl: config.siteUrl,
+    pageFilterRegex: config.pageFilterRegex || null,
+    generatedAt: new Date().toISOString(),
+    realtimeMode: 'delayed_export',
+    expectedLagSeconds: 86_400,
+    startDate: range.startDate,
+    endDate: range.endDate,
+    available: overview.clicks > 0 || overview.impressions > 0,
+    clicks: overview.clicks,
+    impressions: overview.impressions,
+    ctr: overview.ctr,
+    averagePosition: overview.averagePosition,
+    queries: queries.map((row) => ({ query: String(row.query ?? ''), ...searchConsoleMetric(row) })),
+    pages: pages.map((row) => ({ pageUrl: String(row.pageUrl ?? ''), ...searchConsoleMetric(row) })),
+    countries: countries.map((row) => ({ country: String(row.country ?? ''), ...searchConsoleMetric(row) })),
+    devices: devices.map((row) => ({ device: String(row.device ?? ''), ...searchConsoleMetric(row) })),
+    note,
+  };
+}
+
+async function fetchProductSearchConsoleFallback(
+  config: ProductSearchConsoleConfig,
+  range: HushhAiDateRange,
+  officialExportNote: string,
+): Promise<DataResult<Record<string, unknown>>> {
+  const queryProject = BQ_JOB_PROJECT || config.fallbackProjectId;
+  const datasetRef = `\`${config.fallbackProjectId}.${config.fallbackDataset}\``;
+  const sourceLabel = `${config.fallbackProjectId}.${config.fallbackDataset}`;
+  const tableRows = await queryBigQuerySql(queryProject, `
+    SELECT table_name AS tableName
+    FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
+    WHERE table_name IN ('site_daily', 'query_daily', 'page_daily', 'country_daily', 'device_daily')
+  `);
+
+  if (tableRows.error) {
+    const note = `${config.productLabel} Search Console GCP fallback dataset ${sourceLabel} is not queryable yet. ${officialExportNote}`;
+    if (/not found|notfound/i.test(tableRows.error)) {
+      return { data: unavailableProductSearchConsole(config, range, note), error: null };
+    }
+    return { data: null, error: tableRows.error };
+  }
+
+  const tableNames = new Set(tableRows.rows.map((row) => String(row.tableName)));
+  if (!tableNames.has('site_daily')) {
+    return {
+      data: unavailableProductSearchConsole(
+        config,
+        range,
+        `${config.productLabel} Search Console GCP fallback is configured, but ${sourceLabel}.site_daily has not been created or populated yet. ${officialExportNote}`,
+      ),
+      error: null,
+    };
+  }
+
+  const dateFilter = `data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'`;
+  const searchTypeFilter = `LOWER(search_type) = LOWER(${sqlStringLiteral(config.searchType)})`;
+  const siteFilter = `site_url = ${sqlStringLiteral(config.siteUrl)}`;
+  const whereClause = `${dateFilter} AND ${searchTypeFilter} AND ${siteFilter}`;
+  const weightedPosition = 'SAFE_DIVIDE(SUM(average_position * impressions), SUM(impressions))';
+  const aggregateQuery = `
+    SELECT
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      ${weightedPosition} AS averagePosition
+    FROM ${datasetRef}.site_daily
+    WHERE ${whereClause}
+  `;
+  const dimensionQuery = (table: string, field: string, alias: string) => tableNames.has(table) ? `
+    SELECT
+      ${field} AS ${alias},
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      ${weightedPosition} AS averagePosition
+    FROM ${datasetRef}.${table}
+    WHERE ${whereClause}
+    GROUP BY ${alias}
+    ORDER BY impressions DESC
+    LIMIT ${config.rowLimit}
+  ` : null;
+
+  const [aggregate, queries, pages, countries, devices] = await Promise.all([
+    queryBigQuerySql(queryProject, aggregateQuery),
+    dimensionQuery('query_daily', 'query', 'query')
+      ? queryBigQuerySql(queryProject, dimensionQuery('query_daily', 'query', 'query') as string)
+      : Promise.resolve({ rows: [], error: null }),
+    dimensionQuery('page_daily', 'page_url', 'pageUrl')
+      ? queryBigQuerySql(queryProject, dimensionQuery('page_daily', 'page_url', 'pageUrl') as string)
+      : Promise.resolve({ rows: [], error: null }),
+    dimensionQuery('country_daily', 'country', 'country')
+      ? queryBigQuerySql(queryProject, dimensionQuery('country_daily', 'country', 'country') as string)
+      : Promise.resolve({ rows: [], error: null }),
+    dimensionQuery('device_daily', 'device', 'device')
+      ? queryBigQuerySql(queryProject, dimensionQuery('device_daily', 'device', 'device') as string)
+      : Promise.resolve({ rows: [], error: null }),
+  ]);
+  const errors = [aggregate.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
+  if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
+
+  const data = productSearchConsolePayload(
+    config,
+    range,
+    'metrics-hushh-ai-search-console-gcp-fallback',
+    config.fallbackProjectId,
+    config.fallbackDataset,
+    aggregate.rows[0],
+    queries.rows,
+    pages.rows,
+    countries.rows,
+    devices.rows,
+    `Read by metrics.hushh.ai from GCP fallback Search Console tables. ${officialExportNote}`,
+  );
+  return { data, error: errors.length > 0 ? errors.join('; ') : null };
+}
+
+async function fetchProductSearchConsole(
+  config: ProductSearchConsoleConfig,
+  range: HushhAiDateRange,
+): Promise<DataResult<Record<string, unknown>>> {
+  const queryProject = BQ_JOB_PROJECT || config.sourceProjectId;
+  const datasetRef = `\`${config.sourceProjectId}.${config.sourceDataset}\``;
+  const sourceLabel = `${config.sourceProjectId}.${config.sourceDataset}`;
+  const tableRows = await queryBigQuerySql(queryProject, `
+    SELECT table_name AS tableName
+    FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
+    WHERE table_name IN ('searchdata_site_impression', 'searchdata_url_impression')
+  `);
+
+  if (tableRows.error) {
+    const waitingNote = `${config.productLabel} Search Console bulk export is configured, but ${sourceLabel} is not queryable yet.`;
+    if (/not found|notfound/i.test(tableRows.error)) {
+      return fetchProductSearchConsoleFallback(config, range, waitingNote);
+    }
+    return { data: null, error: tableRows.error };
+  }
+
+  const tableNames = new Set(tableRows.rows.map((row) => String(row.tableName)));
+  if (!tableNames.has('searchdata_site_impression')) {
+    return fetchProductSearchConsoleFallback(
+      config,
+      range,
+      `Official Search Console bulk export is set up; waiting for ${sourceLabel}.searchdata_site_impression.`,
+    );
+  }
+  if (config.pageFilterRegex && !tableNames.has('searchdata_url_impression')) {
+    return fetchProductSearchConsoleFallback(
+      config,
+      range,
+      `Official Search Console bulk export exists, but ${sourceLabel}.searchdata_url_impression is required for product URL filtering.`,
+    );
+  }
+
+  const siteTable = `${datasetRef}.searchdata_site_impression`;
+  const urlTable = `${datasetRef}.searchdata_url_impression`;
+  const sourceTable = config.pageFilterRegex ? urlTable : siteTable;
+  const urlFilter = config.pageFilterRegex
+    ? `AND REGEXP_CONTAINS(url, ${sqlStringLiteral(config.pageFilterRegex)})`
+    : '';
+  const whereClause = `
+    data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
+    AND LOWER(search_type) = LOWER(${sqlStringLiteral(config.searchType)})
+    ${urlFilter}
+  `;
+  const aggregateQuery = `
+    SELECT
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+    FROM ${sourceTable}
+    WHERE ${whereClause}
+  `;
+  const dimensionQuery = (field: string, alias: string) => `
+    SELECT
+      ${field} AS ${alias},
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+    FROM ${sourceTable}
+    WHERE ${whereClause}
+    GROUP BY ${alias}
+    ORDER BY impressions DESC
+    LIMIT ${config.rowLimit}
+  `;
+
+  const [aggregate, queries, pages, countries, devices] = await Promise.all([
+    queryBigQuerySql(queryProject, aggregateQuery),
+    queryBigQuerySql(queryProject, dimensionQuery('COALESCE(query, \'(anonymous)\')', 'query')),
+    tableNames.has('searchdata_url_impression')
+      ? queryBigQuerySql(queryProject, dimensionQuery('url', 'pageUrl'))
+      : Promise.resolve({ rows: [], error: null }),
+    queryBigQuerySql(queryProject, dimensionQuery('country', 'country')),
+    queryBigQuerySql(queryProject, dimensionQuery('device', 'device')),
+  ]);
+  const errors = [aggregate.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
+  if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
+
+  const data = productSearchConsolePayload(
+    config,
+    range,
+    'metrics-hushh-ai-search-console-bigquery',
+    config.sourceProjectId,
+    config.sourceDataset,
+    aggregate.rows[0],
+    queries.rows,
+    pages.rows,
+    countries.rows,
+    devices.rows,
+    'Read by metrics.hushh.ai from the Search Console BigQuery bulk export.',
+  );
+  return { data, error: errors.length > 0 ? errors.join('; ') : null };
+}
+
 async function fetchHushhTechSearchConsoleFallback(
   range: HushhAiDateRange,
   officialExportNote: string,
@@ -813,6 +1125,7 @@ async function fetchHushhTechAnalytics(range: HushhAiDateRange): Promise<{ data:
     warnings.add(String(asRecord(searchConsole.data)?.note ?? 'Search Console is waiting.'));
   }
   summary.dataQualityWarnings = Array.from(warnings);
+  summary.sourceCards = buildHushhTechSourceCards(summary);
 
   return {
     data: summary,
@@ -992,6 +1305,59 @@ async function fetchKaiGa4ExportSummary(
   };
 }
 
+function waitingGa4Summary(
+  productLabel: string,
+  range: HushhAiDateRange,
+  sourceProjectId: string,
+  sourceDataset: string,
+  note: string,
+): Record<string, unknown> {
+  return {
+    sourceProjectId,
+    sourceDataset,
+    generatedAt: new Date().toISOString(),
+    realtimeMode: 'delayed_export',
+    expectedLagSeconds: 86_400,
+    available: false,
+    windowDays: range.days,
+    range: {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      days: range.days,
+    },
+    rangeTotals: {
+      users: null,
+      sessions: null,
+      events: null,
+    },
+    daily: dateSpine(range).map((date) => ({
+      eventDate: date,
+      events: 0,
+      users: 0,
+      sessions: 0,
+    })),
+    topEvents: [],
+    geo: [],
+    note: `${productLabel} ${note}`,
+  };
+}
+
+async function fetchHushhAiGa4Summary(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  if (!HUSHH_AI_GA4_PROJECT || !HUSHH_AI_GA4_DATASET) {
+    return {
+      data: waitingGa4Summary(
+        'Hushh AI',
+        range,
+        HUSHH_AI_GA4_PROJECT,
+        HUSHH_AI_GA4_DATASET,
+        'GA4 BigQuery export/Data API source is not configured in metrics.hushh.ai yet.',
+      ),
+      error: null,
+    };
+  }
+  return fetchKaiGa4ExportSummary(HUSHH_AI_GA4_PROJECT, HUSHH_AI_GA4_DATASET, range, true);
+}
+
 // ---------------------------------------------------------------------------
 // Hush AI GCP and Search Console summaries
 // ---------------------------------------------------------------------------
@@ -1143,122 +1509,33 @@ async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult
 }
 
 async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
-  const generatedAt = new Date().toISOString();
-  const queryProject = BQ_JOB_PROJECT || HUSHH_AI_SEARCH_PROJECT;
-  const datasetRef = `\`${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}\``;
-  const tableRows = await queryBigQuerySql(queryProject, `
-    SELECT table_name AS tableName
-    FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
-    WHERE table_name IN ('searchdata_site_impression', 'searchdata_url_impression')
-  `);
+  return fetchProductSearchConsole({
+    productLabel: 'Hushh AI',
+    sourceProjectId: HUSHH_AI_SEARCH_PROJECT,
+    sourceDataset: HUSHH_AI_SEARCH_DATASET,
+    fallbackProjectId: HUSHH_AI_SEARCH_FALLBACK_PROJECT,
+    fallbackDataset: HUSHH_AI_SEARCH_FALLBACK_DATASET,
+    siteUrl: HUSHH_AI_SEARCH_CONSOLE_SITE_URL,
+    searchType: HUSHH_AI_SEARCH_CONSOLE_TYPE,
+    dataState: HUSHH_AI_SEARCH_CONSOLE_DATA_STATE,
+    rowLimit: HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT,
+    pageFilterRegex: HUSHH_AI_SEARCH_CONSOLE_PAGE_FILTER_REGEX,
+  }, range);
+}
 
-  if (tableRows.error) return { data: null, error: tableRows.error };
-
-  const tableNames = new Set(tableRows.rows.map((row) => String(row.tableName)));
-  if (!tableNames.has('searchdata_site_impression')) {
-    return {
-      data: {
-        sourceProjectId: HUSHH_AI_SEARCH_PROJECT,
-        sourceDataset: HUSHH_AI_SEARCH_DATASET,
-        generatedAt,
-        realtimeMode: 'delayed_export',
-        expectedLagSeconds: 86_400,
-        startDate: range.startDate,
-        endDate: range.endDate,
-        available: false,
-        clicks: 0,
-        impressions: 0,
-        ctr: null,
-        averagePosition: null,
-        queries: [],
-        pages: [],
-        countries: [],
-      },
-      error: null,
-    };
-  }
-
-  const siteTable = `${datasetRef}.searchdata_site_impression`;
-  const urlTable = `${datasetRef}.searchdata_url_impression`;
-  const aggregateQuery = `
-    SELECT
-      SUM(clicks) AS clicks,
-      SUM(impressions) AS impressions,
-      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
-    FROM ${siteTable}
-    WHERE data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
-  `;
-  const queryRowsQuery = `
-    SELECT
-      query,
-      SUM(clicks) AS clicks,
-      SUM(impressions) AS impressions,
-      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
-    FROM ${siteTable}
-    WHERE data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
-    GROUP BY query
-    ORDER BY impressions DESC
-    LIMIT 10
-  `;
-  const countryRowsQuery = `
-    SELECT
-      country,
-      SUM(clicks) AS clicks,
-      SUM(impressions) AS impressions,
-      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
-    FROM ${siteTable}
-    WHERE data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
-    GROUP BY country
-    ORDER BY impressions DESC
-    LIMIT 10
-  `;
-  const pageRowsQuery = tableNames.has('searchdata_url_impression') ? `
-    SELECT
-      url AS pageUrl,
-      SUM(clicks) AS clicks,
-      SUM(impressions) AS impressions,
-      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
-    FROM ${urlTable}
-    WHERE data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
-    GROUP BY pageUrl
-    ORDER BY impressions DESC
-    LIMIT 10
-  ` : null;
-
-  const [aggregate, queries, countries, pages] = await Promise.all([
-    queryBigQuerySql(queryProject, aggregateQuery),
-    queryBigQuerySql(queryProject, queryRowsQuery),
-    queryBigQuerySql(queryProject, countryRowsQuery),
-    pageRowsQuery ? queryBigQuerySql(queryProject, pageRowsQuery) : Promise.resolve({ rows: [], error: null }),
-  ]);
-  const errors = [aggregate.error, queries.error, countries.error, pages.error].filter(Boolean);
-  if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
-
-  const overview = aggregate.rows[0] ?? {};
-  return {
-    data: {
-      sourceProjectId: HUSHH_AI_SEARCH_PROJECT,
-      sourceDataset: HUSHH_AI_SEARCH_DATASET,
-      generatedAt,
-      realtimeMode: 'delayed_export',
-      expectedLagSeconds: 86_400,
-      startDate: range.startDate,
-      endDate: range.endDate,
-      available: toNumber(overview.impressions) > 0,
-      clicks: toNumber(overview.clicks),
-      impressions: toNumber(overview.impressions),
-      ctr: overview.ctr == null ? null : toNumber(overview.ctr),
-      averagePosition: overview.averagePosition == null ? null : toNumber(overview.averagePosition),
-      queries: queries.rows,
-      pages: pages.rows,
-      countries: countries.rows,
-    },
-    error: errors.length > 0 ? errors.join('; ') : null,
-  };
+async function fetchKaiSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  return fetchProductSearchConsole({
+    productLabel: 'Kai',
+    sourceProjectId: KAI_SEARCH_PROJECT,
+    sourceDataset: KAI_SEARCH_DATASET,
+    fallbackProjectId: KAI_SEARCH_FALLBACK_PROJECT,
+    fallbackDataset: KAI_SEARCH_FALLBACK_DATASET,
+    siteUrl: KAI_SEARCH_CONSOLE_SITE_URL,
+    searchType: KAI_SEARCH_CONSOLE_TYPE,
+    dataState: KAI_SEARCH_CONSOLE_DATA_STATE,
+    rowLimit: KAI_SEARCH_CONSOLE_ROW_LIMIT,
+    pageFilterRegex: KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX,
+  }, range);
 }
 
 function parseJsonField<T>(value: unknown, fallback: T): T {
@@ -1358,8 +1635,12 @@ function buildHushhAiFreshness(
   fetchedAt: string,
   gcp: Record<string, unknown> | null,
   searchConsole: Record<string, unknown> | null,
+  ga4: Record<string, unknown> | null = null,
+  productEvents: Record<string, unknown> | null = null,
 ) {
   const searchAvailable = Boolean(searchConsole?.available);
+  const ga4Available = Boolean(ga4?.available);
+  const eventsAvailable = Boolean(productEvents?.available);
   return {
     mode: 'polling',
     refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
@@ -1384,16 +1665,265 @@ function buildHushhAiFreshness(
         detail: searchAvailable ? 'Search Console exports are delayed' : 'export tables/data not ready for this window',
       },
       {
-        key: 'mixpanel',
-        label: 'Mixpanel',
-        state: 'collecting_not_ingested',
-        realtimeLevel: 'not_in_dashboard_yet',
-        generatedAt: fetchedAt,
-        expectedLagSeconds: null,
-        detail: 'hushh.ai events are live on the website; dashboard ingestion is the next step',
+        key: 'ga4',
+        label: 'GA4',
+        state: ga4Available ? 'delayed' : 'waiting',
+        realtimeLevel: 'delayed_export',
+        generatedAt: typeof ga4?.generatedAt === 'string' ? ga4.generatedAt : fetchedAt,
+        expectedLagSeconds: 86_400,
+        detail: ga4Available ? 'GA4 export is available with daily export lag' : 'GA4 source is not configured or has not exported rows yet',
+      },
+      {
+        key: 'product_events',
+        label: 'Product Events',
+        state: eventsAvailable ? 'live' : 'collecting_not_ingested',
+        realtimeLevel: eventsAvailable ? 'events_aggregate' : 'not_in_dashboard_yet',
+        generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : fetchedAt,
+        expectedLagSeconds: eventsAvailable ? null : null,
+        detail: eventsAvailable ? 'Product event aggregates are available' : 'hushh.ai events are collecting, but dashboard ingestion is not wired yet',
       },
     ],
   };
+}
+
+function sourceStateClass(status: string): string {
+  if (status === 'live' || status === 'near_live') return 'live';
+  if (status === 'delayed') return 'delayed';
+  if (status === 'collecting_not_ingested') return 'collecting_not_ingested';
+  if (status === 'waiting' || status === 'not_configured') return 'waiting';
+  return 'unavailable';
+}
+
+function metricValue(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sourceMetric(key: string, label: string, value: unknown, displayValue?: string | null) {
+  return {
+    key,
+    label,
+    value: metricValue(value),
+    ...(displayValue ? { displayValue } : {}),
+  };
+}
+
+function formatSourcePercent(value: unknown): string | null {
+  const parsed = metricValue(value);
+  return parsed == null ? null : `${(parsed * 100).toFixed(1)}%`;
+}
+
+function formatSourcePosition(value: unknown): string | null {
+  const parsed = metricValue(value);
+  return parsed == null ? null : parsed.toFixed(1);
+}
+
+function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | null, fallbackSource: string) {
+  const available = Boolean(searchConsole?.available);
+  const note = typeof searchConsole?.note === 'string' ? searchConsole.note : null;
+  const overview = asRecord(searchConsole?.overview) ?? {};
+  return {
+    key: 'search_console',
+    label: 'Search Console',
+    status: available ? 'delayed' : 'waiting',
+    stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+    source: String(searchConsole?.source ?? fallbackSource),
+    freshness: {
+      generatedAt: typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : new Date().toISOString(),
+      expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds),
+    },
+    metrics: [
+      sourceMetric('clicks', 'Clicks', searchConsole?.clicks ?? overview.clicks),
+      sourceMetric('impressions', 'Impressions', searchConsole?.impressions ?? overview.impressions),
+      sourceMetric('ctr', 'CTR', searchConsole?.ctr ?? overview.ctr, formatSourcePercent(searchConsole?.ctr ?? overview.ctr)),
+      sourceMetric(
+        'average_position',
+        'Avg Position',
+        searchConsole?.averagePosition ?? overview.averagePosition,
+        formatSourcePosition(searchConsole?.averagePosition ?? overview.averagePosition),
+      ),
+    ],
+    blocker: available ? null : note ?? 'Search Console source is waiting for export or fallback rows.',
+  };
+}
+
+function buildGa4SourceCard(ga4: Record<string, unknown> | null, source: string, blocker: string) {
+  const available = Boolean(ga4?.available);
+  const totals = asRecord(ga4?.rangeTotals) ?? {};
+  return {
+    key: 'ga4',
+    label: 'GA4',
+    status: available ? 'delayed' : 'waiting',
+    stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+    source,
+    freshness: {
+      generatedAt: typeof ga4?.generatedAt === 'string' ? ga4.generatedAt : new Date().toISOString(),
+      expectedLagSeconds: metricValue(ga4?.expectedLagSeconds ?? 86_400),
+    },
+    metrics: [
+      sourceMetric('users', 'Users', totals.users),
+      sourceMetric('sessions', 'Sessions', totals.sessions),
+      sourceMetric('events', 'Events', totals.events),
+    ],
+    blocker: available ? null : (typeof ga4?.note === 'string' ? ga4.note : blocker),
+  };
+}
+
+function buildHushhTechGa4SourceCard(summary: Record<string, unknown>) {
+  const traffic = asRecord(summary.traffic);
+  const overview = asRecord(traffic?.overview) ?? {};
+  const available = Boolean(traffic?.available);
+  return {
+    key: 'ga4',
+    label: 'GA4',
+    status: available ? 'delayed' : 'waiting',
+    stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+    source: String(traffic?.source ?? 'hushhtech-public-summary'),
+    freshness: {
+      generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
+      expectedLagSeconds: 86_400,
+    },
+    metrics: [
+      sourceMetric('active_7_day_users', '7d Active Users', overview.active7DayUsers),
+      sourceMetric('sessions', 'Sessions', overview.sessions),
+      sourceMetric('page_views', 'Page Views', overview.screenPageViews),
+      sourceMetric('new_users', 'New Users', overview.newUsers),
+    ],
+    blocker: available ? null : String(traffic?.note ?? 'GA4 Data API is waiting or returned no traffic rows.'),
+  };
+}
+
+function buildHushhTechEventsSourceCard(summary: Record<string, unknown>) {
+  const supabase = asRecord(summary.supabase);
+  const totals = asRecord(supabase?.rangeTotals) ?? {};
+  const available = Boolean(supabase);
+  return {
+    key: 'product_events',
+    label: 'DB / Product Events',
+    status: available ? 'live' : 'waiting',
+    stateClass: sourceStateClass(available ? 'live' : 'waiting'),
+    source: String(supabase?.sourceDatabaseName ?? 'HushhTech Supabase'),
+    freshness: {
+      generatedAt: typeof supabase?.generatedAt === 'string' ? supabase.generatedAt : new Date().toISOString(),
+      expectedLagSeconds: null,
+    },
+    metrics: [
+      sourceMetric('total_users', 'Total Users', totals.totalUsers),
+      sourceMetric('new_users', 'New Users', totals.newUsers),
+      sourceMetric('active_users', 'Active Users', totals.activeUsers),
+      sourceMetric('analytics_events', 'Events', totals.analyticsEvents),
+    ],
+    blocker: available ? null : 'HushhTech Supabase database aggregates are unavailable.',
+  };
+}
+
+function buildHushhTechSourceCards(summary: Record<string, unknown>) {
+  return [
+    buildSearchConsoleSourceCard(asRecord(summary.searchPerformance), 'hushhtech Search Console'),
+    buildHushhTechGa4SourceCard(summary),
+    buildHushhTechEventsSourceCard(summary),
+  ];
+}
+
+function buildHushhAiProductEvents(fetchedAt: string): Record<string, unknown> {
+  return {
+    source: 'mixpanel-events',
+    available: false,
+    status: 'collecting_not_ingested',
+    generatedAt: fetchedAt,
+    metrics: [],
+    note: 'hushh.ai product events are collecting, but aggregate dashboard ingestion is not wired yet.',
+  };
+}
+
+function buildHushhAiSourceCards(
+  searchConsole: Record<string, unknown> | null,
+  ga4: Record<string, unknown> | null,
+  productEvents: Record<string, unknown> | null,
+) {
+  const eventsAvailable = Boolean(productEvents?.available);
+  return [
+    buildSearchConsoleSourceCard(searchConsole, 'hushh.ai Search Console'),
+    buildGa4SourceCard(
+      ga4,
+      HUSHH_AI_GA4_PROJECT && HUSHH_AI_GA4_DATASET
+        ? `${HUSHH_AI_GA4_PROJECT}.${HUSHH_AI_GA4_DATASET}`
+        : 'not_configured',
+      'Hushh AI GA4 source is not configured in metrics.hushh.ai yet.',
+    ),
+    {
+      key: 'product_events',
+      label: 'DB / Product Events',
+      status: eventsAvailable ? 'live' : 'collecting_not_ingested',
+      stateClass: sourceStateClass(eventsAvailable ? 'live' : 'collecting_not_ingested'),
+      source: String(productEvents?.source ?? 'mixpanel-events'),
+      freshness: {
+        generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : new Date().toISOString(),
+        expectedLagSeconds: null,
+      },
+      metrics: [],
+      blocker: eventsAvailable ? null : String(productEvents?.note ?? 'Hushh AI product events are not ingested into the dashboard yet.'),
+    },
+  ];
+}
+
+function kaiFeedMetric(rows: Record<string, unknown>[], group: string, name: string): number {
+  const row = latestRowsForProductGroup(rows, group).find((item) => item.metric_name === name);
+  return toNumber(row?.metric_count ?? row?.metric_value);
+}
+
+function latestRowsForProductGroup(rows: Record<string, unknown>[], group: string): Record<string, unknown>[] {
+  const groupRows = rows.filter((row) => row.metric_group === group);
+  const dated = groupRows.filter((row) => timestampString(row.metric_date) || typeof row.metric_date === 'string');
+  const latestDate = dated
+    .map((row) => timestampString(row.metric_date) ?? String(row.metric_date ?? ''))
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  return latestDate
+    ? groupRows.filter((row) => (timestampString(row.metric_date) ?? String(row.metric_date ?? '')) === latestDate)
+    : groupRows;
+}
+
+function buildKaiEventsSourceCard(uatRows: Record<string, unknown>[], fetchedAt: string) {
+  const status = buildKaiFeedStatus(uatRows);
+  const available = uatRows.length > 0;
+  return {
+    key: 'product_events',
+    label: 'DB / Product Events',
+    status: available ? 'live' : 'waiting',
+    stateClass: sourceStateClass(available ? 'live' : 'waiting'),
+    source: `${status.sourceProjectId || BQ_UAT_PROJECT}.${status.sourceDataset || BQ_UAT_DATASET}`,
+    freshness: {
+      generatedAt: status.asOfTimestamp ?? fetchedAt,
+      expectedLagSeconds: 86_400,
+    },
+    metrics: [
+      sourceMetric('dau', 'DAU', kaiFeedMetric(uatRows, 'summary', 'current_dau')),
+      sourceMetric('wau', 'WAU', kaiFeedMetric(uatRows, 'summary', 'current_wau')),
+      sourceMetric('sessions', 'Sessions', kaiFeedMetric(uatRows, 'summary', 'current_sessions')),
+      sourceMetric('events', 'Events', kaiFeedMetric(uatRows, 'summary', 'current_total_events')),
+    ],
+    blocker: available ? null : 'Kai UAT public dashboard feed is unavailable.',
+  };
+}
+
+function buildKaiSourceCards(
+  searchConsole: Record<string, unknown> | null,
+  uatGa4: Record<string, unknown> | null,
+  uatRows: Record<string, unknown>[],
+  fetchedAt: string,
+) {
+  return [
+    buildSearchConsoleSourceCard(searchConsole, 'Kai Search Console'),
+    buildGa4SourceCard(
+      uatGa4,
+      `${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`,
+      'Kai UAT GA4 export is waiting or unavailable.',
+    ),
+    buildKaiEventsSourceCard(uatRows, fetchedAt),
+  ];
 }
 
 async function fetchHushhTechSupabaseSummary(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
@@ -1665,15 +2195,16 @@ app.get('/api/analytics/kai/ga4', async (_req, res) => {
 
 app.get('/api/analytics/kai', async (req, res) => {
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
-  const [production, uat, uatGa4, productionGa4, gcp] = await Promise.all([
+  const [production, uat, uatGa4, productionGa4, gcp, searchConsole] = await Promise.all([
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     fetchKaiGa4Summary(),
     fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
+    fetchKaiSearchConsole(kaiRange),
   ]);
   const fetchedAt = new Date().toISOString();
-  const error = [production.error, uat.error, uatGa4.error, productionGa4.error, gcp.error].filter(Boolean).join('; ') || null;
+  const error = [production.error, uat.error, uatGa4.error, productionGa4.error, gcp.error, searchConsole.error].filter(Boolean).join('; ') || null;
   res.status(error && production.rows.length === 0 && !gcp.data && !productionGa4.data ? 502 : 200).json({
     platform: 'kai.hushh.ai',
     data: {
@@ -1687,8 +2218,10 @@ app.get('/api/analytics/kai', async (req, res) => {
       },
       uatGa4: uatGa4.data,
       productionGa4: productionGa4.data,
+      searchConsole: searchConsole.data,
       gcp: gcp.data,
       freshness: buildKaiFreshness(fetchedAt, production.rows, gcp.data, productionGa4.data),
+      sourceCards: buildKaiSourceCards(searchConsole.data, uatGa4.data, uat.rows, fetchedAt),
     },
     error,
     fetchedAt,
@@ -1697,18 +2230,23 @@ app.get('/api/analytics/kai', async (req, res) => {
 
 app.get('/api/analytics/hushhai', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
-  const [gcp, searchConsole] = await Promise.all([
+  const [gcp, searchConsole, ga4] = await Promise.all([
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
+    fetchHushhAiGa4Summary(hushhAiRange),
   ]);
-  const error = [gcp.error, searchConsole.error].filter(Boolean).join('; ') || null;
+  const error = [gcp.error, searchConsole.error, ga4.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
+  const productEvents = buildHushhAiProductEvents(fetchedAt);
   res.status(error && !gcp.data && !searchConsole.data ? 502 : 200).json({
     platform: 'hushh.ai',
     data: {
       gcp: gcp.data,
       searchConsole: searchConsole.data,
-      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data),
+      ga4: ga4.data,
+      productEvents,
+      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data, ga4.data, productEvents),
+      sourceCards: buildHushhAiSourceCards(searchConsole.data, ga4.data, productEvents),
     },
     error,
     fetchedAt,
@@ -1719,17 +2257,20 @@ app.get('/api/analytics/all', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
   const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
-  const [uat, production, kaiGa4, kaiProductionGa4, kaiProductionGcp, hushhAiGcp, hushhAiSearchConsole, hushhTech] = await Promise.all([
+  const [uat, production, kaiGa4, kaiProductionGa4, kaiProductionGcp, kaiSearchConsole, hushhAiGcp, hushhAiSearchConsole, hushhAiGa4, hushhTech] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     fetchKaiGa4Summary(),
     fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
+    fetchKaiSearchConsole(kaiRange),
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
+    fetchHushhAiGa4Summary(hushhAiRange),
     fetchHushhTechAnalytics(hushhTechRange),
   ]);
   const fetchedAt = new Date().toISOString();
+  const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
   res.json({
     kai: {
       uat: { environment: 'uat', rows: uat.rows, error: uat.error },
@@ -1748,10 +2289,12 @@ app.get('/api/analytics/all', async (req, res) => {
           },
           uatGa4: kaiGa4.data,
           productionGa4: kaiProductionGa4.data,
+          searchConsole: kaiSearchConsole.data,
           gcp: kaiProductionGcp.data,
           freshness: buildKaiFreshness(fetchedAt, production.rows, kaiProductionGcp.data, kaiProductionGa4.data),
+          sourceCards: buildKaiSourceCards(kaiSearchConsole.data, kaiGa4.data, uat.rows, fetchedAt),
         },
-        error: [production.error, uat.error, kaiGa4.error, kaiProductionGa4.error, kaiProductionGcp.error].filter(Boolean).join('; ') || null,
+        error: [production.error, uat.error, kaiGa4.error, kaiProductionGa4.error, kaiProductionGcp.error, kaiSearchConsole.error].filter(Boolean).join('; ') || null,
       },
     },
     hushhAi: {
@@ -1759,9 +2302,12 @@ app.get('/api/analytics/all', async (req, res) => {
       data: {
         gcp: hushhAiGcp.data,
         searchConsole: hushhAiSearchConsole.data,
-        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data),
+        ga4: hushhAiGa4.data,
+        productEvents: hushhAiProductEvents,
+        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents),
+        sourceCards: buildHushhAiSourceCards(hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents),
       },
-      error: [hushhAiGcp.error, hushhAiSearchConsole.error].filter(Boolean).join('; ') || null,
+      error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error].filter(Boolean).join('; ') || null,
     },
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
     fetchedAt,
@@ -1779,8 +2325,16 @@ app.get('/api/health', (_req, res) => {
       kaiGa4: `${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`,
       kaiProductionGa4: `${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`,
       kaiProductionCloudRun: `${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`,
+      kaiSearchConsole: `${KAI_SEARCH_PROJECT}.${KAI_SEARCH_DATASET}`,
+      kaiSearchConsoleFallback: `${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`,
+      kaiSearchConsoleSiteUrl: KAI_SEARCH_CONSOLE_SITE_URL,
       hushhAiCloudRun: `${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`,
       hushhAiSearchConsole: `${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}`,
+      hushhAiSearchConsoleFallback: `${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`,
+      hushhAiSearchConsoleSiteUrl: HUSHH_AI_SEARCH_CONSOLE_SITE_URL,
+      hushhAiGa4: HUSHH_AI_GA4_PROJECT && HUSHH_AI_GA4_DATASET
+        ? `${HUSHH_AI_GA4_PROJECT}.${HUSHH_AI_GA4_DATASET}`
+        : '(waiting)',
       hushhTechEndpoint: buildHushhTechUrl(),
       hushhTechCloudRun: `${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`,
       hushhTechSearchConsole: `${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`,
@@ -1808,7 +2362,10 @@ app.listen(PORT, () => {
   console.log(`  Kai GA4:       ${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`);
   console.log(`  Kai Prod GA4:  ${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`);
   console.log(`  Kai GCP:       ${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`);
+  console.log(`  Kai GSC Fallback: ${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`);
   console.log(`  Hush AI GCP:   ${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`);
+  console.log(`  Hush AI GA4:   ${HUSHH_AI_GA4_PROJECT && HUSHH_AI_GA4_DATASET ? `${HUSHH_AI_GA4_PROJECT}.${HUSHH_AI_GA4_DATASET}` : '(waiting)'}`);
+  console.log(`  Hush AI GSC Fallback: ${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`);
   console.log(`  hushhtech.com: ${buildHushhTechUrl()}`);
   console.log(`  HushhTech GCP: ${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`);
   console.log(`  HushhTech GSC: ${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`);
