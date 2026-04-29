@@ -212,6 +212,18 @@ gcloud scheduler jobs resume hushhtech-search-console-ingest-daily \
   --location=us-central1
 ```
 
+Run the HushhTech metrics-flow probe after changing ingestion, Scheduler, GA4,
+or dashboard wiring:
+
+```bash
+npm run test:prod:hushhtech-flow
+```
+
+This probe checks the public HushhTech summary endpoint, the
+`metrics.hushh.ai` HushhTech and aggregate APIs, BigQuery fallback freshness,
+Cloud Run Job readiness, the latest completed ingestion execution, the
+Scheduler target, and the OAuth secret version without printing secret values.
+
 Check that runtime config is still Secret Manager-backed:
 
 ```bash

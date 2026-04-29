@@ -260,7 +260,7 @@ gcloud scheduler jobs create http hushhtech-search-console-ingest-daily \
   --location="$REGION" \
   --schedule="20 9 * * *" \
   --time-zone="Etc/UTC" \
-  --uri="https://run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT/jobs/${HUSHHTECH_SEARCH_INGEST_JOB}:run" \
+  --uri="https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/${HUSHHTECH_SEARCH_INGEST_JOB}:run" \
   --http-method=POST \
   --oauth-service-account-email="$HUSHHTECH_SEARCH_SCHEDULER_SA" \
   --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
