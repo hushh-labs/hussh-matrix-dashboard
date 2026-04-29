@@ -96,6 +96,12 @@ gcloud projects add-iam-policy-binding hushh-ai-prod \
   --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
   --role="roles/run.admin"
 
+gcloud artifacts repositories add-iam-policy-binding website-images \
+  --project=hushh-ai-prod \
+  --location=us-central1 \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.reader"
+
 gcloud iam service-accounts add-iam-policy-binding \
   metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com \
   --project=hushh-ai-prod \
