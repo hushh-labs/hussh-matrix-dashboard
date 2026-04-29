@@ -43,8 +43,8 @@ required for this subdomain.
 | Service | `hushh-matrix-dashboard` |
 | Runtime identity | `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com` |
 | Image repo | `us-central1-docker.pkg.dev/hushh-ai-prod/website-images` |
-| Current deployed revision | `hushh-matrix-dashboard-00015-fkk` |
-| Current deployed image tag | `hushh-matrix-dashboard:4125b6f-hushhtech-gsc-fallback-20260428232037` |
+| Current deployed revision | `hushh-matrix-dashboard-00016-q9f` |
+| Current deployed image tag | `hushh-matrix-dashboard:99d4ae0-three-source-20260429170102` |
 | Runtime config | Secret Manager-backed env vars only |
 | Public access | Enabled, aggregate-only |
 
