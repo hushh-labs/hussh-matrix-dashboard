@@ -126,6 +126,36 @@ app.use('/api', (_req, res, next) => {
   next();
 });
 
+const PUBLIC_OMIT_KEYS = new Set([
+  'sourceProjectId',
+  'sourceDataset',
+  'fallbackProjectId',
+  'fallbackDataset',
+  'officialExportProjectId',
+  'officialExportDataset',
+  'sourceProjectRef',
+  'sourceProjectName',
+  'sourceDatabaseName',
+  'sourceTable',
+  'pageFilterRegex',
+]);
+const PUBLIC_UNSAFE_VALUE_PATTERN = /analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda(?:-uat)?|ibsisfnjxeowvdtvgzff/i;
+
+function sanitizePublicPayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => sanitizePublicPayload(item));
+  if (typeof value === 'string') {
+    return PUBLIC_UNSAFE_VALUE_PATTERN.test(value) ? 'Internal aggregate source' : value;
+  }
+  if (!value || typeof value !== 'object') return value;
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (PUBLIC_OMIT_KEYS.has(key)) continue;
+    sanitized[key] = sanitizePublicPayload(child);
+  }
+  return sanitized;
+}
+
 interface HushhAiDateRange {
   startDate: string;
   endDate: string;
@@ -474,33 +504,40 @@ async function fetchHushhTechCloudRun(range: HushhAiDateRange): Promise<DataResu
 }
 
 function unavailableHushhTechSearchConsole(range: HushhAiDateRange, note: string): Record<string, unknown> {
+  const overview = {
+    clicks: 0,
+    impressions: 0,
+    ctr: null,
+    averagePosition: null,
+  };
   return {
-    source: 'metrics-hushh-ai-search-console-bigquery',
+    source: 'metrics-hushh-ai-search-console-waiting',
+    sourceLabel: 'Search Console waiting',
     available: false,
     realtime: false,
     dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
     searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
-    overview: {
-      clicks: 0,
-      impressions: 0,
-      ctr: null,
-      averagePosition: null,
+    overview,
+    range: {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      days: range.days,
     },
+    rangeTotals: overview,
+    daily: searchConsoleDailySpine(range, []),
     queries: [],
     pages: [],
     countries: [],
     devices: [],
     searchAppearance: [],
     state: {
-      source: 'metrics-hushh-ai-search-console-bigquery',
+      source: 'Search Console waiting',
       available: false,
       byRegion: [],
       note,
     },
     metadata: {
       siteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
-      sourceProjectId: HUSHHTECH_SEARCH_PROJECT,
-      sourceDataset: HUSHHTECH_SEARCH_DATASET,
       startDate: range.startDate,
       endDate: range.endDate,
       expectedLagSeconds: 86_400,
@@ -517,6 +554,39 @@ function searchConsoleMetric(row: Record<string, unknown> | undefined) {
     ctr: row?.ctr == null ? null : toNumber(row.ctr),
     averagePosition: averagePosition == null ? null : toNumber(averagePosition),
   };
+}
+
+function publicSearchConsoleSourceLabel(source: unknown): string {
+  const value = String(source ?? '');
+  if (value.includes('gcp-fallback')) return 'Search Console fallback aggregates';
+  if (value.includes('waiting')) return 'Search Console waiting';
+  return 'Search Console official export';
+}
+
+function publicGa4SourceLabel(source: unknown): string {
+  const value = String(source ?? '');
+  if (value === 'ga4-data-api' || value.startsWith('properties/')) return 'GA4 Data API';
+  if (value.includes('not_configured')) return 'GA4 waiting';
+  return 'GA4 export';
+}
+
+function publicProductEventsSourceLabel(productLabel: string): string {
+  return `${productLabel} DB aggregate events`;
+}
+
+function searchConsoleDailySpine(
+  range: HushhAiDateRange,
+  rows: Record<string, unknown>[],
+): Array<Record<string, unknown>> {
+  const byDate = new Map(rows.map((row) => [String(row.date ?? row.dataDate ?? row.eventDate), row]));
+  return dateSpine(range).map((date) => {
+    const metric = searchConsoleMetric(byDate.get(date));
+    return {
+      date,
+      label: date.slice(5),
+      ...metric,
+    };
+  });
 }
 
 function sqlStringLiteral(value: string): string {
@@ -547,22 +617,30 @@ function unavailableProductSearchConsole(
 ): Record<string, unknown> {
   return {
     source: 'metrics-hushh-ai-search-console-waiting',
-    sourceProjectId: config.sourceProjectId,
-    sourceDataset: config.sourceDataset,
-    fallbackProjectId: config.fallbackProjectId,
-    fallbackDataset: config.fallbackDataset,
+    sourceLabel: 'Search Console waiting',
     siteUrl: config.siteUrl,
-    pageFilterRegex: config.pageFilterRegex || null,
     generatedAt: new Date().toISOString(),
     realtimeMode: 'delayed_export',
     expectedLagSeconds: 86_400,
     startDate: range.startDate,
     endDate: range.endDate,
+    range: {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      days: range.days,
+    },
+    rangeTotals: {
+      clicks: 0,
+      impressions: 0,
+      ctr: null,
+      averagePosition: null,
+    },
     available: false,
     clicks: 0,
     impressions: 0,
     ctr: null,
     averagePosition: null,
+    daily: searchConsoleDailySpine(range, []),
     queries: [],
     pages: [],
     countries: [],
@@ -578,6 +656,7 @@ function productSearchConsolePayload(
   sourceProjectId: string,
   sourceDataset: string,
   aggregateRow: Record<string, unknown> | undefined,
+  dailyRows: Record<string, unknown>[],
   queries: Record<string, unknown>[],
   pages: Record<string, unknown>[],
   countries: Record<string, unknown>[],
@@ -587,22 +666,25 @@ function productSearchConsolePayload(
   const overview = searchConsoleMetric(aggregateRow);
   return {
     source,
-    sourceProjectId,
-    sourceDataset,
-    fallbackProjectId: config.fallbackProjectId,
-    fallbackDataset: config.fallbackDataset,
+    sourceLabel: publicSearchConsoleSourceLabel(source),
     siteUrl: config.siteUrl,
-    pageFilterRegex: config.pageFilterRegex || null,
     generatedAt: new Date().toISOString(),
     realtimeMode: 'delayed_export',
     expectedLagSeconds: 86_400,
     startDate: range.startDate,
     endDate: range.endDate,
+    range: {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      days: range.days,
+    },
+    rangeTotals: overview,
     available: overview.clicks > 0 || overview.impressions > 0,
     clicks: overview.clicks,
     impressions: overview.impressions,
     ctr: overview.ctr,
     averagePosition: overview.averagePosition,
+    daily: searchConsoleDailySpine(range, dailyRows),
     queries: queries.map((row) => ({ query: String(row.query ?? ''), ...searchConsoleMetric(row) })),
     pages: pages.map((row) => ({ pageUrl: String(row.pageUrl ?? ''), ...searchConsoleMetric(row) })),
     countries: countries.map((row) => ({ country: String(row.country ?? ''), ...searchConsoleMetric(row) })),
@@ -618,7 +700,6 @@ async function fetchProductSearchConsoleFallback(
 ): Promise<DataResult<Record<string, unknown>>> {
   const queryProject = BQ_JOB_PROJECT || config.fallbackProjectId;
   const datasetRef = `\`${config.fallbackProjectId}.${config.fallbackDataset}\``;
-  const sourceLabel = `${config.fallbackProjectId}.${config.fallbackDataset}`;
   const tableRows = await queryBigQuerySql(queryProject, `
     SELECT table_name AS tableName
     FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
@@ -626,7 +707,7 @@ async function fetchProductSearchConsoleFallback(
   `);
 
   if (tableRows.error) {
-    const note = `${config.productLabel} Search Console GCP fallback dataset ${sourceLabel} is not queryable yet. ${officialExportNote}`;
+    const note = `${config.productLabel} Search Console fallback aggregates are not queryable yet. ${officialExportNote}`;
     if (/not found|notfound/i.test(tableRows.error)) {
       return { data: unavailableProductSearchConsole(config, range, note), error: null };
     }
@@ -639,7 +720,7 @@ async function fetchProductSearchConsoleFallback(
       data: unavailableProductSearchConsole(
         config,
         range,
-        `${config.productLabel} Search Console GCP fallback is configured, but ${sourceLabel}.site_daily has not been created or populated yet. ${officialExportNote}`,
+        `${config.productLabel} Search Console fallback is configured, but the daily aggregate table has not been created or populated yet. ${officialExportNote}`,
       ),
       error: null,
     };
@@ -659,6 +740,18 @@ async function fetchProductSearchConsoleFallback(
     FROM ${datasetRef}.site_daily
     WHERE ${whereClause}
   `;
+  const dailyQuery = `
+    SELECT
+      CAST(data_date AS STRING) AS date,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      ${weightedPosition} AS averagePosition
+    FROM ${datasetRef}.site_daily
+    WHERE ${whereClause}
+    GROUP BY date
+    ORDER BY date
+  `;
   const dimensionQuery = (table: string, field: string, alias: string) => tableNames.has(table) ? `
     SELECT
       ${field} AS ${alias},
@@ -673,8 +766,9 @@ async function fetchProductSearchConsoleFallback(
     LIMIT ${config.rowLimit}
   ` : null;
 
-  const [aggregate, queries, pages, countries, devices] = await Promise.all([
+  const [aggregate, daily, queries, pages, countries, devices] = await Promise.all([
     queryBigQuerySql(queryProject, aggregateQuery),
+    queryBigQuerySql(queryProject, dailyQuery),
     dimensionQuery('query_daily', 'query', 'query')
       ? queryBigQuerySql(queryProject, dimensionQuery('query_daily', 'query', 'query') as string)
       : Promise.resolve({ rows: [], error: null }),
@@ -688,7 +782,7 @@ async function fetchProductSearchConsoleFallback(
       ? queryBigQuerySql(queryProject, dimensionQuery('device_daily', 'device', 'device') as string)
       : Promise.resolve({ rows: [], error: null }),
   ]);
-  const errors = [aggregate.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
+  const errors = [aggregate.error, daily.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
   if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
 
   const data = productSearchConsolePayload(
@@ -698,6 +792,7 @@ async function fetchProductSearchConsoleFallback(
     config.fallbackProjectId,
     config.fallbackDataset,
     aggregate.rows[0],
+    daily.rows,
     queries.rows,
     pages.rows,
     countries.rows,
@@ -713,7 +808,6 @@ async function fetchProductSearchConsole(
 ): Promise<DataResult<Record<string, unknown>>> {
   const queryProject = BQ_JOB_PROJECT || config.sourceProjectId;
   const datasetRef = `\`${config.sourceProjectId}.${config.sourceDataset}\``;
-  const sourceLabel = `${config.sourceProjectId}.${config.sourceDataset}`;
   const tableRows = await queryBigQuerySql(queryProject, `
     SELECT table_name AS tableName
     FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
@@ -721,7 +815,7 @@ async function fetchProductSearchConsole(
   `);
 
   if (tableRows.error) {
-    const waitingNote = `${config.productLabel} Search Console bulk export is configured, but ${sourceLabel} is not queryable yet.`;
+    const waitingNote = `${config.productLabel} Search Console bulk export is configured, but it is not queryable yet.`;
     if (/not found|notfound/i.test(tableRows.error)) {
       return fetchProductSearchConsoleFallback(config, range, waitingNote);
     }
@@ -733,14 +827,14 @@ async function fetchProductSearchConsole(
     return fetchProductSearchConsoleFallback(
       config,
       range,
-      `Official Search Console bulk export is set up; waiting for ${sourceLabel}.searchdata_site_impression.`,
+      'Official Search Console bulk export is set up; waiting for the site impression table.',
     );
   }
   if (config.pageFilterRegex && !tableNames.has('searchdata_url_impression')) {
     return fetchProductSearchConsoleFallback(
       config,
       range,
-      `Official Search Console bulk export exists, but ${sourceLabel}.searchdata_url_impression is required for product URL filtering.`,
+      'Official Search Console bulk export exists, but the URL impression table is required for product URL filtering.',
     );
   }
 
@@ -765,6 +859,18 @@ async function fetchProductSearchConsole(
     FROM ${sourceTable}
     WHERE ${whereClause}
   `;
+  const dailyQuery = `
+    SELECT
+      CAST(data_date AS STRING) AS date,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(${positionField}), SUM(impressions)) + 1 AS averagePosition
+    FROM ${sourceTable}
+    WHERE ${whereClause}
+    GROUP BY date
+    ORDER BY date
+  `;
   const dimensionQuery = (field: string, alias: string) => `
     SELECT
       ${field} AS ${alias},
@@ -779,8 +885,9 @@ async function fetchProductSearchConsole(
     LIMIT ${config.rowLimit}
   `;
 
-  const [aggregate, queries, pages, countries, devices] = await Promise.all([
+  const [aggregate, daily, queries, pages, countries, devices] = await Promise.all([
     queryBigQuerySql(queryProject, aggregateQuery),
+    queryBigQuerySql(queryProject, dailyQuery),
     queryBigQuerySql(queryProject, dimensionQuery('COALESCE(query, \'(anonymous)\')', 'query')),
     tableNames.has('searchdata_url_impression')
       ? queryBigQuerySql(queryProject, dimensionQuery('url', 'pageUrl'))
@@ -788,7 +895,7 @@ async function fetchProductSearchConsole(
     queryBigQuerySql(queryProject, dimensionQuery('country', 'country')),
     queryBigQuerySql(queryProject, dimensionQuery('device', 'device')),
   ]);
-  const errors = [aggregate.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
+  const errors = [aggregate.error, daily.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
   if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
 
   const data = productSearchConsolePayload(
@@ -798,6 +905,7 @@ async function fetchProductSearchConsole(
     config.sourceProjectId,
     config.sourceDataset,
     aggregate.rows[0],
+    daily.rows,
     queries.rows,
     pages.rows,
     countries.rows,
@@ -814,7 +922,6 @@ async function fetchHushhTechSearchConsoleFallback(
   const generatedAt = new Date().toISOString();
   const queryProject = BQ_JOB_PROJECT || HUSHHTECH_SEARCH_FALLBACK_PROJECT;
   const datasetRef = `\`${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}\``;
-  const sourceLabel = `${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}`;
   const tableRows = await queryBigQuerySql(queryProject, `
     SELECT table_name AS tableName
     FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
@@ -822,7 +929,7 @@ async function fetchHushhTechSearchConsoleFallback(
   `);
 
   if (tableRows.error) {
-    const note = `Search Console GCP fallback dataset ${sourceLabel} is not queryable yet. ${officialExportNote}`;
+    const note = `Search Console fallback aggregates are not queryable yet. ${officialExportNote}`;
     if (/not found|notfound/i.test(tableRows.error)) {
       return { data: unavailableHushhTechSearchConsole(range, note), error: null };
     }
@@ -834,7 +941,7 @@ async function fetchHushhTechSearchConsoleFallback(
     return {
       data: unavailableHushhTechSearchConsole(
         range,
-        `Search Console GCP fallback is configured, but ${sourceLabel}.site_daily has not been created or populated yet. ${officialExportNote}`,
+        `Search Console fallback is configured, but the daily aggregate table has not been created or populated yet. ${officialExportNote}`,
       ),
       error: null,
     };
@@ -855,6 +962,18 @@ async function fetchHushhTechSearchConsoleFallback(
     FROM ${datasetRef}.site_daily
     WHERE ${whereClause}
   `;
+  const dailyQuery = `
+    SELECT
+      CAST(data_date AS STRING) AS date,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      ${weightedPosition} AS averagePosition
+    FROM ${datasetRef}.site_daily
+    WHERE ${whereClause}
+    GROUP BY date
+    ORDER BY date
+  `;
   const dimensionQuery = (table: string, field: string, alias: string) => tableNames.has(table) ? `
     SELECT
       ${field} AS ${alias},
@@ -874,14 +993,15 @@ async function fetchHushhTechSearchConsoleFallback(
   const countryRowsQuery = dimensionQuery('country_daily', 'country', 'country');
   const deviceRowsQuery = dimensionQuery('device_daily', 'device', 'device');
 
-  const [aggregate, queries, pages, countries, devices] = await Promise.all([
+  const [aggregate, daily, queries, pages, countries, devices] = await Promise.all([
     queryBigQuerySql(queryProject, aggregateQuery),
+    queryBigQuerySql(queryProject, dailyQuery),
     queryRowsQuery ? queryBigQuerySql(queryProject, queryRowsQuery) : Promise.resolve({ rows: [], error: null }),
     pageRowsQuery ? queryBigQuerySql(queryProject, pageRowsQuery) : Promise.resolve({ rows: [], error: null }),
     countryRowsQuery ? queryBigQuerySql(queryProject, countryRowsQuery) : Promise.resolve({ rows: [], error: null }),
     deviceRowsQuery ? queryBigQuerySql(queryProject, deviceRowsQuery) : Promise.resolve({ rows: [], error: null }),
   ]);
-  const errors = [aggregate.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
+  const errors = [aggregate.error, daily.error, queries.error, pages.error, countries.error, devices.error].filter(Boolean);
   if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
 
   const overview = searchConsoleMetric(aggregate.rows[0]);
@@ -889,11 +1009,19 @@ async function fetchHushhTechSearchConsoleFallback(
   return {
     data: {
       source: 'metrics-hushh-ai-search-console-gcp-fallback',
+      sourceLabel: 'Search Console fallback aggregates',
       available,
       realtime: false,
       dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
       searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
       overview,
+      range: {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        days: range.days,
+      },
+      rangeTotals: overview,
+      daily: searchConsoleDailySpine(range, daily.rows),
       queries: queries.rows.map((row) => ({
         query: String(row.query ?? ''),
         ...searchConsoleMetric(row),
@@ -919,10 +1047,6 @@ async function fetchHushhTechSearchConsoleFallback(
       },
       metadata: {
         siteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
-        sourceProjectId: HUSHHTECH_SEARCH_FALLBACK_PROJECT,
-        sourceDataset: HUSHHTECH_SEARCH_FALLBACK_DATASET,
-        officialExportProjectId: HUSHHTECH_SEARCH_PROJECT,
-        officialExportDataset: HUSHHTECH_SEARCH_DATASET,
         generatedAt,
         startDate: range.startDate,
         endDate: range.endDate,
@@ -940,7 +1064,6 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
   const generatedAt = new Date().toISOString();
   const queryProject = BQ_JOB_PROJECT || HUSHHTECH_SEARCH_PROJECT;
   const datasetRef = `\`${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}\``;
-  const sourceLabel = `${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`;
   const tableRows = await queryBigQuerySql(queryProject, `
     SELECT table_name AS tableName
     FROM ${datasetRef}.INFORMATION_SCHEMA.TABLES
@@ -948,7 +1071,7 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
   `);
 
   if (tableRows.error) {
-    const waitingNote = `Search Console bulk export for hushhtech.com is configured, but ${sourceLabel} is not queryable yet.`;
+    const waitingNote = 'Search Console bulk export for hushhtech.com is configured, but it is not queryable yet.';
     if (/not found|notfound/i.test(tableRows.error)) {
       return fetchHushhTechSearchConsoleFallback(range, waitingNote);
     }
@@ -959,7 +1082,7 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
   if (!tableNames.has('searchdata_site_impression')) {
     return fetchHushhTechSearchConsoleFallback(
       range,
-      `Official Search Console bulk export is set up; waiting for ${sourceLabel}.searchdata_site_impression.`,
+      'Official Search Console bulk export is set up; waiting for the site impression table.',
     );
   }
 
@@ -977,6 +1100,18 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
       SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
     FROM ${siteTable}
     WHERE ${whereClause}
+  `;
+  const dailyQuery = `
+    SELECT
+      CAST(data_date AS STRING) AS date,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+    FROM ${siteTable}
+    WHERE ${whereClause}
+    GROUP BY date
+    ORDER BY date
   `;
   const queryRowsQuery = `
     SELECT
@@ -1031,25 +1166,34 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
     LIMIT ${rowLimit}
   ` : null;
 
-  const [aggregate, queries, countries, devices, pages] = await Promise.all([
+  const [aggregate, daily, queries, countries, devices, pages] = await Promise.all([
     queryBigQuerySql(queryProject, aggregateQuery),
+    queryBigQuerySql(queryProject, dailyQuery),
     queryBigQuerySql(queryProject, queryRowsQuery),
     queryBigQuerySql(queryProject, countryRowsQuery),
     queryBigQuerySql(queryProject, deviceRowsQuery),
     pageRowsQuery ? queryBigQuerySql(queryProject, pageRowsQuery) : Promise.resolve({ rows: [], error: null }),
   ]);
-  const errors = [aggregate.error, queries.error, countries.error, devices.error, pages.error].filter(Boolean);
+  const errors = [aggregate.error, daily.error, queries.error, countries.error, devices.error, pages.error].filter(Boolean);
   if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
 
   const overview = searchConsoleMetric(aggregate.rows[0]);
   return {
     data: {
       source: 'metrics-hushh-ai-search-console-bigquery',
+      sourceLabel: 'Search Console official export',
       available: overview.clicks > 0 || overview.impressions > 0,
       realtime: false,
       dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
       searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
       overview,
+      range: {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        days: range.days,
+      },
+      rangeTotals: overview,
+      daily: searchConsoleDailySpine(range, daily.rows),
       queries: queries.rows.map((row) => ({
         query: String(row.query ?? ''),
         ...searchConsoleMetric(row),
@@ -1075,8 +1219,6 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
       },
       metadata: {
         siteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
-        sourceProjectId: HUSHHTECH_SEARCH_PROJECT,
-        sourceDataset: HUSHHTECH_SEARCH_DATASET,
         generatedAt,
         startDate: range.startDate,
         endDate: range.endDate,
@@ -1151,11 +1293,11 @@ function toNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function fetchKaiGa4Summary(): Promise<DataResult<Record<string, unknown>>> {
+function defaultUtcRange(days: number): HushhAiDateRange {
   const end = new Date();
   const endDate = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
-  const windowDays = Number.isFinite(KAI_GA4_WINDOW_DAYS) ? KAI_GA4_WINDOW_DAYS : 14;
-  const range: HushhAiDateRange = {
+  const windowDays = Math.max(1, Math.min(days, MAX_HUSHH_AI_RANGE_DAYS));
+  return {
     startDate: formatUtcDate(addUtcDays(endDate, -(windowDays - 1))),
     endDate: formatUtcDate(endDate),
     days: windowDays,
@@ -1163,7 +1305,39 @@ async function fetchKaiGa4Summary(): Promise<DataResult<Record<string, unknown>>
     endTime: addUtcDays(endDate, 1).toISOString(),
     windowSeconds: windowDays * 86_400,
   };
-  return fetchKaiGa4ExportSummary(KAI_GA4_PROJECT, KAI_GA4_DATASET, range, false);
+}
+
+async function fetchKaiGa4Summary(range?: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  const windowDays = Number.isFinite(KAI_GA4_WINDOW_DAYS) ? KAI_GA4_WINDOW_DAYS : 14;
+  const effectiveRange = range ?? defaultUtcRange(windowDays);
+  return fetchKaiGa4ExportSummary(KAI_GA4_PROJECT, KAI_GA4_DATASET, effectiveRange, false);
+}
+
+function ga4ExportSuffixFilter(startDate: string, endDate: string, includeIntraday = false): string {
+  const start = startDate.replaceAll('-', '');
+  const end = endDate.replaceAll('-', '');
+  if (!includeIntraday) return `_TABLE_SUFFIX BETWEEN '${start}' AND '${end}'`;
+
+  const suffixes: string[] = [];
+  let cursor = parseUtcDate(startDate) as Date;
+  const last = parseUtcDate(endDate) as Date;
+  while (cursor <= last) {
+    const suffix = formatUtcDate(cursor).replaceAll('-', '');
+    suffixes.push(`'${suffix}'`, `'intraday_${suffix}'`);
+    cursor = addUtcDays(cursor, 1);
+  }
+  return `_TABLE_SUFFIX IN (${suffixes.join(', ')})`;
+}
+
+function ga4ExportTotalsSql(table: string, whereClause: string): string {
+  return `
+    SELECT
+      COUNT(*) AS events,
+      COUNT(DISTINCT user_pseudo_id) AS users,
+      COUNT(DISTINCT (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')) AS sessions
+    FROM ${table}
+    WHERE ${whereClause}
+  `;
 }
 
 async function fetchKaiGa4ExportSummary(
@@ -1174,9 +1348,12 @@ async function fetchKaiGa4ExportSummary(
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
-  const suffixStart = range.startDate.replaceAll('-', '');
-  const suffixEnd = range.endDate.replaceAll('-', '');
-  const dateFilter = `_TABLE_SUFFIX BETWEEN '${suffixStart}' AND '${suffixEnd}'`;
+  const dateFilter = ga4ExportSuffixFilter(range.startDate, range.endDate);
+  const last7Range = defaultUtcRange(7);
+  const last24Range = defaultUtcRange(2);
+  const last7Filter = ga4ExportSuffixFilter(last7Range.startDate, last7Range.endDate);
+  const last24Filter = `${ga4ExportSuffixFilter(last24Range.startDate, last24Range.endDate, true)}
+    AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`;
 
   const dailyQuery = `
     SELECT
@@ -1189,14 +1366,9 @@ async function fetchKaiGa4ExportSummary(
     GROUP BY eventDate
     ORDER BY eventDate
   `;
-  const totalsQuery = `
-    SELECT
-      COUNT(*) AS events,
-      COUNT(DISTINCT user_pseudo_id) AS users,
-      COUNT(DISTINCT (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')) AS sessions
-    FROM ${table}
-    WHERE ${dateFilter}
-  `;
+  const totalsQuery = ga4ExportTotalsSql(table, dateFilter);
+  const last7Query = ga4ExportTotalsSql(table, last7Filter);
+  const last24Query = ga4ExportTotalsSql(table, last24Filter);
   const eventsQuery = `
     SELECT
       event_name AS eventName,
@@ -1223,13 +1395,15 @@ async function fetchKaiGa4ExportSummary(
   `;
 
   const queryProject = BQ_JOB_PROJECT || projectId;
-  const [daily, totals, topEvents, geo] = await Promise.all([
+  const [daily, totals, last7, last24, topEvents, geo] = await Promise.all([
     queryBigQuerySql(queryProject, dailyQuery),
     queryBigQuerySql(queryProject, totalsQuery),
+    queryBigQuerySql(queryProject, last7Query),
+    queryBigQuerySql(queryProject, last24Query),
     queryBigQuerySql(queryProject, eventsQuery),
     queryBigQuerySql(queryProject, geoQuery),
   ]);
-  const errors = [daily.error, totals.error, topEvents.error, geo.error].filter(Boolean);
+  const errors = [daily.error, totals.error, last7.error, last24.error, topEvents.error, geo.error].filter(Boolean);
 
   if (daily.rows.length === 0 && topEvents.rows.length === 0 && geo.rows.length === 0 && errors.length > 0) {
     if (tolerateMissingDataset) {
@@ -1251,6 +1425,25 @@ async function fetchKaiGa4ExportSummary(
             sessions: 0,
             events: 0,
           },
+          sections: buildGa4Sections({
+            generatedAt,
+            realtime: {
+              users: null,
+              sessions: null,
+              events: null,
+              available: false,
+              note: 'Realtime GA4 needs a GA4 Data API property ID; BigQuery export is delayed.',
+            },
+            last24Hours: {
+              users: null,
+              sessions: null,
+              events: null,
+              available: false,
+              note: 'GA4 export rows are not available for the last 24 hours yet.',
+            },
+            last7Days: { users: 0, sessions: 0, events: 0, available: false },
+            selectedTotal: { users: 0, sessions: 0, events: 0, available: false },
+          }),
           daily: dateSpine(range).map((date) => ({
             eventDate: date,
             events: 0,
@@ -1268,11 +1461,19 @@ async function fetchKaiGa4ExportSummary(
 
   const dailyByDate = new Map(daily.rows.map((row) => [String(row.eventDate), row]));
   const totalsRow = totals.rows[0] ?? {};
+  const last7Row = last7.rows[0] ?? {};
+  const last24Row = last24.rows[0] ?? {};
+  const selectedTotals = {
+    users: toNumber(totalsRow.users),
+    sessions: toNumber(totalsRow.sessions),
+    events: toNumber(totalsRow.events),
+  };
 
   return {
     data: {
       sourceProjectId: projectId,
       sourceDataset: dataset,
+      sourceLabel: 'GA4 export',
       generatedAt,
       realtimeMode: 'delayed_export',
       expectedLagSeconds: 86_400,
@@ -1284,10 +1485,36 @@ async function fetchKaiGa4ExportSummary(
         days: range.days,
       },
       rangeTotals: {
-        users: toNumber(totalsRow.users),
-        sessions: toNumber(totalsRow.sessions),
-        events: toNumber(totalsRow.events),
+        users: selectedTotals.users,
+        sessions: selectedTotals.sessions,
+        events: selectedTotals.events,
       },
+      sections: buildGa4Sections({
+        generatedAt,
+        realtime: {
+          users: null,
+          sessions: null,
+          events: null,
+          available: false,
+          note: 'Realtime GA4 needs a GA4 Data API property ID; BigQuery export is delayed.',
+        },
+        last24Hours: {
+          users: toNumber(last24Row.users),
+          sessions: toNumber(last24Row.sessions),
+          events: toNumber(last24Row.events),
+          available: !last24.error,
+        },
+        last7Days: {
+          users: toNumber(last7Row.users),
+          sessions: toNumber(last7Row.sessions),
+          events: toNumber(last7Row.events),
+          available: !last7.error,
+        },
+        selectedTotal: {
+          ...selectedTotals,
+          available: !totals.error,
+        },
+      }),
       daily: dateSpine(range).map((date) => {
         const row = dailyByDate.get(date) ?? {};
         return {
@@ -1324,6 +1551,7 @@ function waitingGa4Summary(
   return {
     sourceProjectId,
     sourceDataset,
+    sourceLabel: 'GA4 waiting',
     generatedAt: new Date().toISOString(),
     realtimeMode: 'delayed_export',
     expectedLagSeconds: 86_400,
@@ -1339,6 +1567,13 @@ function waitingGa4Summary(
       sessions: null,
       events: null,
     },
+    sections: buildGa4Sections({
+      generatedAt: new Date().toISOString(),
+      realtime: { users: null, sessions: null, events: null, available: false, note },
+      last24Hours: { users: null, sessions: null, events: null, available: false, note },
+      last7Days: { users: null, sessions: null, events: null, available: false, note },
+      selectedTotal: { users: null, sessions: null, events: null, available: false, note },
+    }),
     daily: dateSpine(range).map((date) => ({
       eventDate: date,
       events: 0,
@@ -1374,7 +1609,7 @@ function formatGa4ApiDate(value: string): string {
     : value;
 }
 
-async function runGa4Report(propertyId: string, body: Record<string, unknown>): Promise<Ga4RunReportResponse> {
+async function ga4AuthorizedClient() {
   const { GoogleAuth, Impersonated } = await import('google-auth-library');
   const auth = new GoogleAuth({
     scopes: HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT
@@ -1390,6 +1625,11 @@ async function runGa4Report(propertyId: string, body: Record<string, unknown>): 
       lifetime: 3600,
     })
     : sourceClient;
+  return client as any;
+}
+
+async function runGa4Report(propertyId: string, body: Record<string, unknown>): Promise<Ga4RunReportResponse> {
+  const client = await ga4AuthorizedClient();
   const res = await (client as any).request({
     url: `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
     method: 'POST',
@@ -1399,6 +1639,74 @@ async function runGa4Report(propertyId: string, body: Record<string, unknown>): 
   return res.data as Ga4RunReportResponse;
 }
 
+async function runGa4RealtimeReport(propertyId: string, body: Record<string, unknown>): Promise<Ga4RunReportResponse> {
+  const client = await ga4AuthorizedClient();
+  const res = await (client as any).request({
+    url: `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runRealtimeReport`,
+    method: 'POST',
+    data: body,
+    timeout: 30_000,
+  });
+  return res.data as Ga4RunReportResponse;
+}
+
+function ga4TotalsFromRow(row: Ga4RunReportRow | undefined, offset = 0) {
+  return {
+    users: ga4Metric(row, offset),
+    sessions: ga4Metric(row, offset + 1),
+    events: ga4Metric(row, offset + 2),
+  };
+}
+
+function sumGa4Rows(rows: Ga4RunReportRow[] | undefined, metricOffset = 0) {
+  return (rows ?? []).reduce(
+    (totals, row) => ({
+      users: totals.users + ga4Metric(row, metricOffset),
+      sessions: totals.sessions + ga4Metric(row, metricOffset + 1),
+      events: totals.events + ga4Metric(row, metricOffset + 2),
+    }),
+    { users: 0, sessions: 0, events: 0 },
+  );
+}
+
+function buildGa4Sections(params: {
+  generatedAt: string;
+  realtime?: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null };
+  last24Hours?: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null };
+  last7Days?: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null };
+  selectedTotal?: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null };
+}) {
+  const toSection = (
+    key: string,
+    label: string,
+    mode: string,
+    totals: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null } | undefined,
+  ) => ({
+    key,
+    label,
+    status: totals?.available ? (key === 'realtime' ? 'live' : 'delayed') : 'waiting',
+    stateClass: sourceStateClass(totals?.available ? (key === 'realtime' ? 'live' : 'delayed') : 'waiting'),
+    source: mode,
+    freshness: {
+      generatedAt: params.generatedAt,
+      expectedLagSeconds: key === 'realtime' ? 60 : 86_400,
+    },
+    metrics: [
+      sourceMetric('users', key === 'realtime' ? 'Active Users' : 'Users', totals?.users),
+      sourceMetric('sessions', 'Sessions', totals?.sessions),
+      sourceMetric('events', 'Events', totals?.events),
+    ],
+    blocker: totals?.available ? null : totals?.note ?? `${label} is waiting for GA4 rows.`,
+  });
+
+  return [
+    toSection('realtime', 'Realtime', 'GA4 Realtime API', params.realtime),
+    toSection('last_24_hours', 'Last 24 Hours', 'GA4 processed report', params.last24Hours),
+    toSection('last_7_days', 'Last 7 Days', 'GA4 processed report', params.last7Days),
+    toSection('selected_total', 'Selected Total', 'GA4 selected range', params.selectedTotal),
+  ];
+}
+
 async function fetchGa4DataApiSummary(
   propertyId: string,
   measurementId: string,
@@ -1406,10 +1714,27 @@ async function fetchGa4DataApiSummary(
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const dateRanges = [{ startDate: range.startDate, endDate: range.endDate }];
+  const last7DateRanges = [{ startDate: '7daysAgo', endDate: 'today' }];
+  const last24DateRanges = [{ startDate: 'yesterday', endDate: 'today' }];
   const coreMetrics = [{ name: 'activeUsers' }, { name: 'sessions' }, { name: 'eventCount' }];
 
   try {
-    const [daily, totals, topEvents, geo] = await Promise.all([
+    const [realtime, last24Hourly, last7Totals, daily, totals, topEvents, geo] = await Promise.all([
+      runGa4RealtimeReport(propertyId, {
+        minuteRanges: [{ name: 'last_30_minutes', startMinutesAgo: 29, endMinutesAgo: 0 }],
+        metrics: [{ name: 'activeUsers' }, { name: 'eventCount' }],
+        limit: '10',
+      }),
+      runGa4Report(propertyId, {
+        dateRanges: last24DateRanges,
+        dimensions: [{ name: 'dateHour' }],
+        metrics: coreMetrics,
+        orderBys: [{ dimension: { dimensionName: 'dateHour' } }],
+      }),
+      runGa4Report(propertyId, {
+        dateRanges: last7DateRanges,
+        metrics: coreMetrics,
+      }),
       runGa4Report(propertyId, {
         dateRanges,
         dimensions: [{ name: 'date' }],
@@ -1440,10 +1765,22 @@ async function fetchGa4DataApiSummary(
       (daily.rows ?? []).map((row) => [formatGa4ApiDate(ga4Dimension(row, 0)), row]),
     );
     const totalsRow = totals.rows?.[0];
+    const realtimeRow = realtime.rows?.[0];
+    const realtimeTotals = {
+      users: realtimeRow ? ga4Metric(realtimeRow, 0) : 0,
+      sessions: null,
+      events: realtimeRow ? ga4Metric(realtimeRow, 1) : 0,
+      available: true,
+      note: null,
+    };
+    const last24Totals = sumGa4Rows(last24Hourly.rows);
+    const last7Row = last7Totals.rows?.[0];
+    const selectedTotals = ga4TotalsFromRow(totalsRow);
 
     return {
       data: {
         source: 'ga4-data-api',
+        sourceLabel: 'GA4 Data API',
         propertyId,
         measurementId,
         generatedAt,
@@ -1457,10 +1794,27 @@ async function fetchGa4DataApiSummary(
           days: range.days,
         },
         rangeTotals: {
-          users: ga4Metric(totalsRow, 0),
-          sessions: ga4Metric(totalsRow, 1),
-          events: ga4Metric(totalsRow, 2),
+          users: selectedTotals.users,
+          sessions: selectedTotals.sessions,
+          events: selectedTotals.events,
         },
+        sections: buildGa4Sections({
+          generatedAt,
+          realtime: realtimeTotals,
+          last24Hours: {
+            ...last24Totals,
+            available: true,
+            note: 'Last 24 hours is assembled from GA4 hourly processed rows.',
+          },
+          last7Days: {
+            ...ga4TotalsFromRow(last7Row),
+            available: true,
+          },
+          selectedTotal: {
+            ...selectedTotals,
+            available: true,
+          },
+        }),
         daily: dateSpine(range).map((date) => {
           const row = dailyByDate.get(date);
           return {
@@ -1886,18 +2240,63 @@ function formatSourcePosition(value: unknown): string | null {
   return parsed == null ? null : parsed.toFixed(1);
 }
 
+function searchConsoleDailyRows(searchConsole: Record<string, unknown> | null): Record<string, unknown>[] {
+  return Array.isArray(searchConsole?.daily)
+    ? searchConsole.daily.filter((row): row is Record<string, unknown> => Boolean(asRecord(row)))
+    : [];
+}
+
+function aggregateSearchConsoleRows(rows: Record<string, unknown>[]) {
+  const clicks = rows.reduce((sum, row) => sum + toNumber(row.clicks), 0);
+  const impressions = rows.reduce((sum, row) => sum + toNumber(row.impressions), 0);
+  const weightedPosition = rows.reduce((sum, row) => {
+    const position = metricValue(row.averagePosition);
+    return position == null ? sum : sum + position * toNumber(row.impressions);
+  }, 0);
+  return {
+    clicks,
+    impressions,
+    ctr: impressions > 0 ? clicks / impressions : null,
+    averagePosition: impressions > 0 ? weightedPosition / impressions : null,
+  };
+}
+
+function searchConsoleSectionMetrics(metric: Record<string, unknown>) {
+  return [
+    sourceMetric('clicks', 'Clicks', metric.clicks),
+    sourceMetric('impressions', 'Impressions', metric.impressions),
+    sourceMetric('ctr', 'CTR', metric.ctr, formatSourcePercent(metric.ctr)),
+    sourceMetric('average_position', 'Avg Position', metric.averagePosition, formatSourcePosition(metric.averagePosition)),
+  ];
+}
+
 function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | null, fallbackSource: string) {
   const available = Boolean(searchConsole?.available);
   const note = typeof searchConsole?.note === 'string' ? searchConsole.note : null;
   const overview = asRecord(searchConsole?.overview) ?? {};
+  const generatedAt = typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : new Date().toISOString();
+  const dailyRows = searchConsoleDailyRows(searchConsole);
+  const latestAvailableDaily = dailyRows
+    .filter((row) => toNumber(row.clicks) > 0 || toNumber(row.impressions) > 0)
+    .at(-1) ?? dailyRows.at(-1);
+  const latestMetric = latestAvailableDaily
+    ? {
+        ...searchConsoleMetric(latestAvailableDaily),
+        date: latestAvailableDaily.date,
+      }
+    : aggregateSearchConsoleRows([]);
+  const lastSevenMetric = aggregateSearchConsoleRows(dailyRows.slice(-7));
+  const rangeTotals = asRecord(searchConsole?.rangeTotals) ?? {};
+  const selectedMetric = searchConsoleMetric({ ...overview, ...rangeTotals });
+  const delayedSearchNote = 'Search Console exports are delayed daily aggregates; true realtime search data is not available from the current BigQuery fallback.';
   return {
     key: 'search_console',
     label: 'Search Console',
     status: available ? 'delayed' : 'waiting',
     stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
-    source: String(searchConsole?.source ?? fallbackSource),
+    source: String(searchConsole?.sourceLabel ?? publicSearchConsoleSourceLabel(searchConsole?.source ?? fallbackSource)),
     freshness: {
-      generatedAt: typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : new Date().toISOString(),
+      generatedAt,
       expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds),
     },
     metrics: [
@@ -1911,6 +2310,47 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
         formatSourcePosition(searchConsole?.averagePosition ?? overview.averagePosition),
       ),
     ],
+    sections: [
+      {
+        key: 'last_24_hours',
+        label: 'Latest Daily',
+        status: latestAvailableDaily && available ? 'delayed' : 'waiting',
+        stateClass: sourceStateClass(latestAvailableDaily && available ? 'delayed' : 'waiting'),
+        source: 'Search Console daily aggregate',
+        freshness: {
+          generatedAt,
+          expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds ?? 86_400),
+        },
+        metrics: searchConsoleSectionMetrics(latestMetric),
+        blocker: latestAvailableDaily && available ? delayedSearchNote : note ?? 'Search Console latest daily data is waiting; hourly last-24h is not ingested yet.',
+      },
+      {
+        key: 'last_7_days',
+        label: 'Last 7 Days',
+        status: available ? 'delayed' : 'waiting',
+        stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+        source: 'Search Console daily aggregate',
+        freshness: {
+          generatedAt,
+          expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds ?? 86_400),
+        },
+        metrics: searchConsoleSectionMetrics(lastSevenMetric),
+        blocker: available ? delayedSearchNote : note ?? 'Search Console 7-day data is waiting.',
+      },
+      {
+        key: 'selected_total',
+        label: 'Selected Total',
+        status: available ? 'delayed' : 'waiting',
+        stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+        source: 'Search Console selected range',
+        freshness: {
+          generatedAt,
+          expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds ?? 86_400),
+        },
+        metrics: searchConsoleSectionMetrics(selectedMetric),
+        blocker: available ? delayedSearchNote : note ?? 'Search Console selected-range data is waiting.',
+      },
+    ],
     blocker: available ? null : note ?? 'Search Console source is waiting for export or fallback rows.',
   };
 }
@@ -1918,12 +2358,13 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
 function buildGa4SourceCard(ga4: Record<string, unknown> | null, source: string, blocker: string) {
   const available = Boolean(ga4?.available);
   const totals = asRecord(ga4?.rangeTotals) ?? {};
+  const sections = Array.isArray(ga4?.sections) ? ga4.sections : [];
   return {
     key: 'ga4',
     label: 'GA4',
     status: available ? 'delayed' : 'waiting',
     stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
-    source,
+    source: publicGa4SourceLabel(source),
     freshness: {
       generatedAt: typeof ga4?.generatedAt === 'string' ? ga4.generatedAt : new Date().toISOString(),
       expectedLagSeconds: metricValue(ga4?.expectedLagSeconds ?? 86_400),
@@ -1933,6 +2374,7 @@ function buildGa4SourceCard(ga4: Record<string, unknown> | null, source: string,
       sourceMetric('sessions', 'Sessions', totals.sessions),
       sourceMetric('events', 'Events', totals.events),
     ],
+    sections,
     blocker: available ? null : (typeof ga4?.note === 'string' ? ga4.note : blocker),
   };
 }
@@ -1946,7 +2388,7 @@ function buildHushhTechGa4SourceCard(summary: Record<string, unknown>) {
     label: 'GA4',
     status: available ? 'delayed' : 'waiting',
     stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
-    source: String(traffic?.source ?? 'hushhtech-public-summary'),
+    source: publicGa4SourceLabel(traffic?.source ?? 'ga4-data-api'),
     freshness: {
       generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
       expectedLagSeconds: 86_400,
@@ -1956,6 +2398,77 @@ function buildHushhTechGa4SourceCard(summary: Record<string, unknown>) {
       sourceMetric('sessions', 'Sessions', overview.sessions),
       sourceMetric('page_views', 'Page Views', overview.screenPageViews),
       sourceMetric('new_users', 'New Users', overview.newUsers),
+    ],
+    sections: [
+      {
+        key: 'realtime',
+        label: 'Realtime',
+        status: overview.realtimeActiveUsers == null ? 'waiting' : 'live',
+        stateClass: sourceStateClass(overview.realtimeActiveUsers == null ? 'waiting' : 'live'),
+        source: 'GA4 realtime',
+        freshness: {
+          generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
+          expectedLagSeconds: 60,
+        },
+        metrics: [
+          sourceMetric('active_users', 'Active Users', overview.realtimeActiveUsers),
+        ],
+        blocker: overview.realtimeActiveUsers == null ? 'Realtime GA4 is not exposed by the HushhTech public summary yet.' : null,
+      },
+      {
+        key: 'last_24_hours',
+        label: 'Last 24 Hours',
+        status: available ? 'delayed' : 'waiting',
+        stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+        source: 'GA4 processed report',
+        freshness: {
+          generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
+          expectedLagSeconds: 86_400,
+        },
+        metrics: [
+          sourceMetric('users', 'Users', overview.active1DayUsers),
+          sourceMetric('sessions', 'Sessions', overview.sessions),
+          sourceMetric('page_views', 'Page Views', overview.screenPageViews),
+          sourceMetric('new_users', 'New Users', overview.newUsers),
+        ],
+        blocker: available ? null : String(traffic?.note ?? 'Last 24 hours GA4 data is waiting.'),
+      },
+      {
+        key: 'last_7_days',
+        label: 'Last 7 Days',
+        status: available ? 'delayed' : 'waiting',
+        stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+        source: 'GA4 processed report',
+        freshness: {
+          generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
+          expectedLagSeconds: 86_400,
+        },
+        metrics: [
+          sourceMetric('users', 'Users', overview.active7DayUsers),
+          sourceMetric('sessions', 'Sessions', overview.sessions),
+          sourceMetric('page_views', 'Page Views', overview.screenPageViews),
+          sourceMetric('new_users', 'New Users', overview.newUsers),
+        ],
+        blocker: available ? null : String(traffic?.note ?? 'Last 7 days GA4 data is waiting.'),
+      },
+      {
+        key: 'selected_total',
+        label: 'Selected Total',
+        status: available ? 'delayed' : 'waiting',
+        stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+        source: 'GA4 selected range',
+        freshness: {
+          generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
+          expectedLagSeconds: 86_400,
+        },
+        metrics: [
+          sourceMetric('users', 'Users', overview.active7DayUsers),
+          sourceMetric('sessions', 'Sessions', overview.sessions),
+          sourceMetric('page_views', 'Page Views', overview.screenPageViews),
+          sourceMetric('new_users', 'New Users', overview.newUsers),
+        ],
+        blocker: available ? null : String(traffic?.note ?? 'Selected range GA4 data is waiting.'),
+      },
     ],
     blocker: available ? null : String(traffic?.note ?? 'GA4 Data API is waiting or returned no traffic rows.'),
   };
@@ -1970,7 +2483,7 @@ function buildHushhTechEventsSourceCard(summary: Record<string, unknown>) {
     label: 'DB / Product Events',
     status: available ? 'live' : 'waiting',
     stateClass: sourceStateClass(available ? 'live' : 'waiting'),
-    source: String(supabase?.sourceDatabaseName ?? 'HushhTech Supabase'),
+    source: publicProductEventsSourceLabel('HushhTech'),
     freshness: {
       generatedAt: typeof supabase?.generatedAt === 'string' ? supabase.generatedAt : new Date().toISOString(),
       expectedLagSeconds: null,
@@ -2029,7 +2542,7 @@ function buildHushhAiSourceCards(
       label: 'DB / Product Events',
       status: eventsStatus,
       stateClass: sourceStateClass(eventsStatus),
-      source: String(productEvents?.source ?? 'hushh-ai-db-status'),
+      source: publicProductEventsSourceLabel('Hushh AI'),
       freshness: {
         generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : new Date().toISOString(),
         expectedLagSeconds: null,
@@ -2066,7 +2579,7 @@ function buildKaiEventsSourceCard(uatRows: Record<string, unknown>[], fetchedAt:
     label: 'DB / Product Events',
     status: available ? 'live' : 'waiting',
     stateClass: sourceStateClass(available ? 'live' : 'waiting'),
-    source: `${status.sourceProjectId || BQ_UAT_PROJECT}.${status.sourceDataset || BQ_UAT_DATASET}`,
+    source: publicProductEventsSourceLabel('Kai UAT'),
     freshness: {
       generatedAt: status.asOfTimestamp ?? fetchedAt,
       expectedLagSeconds: 86_400,
@@ -2326,43 +2839,43 @@ async function fetchHushhTechSupabaseSummary(range: HushhAiDateRange): Promise<D
 
 app.get('/api/analytics/kai/uat', async (_req, res) => {
   const result = await queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW);
-  res.status(result.error ? 502 : 200).json({
+  res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
     environment: 'uat',
     rows: result.rows,
     error: result.error,
     fetchedAt: new Date().toISOString(),
-  });
+  }));
 });
 
 app.get('/api/analytics/kai/production', async (_req, res) => {
   const result = await queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW);
-  res.status(result.error ? 502 : 200).json({
+  res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
     environment: 'production',
     rows: result.rows,
     error: result.error,
     fetchedAt: new Date().toISOString(),
-  });
+  }));
 });
 
 app.get('/api/analytics/hushhtech', async (req, res) => {
   const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
   const result = await fetchHushhTechAnalytics(hushhTechRange);
-  res.status(result.error ? 502 : 200).json({
+  res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
     platform: 'hushhtech.com',
     data: result.data,
     error: result.error,
     fetchedAt: new Date().toISOString(),
-  });
+  }));
 });
 
 app.get('/api/analytics/kai/ga4', async (_req, res) => {
   const result = await fetchKaiGa4Summary();
-  res.status(result.error && !result.data ? 502 : 200).json({
+  res.status(result.error && !result.data ? 502 : 200).json(sanitizePublicPayload({
     platform: 'kai.hushh.ai',
     data: result.data,
     error: result.error,
     fetchedAt: new Date().toISOString(),
-  });
+  }));
 });
 
 app.get('/api/analytics/kai', async (req, res) => {
@@ -2370,14 +2883,14 @@ app.get('/api/analytics/kai', async (req, res) => {
   const [production, uat, uatGa4, productionGa4, gcp, searchConsole] = await Promise.all([
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
-    fetchKaiGa4Summary(),
+    fetchKaiGa4Summary(kaiRange),
     fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
     fetchKaiSearchConsole(kaiRange),
   ]);
   const fetchedAt = new Date().toISOString();
   const error = [production.error, uat.error, uatGa4.error, productionGa4.error, gcp.error, searchConsole.error].filter(Boolean).join('; ') || null;
-  res.status(error && production.rows.length === 0 && !gcp.data && !productionGa4.data ? 502 : 200).json({
+  res.status(error && production.rows.length === 0 && !gcp.data && !productionGa4.data ? 502 : 200).json(sanitizePublicPayload({
     platform: 'kai.hushh.ai',
     data: {
       productionFeed: {
@@ -2397,7 +2910,7 @@ app.get('/api/analytics/kai', async (req, res) => {
     },
     error,
     fetchedAt,
-  });
+  }));
 });
 
 app.get('/api/analytics/hushhai', async (req, res) => {
@@ -2410,7 +2923,7 @@ app.get('/api/analytics/hushhai', async (req, res) => {
   const error = [gcp.error, searchConsole.error, ga4.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
   const productEvents = buildHushhAiProductEvents(fetchedAt);
-  res.status(error && !gcp.data && !searchConsole.data ? 502 : 200).json({
+  res.status(error && !gcp.data && !searchConsole.data ? 502 : 200).json(sanitizePublicPayload({
     platform: 'hushh.ai',
     data: {
       gcp: gcp.data,
@@ -2422,7 +2935,7 @@ app.get('/api/analytics/hushhai', async (req, res) => {
     },
     error,
     fetchedAt,
-  });
+  }));
 });
 
 app.get('/api/analytics/all', async (req, res) => {
@@ -2432,7 +2945,7 @@ app.get('/api/analytics/all', async (req, res) => {
   const [uat, production, kaiGa4, kaiProductionGa4, kaiProductionGcp, kaiSearchConsole, hushhAiGcp, hushhAiSearchConsole, hushhAiGa4, hushhTech] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
-    fetchKaiGa4Summary(),
+    fetchKaiGa4Summary(kaiRange),
     fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
     fetchKaiSearchConsole(kaiRange),
@@ -2443,7 +2956,7 @@ app.get('/api/analytics/all', async (req, res) => {
   ]);
   const fetchedAt = new Date().toISOString();
   const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
-  res.json({
+  res.json(sanitizePublicPayload({
     kai: {
       uat: { environment: 'uat', rows: uat.rows, error: uat.error },
       production: { environment: 'production', rows: production.rows, error: production.error },
@@ -2483,11 +2996,11 @@ app.get('/api/analytics/all', async (req, res) => {
     },
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
     fetchedAt,
-  });
+  }));
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({
+  res.json(sanitizePublicPayload({
     status: 'ok',
     uptime: process.uptime(),
     config: {
@@ -2514,7 +3027,7 @@ app.get('/api/health', (_req, res) => {
       hushhTechSearchConsoleSiteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
       hushhTechSupabase: HUSHHTECH_SUPABASE_PROJECT_REF,
     },
-  });
+  }));
 });
 
 // ---------------------------------------------------------------------------

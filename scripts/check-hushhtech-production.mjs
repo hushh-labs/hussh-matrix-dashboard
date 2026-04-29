@@ -333,7 +333,14 @@ async function main() {
 
   const productRoot = await fetchWithTimeout(`${product.url}/`, options.timeoutMs, 'text/html');
   assert(productRoot.ok, `HushhTech production root returned HTTP ${productRoot.status}`);
+  const productRootHtml = await productRoot.text();
   results.push({ check: 'product-root', status: 'ok', detail: String(productRoot.status) });
+  const visibleGaTags = Array.from(new Set(productRootHtml.match(/G-[A-Z0-9]+/g) || []));
+  results.push({
+    check: 'product-ga4-tag-html',
+    status: visibleGaTags.length > 0 ? 'ok' : 'warn',
+    detail: visibleGaTags.length > 0 ? visibleGaTags.join(', ') : 'No GA4 measurement ID found in initial HTML',
+  });
 
   const summary = await checkJsonEndpoint(product.url, '/api/metrics/summary?window_days=7', options.timeoutMs);
   assert(hasNoStore(summary.response), 'HushhTech summary endpoint is cacheable', summary.response.headers.get('cache-control') || '');
@@ -353,6 +360,16 @@ async function main() {
     'GA4 traffic block available',
     'GA4 traffic block present but not available',
   ));
+  const trafficOverview = summary.body?.traffic?.overview || {};
+  const trafficSignals = ['active1DayUsers', 'active7DayUsers', 'sessions', 'screenPageViews', 'newUsers']
+    .map((key) => Number(trafficOverview[key] || 0));
+  results.push({
+    check: 'product-ga4-traffic-volume',
+    status: trafficSignals.every((value) => value === 0) ? 'warn' : 'ok',
+    detail: trafficSignals.every((value) => value === 0)
+      ? 'GA4 Data API is reachable but product traffic is zero for this window'
+      : `sessions=${trafficOverview.sessions ?? 0}, active7DayUsers=${trafficOverview.active7DayUsers ?? 0}`,
+  });
 
   const dashboardDns = await checkDns(dashboard.canonicalHost);
   assert(dashboardDns.cnames.length || dashboardDns.addresses.length, 'metrics dashboard domain does not resolve', dashboard.canonicalHost);
@@ -374,11 +391,7 @@ async function main() {
     'dashboard health is missing HushhTech Cloud Run config',
     String(health.body?.config?.hushhTechCloudRun || ''),
   );
-  assert(
-    String(health.body?.config?.hushhTechSearchConsoleFallback || '').includes('hushhtech_search_console_api'),
-    'dashboard health is missing HushhTech Search Console GCP fallback config',
-    String(health.body?.config?.hushhTechSearchConsoleFallback || ''),
-  );
+  assert(health.body?.config?.hushhTechSearchConsoleFallback, 'dashboard health is missing HushhTech Search Console GCP fallback config');
   results.push({ check: 'dashboard-health', status: 'ok', detail: health.body.status });
 
   const dashboardHushhTech = await checkJsonEndpoint(dashboard.url, '/api/analytics/hushhtech', options.timeoutMs);

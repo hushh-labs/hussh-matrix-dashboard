@@ -419,10 +419,11 @@ function buildKaiProductionDailySummaryMetrics(kaiProduction: KaiProductionSumma
   const ga4 = kaiProduction?.productionGa4;
   const gcp = kaiProduction?.gcp;
   const ga4Ready = Boolean(ga4?.available);
+  const ga4Source = ga4?.sourceLabel ?? 'GA4 export';
   return [
-    metric('Production Users', asNumber(ga4?.rangeTotals?.users), ga4?.sourceDataset, ga4Ready ? undefined : 'Waiting'),
-    metric('Production Sessions', asNumber(ga4?.rangeTotals?.sessions), ga4?.sourceDataset, ga4Ready ? undefined : 'Waiting'),
-    metric('Production Events', asNumber(ga4?.rangeTotals?.events), ga4?.sourceDataset, ga4Ready ? undefined : 'Waiting'),
+    metric('Production Users', asNumber(ga4?.rangeTotals?.users), ga4Source, ga4Ready ? undefined : 'Waiting'),
+    metric('Production Sessions', asNumber(ga4?.rangeTotals?.sessions), ga4Source, ga4Ready ? undefined : 'Waiting'),
+    metric('Production Events', asNumber(ga4?.rangeTotals?.events), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.serviceName),
     metric('Cloud Run Non-2xx', asNumber(gcp?.errorCount), gcp?.serviceName),
     metric('Cloud Run Error Rate', asNumber(gcp?.errorRate), gcp?.serviceName, formatPercent(gcp?.errorRate)),
@@ -435,12 +436,12 @@ function buildKaiProductionReadinessMetrics(kaiProduction: KaiProductionSummary 
   const ga4 = kaiProduction?.productionGa4;
   const uat = kaiProduction?.uatFeed?.status;
   return [
-    metric('Production Ready', feed?.productionReady ? 1 : 0, feed?.sourceDataset, feed?.productionReady ? 'Ready' : 'Waiting'),
-    metric('Production Source Rows', asNumber(feed?.sourceEventRows), feed?.sourceProjectId),
+    metric('Production Ready', feed?.productionReady ? 1 : 0, 'Production feed', feed?.productionReady ? 'Ready' : 'Waiting'),
+    metric('Production Source Rows', asNumber(feed?.sourceEventRows), 'Production feed'),
     metric('Production Freshness Lag', asNumber(feed?.freshnessLagMinutes), 'minutes', feed?.freshnessLagMinutes == null ? '—' : `${feed.freshnessLagMinutes}m`),
-    metric('Production GA4 Export', ga4?.available ? 1 : 0, ga4?.sourceDataset, ga4?.available ? 'Available' : 'Waiting'),
-    metric('UAT Validation Rows', asNumber(uat?.sourceEventRows), uat?.sourceDataset),
-    metric('UAT Production Ready Flag', uat?.productionReady ? 1 : 0, uat?.sourceDataset, uat?.productionReady ? 'Ready' : 'Validation'),
+    metric('Production GA4 Export', ga4?.available ? 1 : 0, ga4?.sourceLabel ?? 'GA4 export', ga4?.available ? 'Available' : 'Waiting'),
+    metric('UAT Validation Rows', asNumber(uat?.sourceEventRows), 'UAT validation feed'),
+    metric('UAT Production Ready Flag', uat?.productionReady ? 1 : 0, 'UAT validation feed', uat?.productionReady ? 'Ready' : 'Validation'),
   ];
 }
 
@@ -702,10 +703,10 @@ function buildHushhAiSearchMetrics(hushhAi: HushhAiSummary | null): BreakdownMet
   if (!search) return [];
 
   return [
-    metric('Search Clicks', search.clicks, search.sourceDataset),
-    metric('Search Impressions', search.impressions, search.sourceDataset),
-    metric('Search CTR', search.ctr ?? 0, search.sourceDataset, formatPercent(search.ctr)),
-    metric('Search Avg Position', search.averagePosition ?? 0, search.sourceDataset, search.averagePosition?.toFixed(1) ?? '—'),
+    metric('Search Clicks', search.clicks, search.sourceLabel ?? 'Search Console'),
+    metric('Search Impressions', search.impressions, search.sourceLabel ?? 'Search Console'),
+    metric('Search CTR', search.ctr ?? 0, search.sourceLabel ?? 'Search Console', formatPercent(search.ctr)),
+    metric('Search Avg Position', search.averagePosition ?? 0, search.sourceLabel ?? 'Search Console', search.averagePosition?.toFixed(1) ?? '—'),
     ...search.queries.slice(0, 6).map((row) => metric(
       row.query,
       firstNumber(row.clicks, row.impressions),
@@ -743,7 +744,7 @@ function buildHushhTechDatabaseMetrics(hushhTech: HushhTechMetricsSummary | null
   return (hushhTech?.supabase?.metrics ?? []).slice(0, 10).map((row) => metric(
     row.label,
     row.value,
-    [row.sourceTable, row.detail].filter(Boolean).join(' · '),
+    row.detail,
   ));
 }
 

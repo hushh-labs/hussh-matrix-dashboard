@@ -62,6 +62,53 @@ npm run build
 rg "sbp_|SUPABASE_ACCESS_TOKEN=.+" . --glob '!node_modules/**' --glob '!dist/**' --glob '!package-lock.json'
 ```
 
+## Deploy On Main
+
+Production redeploys automatically from GitHub Actions on every push to
+`main`.
+
+- Workflow: `.github/workflows/deploy-main.yml`
+- Trigger: `push` to `main`, plus `workflow_dispatch`
+- GCP deploy service account:
+  `github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com`
+- Workload Identity provider:
+  `projects/1072839345524/locations/global/workloadIdentityPools/github-actions/providers/github-hussh-matrix-dashboard`
+- Provider condition: only `hushh-labs/hussh-matrix-dashboard` on
+  `refs/heads/main`
+- Runtime service account remains:
+  `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com`
+
+The workflow gates deployment with `npm ci`, `npm run lint`,
+`npm run build`, `git diff --check`, and a tracked-file secret pattern scan.
+It builds a commit-SHA-tagged image, deploys `hushh-matrix-dashboard`, verifies
+runtime env vars are Secret Manager-backed, then runs:
+
+```bash
+npm run test:prod:metrics-flow -- --dashboard-url https://metrics.hushh.ai --timeout-ms 120000
+npm run test:prod:hushh-ai -- --base-url https://metrics.hushh.ai --timeout-ms 120000
+npm run test:prod:kai -- --dashboard-url https://metrics.hushh.ai --timeout-ms 120000
+```
+
+GCP IAM required by the workflow:
+
+```bash
+gcloud projects add-iam-policy-binding hushh-ai-prod \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/run.admin"
+
+gcloud iam service-accounts add-iam-policy-binding \
+  metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com \
+  --project=hushh-ai-prod \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+
+gcloud iam service-accounts add-iam-policy-binding \
+  github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com \
+  --project=hushh-ai-prod \
+  --member="principalSet://iam.googleapis.com/projects/1072839345524/locations/global/workloadIdentityPools/github-actions/attribute.repository/hushh-labs/hussh-matrix-dashboard" \
+  --role="roles/iam.workloadIdentityUser"
+```
+
 ## Runtime Identity
 
 ```bash
