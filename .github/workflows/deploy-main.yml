@@ -73,10 +73,29 @@ jobs:
         run: |
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
           echo "IMAGE=${IMAGE}" >> "${GITHUB_ENV}"
-          gcloud builds submit \
+          BUILD_ID="$(gcloud builds submit \
             --project="${PROJECT_ID}" \
             --tag="${IMAGE}" \
-            .
+            --async \
+            --format='value(id)' \
+            .)"
+          echo "Cloud Build ID: ${BUILD_ID}"
+          for attempt in $(seq 1 90); do
+            STATUS="$(gcloud builds describe "${BUILD_ID}" --project="${PROJECT_ID}" --format='value(status)')"
+            echo "Cloud Build status: ${STATUS}"
+            case "${STATUS}" in
+              SUCCESS)
+                exit 0
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build failed with status ${STATUS}"
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Cloud Build did not finish within the expected window."
+          exit 1
 
       - name: Deploy Cloud Run service
         run: |
