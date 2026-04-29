@@ -156,6 +156,24 @@ function sanitizePublicPayload(value: unknown): unknown {
   return sanitized;
 }
 
+function publicIntegrationError(sourceLabel: string, err: unknown): string {
+  const rawMessage = err instanceof Error ? err.message : String(err);
+  const compactMessage = rawMessage.replace(/\s+/g, ' ').trim();
+  if (/<\/?(html|head|body|script|style|title|table|font|div|p|h1)\b/i.test(compactMessage)) {
+    return `${sourceLabel} request was rejected before JSON report data was returned. Verify the product analytics property access for the metrics runtime identity and retry.`;
+  }
+  if (/permission|denied|forbidden|unauthorized|insufficient|403|401/i.test(compactMessage)) {
+    return `${sourceLabel} access is not working yet. Verify the metrics runtime identity has Viewer or Analyst access to the analytics property.`;
+  }
+  if (/not\s*found|404/i.test(compactMessage)) {
+    return `${sourceLabel} property was not found by the configured analytics reader. Verify the property ID and data source configuration.`;
+  }
+  const safeDetail = compactMessage.slice(0, 180);
+  return safeDetail
+    ? `${sourceLabel} request failed before report data was returned: ${safeDetail}`
+    : `${sourceLabel} request failed before report data was returned.`;
+}
+
 interface HushhAiDateRange {
   startDate: string;
   endDate: string;
@@ -1900,14 +1918,14 @@ async function fetchGa4DataApiSummary(
       error: null,
     };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = publicIntegrationError('GA4 Data API', err);
     return {
       data: waitingGa4Summary(
         'Hushh AI',
         range,
         `properties/${propertyId}`,
         measurementId,
-        `GA4 Data API source is configured for ${measurementId}, but Analytics property access is not working yet: ${message}`,
+        `GA4 Data API source is configured for ${measurementId}, but ${message}`,
       ),
       error: null,
     };

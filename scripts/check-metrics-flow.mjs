@@ -103,6 +103,8 @@ function assertPublicSafePayload(body, label) {
   const text = JSON.stringify(body);
   const unsafePattern = /sourceDataset|sourceProjectId|sourceProjectRef|sourceTable|analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda|ibsisfnjxeowvdtvgzff/i;
   assert(!unsafePattern.test(text), `${label} payload exposes unsafe source identifiers`);
+  const rawProviderMarkupPattern = /<\/?(html|head|body|script|style|title|table|font|div|p|h1)\b/i;
+  assert(!rawProviderMarkupPattern.test(text), `${label} payload exposes raw provider markup`);
 }
 
 function assertSourceCardMetric(card, key) {
