@@ -87,6 +87,10 @@ const HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT = Math.max(
 );
 const HUSHH_AI_GA4_PROJECT = process.env.HUSHH_AI_GA4_PROJECT || '';
 const HUSHH_AI_GA4_DATASET = process.env.HUSHH_AI_GA4_DATASET || '';
+const HUSHH_AI_GA4_PROPERTY_ID = process.env.HUSHH_AI_GA4_PROPERTY_ID || '';
+const HUSHH_AI_GA4_MEASUREMENT_ID = process.env.HUSHH_AI_GA4_MEASUREMENT_ID || 'G-PPEF1CSJ5H';
+const HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT =
+  process.env.HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT || '';
 const HUSHH_AI_GA4_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_GA4_WINDOW_DAYS || '7', 10);
 const KAI_SEARCH_PROJECT = process.env.KAI_SEARCH_PROJECT || HUSHH_AI_SEARCH_PROJECT;
 const KAI_SEARCH_DATASET = process.env.KAI_SEARCH_DATASET || HUSHH_AI_SEARCH_DATASET;
@@ -519,6 +523,10 @@ function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function sqlRawStringLiteral(value: string): string {
+  return `r'${value.replace(/'/g, "''")}'`;
+}
+
 interface ProductSearchConsoleConfig {
   productLabel: string;
   sourceProjectId: string;
@@ -739,8 +747,9 @@ async function fetchProductSearchConsole(
   const siteTable = `${datasetRef}.searchdata_site_impression`;
   const urlTable = `${datasetRef}.searchdata_url_impression`;
   const sourceTable = config.pageFilterRegex ? urlTable : siteTable;
+  const positionField = config.pageFilterRegex ? 'sum_position' : 'sum_top_position';
   const urlFilter = config.pageFilterRegex
-    ? `AND REGEXP_CONTAINS(url, ${sqlStringLiteral(config.pageFilterRegex)})`
+    ? `AND REGEXP_CONTAINS(url, ${sqlRawStringLiteral(config.pageFilterRegex)})`
     : '';
   const whereClause = `
     data_date BETWEEN DATE '${range.startDate}' AND DATE '${range.endDate}'
@@ -752,7 +761,7 @@ async function fetchProductSearchConsole(
       SUM(clicks) AS clicks,
       SUM(impressions) AS impressions,
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+      SAFE_DIVIDE(SUM(${positionField}), SUM(impressions)) + 1 AS averagePosition
     FROM ${sourceTable}
     WHERE ${whereClause}
   `;
@@ -762,7 +771,7 @@ async function fetchProductSearchConsole(
       SUM(clicks) AS clicks,
       SUM(impressions) AS impressions,
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+      SAFE_DIVIDE(SUM(${positionField}), SUM(impressions)) + 1 AS averagePosition
     FROM ${sourceTable}
     WHERE ${whereClause}
     GROUP BY ${alias}
@@ -1014,7 +1023,7 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
       SUM(clicks) AS clicks,
       SUM(impressions) AS impressions,
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1 AS averagePosition
+      SAFE_DIVIDE(SUM(sum_position), SUM(impressions)) + 1 AS averagePosition
     FROM ${urlTable}
     WHERE ${whereClause}
     GROUP BY pageUrl
@@ -1342,7 +1351,160 @@ function waitingGa4Summary(
   };
 }
 
+type Ga4RunReportRow = {
+  dimensionValues?: Array<{ value?: string }>;
+  metricValues?: Array<{ value?: string }>;
+};
+
+type Ga4RunReportResponse = {
+  rows?: Ga4RunReportRow[];
+};
+
+function ga4Metric(row: Ga4RunReportRow | undefined, index: number): number {
+  return toNumber(row?.metricValues?.[index]?.value);
+}
+
+function ga4Dimension(row: Ga4RunReportRow | undefined, index: number): string {
+  return String(row?.dimensionValues?.[index]?.value ?? '');
+}
+
+function formatGa4ApiDate(value: string): string {
+  return /^\d{8}$/.test(value)
+    ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+    : value;
+}
+
+async function runGa4Report(propertyId: string, body: Record<string, unknown>): Promise<Ga4RunReportResponse> {
+  const { GoogleAuth, Impersonated } = await import('google-auth-library');
+  const auth = new GoogleAuth({
+    scopes: HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT
+      ? ['https://www.googleapis.com/auth/cloud-platform']
+      : ['https://www.googleapis.com/auth/analytics.readonly'],
+  });
+  const sourceClient = await auth.getClient();
+  const client = HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT
+    ? new Impersonated({
+      sourceClient,
+      targetPrincipal: HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT,
+      targetScopes: ['https://www.googleapis.com/auth/analytics.readonly'],
+      lifetime: 3600,
+    })
+    : sourceClient;
+  const res = await (client as any).request({
+    url: `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
+    method: 'POST',
+    data: body,
+    timeout: 30_000,
+  });
+  return res.data as Ga4RunReportResponse;
+}
+
+async function fetchGa4DataApiSummary(
+  propertyId: string,
+  measurementId: string,
+  range: HushhAiDateRange,
+): Promise<DataResult<Record<string, unknown>>> {
+  const generatedAt = new Date().toISOString();
+  const dateRanges = [{ startDate: range.startDate, endDate: range.endDate }];
+  const coreMetrics = [{ name: 'activeUsers' }, { name: 'sessions' }, { name: 'eventCount' }];
+
+  try {
+    const [daily, totals, topEvents, geo] = await Promise.all([
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'date' }],
+        metrics: coreMetrics,
+        orderBys: [{ dimension: { dimensionName: 'date' } }],
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        metrics: coreMetrics,
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'eventName' }],
+        metrics: [{ name: 'eventCount' }, { name: 'activeUsers' }],
+        orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+        limit: '20',
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'platform' }, { name: 'deviceCategory' }, { name: 'country' }],
+        metrics: [{ name: 'eventCount' }, { name: 'activeUsers' }],
+        orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
+        limit: '20',
+      }),
+    ]);
+
+    const dailyByDate = new Map(
+      (daily.rows ?? []).map((row) => [formatGa4ApiDate(ga4Dimension(row, 0)), row]),
+    );
+    const totalsRow = totals.rows?.[0];
+
+    return {
+      data: {
+        source: 'ga4-data-api',
+        propertyId,
+        measurementId,
+        generatedAt,
+        realtimeMode: 'delayed_export',
+        expectedLagSeconds: 86_400,
+        available: true,
+        windowDays: range.days,
+        range: {
+          startDate: range.startDate,
+          endDate: range.endDate,
+          days: range.days,
+        },
+        rangeTotals: {
+          users: ga4Metric(totalsRow, 0),
+          sessions: ga4Metric(totalsRow, 1),
+          events: ga4Metric(totalsRow, 2),
+        },
+        daily: dateSpine(range).map((date) => {
+          const row = dailyByDate.get(date);
+          return {
+            eventDate: date,
+            users: ga4Metric(row, 0),
+            sessions: ga4Metric(row, 1),
+            events: ga4Metric(row, 2),
+          };
+        }),
+        topEvents: (topEvents.rows ?? []).map((row) => ({
+          eventName: ga4Dimension(row, 0),
+          events: ga4Metric(row, 0),
+          users: ga4Metric(row, 1),
+        })),
+        geo: (geo.rows ?? []).map((row) => ({
+          platform: ga4Dimension(row, 0),
+          deviceCategory: ga4Dimension(row, 1),
+          country: ga4Dimension(row, 2),
+          events: ga4Metric(row, 0),
+          users: ga4Metric(row, 1),
+        })),
+      },
+      error: null,
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      data: waitingGa4Summary(
+        'Hushh AI',
+        range,
+        `properties/${propertyId}`,
+        measurementId,
+        `GA4 Data API source is configured for ${measurementId}, but Analytics property access is not working yet: ${message}`,
+      ),
+      error: null,
+    };
+  }
+}
+
 async function fetchHushhAiGa4Summary(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  if (HUSHH_AI_GA4_PROPERTY_ID) {
+    return fetchGa4DataApiSummary(HUSHH_AI_GA4_PROPERTY_ID, HUSHH_AI_GA4_MEASUREMENT_ID, range);
+  }
+
   if (!HUSHH_AI_GA4_PROJECT || !HUSHH_AI_GA4_DATASET) {
     return {
       data: waitingGa4Summary(
@@ -1350,7 +1512,7 @@ async function fetchHushhAiGa4Summary(range: HushhAiDateRange): Promise<DataResu
         range,
         HUSHH_AI_GA4_PROJECT,
         HUSHH_AI_GA4_DATASET,
-        'GA4 BigQuery export/Data API source is not configured in metrics.hushh.ai yet.',
+        `GA4 Data API property ID is not configured in metrics.hushh.ai yet for ${HUSHH_AI_GA4_MEASUREMENT_ID}.`,
       ),
       error: null,
     };
@@ -1641,6 +1803,9 @@ function buildHushhAiFreshness(
   const searchAvailable = Boolean(searchConsole?.available);
   const ga4Available = Boolean(ga4?.available);
   const eventsAvailable = Boolean(productEvents?.available);
+  const productEventsState = eventsAvailable
+    ? 'live'
+    : String(productEvents?.status ?? 'waiting');
   return {
     mode: 'polling',
     refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
@@ -1675,12 +1840,14 @@ function buildHushhAiFreshness(
       },
       {
         key: 'product_events',
-        label: 'Product Events',
-        state: eventsAvailable ? 'live' : 'collecting_not_ingested',
-        realtimeLevel: eventsAvailable ? 'events_aggregate' : 'not_in_dashboard_yet',
+        label: 'DB / Product Events',
+        state: productEventsState,
+        realtimeLevel: eventsAvailable ? 'events_aggregate' : 'not_configured',
         generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : fetchedAt,
         expectedLagSeconds: eventsAvailable ? null : null,
-        detail: eventsAvailable ? 'Product event aggregates are available' : 'hushh.ai events are collecting, but dashboard ingestion is not wired yet',
+        detail: eventsAvailable
+          ? 'Product event aggregates are available'
+          : String(productEvents?.note ?? 'Hushh AI DB aggregate source is not configured yet'),
       },
     ],
   };
@@ -1826,14 +1993,20 @@ function buildHushhTechSourceCards(summary: Record<string, unknown>) {
   ];
 }
 
+function hushhAiGa4SourceLabel(): string {
+  if (HUSHH_AI_GA4_PROPERTY_ID) return `properties/${HUSHH_AI_GA4_PROPERTY_ID}`;
+  if (HUSHH_AI_GA4_PROJECT && HUSHH_AI_GA4_DATASET) return `${HUSHH_AI_GA4_PROJECT}.${HUSHH_AI_GA4_DATASET}`;
+  return 'not_configured';
+}
+
 function buildHushhAiProductEvents(fetchedAt: string): Record<string, unknown> {
   return {
-    source: 'mixpanel-events',
+    source: 'hushh-ai-db-status',
     available: false,
-    status: 'collecting_not_ingested',
+    status: 'not_configured',
     generatedAt: fetchedAt,
     metrics: [],
-    note: 'hushh.ai product events are collecting, but aggregate dashboard ingestion is not wired yet.',
+    note: 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
   };
 }
 
@@ -1843,21 +2016,20 @@ function buildHushhAiSourceCards(
   productEvents: Record<string, unknown> | null,
 ) {
   const eventsAvailable = Boolean(productEvents?.available);
+  const eventsStatus = eventsAvailable ? 'live' : String(productEvents?.status ?? 'waiting');
   return [
     buildSearchConsoleSourceCard(searchConsole, 'hushh.ai Search Console'),
     buildGa4SourceCard(
       ga4,
-      HUSHH_AI_GA4_PROJECT && HUSHH_AI_GA4_DATASET
-        ? `${HUSHH_AI_GA4_PROJECT}.${HUSHH_AI_GA4_DATASET}`
-        : 'not_configured',
+      hushhAiGa4SourceLabel(),
       'Hushh AI GA4 source is not configured in metrics.hushh.ai yet.',
     ),
     {
       key: 'product_events',
       label: 'DB / Product Events',
-      status: eventsAvailable ? 'live' : 'collecting_not_ingested',
-      stateClass: sourceStateClass(eventsAvailable ? 'live' : 'collecting_not_ingested'),
-      source: String(productEvents?.source ?? 'mixpanel-events'),
+      status: eventsStatus,
+      stateClass: sourceStateClass(eventsStatus),
+      source: String(productEvents?.source ?? 'hushh-ai-db-status'),
       freshness: {
         generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : new Date().toISOString(),
         expectedLagSeconds: null,
@@ -2332,9 +2504,9 @@ app.get('/api/health', (_req, res) => {
       hushhAiSearchConsole: `${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}`,
       hushhAiSearchConsoleFallback: `${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`,
       hushhAiSearchConsoleSiteUrl: HUSHH_AI_SEARCH_CONSOLE_SITE_URL,
-      hushhAiGa4: HUSHH_AI_GA4_PROJECT && HUSHH_AI_GA4_DATASET
-        ? `${HUSHH_AI_GA4_PROJECT}.${HUSHH_AI_GA4_DATASET}`
-        : '(waiting)',
+      hushhAiGa4: hushhAiGa4SourceLabel(),
+      hushhAiGa4MeasurementId: HUSHH_AI_GA4_MEASUREMENT_ID,
+      hushhAiGa4Impersonation: HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT || '(direct)',
       hushhTechEndpoint: buildHushhTechUrl(),
       hushhTechCloudRun: `${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`,
       hushhTechSearchConsole: `${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`,
@@ -2364,7 +2536,8 @@ app.listen(PORT, () => {
   console.log(`  Kai GCP:       ${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`);
   console.log(`  Kai GSC Fallback: ${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`);
   console.log(`  Hush AI GCP:   ${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`);
-  console.log(`  Hush AI GA4:   ${HUSHH_AI_GA4_PROJECT && HUSHH_AI_GA4_DATASET ? `${HUSHH_AI_GA4_PROJECT}.${HUSHH_AI_GA4_DATASET}` : '(waiting)'}`);
+  console.log(`  Hush AI GA4:   ${hushhAiGa4SourceLabel()} (${HUSHH_AI_GA4_MEASUREMENT_ID})`);
+  console.log(`  Hush AI GA4 SA:${HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT || '(direct runtime service account)'}`);
   console.log(`  Hush AI GSC Fallback: ${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`);
   console.log(`  hushhtech.com: ${buildHushhTechUrl()}`);
   console.log(`  HushhTech GCP: ${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`);
