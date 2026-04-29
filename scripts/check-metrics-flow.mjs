@@ -211,17 +211,17 @@ async function checkFallbackDataset(options, dataset) {
   }
 
   const rowCounts = await queryBigQuery(options.project, `
-    SELECT 'site_daily' AS table_name, COUNT(*) AS rows FROM \`${options.project}.${dataset}.site_daily\`
+    SELECT 'site_daily' AS table_name, COUNT(*) AS row_count FROM \`${options.project}.${dataset}.site_daily\`
     UNION ALL SELECT 'query_daily', COUNT(*) FROM \`${options.project}.${dataset}.query_daily\`
     UNION ALL SELECT 'page_daily', COUNT(*) FROM \`${options.project}.${dataset}.page_daily\`
     UNION ALL SELECT 'country_daily', COUNT(*) FROM \`${options.project}.${dataset}.country_daily\`
     UNION ALL SELECT 'device_daily', COUNT(*) FROM \`${options.project}.${dataset}.device_daily\`
   `, options.timeoutMs);
-  const totalRows = rowCounts.reduce((sum, row) => sum + Number(row.rows || 0), 0);
+  const totalRows = rowCounts.reduce((sum, row) => sum + Number(row.row_count || 0), 0);
   return result(
     `fallback-dataset-${dataset}`,
     totalRows > 0 ? 'ok' : 'warn',
-    rowCounts.map((row) => `${row.table_name}:${row.rows}`).join(', '),
+    rowCounts.map((row) => `${row.table_name}:${row.row_count}`).join(', '),
   );
 }
 
