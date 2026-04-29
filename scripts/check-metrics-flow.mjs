@@ -148,7 +148,20 @@ async function fetchJson(url, timeoutMs) {
 
 async function execJson(command, args, timeoutMs) {
   const { stdout } = await execFileAsync(command, args, { timeout: timeoutMs, maxBuffer: 20 * 1024 * 1024 });
-  return JSON.parse(stdout || 'null');
+  return parseJsonOutput(stdout);
+}
+
+function parseJsonOutput(stdout) {
+  const trimmed = String(stdout || '').trim();
+  if (!trimmed) return null;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch (error) {
+    const jsonStart = trimmed.search(/[\[{]/);
+    if (jsonStart > 0) return JSON.parse(trimmed.slice(jsonStart));
+    throw error;
+  }
 }
 
 async function queryBigQuery(project, sql, timeoutMs) {
