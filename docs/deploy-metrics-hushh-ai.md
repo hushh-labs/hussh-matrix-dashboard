@@ -340,7 +340,10 @@ gcloud run jobs execute "$HUSHHTECH_SEARCH_INGEST_JOB" \
   --wait
 ```
 
-Schedule the recurring 16-day backfill:
+Schedule the recurring 16-day backfill. Search Console is still a daily
+aggregate source, but running the fallback every six hours lets metrics.hushh.ai
+pick up Google's newly published daily rows without waiting for the next
+single daily run:
 
 ```bash
 gcloud iam service-accounts create hushhtech-gsc-scheduler \
@@ -359,7 +362,7 @@ gcloud iam service-accounts add-iam-policy-binding "$HUSHHTECH_SEARCH_INGEST_SA"
 gcloud scheduler jobs create http hushhtech-search-console-ingest-daily \
   --project="$PROJECT" \
   --location="$REGION" \
-  --schedule="20 9 * * *" \
+  --schedule="20 */6 * * *" \
   --time-zone="Etc/UTC" \
   --uri="https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/${HUSHHTECH_SEARCH_INGEST_JOB}:run" \
   --http-method=POST \
@@ -432,12 +435,24 @@ gcloud run jobs deploy "$KAI_SEARCH_INGEST_JOB" \
   --set-secrets="SEARCH_CONSOLE_OAUTH_JSON=$SEARCH_CONSOLE_OAUTH_SECRET:latest"
 ```
 
-Run the one-time 90-day backfill once per job, then schedule the daily 16-day
-refresh through Cloud Scheduler:
+Run the one-time 90-day backfill once per job, then schedule the recurring
+six-hour 16-day refresh through Cloud Scheduler:
 
 ```bash
 gcloud run jobs execute "$HUSHH_AI_SEARCH_INGEST_JOB" --project="$PROJECT" --region="$REGION" --args=scripts/ingest-hushhtech-search-console.mjs,--days,90 --wait
 gcloud run jobs execute "$KAI_SEARCH_INGEST_JOB" --project="$PROJECT" --region="$REGION" --args=scripts/ingest-hushhtech-search-console.mjs,--days,90 --wait
+
+gcloud scheduler jobs update http hushh-ai-search-console-ingest-daily \
+  --project="$PROJECT" \
+  --location="$REGION" \
+  --schedule="30 */6 * * *" \
+  --time-zone="Etc/UTC"
+
+gcloud scheduler jobs update http kai-search-console-ingest-daily \
+  --project="$PROJECT" \
+  --location="$REGION" \
+  --schedule="40 */6 * * *" \
+  --time-zone="Etc/UTC"
 ```
 
 ## Build And Deploy

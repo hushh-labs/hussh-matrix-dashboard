@@ -147,11 +147,11 @@ why some sections may show neutral empty states:
 | --- | --- | --- |
 | Kai production | `hushh-pda.analytics_526603671` is not materialized | Enable or repair the production GA4 BigQuery export; Cloud Run production metrics are still available |
 | Kai production | Hosted frontend still needs production web tag redeploy | Redeploy Kai with the production measurement ID already configured in secrets |
-| HushhTech Search Console | Official bulk export tables have not materialized yet | GCP-only fallback is active in `hushh-ai-prod.hushhtech_search_console_api`; daily Scheduler job `hushhtech-search-console-ingest-daily` refreshes the last 16 days |
-| Hushh AI Search Console | Official export dataset exists, but export tables may not be present yet | GCP-only fallback is active in `hushh-ai-prod.hushh_ai_search_console_api` |
+| HushhTech Search Console | Official bulk export tables have not materialized yet | GCP-only fallback is active in `hushh-ai-prod.hushhtech_search_console_api`; Scheduler job `hushhtech-search-console-ingest-daily` refreshes the last 16 days every 6 hours |
+| Hushh AI Search Console | Official export dataset exists, but export tables may not be present yet | GCP-only fallback is active in `hushh-ai-prod.hushh_ai_search_console_api`; Scheduler refreshes the last 16 days every 6 hours |
 | Hushh AI GA4 | GA4 UI rejects the custom `metrics-dashboard-runtime` service account, but the property already authorizes `646258530541-compute@developer.gserviceaccount.com` | Runtime impersonation bridge is active; keep `roles/iam.serviceAccountTokenCreator` on the target service account for `metrics-dashboard-runtime` |
 | Hushh AI DB / product events | No Hushh AI DB aggregate source is confirmed in metrics runtime config | Keep the product events card in `not_configured`; do not use HushhTech Supabase |
-| Kai Search Console | Official domain export is shared with `sc-domain:hushh.ai` and may not have tables yet | GCP-only fallback is active in `hushh-ai-prod.kai_search_console_api` with Kai URL filters |
+| Kai Search Console | Official domain export is shared with `sc-domain:hushh.ai` and may not have tables yet | GCP-only fallback is active in `hushh-ai-prod.kai_search_console_api` with Kai URL filters; Scheduler refreshes the last 16 days every 6 hours |
 
 ## Operational Commands
 

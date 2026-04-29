@@ -119,6 +119,17 @@ function assertSearchConsoleSections(card, label) {
   assertSourceSections(card, label, 'Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
 }
 
+function assertSearchConsoleFreshness(card, label) {
+  if (!card || card.status === 'waiting' || card.status === 'not_configured') return;
+  const sections = Array.isArray(card.sections) ? card.sections : [];
+  for (const section of sections) {
+    assert(!section.blocker, `${label} Search Console ${section.key} should not show a blocker when data is available`, String(section.blocker || ''));
+    assert(Array.isArray(section.metrics) && section.metrics.length >= 4, `${label} Search Console ${section.key} should expose clicks/impressions/CTR/position`);
+    assert(section.freshness?.generatedAt, `${label} Search Console ${section.key} missing refresh timestamp`);
+    assert(/data date|latest data/.test(String(section.source || '')), `${label} Search Console ${section.key} missing latest data date in source`);
+  }
+}
+
 function assertSourceSections(card, label, sourceLabel, requiredKeys) {
   assert(card, `${label} ${sourceLabel} source card missing`);
   const sections = Array.isArray(card.sections) ? card.sections : [];
@@ -240,6 +251,7 @@ async function checkApiFlow(options) {
       assertSourceCardMetric(searchCard, key);
     }
     assertSearchConsoleSections(searchCard, label);
+    assertSearchConsoleFreshness(searchCard, label);
     assertGa4Sections(body?.sourceCards?.find((card) => card.key === 'ga4'), label);
   }
 
@@ -332,6 +344,7 @@ async function checkGcpFlow(options) {
       '--format=json',
     ], options.timeoutMs);
     assert(scheduler.state === 'ENABLED', `${schedulerName} is not enabled`, String(scheduler.state || 'missing'));
+    assert(String(scheduler.schedule || '').includes('*/6'), `${schedulerName} should refresh Search Console fallback every 6 hours`, String(scheduler.schedule || 'missing'));
     results.push(result(`cloud-scheduler-${schedulerName}`, 'ok', scheduler.schedule));
   }
 

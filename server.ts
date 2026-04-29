@@ -515,6 +515,9 @@ function unavailableHushhTechSearchConsole(range: HushhAiDateRange, note: string
     sourceLabel: 'Search Console waiting',
     available: false,
     realtime: false,
+    latestDataDate: null,
+    latestIngestedAt: null,
+    expectedLagSeconds: 86_400,
     dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
     searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
     overview,
@@ -554,6 +557,37 @@ function searchConsoleMetric(row: Record<string, unknown> | undefined) {
     ctr: row?.ctr == null ? null : toNumber(row.ctr),
     averagePosition: averagePosition == null ? null : toNumber(averagePosition),
   };
+}
+
+function latestSearchConsoleDate(rows: Record<string, unknown>[]): string | null {
+  return rows
+    .map((row) => String(row.date ?? row.dataDate ?? row.data_date ?? ''))
+    .filter(Boolean)
+    .sort()
+    .at(-1) ?? null;
+}
+
+function latestSearchConsoleIngestedAt(rows: Record<string, unknown>[]): string | null {
+  return rows
+    .map((row) => String(row.ingestedAt ?? row.ingested_at ?? ''))
+    .filter(Boolean)
+    .sort()
+    .at(-1) ?? null;
+}
+
+function searchConsoleLatestDataDate(data: unknown): string | null {
+  const record = asRecord(data);
+  return typeof record?.latestDataDate === 'string' ? record.latestDataDate : null;
+}
+
+function shouldPreferSearchConsoleFallback(primary: unknown, fallback: unknown): boolean {
+  const primaryRecord = asRecord(primary);
+  const fallbackRecord = asRecord(fallback);
+  if (!fallbackRecord?.available) return false;
+  if (!primaryRecord?.available) return true;
+  const primaryDate = searchConsoleLatestDataDate(primaryRecord);
+  const fallbackDate = searchConsoleLatestDataDate(fallbackRecord);
+  return Boolean(primaryDate && fallbackDate && fallbackDate > primaryDate);
 }
 
 function publicSearchConsoleSourceLabel(source: unknown): string {
@@ -620,6 +654,8 @@ function unavailableProductSearchConsole(
     sourceLabel: 'Search Console waiting',
     siteUrl: config.siteUrl,
     generatedAt: new Date().toISOString(),
+    latestDataDate: null,
+    latestIngestedAt: null,
     realtimeMode: 'delayed_export',
     expectedLagSeconds: 86_400,
     startDate: range.startDate,
@@ -664,11 +700,15 @@ function productSearchConsolePayload(
   note: string,
 ): Record<string, unknown> {
   const overview = searchConsoleMetric(aggregateRow);
+  const latestDataDate = latestSearchConsoleDate(dailyRows);
+  const latestIngestedAt = latestSearchConsoleIngestedAt(dailyRows);
   return {
     source,
     sourceLabel: publicSearchConsoleSourceLabel(source),
     siteUrl: config.siteUrl,
     generatedAt: new Date().toISOString(),
+    latestDataDate,
+    latestIngestedAt,
     realtimeMode: 'delayed_export',
     expectedLagSeconds: 86_400,
     startDate: range.startDate,
@@ -743,6 +783,7 @@ async function fetchProductSearchConsoleFallback(
   const dailyQuery = `
     SELECT
       CAST(data_date AS STRING) AS date,
+      FORMAT_TIMESTAMP('%FT%TZ', MAX(ingested_at)) AS ingestedAt,
       SUM(clicks) AS clicks,
       SUM(impressions) AS impressions,
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
@@ -912,6 +953,12 @@ async function fetchProductSearchConsole(
     devices.rows,
     'Read by metrics.hushh.ai from the Search Console BigQuery bulk export.',
   );
+  const fallback = await fetchProductSearchConsoleFallback(
+    config,
+    range,
+    'GCP fallback is also checked because the official Search Console export can lag behind the API fallback.',
+  );
+  if (shouldPreferSearchConsoleFallback(data, fallback.data)) return fallback;
   return { data, error: errors.length > 0 ? errors.join('; ') : null };
 }
 
@@ -965,6 +1012,7 @@ async function fetchHushhTechSearchConsoleFallback(
   const dailyQuery = `
     SELECT
       CAST(data_date AS STRING) AS date,
+      FORMAT_TIMESTAMP('%FT%TZ', MAX(ingested_at)) AS ingestedAt,
       SUM(clicks) AS clicks,
       SUM(impressions) AS impressions,
       SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
@@ -1006,12 +1054,17 @@ async function fetchHushhTechSearchConsoleFallback(
 
   const overview = searchConsoleMetric(aggregate.rows[0]);
   const available = overview.clicks > 0 || overview.impressions > 0;
+  const latestDataDate = latestSearchConsoleDate(daily.rows);
+  const latestIngestedAt = latestSearchConsoleIngestedAt(daily.rows);
   return {
     data: {
       source: 'metrics-hushh-ai-search-console-gcp-fallback',
       sourceLabel: 'Search Console fallback aggregates',
       available,
       realtime: false,
+      latestDataDate,
+      latestIngestedAt,
+      expectedLagSeconds: 86_400,
       dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
       searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
       overview,
@@ -1178,12 +1231,15 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
   if (aggregate.rows.length === 0 && errors.length > 0) return { data: null, error: errors.join('; ') };
 
   const overview = searchConsoleMetric(aggregate.rows[0]);
-  return {
-    data: {
+  const latestDataDate = latestSearchConsoleDate(daily.rows);
+  const data = {
       source: 'metrics-hushh-ai-search-console-bigquery',
       sourceLabel: 'Search Console official export',
       available: overview.clicks > 0 || overview.impressions > 0,
       realtime: false,
+      latestDataDate,
+      latestIngestedAt: null,
+      expectedLagSeconds: 86_400,
       dataState: HUSHHTECH_SEARCH_CONSOLE_DATA_STATE,
       searchType: HUSHHTECH_SEARCH_CONSOLE_TYPE,
       overview,
@@ -1227,9 +1283,13 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
       note: overview.clicks > 0 || overview.impressions > 0
         ? 'Read by metrics.hushh.ai from the Search Console BigQuery bulk export.'
         : 'Search Console bulk export returned no rows for this range.',
-    },
-    error: errors.length > 0 ? errors.join('; ') : null,
   };
+  const fallback = await fetchHushhTechSearchConsoleFallback(
+    range,
+    'GCP fallback is also checked because the official Search Console export can lag behind the API fallback.',
+  );
+  if (shouldPreferSearchConsoleFallback(data, fallback.data)) return fallback;
+  return { data, error: errors.length > 0 ? errors.join('; ') : null };
 }
 
 function mergeHushhTechCoverage(summary: Record<string, unknown>): Record<string, unknown> {
@@ -2288,7 +2348,15 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
   const lastSevenMetric = aggregateSearchConsoleRows(dailyRows.slice(-7));
   const rangeTotals = asRecord(searchConsole?.rangeTotals) ?? {};
   const selectedMetric = searchConsoleMetric({ ...overview, ...rangeTotals });
-  const delayedSearchNote = 'Search Console exports are delayed daily aggregates; true realtime search data is not available from the current BigQuery fallback.';
+  const latestDataDate = typeof searchConsole?.latestDataDate === 'string'
+    ? searchConsole.latestDataDate
+    : typeof latestAvailableDaily?.date === 'string'
+      ? latestAvailableDaily.date
+      : null;
+  const latestIngestedAt = typeof searchConsole?.latestIngestedAt === 'string' ? searchConsole.latestIngestedAt : null;
+  const sourceFreshnessAt = latestIngestedAt ?? generatedAt;
+  const dailySource = latestDataDate ? `GCP daily aggregate · data date ${latestDataDate}` : 'GCP daily aggregate';
+  const waitingSearchNote = 'Waiting for the next GCP Search Console daily aggregate.';
   return {
     key: 'search_console',
     label: 'Search Console',
@@ -2296,7 +2364,7 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
     stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
     source: String(searchConsole?.sourceLabel ?? publicSearchConsoleSourceLabel(searchConsole?.source ?? fallbackSource)),
     freshness: {
-      generatedAt,
+      generatedAt: sourceFreshnessAt,
       expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds),
     },
     metrics: [
@@ -2313,42 +2381,42 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
     sections: [
       {
         key: 'last_24_hours',
-        label: 'Latest Daily',
+        label: 'Latest Available Day',
         status: latestAvailableDaily && available ? 'delayed' : 'waiting',
         stateClass: sourceStateClass(latestAvailableDaily && available ? 'delayed' : 'waiting'),
-        source: 'Search Console daily aggregate',
+        source: dailySource,
         freshness: {
-          generatedAt,
+          generatedAt: sourceFreshnessAt,
           expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds ?? 86_400),
         },
         metrics: searchConsoleSectionMetrics(latestMetric),
-        blocker: latestAvailableDaily && available ? delayedSearchNote : note ?? 'Search Console latest daily data is waiting; hourly last-24h is not ingested yet.',
+        blocker: latestAvailableDaily && available ? null : note ?? waitingSearchNote,
       },
       {
         key: 'last_7_days',
         label: 'Last 7 Days',
         status: available ? 'delayed' : 'waiting',
         stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
-        source: 'Search Console daily aggregate',
+        source: dailySource,
         freshness: {
-          generatedAt,
+          generatedAt: sourceFreshnessAt,
           expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds ?? 86_400),
         },
         metrics: searchConsoleSectionMetrics(lastSevenMetric),
-        blocker: available ? delayedSearchNote : note ?? 'Search Console 7-day data is waiting.',
+        blocker: available ? null : note ?? 'Search Console 7-day aggregate is waiting in GCP.',
       },
       {
         key: 'selected_total',
         label: 'Selected Total',
         status: available ? 'delayed' : 'waiting',
         stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
-        source: 'Search Console selected range',
+        source: latestDataDate ? `GCP selected range aggregate · latest data ${latestDataDate}` : 'GCP selected range aggregate',
         freshness: {
-          generatedAt,
+          generatedAt: sourceFreshnessAt,
           expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds ?? 86_400),
         },
         metrics: searchConsoleSectionMetrics(selectedMetric),
-        blocker: available ? delayedSearchNote : note ?? 'Search Console selected-range data is waiting.',
+        blocker: available ? null : note ?? 'Search Console selected-range aggregate is waiting in GCP.',
       },
     ],
     blocker: available ? null : note ?? 'Search Console source is waiting for export or fallback rows.',

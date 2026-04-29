@@ -148,9 +148,10 @@ function freshnessClass(source: HushhAiFreshnessSource): string {
   return 'bg-[#f5f5f7] text-[#6e6e73]';
 }
 
-function sourceStatusLabel(status: string): string {
+function sourceStatusLabel(status: string, sourceKey?: string): string {
   if (status === 'live') return 'Live';
   if (status === 'near_live') return 'Near-live';
+  if (sourceKey === 'search_console' && status === 'delayed') return 'Daily';
   if (status === 'delayed') return 'Delayed';
   if (status === 'waiting') return 'Waiting';
   if (status === 'not_configured') return 'Not configured';
@@ -309,37 +310,46 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
           <p className="mt-1 truncate text-xs font-bold text-[#86868b]">{card.source}</p>
         </div>
         <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-bold', sourceStatusClass(card.status))}>
-          {sourceStatusLabel(card.status)}
+          {sourceStatusLabel(card.status, card.key)}
         </span>
       </div>
 
       {sections.length > 0 ? (
         <div className="mt-5 space-y-3">
-          {sections.map((section) => (
-            <div key={section.key} className="rounded-lg bg-[#f5f5f7] p-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{section.label}</p>
-                {section.status ? (
-                  <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', sourceStatusClass(section.status))}>
-                    {sourceStatusLabel(section.status)}
-                  </span>
+          {sections.map((section) => {
+            const sectionMeta = [
+              section.source,
+              section.freshness?.generatedAt ? `refreshed ${formatAge(section.freshness.generatedAt)}` : null,
+            ].filter(Boolean).join(' · ');
+            return (
+              <div key={section.key} className="rounded-lg bg-[#f5f5f7] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{section.label}</p>
+                  {section.status ? (
+                    <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', sourceStatusClass(section.status))}>
+                      {sourceStatusLabel(section.status, card.key)}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                  {section.metrics.slice(0, 4).map((metricItem) => (
+                    <div key={`${section.key}-${metricItem.key}`} className="min-h-[54px] rounded-md bg-white/70 p-2">
+                      <p className="truncate text-[10px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{metricItem.label}</p>
+                      <p className="mt-1 truncate text-base font-semibold tracking-[-0.03em] text-[#1d1d1f]">
+                        {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                {sectionMeta ? (
+                  <p className="mt-2 text-[11px] font-semibold leading-5 text-[#86868b]">{sectionMeta}</p>
+                ) : null}
+                {section.blocker ? (
+                  <p className="mt-2 text-xs font-medium leading-5 text-[#6e6e73]">{section.blocker}</p>
                 ) : null}
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {section.metrics.slice(0, 3).map((metricItem) => (
-                  <div key={`${section.key}-${metricItem.key}`} className="min-h-[54px] rounded-md bg-white/70 p-2">
-                    <p className="truncate text-[10px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{metricItem.label}</p>
-                    <p className="mt-1 truncate text-base font-semibold tracking-[-0.03em] text-[#1d1d1f]">
-                      {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-              {section.blocker ? (
-                <p className="mt-2 text-xs font-medium leading-5 text-[#6e6e73]">{section.blocker}</p>
-              ) : null}
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="mt-5 grid grid-cols-2 gap-2">
