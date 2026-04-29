@@ -102,6 +102,18 @@ gcloud artifacts repositories add-iam-policy-binding website-images \
   --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.reader"
 
+gcloud projects add-iam-policy-binding hushh-ai-prod \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/bigquery.jobUser"
+
+gcloud projects add-iam-policy-binding hushh-ai-prod \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/bigquery.dataViewer"
+
+gcloud projects add-iam-policy-binding hushh-ai-prod \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/cloudscheduler.viewer"
+
 gcloud iam service-accounts add-iam-policy-binding \
   metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com \
   --project=hushh-ai-prod \
