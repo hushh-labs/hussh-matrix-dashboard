@@ -2,12 +2,12 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Hussh Insights AI — floating metrics agent for the Hussh Matrix Dashboard.
- * Apple-inspired glassmorphism design with smooth animations.
+ * Matrix Agent One — floating metrics analyst for the Hussh Matrix Dashboard.
+ * Apple-inspired material design with smooth animations.
  */
 
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowUp, Lightbulb, Loader2, MessageSquareText, Sparkles, X } from 'lucide-react';
+import { Activity, ArrowUp, Lightbulb, Loader2, MessageSquareText, Sparkles, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 
@@ -57,8 +57,12 @@ interface ChatMessage {
 interface PromptOption {
   label: string;
   prompt: string;
+  description?: string;
   tone?: 'default' | 'priority' | 'warning';
 }
+
+const AGENT_NAME = 'Matrix Agent One';
+const AGENT_SUBTITLE = 'Hushh metrics copilot';
 
 const STARTER_PROMPTS: PromptOption[] = [
   {
@@ -87,21 +91,25 @@ const STARTER_PROMPTS: PromptOption[] = [
 const DEEP_DIVE_PROMPTS: PromptOption[] = [
   {
     label: 'Full board review',
+    description: 'Wins, risks, missing data, and next actions',
     prompt: 'Review the full dashboard like an operator. Give me wins, risks, missing data, and the next 5 actions.',
     tone: 'priority',
   },
   {
     label: 'What changed today?',
+    description: 'Last-day reliability, traffic, users, and freshness',
     prompt: 'What happened in the last day across Hushh products? Separate reliability, traffic, users, funnels, source caveats, and data freshness.',
     tone: 'priority',
   },
   {
     label: 'Source health audit',
+    description: 'Live, delayed, waiting, and unavailable sources',
     prompt: 'Audit every connected source. Tell me what is live, delayed, waiting, not configured, and what each status means.',
     tone: 'warning',
   },
   {
     label: 'CEO brief',
+    description: 'Decision-ready numbers with caveats',
     prompt: 'Create a concise CEO-ready brief from the current metrics with the most important numbers and caveats.',
   },
 ];
@@ -161,9 +169,9 @@ function statusClass(status: string, available: boolean) {
 }
 
 function promptOptionClass(tone: PromptOption['tone'] = 'default') {
-  if (tone === 'priority') return 'border-[#007aff]/20 bg-[#eef6ff] text-[#005eb8] hover:border-[#007aff]/35 hover:bg-[#e3f1ff]';
-  if (tone === 'warning') return 'border-[#9a5b00]/20 bg-[#fff7e6] text-[#7a4b00] hover:border-[#9a5b00]/35 hover:bg-[#fff1d2]';
-  return 'border-black/[0.06] bg-[#f5f5f7]/90 text-[#1d1d1f] hover:border-[#007aff]/20 hover:bg-[#007aff]/[0.05] hover:text-[#005eb8]';
+  if (tone === 'priority') return 'border-[#007aff]/20 bg-[#eef6ff]/95 text-[#005eb8] hover:border-[#007aff]/40 hover:bg-[#e3f1ff]';
+  if (tone === 'warning') return 'border-[#9a5b00]/20 bg-[#fff7e6]/95 text-[#7a4b00] hover:border-[#9a5b00]/40 hover:bg-[#fff1d2]';
+  return 'border-black/[0.07] bg-white/[0.82] text-[#1d1d1f] hover:border-[#007aff]/25 hover:bg-[#f4faff] hover:text-[#005eb8]';
 }
 
 function buildContextualPrompts(message: ChatMessage | undefined): PromptOption[] {
@@ -231,7 +239,7 @@ function PromptOptionTray({
             onClick={() => onSelect(option.prompt)}
             disabled={disabled}
             title={option.prompt}
-            className={`min-h-8 shrink-0 rounded-full border px-3 text-left text-[11px] font-bold transition-all duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${promptOptionClass(option.tone)}`}
+            className={`min-h-9 shrink-0 rounded-full border px-3.5 text-left text-[12px] font-semibold transition-all duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${promptOptionClass(option.tone)}`}
           >
             {option.label}
           </button>
@@ -358,10 +366,10 @@ export default function HusshInsightsAgent() {
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 24 }}
             onClick={() => setIsOpen(true)}
-            className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#1d1d1f] shadow-[0_2px_8px_rgba(0,0,0,0.12),0_12px_32px_rgba(0,0,0,0.18)] transition-shadow duration-200 hover:shadow-[0_4px_12px_rgba(0,0,0,0.16),0_16px_40px_rgba(0,0,0,0.24)] active:scale-95"
-            aria-label="Open Hussh Insights AI"
+            className="fixed bottom-6 right-6 z-50 flex h-16 w-16 items-center justify-center rounded-full border border-white/20 bg-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.14),0_18px_46px_rgba(0,0,0,0.24)] transition-shadow duration-200 hover:shadow-[0_4px_14px_rgba(0,0,0,0.18),0_22px_56px_rgba(0,0,0,0.28)] active:scale-95"
+            aria-label={`Open ${AGENT_NAME}`}
           >
-            <Sparkles className="h-6 w-6 text-white" />
+            <Sparkles className="h-7 w-7 text-white" />
           </motion.button>
         )}
       </AnimatePresence>
@@ -374,62 +382,70 @@ export default function HusshInsightsAgent() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-            className="fixed bottom-6 right-6 z-50 flex w-[400px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-2xl border border-black/[0.06] bg-white/92 shadow-[0_4px_16px_rgba(0,0,0,0.08),0_24px_64px_rgba(0,0,0,0.12)] backdrop-blur-2xl sm:w-[480px]"
-            style={{ maxHeight: 'min(760px, calc(100vh - 48px))' }}
+            className="fixed inset-x-3 bottom-3 z-50 mx-auto flex w-[calc(100vw-24px)] max-w-[780px] flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/[0.86] shadow-[0_8px_30px_rgba(0,0,0,0.10),0_32px_90px_rgba(0,0,0,0.18)] backdrop-blur-2xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[680px] lg:w-[760px]"
+            style={{ height: 'min(820px, calc(100vh - 48px))', maxHeight: 'calc(100vh - 32px)' }}
           >
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-black/[0.06] bg-white/60 px-5 py-3.5 backdrop-blur-xl">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#007aff] to-[#5856d6]">
-                  <Sparkles className="h-4 w-4 text-white" />
+            <div className="flex items-center justify-between border-b border-black/[0.06] bg-white/[0.62] px-5 py-4 backdrop-blur-xl sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#1d1d1f] shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_10px_24px_rgba(0,0,0,0.16)]">
+                  <Sparkles className="h-5 w-5 text-white" />
                 </div>
-                <div>
-                  <h2 className="text-[13px] font-bold text-[#1d1d1f] leading-tight">Hussh Insights AI</h2>
-                  <p className="text-[11px] font-medium text-[#86868b] leading-tight">Metrics agent</p>
+                <div className="min-w-0">
+                  <h2 className="truncate text-[18px] font-semibold leading-tight text-[#1d1d1f]">{AGENT_NAME}</h2>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <p className="text-[13px] font-medium leading-tight text-[#86868b]">{AGENT_SUBTITLE}</p>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-[#1f7a36]/15 bg-[#ecfdf3] px-2 py-0.5 text-[10px] font-bold uppercase text-[#1f7a36]">
+                      <Activity className="h-3 w-3" />
+                      Live Matrix
+                    </span>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex shrink-0 items-center gap-1.5">
                 {messages.length > 0 && (
                   <button
                     onClick={clearChat}
-                    className="rounded-lg px-2 py-1 text-[11px] font-semibold text-[#86868b] transition-colors hover:bg-black/[0.04] hover:text-[#1d1d1f]"
+                    className="flex h-9 w-9 items-center justify-center rounded-full text-[#86868b] transition-colors hover:bg-black/[0.06] hover:text-[#1d1d1f]"
+                    aria-label="Clear conversation"
+                    title="Clear conversation"
                   >
-                    Clear
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 )}
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="flex h-7 w-7 items-center justify-center rounded-full transition-colors hover:bg-black/[0.06]"
-                  aria-label="Close"
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-[#86868b] transition-colors hover:bg-black/[0.06] hover:text-[#1d1d1f]"
+                  aria-label={`Close ${AGENT_NAME}`}
+                  title="Close"
                 >
-                  <X className="h-4 w-4 text-[#86868b]" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
             </div>
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4" style={{ minHeight: '300px', maxHeight: '510px' }}>
+            <div className="flex-1 overflow-y-auto overscroll-contain bg-[linear-gradient(180deg,rgba(245,245,247,0.50),rgba(255,255,255,0.30))] px-4 py-5 sm:px-6">
               {messages.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center py-6">
-                  <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#007aff]/10 to-[#5856d6]/10">
-                    <Sparkles className="h-6 w-6 text-[#007aff]" />
+                <div className="flex h-full flex-col items-center justify-start py-5 sm:justify-center sm:py-6">
+                  <div className="mb-4 hidden h-16 w-16 items-center justify-center rounded-[24px] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_18px_40px_rgba(0,0,0,0.08)] sm:flex">
+                    <Sparkles className="h-7 w-7 text-[#007aff]" />
                   </div>
-                  <p className="mb-1 text-[15px] font-bold text-[#1d1d1f]">Choose a starting point</p>
-                  <p className="mb-5 text-center text-[13px] text-[#86868b] leading-relaxed">
-                    Pick a recommended analyst question or type your own.<br />
-                    I keep source status, caveats, and confidence attached.
+                  <p className="hidden text-[22px] font-semibold text-[#1d1d1f] sm:block">{AGENT_NAME}</p>
+                  <p className="mb-4 text-center text-[14px] font-medium leading-relaxed text-[#86868b] sm:mb-6 sm:mt-1">
+                    Analyst prompts for the Hushh Matrix
                   </p>
-                  <div className="flex w-full flex-col gap-2">
+                  <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
                     {DEEP_DIVE_PROMPTS.map((option) => (
                       <button
                         key={option.label}
                         onClick={() => handleSuggestion(option.prompt)}
-                        className={`group flex w-full items-start gap-2 rounded-xl border px-3.5 py-2.5 text-left transition-all duration-150 active:scale-[0.98] ${promptOptionClass(option.tone)}`}
+                        className={`group flex min-h-[86px] w-full items-start gap-3 rounded-2xl border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-all duration-150 hover:-translate-y-0.5 active:scale-[0.98] sm:min-h-[94px] ${promptOptionClass(option.tone)}`}
                       >
-                        <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>
-                          <span className="block text-[12px] font-bold">{option.label}</span>
-                          <span className="mt-0.5 block text-[11px] font-medium leading-snug opacity-75">{option.prompt}</span>
+                          <span className="block text-[13px] font-semibold">{option.label}</span>
+                          <span className="mt-1 block text-[12px] font-medium leading-snug opacity-75">{option.description ?? option.prompt}</span>
                         </span>
                       </button>
                     ))}
@@ -446,12 +462,12 @@ export default function HusshInsightsAgent() {
                       className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                       <div
-                        className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
+                        className={`max-w-[92%] rounded-[22px] px-4 py-3 text-[14px] leading-relaxed sm:max-w-[88%] ${
                           msg.role === 'user'
-                            ? 'bg-[#007aff] text-white'
+                            ? 'bg-[#007aff] text-white shadow-[0_8px_20px_rgba(0,122,255,0.22)]'
                             : msg.isError || (hasError && msg === messages[messages.length - 1])
-                              ? 'border border-red-200/60 bg-red-50/80 text-[#1d1d1f]'
-                              : 'border border-black/[0.04] bg-[#f5f5f7]/80 text-[#1d1d1f]'
+                              ? 'border border-red-200/70 bg-red-50/[0.88] text-[#1d1d1f]'
+                              : 'border border-white/75 bg-white/[0.76] text-[#1d1d1f] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.06)] backdrop-blur-xl'
                         }`}
                       >
                         {msg.role === 'assistant' ? (
@@ -461,14 +477,14 @@ export default function HusshInsightsAgent() {
                               <div className="space-y-2 pt-1">
                                 <div className="flex flex-wrap gap-1.5">
                                   {msg.confidence && (
-                                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${confidenceClass(msg.confidence)}`}>
+                                    <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${confidenceClass(msg.confidence)}`}>
                                       {msg.confidence}
                                     </span>
                                   )}
                                   {(msg.sources ?? []).slice(0, 4).map((source) => (
                                     <span
                                       key={`${msg.id}-${source.product}-${source.source}`}
-                                      className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusClass(source.status, source.available)}`}
+                                      className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusClass(source.status, source.available)}`}
                                       title={`${source.product}: ${source.source}`}
                                     >
                                       {source.source.replaceAll('_', ' ')}
@@ -476,7 +492,7 @@ export default function HusshInsightsAgent() {
                                   ))}
                                 </div>
                                 {(msg.warnings ?? []).length > 0 && (
-                                  <div className="rounded-lg border border-[#9a5b00]/15 bg-[#fff7e6]/70 px-2.5 py-2 text-[11px] font-medium leading-snug text-[#7a4b00]">
+                                  <div className="rounded-xl border border-[#9a5b00]/15 bg-[#fff7e6]/80 px-3 py-2 text-[12px] font-medium leading-snug text-[#7a4b00]">
                                     {msg.warnings?.slice(0, 2).join(' ')}
                                   </div>
                                 )}
@@ -496,9 +512,9 @@ export default function HusshInsightsAgent() {
                       animate={{ opacity: 1, y: 0 }}
                       className="flex justify-start"
                     >
-                      <div className="flex items-center gap-2 rounded-2xl border border-black/[0.04] bg-[#f5f5f7]/80 px-3.5 py-2.5">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#007aff]" />
-                        <span className="text-[12px] text-[#86868b]">Analyzing metrics…</span>
+                      <div className="flex items-center gap-2 rounded-[22px] border border-white/75 bg-white/[0.76] px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.06)] backdrop-blur-xl">
+                        <Loader2 className="h-4 w-4 animate-spin text-[#007aff]" />
+                        <span className="text-[13px] font-medium text-[#86868b]">Analyzing metrics...</span>
                       </div>
                     </motion.div>
                   )}
@@ -509,38 +525,38 @@ export default function HusshInsightsAgent() {
             </div>
 
             {/* Input Area */}
-            <div className="border-t border-black/[0.06] bg-white/60 px-4 py-3 backdrop-blur-xl">
-              <div className="mb-3 rounded-xl border border-black/[0.05] bg-white/70 px-3 py-2.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+            <div className="border-t border-black/[0.06] bg-white/[0.72] px-4 py-4 backdrop-blur-xl sm:px-5">
+              <div className="mb-3 rounded-2xl border border-white/70 bg-white/[0.68] px-3.5 py-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
                 <PromptOptionTray
-                  title={messages.length === 0 ? 'Recommended questions' : 'Suggested next'}
+                  title={messages.length === 0 ? 'Recommended messages' : 'Ask next'}
                   options={recommendedPrompts}
                   disabled={isLoading}
                   onSelect={handleSuggestion}
                 />
               </div>
-              <div className="flex items-end gap-2 rounded-xl border border-black/[0.08] bg-white px-3 py-2 shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-shadow focus-within:border-[#007aff]/30 focus-within:shadow-[0_0_0_3px_rgba(0,122,255,0.1)]">
+              <div className="flex items-end gap-2 rounded-2xl border border-[#007aff]/20 bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_0_0_4px_rgba(0,122,255,0.06)] transition-shadow focus-within:border-[#007aff]/40 focus-within:shadow-[0_1px_4px_rgba(0,0,0,0.06),0_0_0_5px_rgba(0,122,255,0.12)]">
                 <textarea
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask about Hushh metrics…"
+                  placeholder={`Message ${AGENT_NAME}...`}
                   rows={1}
                   disabled={isLoading}
-                  className="max-h-[120px] min-h-[24px] flex-1 resize-none bg-transparent text-[13px] text-[#1d1d1f] placeholder-[#86868b]/70 outline-none disabled:opacity-50"
+                  className="max-h-[140px] min-h-[30px] flex-1 resize-none bg-transparent text-[15px] text-[#1d1d1f] placeholder-[#86868b]/70 outline-none disabled:opacity-50"
                   style={{ lineHeight: '1.5' }}
                 />
                 <button
                   onClick={() => sendMessage(input)}
                   disabled={!input.trim() || isLoading}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#007aff] text-white transition-all duration-150 hover:bg-[#0066d6] disabled:bg-[#d1d1d6] disabled:text-white active:scale-90"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007aff] text-white shadow-[0_8px_20px_rgba(0,122,255,0.22)] transition-all duration-150 hover:bg-[#0066d6] disabled:bg-[#d1d1d6] disabled:text-white disabled:shadow-none active:scale-90"
                   aria-label="Send message"
                 >
-                  <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
+                  <ArrowUp className="h-5 w-5" strokeWidth={2.5} />
                 </button>
               </div>
-              <p className="mt-2 text-center text-[10px] text-[#86868b]/60">
-                Hussh Insights AI has full access to your metrics matrix
+              <p className="mt-2 text-center text-[11px] font-medium text-[#86868b]/70">
+                Aggregate metrics only
               </p>
             </div>
           </motion.div>
