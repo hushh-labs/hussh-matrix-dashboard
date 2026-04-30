@@ -122,7 +122,15 @@ jobs:
             '--format=json',
           ], { encoding: 'utf8' }));
           const env = service.spec?.template?.spec?.containers?.[0]?.env || [];
-          const plain = env.filter((entry) => entry.value && entry.name !== 'PORT').map((entry) => entry.name);
+          const allowedPlain = new Set([
+            'PORT',
+            'METRICS_CHAT_RATE_LIMIT_HOURLY',
+            'METRICS_CHAT_RATE_LIMIT_DAILY',
+            'GEMINI_METRICS_CHAT_MODEL',
+            'METRICS_CHAT_REQUEST_TIMEOUT_MS',
+            'METRICS_CHAT_CONTEXT_CACHE_SECONDS',
+          ]);
+          const plain = env.filter((entry) => entry.value && !allowedPlain.has(entry.name)).map((entry) => entry.name);
           if (plain.length > 0) {
             console.error(`Runtime env vars are not Secret Manager-backed: ${plain.join(', ')}`);
             process.exit(1);
