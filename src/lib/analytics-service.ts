@@ -26,6 +26,9 @@ import type {
   DashboardData,
   HushhAiDailyStatusPoint,
   KaiDailyStatusPoint,
+  KaiUatDailyStatusPoint,
+  ProductFreshness,
+  ProductSourceCard,
   ProductSourceGroup,
 } from './types';
 
@@ -124,6 +127,10 @@ function metricNumber(row: FeedRow | undefined): number {
   return Number(row?.metric_count ?? row?.metric_value ?? 0) || 0;
 }
 
+function optionalMetricNumber(row: FeedRow | undefined): number | null {
+  return row ? metricNumber(row) : null;
+}
+
 function metricDateValue(row: FeedRow | undefined): string | null {
   const date = row?.metric_date;
   if (typeof date === 'string') return date;
@@ -174,6 +181,9 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     kaiProductionDailyStatus: [],
     kaiProductionDailySummaryMetrics: [],
     kaiProductionReadinessMetrics: [],
+    kaiUatFreshness: null,
+    kaiUatDailyStatus: [],
+    kaiUatDailySummaryMetrics: [],
     hushhTech: null,
     hushhTechAudienceMetrics: [],
     hushhTechBusinessMetrics: [],
@@ -382,9 +392,9 @@ function buildKaiProductionDailyStatus(kaiProduction: KaiProductionSummary | nul
     const current = byDate.get(date) ?? {
       date,
       label,
-      users: 0,
-      sessions: 0,
-      events: 0,
+      users: null,
+      sessions: null,
+      events: null,
       requests: 0,
       errors: 0,
       errorRate: null,
@@ -395,12 +405,14 @@ function buildKaiProductionDailyStatus(kaiProduction: KaiProductionSummary | nul
     return current;
   };
 
-  for (const row of kaiProduction?.productionGa4?.daily ?? []) {
-    const date = String(row.eventDate);
-    const point = ensurePoint(date);
-    point.users = row.users;
-    point.sessions = row.sessions;
-    point.events = row.events;
+  if (kaiProduction?.productionGa4?.available) {
+    for (const row of kaiProduction.productionGa4.daily ?? []) {
+      const date = String(row.eventDate);
+      const point = ensurePoint(date);
+      point.users = row.users;
+      point.sessions = row.sessions;
+      point.events = row.events;
+    }
   }
 
   for (const row of kaiProduction?.gcp?.daily ?? []) {
@@ -410,6 +422,45 @@ function buildKaiProductionDailyStatus(kaiProduction: KaiProductionSummary | nul
     point.errorRate = row.errorRate;
     point.p95LatencyMs = row.p95LatencyMs;
     point.instanceCount = row.instanceCount;
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function buildKaiUatDailyStatus(rows: FeedRow[], kaiGa4: KaiGa4Summary | null): KaiUatDailyStatusPoint[] {
+  const byDate = new Map<string, KaiUatDailyStatusPoint>();
+  const ensurePoint = (date: string, label = date.slice(5)) => {
+    const current = byDate.get(date) ?? {
+      date,
+      label,
+      ga4Users: null,
+      ga4Sessions: null,
+      ga4Events: null,
+      feedDau: null,
+      feedSessions: null,
+      feedEvents: null,
+    };
+    byDate.set(date, current);
+    return current;
+  };
+
+  if (kaiGa4?.available) {
+    for (const row of kaiGa4.daily ?? []) {
+      const date = String(row.eventDate);
+      const point = ensurePoint(date);
+      point.ga4Users = row.users;
+      point.ga4Sessions = row.sessions;
+      point.ga4Events = row.events;
+    }
+  }
+
+  for (const row of rows.filter((item) => item.metric_group === 'usage' && metricDateValue(item))) {
+    const date = metricDateValue(row);
+    if (!date) continue;
+    const point = ensurePoint(date);
+    if (row.metric_name === 'daily_active_users') point.feedDau = optionalMetricNumber(row);
+    if (row.metric_name === 'sessions') point.feedSessions = optionalMetricNumber(row);
+    if (row.metric_name === 'total_events') point.feedEvents = optionalMetricNumber(row);
   }
 
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
@@ -431,17 +482,57 @@ function buildKaiProductionDailySummaryMetrics(kaiProduction: KaiProductionSumma
   ];
 }
 
+function formatMinutes(minutes: number | null | undefined): string {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return '—';
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m`;
+}
+
+function buildKaiUatDailySummaryMetrics(kaiUsage: UsageSummary | null, kaiGa4: KaiGa4Summary | null): BreakdownMetric[] {
+  const ga4Ready = Boolean(kaiGa4?.available);
+  const ga4Source = kaiGa4?.sourceLabel ?? 'UAT GA4 export';
+  return [
+    metric('UAT GA4 Users', asNumber(kaiGa4?.rangeTotals?.users), ga4Source, ga4Ready ? undefined : 'Waiting'),
+    metric('UAT GA4 Sessions', asNumber(kaiGa4?.rangeTotals?.sessions), ga4Source, ga4Ready ? undefined : 'Waiting'),
+    metric('UAT GA4 Events', asNumber(kaiGa4?.rangeTotals?.events), ga4Source, ga4Ready ? undefined : 'Waiting'),
+    metric('UAT DB DAU', asNumber(kaiUsage?.dau), 'UAT DB aggregate'),
+    metric('UAT DB WAU', asNumber(kaiUsage?.wau), 'UAT DB aggregate'),
+    metric('UAT DB Sessions', asNumber(kaiUsage?.sessions), 'UAT DB aggregate'),
+    metric('UAT DB Events', asNumber(kaiUsage?.totalEvents), 'UAT DB aggregate'),
+    metric('UAT Freshness Lag', asNumber(kaiUsage?.freshnessLagMinutes), 'minutes', formatMinutes(kaiUsage?.freshnessLagMinutes)),
+  ];
+}
+
+function buildFreshnessFromSourceCards(
+  cards: ProductSourceCard[] | undefined,
+  fetchedAt: string,
+  title: string,
+): ProductFreshness | null {
+  if (!cards?.length) return null;
+  return {
+    mode: 'polling',
+    refreshIntervalSeconds: 30,
+    fetchedAt,
+    sources: cards.map((card) => ({
+      key: `${title}_${card.key}`,
+      label: card.label,
+      state: card.status,
+      realtimeLevel: card.stateClass ?? card.status,
+      generatedAt: card.freshness.generatedAt,
+      expectedLagSeconds: card.freshness.expectedLagSeconds,
+      detail: card.blocker ?? card.source,
+    })),
+  };
+}
+
 function buildKaiProductionReadinessMetrics(kaiProduction: KaiProductionSummary | null): BreakdownMetric[] {
   const feed = kaiProduction?.productionFeed?.status;
   const ga4 = kaiProduction?.productionGa4;
-  const uat = kaiProduction?.uatFeed?.status;
   return [
     metric('Production Ready', feed?.productionReady ? 1 : 0, 'Production feed', feed?.productionReady ? 'Ready' : 'Waiting'),
     metric('Production Source Rows', asNumber(feed?.sourceEventRows), 'Production feed'),
     metric('Production Freshness Lag', asNumber(feed?.freshnessLagMinutes), 'minutes', feed?.freshnessLagMinutes == null ? '—' : `${feed.freshnessLagMinutes}m`),
     metric('Production GA4 Export', ga4?.available ? 1 : 0, ga4?.sourceLabel ?? 'GA4 export', ga4?.available ? 'Available' : 'Waiting'),
-    metric('UAT Validation Rows', asNumber(uat?.sourceEventRows), 'UAT validation feed'),
-    metric('UAT Production Ready Flag', uat?.productionReady ? 1 : 0, 'UAT validation feed', uat?.productionReady ? 'Ready' : 'Validation'),
   ];
 }
 
@@ -491,14 +582,27 @@ function buildPlatforms(
       name: 'kai.hushh.ai',
       url: 'kai.hushh.ai',
       color: '#12b5cb',
-      available: Boolean(kaiProdGcp || (kaiUsage?.dau ?? 0) > 0),
+      available: Boolean(kaiProdGcp),
       environment: 'production',
       productionReady: kaiProdFeed?.productionReady ?? false,
-      knownBlockers: kaiProdFeed?.knownBlockers ?? kaiFeed?.knownBlockers ?? null,
-      visitors: kaiProdGcp ? formatNumber(kaiProdGcp.requestCount) : kaiUsage ? formatNumber(kaiUsage.dau) : '—',
-      change: kaiProdGcp ? `${formatNumber(kaiProdGcp.errorCount)} non-2xx` : kaiUsage ? `${formatNumber(kaiUsage.wau)} UAT WAU` : '—',
-      avgSession: kaiProdGcp?.p95LatencyMs != null ? `${formatLatency(kaiProdGcp.p95LatencyMs)} p95` : kaiUsage ? `${formatNumber(kaiUsage.sessions)} UAT sessions` : '—',
-      bounceRate: kaiProdGcp ? formatPercent(kaiProdGcp.errorRate) : kaiUsage ? `${formatNumber(kaiUsage.sourceEventRows)} UAT rows` : '—',
+      knownBlockers: kaiProdFeed?.knownBlockers ?? null,
+      visitors: kaiProdGcp ? formatNumber(kaiProdGcp.requestCount) : '—',
+      change: kaiProdGcp ? `${formatNumber(kaiProdGcp.errorCount)} non-2xx` : 'Production traffic waiting',
+      avgSession: kaiProdGcp?.p95LatencyMs != null ? `${formatLatency(kaiProdGcp.p95LatencyMs)} p95` : '—',
+      bounceRate: kaiProdGcp ? formatPercent(kaiProdGcp.errorRate) : '—',
+    },
+    {
+      name: 'uat.kai.hushh.ai',
+      url: 'uat.kai.hushh.ai',
+      color: '#34c759',
+      available: Boolean(kaiUsage),
+      environment: 'uat',
+      productionReady: false,
+      knownBlockers: kaiFeed?.knownBlockers ?? null,
+      visitors: kaiUsage ? formatNumber(kaiUsage.dau) : '—',
+      change: kaiUsage ? `${formatNumber(kaiUsage.wau)} WAU` : 'UAT feed waiting',
+      avgSession: kaiUsage ? `${formatNumber(kaiUsage.sessions)} sessions` : '—',
+      bounceRate: kaiUsage ? `${formatNumber(kaiUsage.sourceEventRows)} feed rows` : '—',
     },
     {
       name: 'hushhtech.com',
@@ -541,13 +645,13 @@ function buildKpiStats(
 
   return [
     {
-      label: 'Kai Requests',
+      label: 'Kai Prod Requests',
       value: kaiProdGcp ? formatNumber(kaiProdGcp.requestCount) : '—',
       icon: 'Users',
       change: kaiProdGcp?.p95LatencyMs != null ? `${formatLatency(kaiProdGcp.p95LatencyMs)} p95` : undefined,
     },
     {
-      label: 'Kai Prod Events',
+      label: 'Kai Prod GA4 Events',
       value: kaiProdGa4?.available ? formatNumber(kaiProdGa4.rangeTotals?.events ?? 0) : '—',
       icon: 'Activity',
       change: kaiProdGa4?.available ? `${formatNumber(kaiProdGa4.rangeTotals?.users ?? 0)} users` : 'GA4 waiting',
@@ -601,12 +705,12 @@ function buildKpiStats(
       change: search ? `${formatNumber(search.impressions)} impressions` : undefined,
     },
     {
-      label: 'Data Freshness',
+      label: 'Kai UAT Freshness',
       value: kaiUsage?.freshnessLagMinutes != null
         ? `${Math.floor(kaiUsage.freshnessLagMinutes / 60)}h ${kaiUsage.freshnessLagMinutes % 60}m`
         : '—',
       icon: 'Clock',
-      suffix: 'Kai lag',
+      suffix: 'UAT lag',
     },
   ];
 }
@@ -625,11 +729,18 @@ function buildSourceGroups(
       sourceCards: hushhAi?.sourceCards ?? [],
     },
     {
-      productKey: 'kai',
-      productName: 'Kai',
+      productKey: 'kai_production',
+      productName: 'Kai Production',
       domain: 'kai.hushh.ai',
-      primaryEnvironment: 'uat',
+      primaryEnvironment: 'production',
       sourceCards: kaiProduction?.sourceCards ?? [],
+    },
+    {
+      productKey: 'kai_uat',
+      productName: 'Kai UAT',
+      domain: 'uat.kai.hushh.ai',
+      primaryEnvironment: 'uat',
+      sourceCards: kaiProduction?.uatSourceCards ?? [],
     },
     {
       productKey: 'hushhtech',
@@ -650,7 +761,7 @@ function buildTrafficData(
 
   const ensurePoint = (date: string) => {
     const label = date.includes('-') ? date.slice(5) : date;
-    const current = byDate.get(date) ?? { sortKey: date, time: label, kai: 0, tech: 0, ai: 0 };
+    const current = byDate.get(date) ?? { sortKey: date, time: label, kaiProd: 0, kaiUat: 0, tech: 0, ai: 0 };
     byDate.set(date, current);
     return current;
   };
@@ -662,9 +773,9 @@ function buildTrafficData(
     if (!date) continue;
     const point = ensurePoint(date);
     if (row.source_environment === 'production') {
-      point.ai = metricNumber(row);
+      point.kaiProd = metricNumber(row);
     } else {
-      point.kai = metricNumber(row);
+      point.kaiUat = metricNumber(row);
     }
   }
 
@@ -1099,6 +1210,9 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     kaiProductionDailyStatus: buildKaiProductionDailyStatus(kaiProduction),
     kaiProductionDailySummaryMetrics: buildKaiProductionDailySummaryMetrics(kaiProduction),
     kaiProductionReadinessMetrics: buildKaiProductionReadinessMetrics(kaiProduction),
+    kaiUatFreshness: buildFreshnessFromSourceCards(kaiProduction?.uatSourceCards, result.fetchedAt, 'kai_uat'),
+    kaiUatDailyStatus: buildKaiUatDailyStatus(uatRows, kaiGa4),
+    kaiUatDailySummaryMetrics: buildKaiUatDailySummaryMetrics(kaiUsage, kaiGa4),
     hushhTech: hushhTech,
     hushhTechAudienceMetrics: buildHushhTechAudienceMetrics(hushhTech),
     hushhTechBusinessMetrics: buildHushhTechBusinessMetrics(hushhTech),

@@ -159,6 +159,14 @@ async function main() {
   assert(ga4, 'Hushh AI GA4 block missing');
   assert(typeof ga4.available === 'boolean', 'Hushh AI GA4 availability missing');
   assert(Array.isArray(ga4.sections) && ga4.sections.length >= 4, 'Hushh AI GA4 sections missing');
+  const configuredGa4Source = String(health.body?.config?.hushhAiGa4 || '');
+  if (configuredGa4Source.startsWith('properties/')) {
+    assert(
+      ga4.available === true,
+      'Hushh AI GA4 Data API source is configured but unavailable',
+      'Grant GA4 property Viewer or Analyst access to the metrics runtime identity and rerun npm run test:ga4:hushh-ai.',
+    );
+  }
   const ga4Card = hushhAi.body?.data?.sourceCards?.find((card) => card.key === 'ga4');
   assertSourceSections(ga4Card, 'Hushh AI GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
   const events = hushhAi.body?.data?.productEvents;

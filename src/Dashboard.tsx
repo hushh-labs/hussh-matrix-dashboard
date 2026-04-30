@@ -1,3 +1,4 @@
+import HusshInsightsAgent from './components/HusshInsightsAgent';
 import { motion } from 'motion/react';
 import {
   Activity,
@@ -45,6 +46,7 @@ import type {
   HushhAiFreshness,
   HushhAiFreshnessSource,
   KaiDailyStatusPoint,
+  KaiUatDailyStatusPoint,
   KpiStat,
   PlatformStatus,
   ProductSourceCard,
@@ -65,6 +67,11 @@ const iconMap: Record<string, typeof Activity> = {
   Users,
 };
 
+const appleCard =
+  'rounded-lg border border-black/[0.06] bg-white/88 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_18px_40px_rgba(0,0,0,0.045)] backdrop-blur-xl';
+const applePanel = 'rounded-lg border border-black/[0.04] bg-[#f6f6f8]';
+const appleLabel = 'text-xs font-bold uppercase text-[#86868b]';
+const dashboardBand = 'border-t border-black/[0.06] pt-8';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
@@ -141,11 +148,11 @@ function freshnessLabel(source: HushhAiFreshnessSource): string {
 }
 
 function freshnessClass(source: HushhAiFreshnessSource): string {
-  if (source.state === 'live') return 'bg-[#ecfdf3] text-[#1f7a36]';
-  if (source.state === 'near_live') return 'bg-[#e8f2ff] text-[#005eb8]';
-  if (source.state === 'collecting_not_ingested') return 'bg-[#f4edff] text-[#6d38a8]';
-  if (source.state === 'delayed' || source.state === 'waiting') return 'bg-[#fff7e6] text-[#9a5b00]';
-  return 'bg-[#f5f5f7] text-[#6e6e73]';
+  if (source.state === 'live') return 'border border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]';
+  if (source.state === 'near_live') return 'border border-[#005eb8]/15 bg-[#e8f2ff]/80 text-[#005eb8]';
+  if (source.state === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f4edff]/80 text-[#6d38a8]';
+  if (source.state === 'delayed' || source.state === 'waiting') return 'border border-[#9a5b00]/15 bg-[#fff7e6]/80 text-[#9a5b00]';
+  return 'border border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]';
 }
 
 function sourceStatusLabel(status: string, sourceKey?: string): string {
@@ -160,11 +167,15 @@ function sourceStatusLabel(status: string, sourceKey?: string): string {
 }
 
 function sourceStatusClass(status: string): string {
-  if (status === 'live' || status === 'near_live') return 'bg-[#ecfdf3] text-[#1f7a36]';
-  if (status === 'delayed') return 'bg-[#e8f2ff] text-[#005eb8]';
-  if (status === 'collecting_not_ingested') return 'bg-[#f4edff] text-[#6d38a8]';
-  if (status === 'waiting' || status === 'not_configured') return 'bg-[#fff7e6] text-[#9a5b00]';
-  return 'bg-[#f5f5f7] text-[#6e6e73]';
+  if (status === 'live' || status === 'near_live') return 'border border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]';
+  if (status === 'delayed') return 'border border-[#005eb8]/15 bg-[#e8f2ff]/80 text-[#005eb8]';
+  if (status === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f4edff]/80 text-[#6d38a8]';
+  if (status === 'waiting' || status === 'not_configured') return 'border border-[#9a5b00]/15 bg-[#fff7e6]/80 text-[#9a5b00]';
+  return 'border border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]';
+}
+
+function formatOptionalNumber(value: number | null | undefined, fallback = '—'): string {
+  return typeof value === 'number' && Number.isFinite(value) ? formatNumber(value) : fallback;
 }
 
 function formatSourceMetricValue(card: ProductSourceCard, value: number | null, displayValue?: string): string {
@@ -186,7 +197,7 @@ function CustomTooltip({ active, payload, label }: any) {
             <div key={`${entry.name}-${index}`} className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
               <span className="font-medium text-[#6e6e73]">{entry.name}</span>
-              <span className="ml-auto font-semibold text-[#1d1d1f]">{entry.value}</span>
+              <span className="ml-auto font-semibold text-[#1d1d1f]">{formatOptionalNumber(entry.value)}</span>
             </div>
           );
         })}
@@ -197,7 +208,7 @@ function CustomTooltip({ active, payload, label }: any) {
 
 function EmptyState({ children }: { children: string }) {
   return (
-    <div className="flex min-h-[160px] items-center justify-center rounded-lg border border-dashed border-black/10 bg-[#f5f5f7] px-4 text-center text-sm font-semibold text-[#86868b]">
+    <div className="flex min-h-[160px] items-center justify-center rounded-lg border border-dashed border-black/[0.08] bg-[#f6f6f8] px-4 text-center text-sm font-semibold text-[#86868b]">
       {children}
     </div>
   );
@@ -215,8 +226,8 @@ function SectionHeader({
   return (
     <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#86868b]">{kicker}</p>
-        <h2 className="mt-1 text-2xl font-semibold tracking-[-0.01em] text-[#1d1d1f]">{title}</h2>
+        <p className={appleLabel}>{kicker}</p>
+        <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">{title}</h2>
       </div>
       {action}
     </div>
@@ -231,10 +242,10 @@ function MetricCard({ stat, index }: { stat: KpiStat; index: number }) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04 }}
-      className="min-h-[154px] rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.06),0_12px_32px_rgba(0,0,0,0.05)]"
+      className={cn(appleCard, 'min-h-[154px] p-5')}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#f5f5f7] text-[#007aff]">
+        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#f5f5f7] text-[#007aff]">
           <Icon className="h-5 w-5" strokeWidth={2.4} />
         </div>
         {stat.change && (
@@ -247,7 +258,7 @@ function MetricCard({ stat, index }: { stat: KpiStat; index: number }) {
       <div className="mt-6">
         <p className="text-sm font-semibold text-[#6e6e73]">{stat.label}</p>
         <div className="mt-1 flex flex-wrap items-end gap-1.5">
-          <p className="text-4xl font-semibold tracking-[-0.04em] text-[#1d1d1f]">{stat.value}</p>
+          <p className="text-4xl font-semibold text-[#1d1d1f]">{stat.value}</p>
           {stat.suffix && <span className="pb-1 text-sm font-bold text-[#86868b]">{stat.suffix}</span>}
         </div>
       </div>
@@ -265,9 +276,9 @@ function MetricListCard({
   items: BreakdownMetric[];
 }) {
   return (
-    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+    <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">{title}</h3>
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
         <p className="mt-1 text-sm font-medium text-[#86868b]">{subtitle}</p>
       </div>
       {items.length === 0 ? (
@@ -303,10 +314,10 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
   const metricItems = card.metrics.slice(0, 4);
   const sections = (card.sections ?? []).filter((section) => section.metrics.length > 0 || section.blocker);
   return (
-    <div className="min-h-[214px] rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+    <div className={cn(appleCard, 'min-h-[214px] p-5')}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-base font-semibold tracking-[-0.01em] text-[#1d1d1f]">{card.label}</p>
+          <p className="truncate text-base font-semibold text-[#1d1d1f]">{card.label}</p>
           <p className="mt-1 truncate text-xs font-bold text-[#86868b]">{card.source}</p>
         </div>
         <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-bold', sourceStatusClass(card.status))}>
@@ -322,9 +333,9 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
               section.freshness?.generatedAt ? `refreshed ${formatAge(section.freshness.generatedAt)}` : null,
             ].filter(Boolean).join(' · ');
             return (
-              <div key={section.key} className="rounded-lg bg-[#f5f5f7] p-3">
+              <div key={section.key} className={cn(applePanel, 'p-3')}>
                 <div className="flex items-center justify-between gap-2">
-                  <p className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{section.label}</p>
+                  <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{section.label}</p>
                   {section.status ? (
                     <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', sourceStatusClass(section.status))}>
                       {sourceStatusLabel(section.status, card.key)}
@@ -333,9 +344,9 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
                   {section.metrics.slice(0, 4).map((metricItem) => (
-                    <div key={`${section.key}-${metricItem.key}`} className="min-h-[54px] rounded-md bg-white/70 p-2">
-                      <p className="truncate text-[10px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{metricItem.label}</p>
-                      <p className="mt-1 truncate text-base font-semibold tracking-[-0.03em] text-[#1d1d1f]">
+                    <div key={`${section.key}-${metricItem.key}`} className="min-h-[54px] rounded-md border border-black/[0.03] bg-white/80 p-2">
+                      <p className="truncate text-[10px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
+                      <p className="mt-1 truncate text-base font-semibold text-[#1d1d1f]">
                         {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
                       </p>
                     </div>
@@ -354,14 +365,14 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
       ) : (
         <div className="mt-5 grid grid-cols-2 gap-2">
           {metricItems.length === 0 ? (
-            <div className="col-span-2 flex min-h-[84px] items-center rounded-lg bg-[#f5f5f7] px-3 text-sm font-semibold text-[#86868b]">
+            <div className={cn(applePanel, 'col-span-2 flex min-h-[84px] items-center px-3 text-sm font-semibold text-[#86868b]')}>
               Waiting for aggregate event rows.
             </div>
           ) : (
             metricItems.map((metricItem) => (
-              <div key={metricItem.key} className="min-h-[72px] rounded-lg bg-[#f5f5f7] p-3">
-                <p className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">{metricItem.label}</p>
-                <p className="mt-2 truncate text-lg font-semibold tracking-[-0.03em] text-[#1d1d1f]">
+              <div key={metricItem.key} className={cn(applePanel, 'min-h-[72px] p-3')}>
+                <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
+                <p className="mt-2 truncate text-lg font-semibold text-[#1d1d1f]">
                   {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
                 </p>
               </div>
@@ -380,18 +391,18 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
 function SourceMatrix({ groups }: { groups: ProductSourceGroup[] }) {
   const orderedKeys = ['search_console', 'ga4', 'product_events'];
   return (
-    <section>
-      <SectionHeader kicker="Simplified sources" title="Three-source metrics matrix" />
-      <div className="space-y-6">
+    <section className={dashboardBand}>
+      <SectionHeader kicker="Connected sources" title="Three-source metrics matrix" />
+      <div className="space-y-7">
         {groups.map((group) => {
           const cards = orderedKeys
             .map((key) => group.sourceCards.find((card) => card.key === key))
             .filter((card): card is ProductSourceCard => Boolean(card));
           return (
-            <div key={group.productKey}>
-              <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div key={group.productKey} className="space-y-3">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <h3 className="text-xl font-semibold tracking-[-0.02em] text-[#1d1d1f]">{group.productName}</h3>
+                  <h3 className="text-xl font-semibold text-[#1d1d1f]">{group.productName}</h3>
                   <p className="text-sm font-bold text-[#86868b]">{group.domain} · primary: {group.primaryEnvironment.toUpperCase()}</p>
                 </div>
               </div>
@@ -425,8 +436,8 @@ function DateRangeControl({
   const presets: DatePreset[] = [7, 14, 30, 90];
 
   return (
-    <div className="flex w-full flex-col gap-2 rounded-lg border border-black/5 bg-white p-2 shadow-sm md:w-auto">
-      <div className="inline-flex rounded-full bg-[#f5f5f7] p-1">
+    <div className="flex w-full flex-col gap-2 rounded-lg border border-black/[0.06] bg-white/88 p-2 shadow-sm backdrop-blur-xl md:w-auto">
+      <div className="inline-flex rounded-lg bg-[#f5f5f7] p-1">
         {presets.map((days) => (
           <button
             key={days}
@@ -477,9 +488,9 @@ function ChartShell({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+    <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">{title}</h3>
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
         <p className="mt-1 text-sm font-medium text-[#86868b]">{subtitle}</p>
       </div>
       <div className="h-[300px] w-full">{children}</div>
@@ -510,11 +521,11 @@ function ProductLivePanel({
   const refreshSeconds = freshness?.refreshIntervalSeconds ?? 30;
 
   return (
-    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+    <div className={cn(appleCard, 'p-5')}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#86868b]">{kicker}</p>
-          <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-[#1d1d1f]">{title} · auto-updating every {refreshSeconds}s</h3>
+          <p className={appleLabel}>{kicker}</p>
+          <h3 className="mt-1 text-xl font-semibold text-[#1d1d1f]">{title} · auto-updating every {refreshSeconds}s</h3>
           <p className="mt-2 text-sm font-medium leading-6 text-[#6e6e73]">
             Last dashboard pull: {formatTimestamp(lastUpdated)} · {formatAge(lastUpdated)}
           </p>
@@ -522,7 +533,7 @@ function ProductLivePanel({
         <button
           onClick={onToggleAutoRefresh}
           className={cn(
-            'inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-4 text-sm font-bold transition',
+            'inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold transition',
             autoRefresh
               ? 'bg-[#1d1d1f] text-white hover:bg-[#323236]'
               : 'bg-[#f5f5f7] text-[#1d1d1f] hover:bg-[#e8e8ed]',
@@ -535,7 +546,7 @@ function ProductLivePanel({
 
       <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         {sources.map((source) => (
-          <div key={source.key} className="rounded-lg border border-black/5 bg-[#fbfbfd] p-4">
+          <div key={source.key} className={cn(applePanel, 'p-4')}>
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-[#1d1d1f]">{source.label}</p>
@@ -562,9 +573,9 @@ function ProductLivePanel({
 
 function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
   return (
-    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+    <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">Daily Status</h3>
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">Daily Status</h3>
         <p className="mt-1 text-sm font-medium text-[#86868b]">Users, sessions, exits, traffic, and latency by date</p>
       </div>
       {rows.length === 0 ? (
@@ -573,7 +584,7 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
         <div className="overflow-x-auto">
           <table className="min-w-[920px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr className="text-xs font-bold uppercase tracking-[0.1em] text-[#86868b]">
+              <tr className="text-xs font-bold uppercase text-[#86868b]">
                 <th className="border-b border-black/5 py-3 pr-4">Date</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Total</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">New</th>
@@ -609,10 +620,10 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
 
 function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
   return (
-    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+    <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">Kai Daily Status</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">Production users, sessions, events, requests, and reliability by date</p>
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai Production Reliability Status</h3>
+        <p className="mt-1 text-sm font-medium text-[#86868b]">Production GA4 stays Waiting until verified; request and reliability columns come from Cloud Run.</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No Kai production daily rows available yet.</EmptyState>
@@ -620,7 +631,7 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
         <div className="overflow-x-auto">
           <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr className="text-xs font-bold uppercase tracking-[0.1em] text-[#86868b]">
+              <tr className="text-xs font-bold uppercase text-[#86868b]">
                 <th className="border-b border-black/5 py-3 pr-4">Date</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Users</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Sessions</th>
@@ -635,9 +646,9 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
               {rows.map((row) => (
                 <tr key={row.date} className="font-semibold text-[#1d1d1f]">
                   <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.users)}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.sessions)}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.events)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.users, 'Waiting')}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.sessions, 'Waiting')}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.events, 'Waiting')}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.requests)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.errors)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{row.errorRate == null ? '—' : `${(row.errorRate * 100).toFixed(3)}%`}</td>
@@ -652,13 +663,56 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
   );
 }
 
+function KaiUatDailyStatusTable({ rows }: { rows: KaiUatDailyStatusPoint[] }) {
+  return (
+    <div className={cn(appleCard, 'p-5')}>
+      <div className="mb-5">
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai UAT Daily Status</h3>
+        <p className="mt-1 text-sm font-medium text-[#86868b]">uat.kai.hushh.ai GA4 and UAT DB aggregate events by date.</p>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState>No Kai UAT daily rows available yet.</EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
+            <thead>
+              <tr className="text-xs font-bold uppercase text-[#86868b]">
+                <th className="border-b border-black/5 py-3 pr-4">Date</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Users</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Sessions</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Events</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">DB DAU</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">DB Sessions</th>
+                <th className="border-b border-black/5 py-3 pl-4 text-right">DB Events</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Users)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Sessions)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Events)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.feedDau)}</td>
+                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.feedSessions)}</td>
+                  <td className="border-b border-black/5 py-3 pl-4 text-right">{formatOptionalNumber(row.feedEvents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
   const maxUsers = Math.max(...steps.map((step) => step.users), 1);
 
   return (
-    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+    <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">{title}</h3>
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
         <p className="mt-1 text-sm font-medium text-[#86868b]">Latest feed day</p>
       </div>
       {steps.length === 0 ? (
@@ -687,12 +741,12 @@ function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
 
 function PlatformCard({ platform }: { platform: PlatformStatus }) {
   return (
-    <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+    <div className={cn(appleCard, 'p-5')}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: platform.color }} />
           <div className="min-w-0">
-            <h3 className="truncate text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">{platform.name}</h3>
+            <h3 className="truncate text-lg font-semibold text-[#1d1d1f]">{platform.name}</h3>
             <div className="mt-1 flex items-center gap-1.5 text-xs font-bold">
               {platform.available ? (
                 <>
@@ -720,20 +774,20 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
       </div>
 
       <div className="mt-7 grid grid-cols-2 gap-3">
-        <div className="rounded-lg bg-[#f5f5f7] p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#86868b]">Visitors</p>
-          <p className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-[#1d1d1f]">{platform.visitors}</p>
+        <div className={cn(applePanel, 'p-4')}>
+          <p className="text-xs font-bold uppercase text-[#86868b]">Primary Metric</p>
+          <p className="mt-2 text-3xl font-semibold text-[#1d1d1f]">{platform.visitors}</p>
         </div>
-        <div className="rounded-lg bg-[#f5f5f7] p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#86868b]">Change</p>
+        <div className={cn(applePanel, 'p-4')}>
+          <p className="text-xs font-bold uppercase text-[#86868b]">Change</p>
           <p className="mt-2 text-base font-bold text-[#248a3d]">{platform.change}</p>
         </div>
-        <div className="rounded-lg bg-[#f5f5f7] p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#86868b]">Sessions</p>
+        <div className={cn(applePanel, 'p-4')}>
+          <p className="text-xs font-bold uppercase text-[#86868b]">Sessions</p>
           <p className="mt-2 text-base font-bold text-[#1d1d1f]">{platform.avgSession}</p>
         </div>
-        <div className="rounded-lg bg-[#f5f5f7] p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#86868b]">Health</p>
+        <div className={cn(applePanel, 'p-4')}>
+          <p className="text-xs font-bold uppercase text-[#86868b]">Health</p>
           <p className="mt-2 text-base font-bold text-[#1d1d1f]">{platform.bounceRate}</p>
         </div>
       </div>
@@ -805,6 +859,9 @@ export default function Dashboard() {
   const kaiProductionReadinessMetrics = data?.kaiProductionReadinessMetrics ?? [];
   const kaiProductionFreshness = data?.kaiProduction?.freshness;
   const kaiProductionGa4Available = Boolean(data?.kaiProduction?.productionGa4?.available);
+  const kaiUatFreshness = data?.kaiUatFreshness;
+  const kaiUatDailyStatus = data?.kaiUatDailyStatus ?? [];
+  const kaiUatDailySummaryMetrics = data?.kaiUatDailySummaryMetrics ?? [];
   const platformMix = data?.platformMix ?? [];
   const featureEngagement = data?.featureEngagement ?? [];
   const instrumentationHealth = data?.instrumentationHealth ?? [];
@@ -833,70 +890,71 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#cce4ff] selection:text-[#003b76]">
       {loading && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#f5f5f7]/80 backdrop-blur-xl">
-          <div className="flex items-center gap-3 rounded-full border border-black/5 bg-white px-5 py-3 shadow-xl">
+          <div className={cn(appleCard, 'flex items-center gap-3 px-5 py-3')}>
             <Loader2 className="h-5 w-5 animate-spin text-[#007aff]" />
             <p className="text-sm font-bold text-[#1d1d1f]">Loading live metrics</p>
           </div>
         </div>
       )}
 
-      <div className="mx-auto max-w-[1180px] px-4 pb-10 pt-4 sm:px-6 sm:pb-12 sm:pt-6 lg:px-8">
-        <div className="sticky top-3 z-30 mb-6 rounded-lg border border-white/70 bg-white/78 p-2 shadow-[0_8px_24px_rgba(0,0,0,0.08)] backdrop-blur-2xl">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="mx-auto max-w-[1320px] px-4 pb-10 pt-4 sm:px-6 sm:pb-12 sm:pt-6 lg:px-8">
+        <div className="sticky top-3 z-30 mb-8 rounded-lg border border-white/70 bg-white/76 p-2 shadow-[0_8px_24px_rgba(0,0,0,0.07)] backdrop-blur-2xl">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div className={cn(
-              'flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-bold',
-              usingMock ? 'bg-[#f5f5f7] text-[#6e6e73]' : 'bg-[#ecfdf3] text-[#1f7a36]',
+              'flex min-h-10 min-w-0 items-center gap-2 rounded-lg border px-3 text-sm font-bold',
+              usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
             )}>
               <CheckCircle2 className="h-4 w-4 shrink-0" />
               <span className="min-w-0">{statusText}</span>
             </div>
-            <button
-              onClick={() => loadData()}
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#007aff] px-4 text-sm font-bold text-white shadow-[0_6px_18px_rgba(0,122,255,0.25)] transition hover:bg-[#006adc]"
-            >
-              <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-              Refresh
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="inline-flex min-w-0 flex-1 rounded-lg bg-[#f5f5f7] p-1 sm:flex-none" role="tablist" aria-label="Dashboard sections">
+                {(['overview', 'platforms'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={cn(
+                      'min-h-9 flex-1 rounded-md px-4 text-sm font-bold capitalize transition sm:flex-none',
+                      activeTab === tab
+                        ? 'bg-white text-[#1d1d1f] shadow-sm'
+                        : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+                    )}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => loadData()}
+                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] sm:px-4"
+              >
+                <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+                Refresh
+              </button>
+            </div>
           </div>
         </div>
 
-        <header className="mb-8 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
-            <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-lg border border-black/5 bg-white shadow-sm">
+            <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-lg border border-black/[0.06] bg-white/90 shadow-sm">
               <span className="text-3xl" aria-label="Hussh logo">🤫</span>
             </div>
-            <p className="text-sm font-bold uppercase tracking-[0.14em] text-[#86868b]">Hussh Matrix</p>
-            <h1 className="mt-2 max-w-3xl text-4xl font-semibold tracking-[-0.05em] text-[#1d1d1f] sm:text-5xl lg:text-6xl">
+            <p className="text-sm font-bold uppercase text-[#86868b]">Hussh Matrix</p>
+            <h1 className="mt-2 max-w-3xl text-4xl font-semibold text-[#1d1d1f] sm:text-5xl lg:text-6xl">
               Analytics control center
             </h1>
             <p className="mt-4 max-w-2xl text-base font-medium leading-7 text-[#6e6e73] sm:text-lg">
               Live aggregate metrics for kai.hushh.ai, hushhtech.com, and hushh.ai with provider health surfaced inline.
             </p>
           </div>
-
-          <div className="inline-flex w-full rounded-full bg-[#e8e8ed] p-1 md:w-auto" role="tablist" aria-label="Dashboard sections">
-            {(['overview', 'platforms'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={cn(
-                  'min-h-11 flex-1 rounded-full px-5 text-sm font-bold capitalize transition md:flex-none',
-                  activeTab === tab
-                    ? 'bg-white text-[#1d1d1f] shadow-sm'
-                    : 'text-[#6e6e73] hover:text-[#1d1d1f]',
-                )}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
         </header>
 
         {activeTab === 'overview' ? (
-          <main className="space-y-8">
+          <main className="space-y-10">
             <SourceMatrix groups={sourceGroups} />
 
-            <section>
+            <section className={dashboardBand}>
               <SectionHeader kicker="Today" title="Key metrics" />
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {kpiStats.map((stat, index) => (
@@ -907,10 +965,10 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section>
+            <section className={dashboardBand}>
               <SectionHeader
-                kicker="kai.hushh.ai"
-                title="Production daily status matrix"
+                kicker="kai.hushh.ai · production"
+                title="Production traffic + readiness"
                 action={(
                   <DateRangeControl
                     range={kaiRange}
@@ -922,8 +980,8 @@ export default function Dashboard() {
               />
               <div className="mb-4">
                 <ProductLivePanel
-                  kicker="Kai live mode"
-                  title="Fresh on refresh"
+                  kicker="Kai production live mode"
+                  title="Production sources"
                   refreshingLabel="Refreshing Kai production sources"
                   freshness={kaiProductionFreshness}
                   lastUpdated={data?.lastUpdated}
@@ -981,14 +1039,85 @@ export default function Dashboard() {
                     </ResponsiveContainer>
                   )}
                 </ChartShell>
-                <MetricListCard title="Production Readiness" subtitle="GA4 export, production feed, and UAT validation context" items={kaiProductionReadinessMetrics} />
+                <MetricListCard title="Production Readiness" subtitle="Production feed and GA4 export only; UAT is tracked in its own matrix." items={kaiProductionReadinessMetrics} />
                 <div className="xl:col-span-2">
                   <KaiDailyStatusTable rows={kaiProductionDailyStatus} />
                 </div>
               </div>
             </section>
 
-            <section>
+            <section className={dashboardBand}>
+              <SectionHeader
+                kicker="uat.kai.hushh.ai · UAT"
+                title="UAT status matrix"
+                action={(
+                  <DateRangeControl
+                    range={kaiRange}
+                    onPreset={(days) => setKaiRange(rangeForPreset(days))}
+                    onCustomRange={setKaiRange}
+                    ariaLabelPrefix="Kai UAT"
+                  />
+                )}
+              />
+              <div className="mb-4">
+                <ProductLivePanel
+                  kicker="Kai UAT live mode"
+                  title="UAT sources"
+                  refreshingLabel="Refreshing Kai UAT sources"
+                  freshness={kaiUatFreshness}
+                  lastUpdated={data?.lastUpdated}
+                  autoRefresh={autoRefresh}
+                  isRefreshing={isRefreshing}
+                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
+                <MetricListCard
+                  title="UAT Range Summary"
+                  subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
+                  items={kaiUatDailySummaryMetrics}
+                />
+                <ChartShell title="UAT Users, Sessions, Events" subtitle="uat.kai.hushh.ai GA4 export">
+                  {kaiUatDailyStatus.length === 0 ? (
+                    <EmptyState>No Kai UAT GA4 daily rows available yet.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                        <CartesianGrid stroke="#ececf0" vertical={false} />
+                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                        <Bar dataKey="ga4Users" name="GA4 Users" fill="#12b5cb" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="ga4Sessions" name="GA4 Sessions" fill="#007aff" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="ga4Events" name="GA4 Events" fill="#af52de" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+                <ChartShell title="UAT DB Events" subtitle="UAT public feed DAU, sessions, and total events">
+                  {kaiUatDailyStatus.length === 0 ? (
+                    <EmptyState>No Kai UAT DB daily rows available yet.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                        <CartesianGrid stroke="#ececf0" vertical={false} />
+                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
+                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                        <Bar dataKey="feedDau" name="DB DAU" fill="#34c759" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="feedSessions" name="DB Sessions" fill="#ff9500" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="feedEvents" name="DB Events" fill="#5856d6" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+                <div className="xl:col-span-2">
+                  <KaiUatDailyStatusTable rows={kaiUatDailyStatus} />
+                </div>
+              </div>
+            </section>
+
+            <section className={dashboardBand}>
               <SectionHeader
                 kicker="hushh.ai"
                 title="Analytics status matrix"
@@ -1048,7 +1177,7 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section>
+            <section className={dashboardBand}>
               <SectionHeader kicker="hushhtech.com" title="Complete report" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <MetricListCard title="Total Report" subtitle="Users, funnel, search, infra, and stored aggregates" items={hushhTechReportTotals} />
@@ -1056,7 +1185,7 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section>
+            <section className={dashboardBand}>
               <SectionHeader kicker="hushhtech.com Supabase" title="Database truth metrics" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <MetricListCard title="Top 10 Database Metrics" subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts" items={hushhTechDatabaseMetrics} />
@@ -1067,8 +1196,8 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_0.95fr]">
-              <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_0.95fr]')}>
+              <div className={cn(appleCard, 'p-5')}>
                 <SectionHeader kicker="Traffic" title="Ecosystem activity" />
                 <div className="mb-4 flex flex-wrap items-center gap-3">
                   {platforms.map((platform) => (
@@ -1093,6 +1222,10 @@ export default function Dashboard() {
                             <stop offset="5%" stopColor="#34c759" stopOpacity={0.2} />
                             <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
                           </linearGradient>
+                          <linearGradient id="colorKaiProd" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#12b5cb" stopOpacity={0.18} />
+                            <stop offset="95%" stopColor="#12b5cb" stopOpacity={0} />
+                          </linearGradient>
                           <linearGradient id="colorTech" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#af52de" stopOpacity={0.18} />
                             <stop offset="95%" stopColor="#af52de" stopOpacity={0} />
@@ -1103,7 +1236,8 @@ export default function Dashboard() {
                         <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} dx={-10} />
                         <Tooltip content={<CustomTooltip />} />
                         <Area type="monotone" dataKey="ai" name="hushh.ai" stroke="#007aff" strokeWidth={2.5} fill="url(#colorAi)" />
-                        <Area type="monotone" dataKey="kai" name="kai.hushh.ai" stroke="#34c759" strokeWidth={2.5} fill="url(#colorKai)" />
+                        <Area type="monotone" dataKey="kaiProd" name="kai.hushh.ai prod events" stroke="#12b5cb" strokeWidth={2.5} fill="url(#colorKaiProd)" />
+                        <Area type="monotone" dataKey="kaiUat" name="uat.kai.hushh.ai events" stroke="#34c759" strokeWidth={2.5} fill="url(#colorKai)" />
                         <Area type="monotone" dataKey="tech" name="hushhtech.com" stroke="#af52de" strokeWidth={2.5} fill="url(#colorTech)" />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -1119,9 +1253,9 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
-                <h3 className="mb-4 text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">Search Surfaces</h3>
+            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
+              <div className={cn(appleCard, 'p-5')}>
+                <h3 className="mb-4 text-lg font-semibold text-[#1d1d1f]">Search Surfaces</h3>
                 {acquisitionChannels.length === 0 ? (
                   <EmptyState>Waiting on first-party search or Search Console dimensions.</EmptyState>
                 ) : (
@@ -1138,7 +1272,7 @@ export default function Dashboard() {
                         </PieChart>
                       </ResponsiveContainer>
                       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-2xl font-semibold tracking-[-0.04em] text-[#1d1d1f]">100%</span>
+                        <span className="text-2xl font-semibold text-[#1d1d1f]">100%</span>
                         <span className="text-xs font-bold text-[#86868b]">Total</span>
                       </div>
                     </div>
@@ -1157,8 +1291,8 @@ export default function Dashboard() {
                 )}
               </div>
 
-              <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
-                <h3 className="mb-4 text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">Top Regions</h3>
+              <div className={cn(appleCard, 'p-5')}>
+                <h3 className="mb-4 text-lg font-semibold text-[#1d1d1f]">Top Regions</h3>
                 {topCountries.length === 0 ? (
                   <EmptyState>No public-safe country or state rows yet.</EmptyState>
                 ) : (
@@ -1178,9 +1312,9 @@ export default function Dashboard() {
                 )}
               </div>
 
-              <div className="rounded-lg border border-black/5 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
-                <h3 className="text-lg font-semibold tracking-[-0.01em] text-[#1d1d1f]">Kai Active Users</h3>
-                <p className="mt-1 text-sm font-medium text-[#86868b]">Past 7 days</p>
+              <div className={cn(appleCard, 'p-5')}>
+                <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai UAT Active Users</h3>
+                <p className="mt-1 text-sm font-medium text-[#86868b]">uat.kai.hushh.ai public feed, past 7 days</p>
                 <div className="mt-5 h-[250px]">
                   {dailyActiveUsers.length === 0 ? (
                     <EmptyState>No Kai daily active user rows available yet.</EmptyState>
@@ -1199,25 +1333,25 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              <MetricListCard title="Kai GA4 Events" subtitle="Raw GA4 export, top events" items={kaiEventMetrics} />
-              <MetricListCard title="Kai Geo + Device" subtitle="Country, device, and platform mix" items={kaiGeoMetrics} />
-              <MetricListCard title="Kai Usage Snapshot" subtitle="Latest public feed usage rows" items={kaiUsageMetrics} />
+            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
+              <MetricListCard title="Kai UAT GA4 Events" subtitle="uat.kai.hushh.ai GA4 export, top events" items={kaiEventMetrics} />
+              <MetricListCard title="Kai UAT Geo + Device" subtitle="UAT country, device, and platform mix" items={kaiGeoMetrics} />
+              <MetricListCard title="Kai UAT Usage Snapshot" subtitle="Latest UAT public feed usage rows" items={kaiUsageMetrics} />
             </section>
 
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
               <MetricListCard title="hushhtech.com Funnel" subtitle="Supabase business funnel aggregates" items={hushhTechBusinessMetrics} />
               <MetricListCard title="hushhtech.com Activity" subtitle="Pages, routes, and event aggregates" items={hushhTechActivityMetrics} />
             </section>
 
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
               <MetricListCard title="hushhtech.com Funnel Detail" subtitle="Signup, onboarding, KYC, profile, and chat steps" items={hushhTechFunnelMetrics} />
               <MetricListCard title="Data Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} />
             </section>
           </main>
         ) : (
-          <main className="space-y-8">
-            <section>
+          <main className="space-y-10">
+            <section className={dashboardBand}>
               <SectionHeader kicker="Platforms" title="Source health" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 {platforms.map((platform) => (
@@ -1228,18 +1362,18 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
               <FunnelCard title="Investor Funnel" steps={investorFunnel} />
               <FunnelCard title="RIA Funnel" steps={riaFunnel} />
             </section>
 
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
               <MetricListCard title="Activation Rates" subtitle="Investor and RIA activation" items={kaiActivationMetrics} />
               <MetricListCard title="Platform Mix" subtitle="Users by platform, latest feed day" items={platformMix} />
               <MetricListCard title="Feature Engagement" subtitle="Governed feature events" items={featureEngagement} />
             </section>
 
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
               <MetricListCard title="Instrumentation Health" subtitle="Governed event schema coverage" items={instrumentationHealth} />
               <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
               <MetricListCard title="hushhtech.com Database" subtitle="Top Supabase aggregate counts" items={hushhTechDatabaseMetrics} />
@@ -1248,6 +1382,8 @@ export default function Dashboard() {
           </main>
         )}
       </div>
+
+      <HusshInsightsAgent />
     </div>
   );
 }

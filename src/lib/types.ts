@@ -69,7 +69,8 @@ export interface KpiStat {
 
 export interface TrafficPoint {
   time: string;
-  kai: number;
+  kaiProd: number;
+  kaiUat: number;
   tech: number;
   ai: number;
 }
@@ -589,22 +590,36 @@ export interface KaiProductionSummary {
   uatGa4: KaiGa4Summary | null;
   productionGa4: KaiGa4Summary | null;
   searchConsole?: SearchConsoleSummary | null;
+  productionSearchConsole?: SearchConsoleSummary | null;
+  uatSearchConsole?: SearchConsoleSummary | null;
   gcp: CloudRunSummary | null;
   freshness?: ProductFreshness | null;
   sourceCards?: ProductSourceCard[];
+  uatSourceCards?: ProductSourceCard[];
 }
 
 export interface KaiDailyStatusPoint {
   date: string;
   label: string;
-  users: number;
-  sessions: number;
-  events: number;
+  users: number | null;
+  sessions: number | null;
+  events: number | null;
   requests: number;
   errors: number;
   errorRate: number | null;
   p95LatencyMs: number | null;
   instanceCount: number | null;
+}
+
+export interface KaiUatDailyStatusPoint {
+  date: string;
+  label: string;
+  ga4Users: number | null;
+  ga4Sessions: number | null;
+  ga4Events: number | null;
+  feedDau: number | null;
+  feedSessions: number | null;
+  feedEvents: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -634,6 +649,9 @@ export interface DashboardData {
   kaiProductionDailyStatus: KaiDailyStatusPoint[];
   kaiProductionDailySummaryMetrics: BreakdownMetric[];
   kaiProductionReadinessMetrics: BreakdownMetric[];
+  kaiUatFreshness: ProductFreshness | null;
+  kaiUatDailyStatus: KaiUatDailyStatusPoint[];
+  kaiUatDailySummaryMetrics: BreakdownMetric[];
 
   // hushhtech.com public metrics
   hushhTech: HushhTechMetricsSummary | null;

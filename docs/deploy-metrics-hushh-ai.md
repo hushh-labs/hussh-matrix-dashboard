@@ -44,6 +44,7 @@ HUSHHTECH_SEARCH_INGEST_SA="hushhtech-gsc-ingest@$PROJECT.iam.gserviceaccount.co
 HUSHHTECH_SEARCH_SCHEDULER_SA="hushhtech-gsc-scheduler@$PROJECT.iam.gserviceaccount.com"
 HUSHHTECH_SEARCH_OAUTH_SECRET=hushhtech-search-console-oauth
 SEARCH_CONSOLE_OAUTH_SECRET=metrics-dashboard-search-console-oauth
+GEMINI_API_KEY_SECRET=hushh-gemini-api-key
 HUSHH_AI_SEARCH_FALLBACK_DATASET=hushh_ai_search_console_api
 HUSHH_AI_SEARCH_INGEST_JOB=hushh-ai-search-console-ingest
 HUSHH_AI_SEARCH_INGEST_SA="hushh-ai-gsc-ingest@$PROJECT.iam.gserviceaccount.com"
@@ -206,6 +207,7 @@ create_or_update_secret metrics-dashboard-node-env production
 create_or_update_secret metrics-dashboard-app-url https://metrics.hushh.ai
 create_or_update_secret metrics-dashboard-bq-job-project hushh-ai-prod
 create_or_update_secret metrics-dashboard-bq-cli-fallback false
+create_or_update_secret "$GEMINI_API_KEY_SECRET" "$GEMINI_API_KEY"
 create_or_update_secret metrics-dashboard-hushhtech-endpoint https://hushhtech.com/api/metrics/summary
 create_or_update_secret metrics-dashboard-hushhtech-window-days 7
 create_or_update_secret metrics-dashboard-hushhtech-gcp-project hushh-tech-prod
@@ -253,6 +255,11 @@ create_or_update_secret metrics-dashboard-kai-search-console-data-state all
 create_or_update_secret metrics-dashboard-kai-search-console-row-limit 10
 ```
 
+Create or rotate the Gemini API key through an environment variable or hidden
+stdin only. Do not paste the raw key into docs, source files, shell history, or
+deployment logs. The runtime env var is `GEMINI_API_KEY`; the Cloud Run binding
+must reference `hushh-gemini-api-key:latest`.
+
 Create or rotate the HushhTech Supabase management token secret. Do not print
 or commit the token. `Hush AI` is the Supabase database name for
 `hushhtech.com`; do not wire this secret into `hushh.ai` metrics.
@@ -269,6 +276,37 @@ Supabase for Search Console metrics.
 ```bash
 create_or_update_secret "$HUSHHTECH_SEARCH_OAUTH_SECRET" "$HUSHHTECH_SEARCH_CONSOLE_OAUTH_JSON"
 ```
+
+### Hushh AI GA4 Data API Access
+
+The GA4 Data API does not read from the web measurement ID directly. For
+`G-PPEF1CSJ5H`, metrics.hushh.ai must call the numeric GA4 property
+`458078330` as `properties/458078330`.
+
+Production is configured to run Cloud Run as
+`metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com` and then
+impersonate the GA-authorized service account
+`646258530541-compute@developer.gserviceaccount.com`. Keep both grants in
+place:
+
+- Google Cloud IAM:
+  `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com` has
+  `roles/iam.serviceAccountTokenCreator` on
+  `646258530541-compute@developer.gserviceaccount.com`.
+- Google Analytics Admin for property `458078330`:
+  `646258530541-compute@developer.gserviceaccount.com` has Viewer or Analyst
+  access.
+
+If the dashboard shows `GA4 Data API source is configured for G-PPEF1CSJ5H,
+but GA4 Data API request was rejected before JSON report data was returned`,
+verify the two grants above and run the focused aggregate-only probe:
+
+```bash
+npm run test:ga4:hushh-ai
+```
+
+That probe validates `runReport` and `runRealtimeReport` without printing raw
+GA4 provider payloads.
 
 The reusable Hushh AI and Kai Search Console ingestion jobs use
 `metrics-dashboard-search-console-oauth`. Seed or rotate it from an owner/full
@@ -474,7 +512,8 @@ gcloud run deploy "$SERVICE" \
   --min-instances=0 \
   --max-instances=3 \
   --clear-env-vars \
-  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,HUSHHTECH_ANALYTICS_ENDPOINT=metrics-dashboard-hushhtech-endpoint:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,HUSHHTECH_GCP_PROJECT=metrics-dashboard-hushhtech-gcp-project:latest,HUSHHTECH_CLOUD_RUN_SERVICE=metrics-dashboard-hushhtech-cloud-run-service:latest,HUSHHTECH_CLOUD_RUN_REGION=metrics-dashboard-hushhtech-cloud-run-region:latest,HUSHHTECH_SEARCH_PROJECT=metrics-dashboard-hushhtech-search-project:latest,HUSHHTECH_SEARCH_DATASET=metrics-dashboard-hushhtech-search-dataset:latest,HUSHHTECH_SEARCH_FALLBACK_PROJECT=metrics-dashboard-hushhtech-search-fallback-project:latest,HUSHHTECH_SEARCH_FALLBACK_DATASET=metrics-dashboard-hushhtech-search-fallback-dataset:latest,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushhtech-search-console-site-url:latest,HUSHHTECH_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushhtech-search-console-type:latest,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushhtech-search-console-data-state:latest,HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushhtech-search-console-row-limit:latest,HUSHHTECH_SUPABASE_PROJECT_REF=metrics-dashboard-hushhtech-supabase-project-ref:latest,HUSHHTECH_SUPABASE_ACCESS_TOKEN=hushhtech-supabase-access-token:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,KAI_SEARCH_PROJECT=metrics-dashboard-kai-search-project:latest,KAI_SEARCH_DATASET=metrics-dashboard-kai-search-dataset:latest,KAI_SEARCH_FALLBACK_PROJECT=metrics-dashboard-kai-search-fallback-project:latest,KAI_SEARCH_FALLBACK_DATASET=metrics-dashboard-kai-search-fallback-dataset:latest,KAI_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-kai-search-console-site-url:latest,KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX=metrics-dashboard-kai-search-console-page-filter-regex:latest,KAI_SEARCH_CONSOLE_TYPE=metrics-dashboard-kai-search-console-type:latest,KAI_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-kai-search-console-data-state:latest,KAI_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-kai-search-console-row-limit:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_SEARCH_FALLBACK_PROJECT=metrics-dashboard-hushh-ai-search-fallback-project:latest,HUSHH_AI_SEARCH_FALLBACK_DATASET=metrics-dashboard-hushh-ai-search-fallback-dataset:latest,HUSHH_AI_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushh-ai-search-console-site-url:latest,HUSHH_AI_SEARCH_CONSOLE_PAGE_FILTER_REGEX=metrics-dashboard-hushh-ai-search-console-page-filter-regex:latest,HUSHH_AI_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushh-ai-search-console-type:latest,HUSHH_AI_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushh-ai-search-console-data-state:latest,HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushh-ai-search-console-row-limit:latest,HUSHH_AI_GA4_MEASUREMENT_ID=metrics-dashboard-hushh-ai-ga4-measurement-id:latest,HUSHH_AI_GA4_PROPERTY_ID=metrics-dashboard-hushh-ai-ga4-property-id:latest,HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT=metrics-dashboard-hushh-ai-ga4-impersonate-service-account:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest"
+  --set-env-vars="GEMINI_METRICS_CHAT_MODEL=gemini-2.5-flash,METRICS_CHAT_RATE_LIMIT_HOURLY=60,METRICS_CHAT_RATE_LIMIT_DAILY=300,METRICS_CHAT_REQUEST_TIMEOUT_MS=45000,METRICS_CHAT_CONTEXT_CACHE_SECONDS=30" \
+  --set-secrets="NODE_ENV=metrics-dashboard-node-env:latest,APP_URL=metrics-dashboard-app-url:latest,BQ_JOB_PROJECT=metrics-dashboard-bq-job-project:latest,BQ_CLI_FALLBACK=metrics-dashboard-bq-cli-fallback:latest,GEMINI_API_KEY=hushh-gemini-api-key:latest,HUSHHTECH_ANALYTICS_ENDPOINT=metrics-dashboard-hushhtech-endpoint:latest,HUSHHTECH_METRICS_WINDOW_DAYS=metrics-dashboard-hushhtech-window-days:latest,HUSHHTECH_GCP_PROJECT=metrics-dashboard-hushhtech-gcp-project:latest,HUSHHTECH_CLOUD_RUN_SERVICE=metrics-dashboard-hushhtech-cloud-run-service:latest,HUSHHTECH_CLOUD_RUN_REGION=metrics-dashboard-hushhtech-cloud-run-region:latest,HUSHHTECH_SEARCH_PROJECT=metrics-dashboard-hushhtech-search-project:latest,HUSHHTECH_SEARCH_DATASET=metrics-dashboard-hushhtech-search-dataset:latest,HUSHHTECH_SEARCH_FALLBACK_PROJECT=metrics-dashboard-hushhtech-search-fallback-project:latest,HUSHHTECH_SEARCH_FALLBACK_DATASET=metrics-dashboard-hushhtech-search-fallback-dataset:latest,HUSHHTECH_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushhtech-search-console-site-url:latest,HUSHHTECH_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushhtech-search-console-type:latest,HUSHHTECH_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushhtech-search-console-data-state:latest,HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushhtech-search-console-row-limit:latest,HUSHHTECH_SUPABASE_PROJECT_REF=metrics-dashboard-hushhtech-supabase-project-ref:latest,HUSHHTECH_SUPABASE_ACCESS_TOKEN=hushhtech-supabase-access-token:latest,KAI_GA4_WINDOW_DAYS=metrics-dashboard-kai-ga4-window-days:latest,KAI_PROD_GA4_PROJECT=metrics-dashboard-kai-prod-ga4-project:latest,KAI_PROD_GA4_DATASET=metrics-dashboard-kai-prod-ga4-dataset:latest,KAI_PROD_GCP_PROJECT=metrics-dashboard-kai-prod-gcp-project:latest,KAI_PROD_CLOUD_RUN_SERVICE=metrics-dashboard-kai-prod-cloud-run-service:latest,KAI_PROD_METRICS_WINDOW_DAYS=metrics-dashboard-kai-prod-window-days:latest,KAI_SEARCH_PROJECT=metrics-dashboard-kai-search-project:latest,KAI_SEARCH_DATASET=metrics-dashboard-kai-search-dataset:latest,KAI_SEARCH_FALLBACK_PROJECT=metrics-dashboard-kai-search-fallback-project:latest,KAI_SEARCH_FALLBACK_DATASET=metrics-dashboard-kai-search-fallback-dataset:latest,KAI_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-kai-search-console-site-url:latest,KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX=metrics-dashboard-kai-search-console-page-filter-regex:latest,KAI_SEARCH_CONSOLE_TYPE=metrics-dashboard-kai-search-console-type:latest,KAI_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-kai-search-console-data-state:latest,KAI_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-kai-search-console-row-limit:latest,HUSHH_AI_GCP_PROJECT=metrics-dashboard-hushh-ai-gcp-project:latest,HUSHH_AI_CLOUD_RUN_SERVICE=metrics-dashboard-hushh-ai-cloud-run-service:latest,HUSHH_AI_METRICS_WINDOW_DAYS=metrics-dashboard-hushh-ai-window-days:latest,HUSHH_AI_SEARCH_PROJECT=metrics-dashboard-hushh-ai-search-project:latest,HUSHH_AI_SEARCH_DATASET=metrics-dashboard-hushh-ai-search-dataset:latest,HUSHH_AI_SEARCH_FALLBACK_PROJECT=metrics-dashboard-hushh-ai-search-fallback-project:latest,HUSHH_AI_SEARCH_FALLBACK_DATASET=metrics-dashboard-hushh-ai-search-fallback-dataset:latest,HUSHH_AI_SEARCH_CONSOLE_SITE_URL=metrics-dashboard-hushh-ai-search-console-site-url:latest,HUSHH_AI_SEARCH_CONSOLE_PAGE_FILTER_REGEX=metrics-dashboard-hushh-ai-search-console-page-filter-regex:latest,HUSHH_AI_SEARCH_CONSOLE_TYPE=metrics-dashboard-hushh-ai-search-console-type:latest,HUSHH_AI_SEARCH_CONSOLE_DATA_STATE=metrics-dashboard-hushh-ai-search-console-data-state:latest,HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT=metrics-dashboard-hushh-ai-search-console-row-limit:latest,HUSHH_AI_GA4_MEASUREMENT_ID=metrics-dashboard-hushh-ai-ga4-measurement-id:latest,HUSHH_AI_GA4_PROPERTY_ID=metrics-dashboard-hushh-ai-ga4-property-id:latest,HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT=metrics-dashboard-hushh-ai-ga4-impersonate-service-account:latest,HUSHH_AI_LIVE_REFRESH_SECONDS=metrics-dashboard-hushh-ai-live-refresh-seconds:latest"
 ```
 
 ## Domain Mapping

@@ -74,6 +74,7 @@ Current platform sources:
 | HushhTech | Cloud Run Monitoring | `metrics.hushh.ai` reads `hushh-tech-prod/hushh-tech-website` directly through Google Cloud Monitoring |
 | HushhTech | Search Console BigQuery export | Preferred source. Search metrics appear when export tables are present in `hushh-ai-prod.searchconsole_hushhtech_com` |
 | HushhTech | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.hushhtech_search_console_api`; populated by Cloud Run Job `hushhtech-search-console-ingest` while the official export is waiting |
+| Hussh Insights AI | Gemini API | Server-only runtime key from Secret Manager secret `hushh-gemini-api-key`; answers are tool-grounded on aggregate dashboard metrics and return structured claims, sources, warnings, and confidence |
 
 All product responses and `/api/analytics/all` expose a normalized
 `sourceCards` matrix with exactly three cards per product:
@@ -149,7 +150,7 @@ why some sections may show neutral empty states:
 | Kai production | Hosted frontend still needs production web tag redeploy | Redeploy Kai with the production measurement ID already configured in secrets |
 | HushhTech Search Console | Official bulk export tables have not materialized yet | GCP-only fallback is active in `hushh-ai-prod.hushhtech_search_console_api`; Scheduler job `hushhtech-search-console-ingest-daily` refreshes the last 16 days every 6 hours |
 | Hushh AI Search Console | Official export dataset exists, but export tables may not be present yet | GCP-only fallback is active in `hushh-ai-prod.hushh_ai_search_console_api`; Scheduler refreshes the last 16 days every 6 hours |
-| Hushh AI GA4 | GA4 UI rejects the custom `metrics-dashboard-runtime` service account, but the property already authorizes `646258530541-compute@developer.gserviceaccount.com` | Runtime impersonation bridge is active; keep `roles/iam.serviceAccountTokenCreator` on the target service account for `metrics-dashboard-runtime` |
+| Hushh AI GA4 | GA4 Data API must use numeric property `458078330`; measurement ID `G-PPEF1CSJ5H` is not a Data API property identifier. GA4 UI rejects the custom `metrics-dashboard-runtime` service account, but the property can authorize `646258530541-compute@developer.gserviceaccount.com` | Keep `roles/iam.serviceAccountTokenCreator` on the target service account for `metrics-dashboard-runtime`; grant Viewer or Analyst on GA4 property `458078330` to `646258530541-compute@developer.gserviceaccount.com`; validate with `npm run test:ga4:hushh-ai` |
 | Hushh AI DB / product events | No Hushh AI DB aggregate source is confirmed in metrics runtime config | Keep the product events card in `not_configured`; do not use HushhTech Supabase |
 | Kai Search Console | Official domain export is shared with `sc-domain:hushh.ai` and may not have tables yet | GCP-only fallback is active in `hushh-ai-prod.kai_search_console_api` with Kai URL filters; Scheduler refreshes the last 16 days every 6 hours |
 

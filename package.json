@@ -14,9 +14,13 @@
     "ingest:hushhtech-search-console": "node scripts/ingest-hushhtech-search-console.mjs",
     "test:prod:metrics-flow": "node scripts/check-metrics-flow.mjs",
     "test:prod:hushh-ai": "node scripts/check-hushh-ai-production.mjs",
+    "test:ga4:hushh-ai": "node scripts/check-hushh-ai-ga4-data-api.mjs",
+    "test:chat:metrics": "node scripts/check-metrics-chat-runtime.mjs",
     "test:prod:hushhtech-flow": "node scripts/check-hushhtech-metrics-flow.mjs",
     "test:prod:hushhtech": "node scripts/check-hushhtech-production.mjs",
-    "test:prod:kai": "node scripts/check-kai-production.mjs"
+    "test:prod:kai": "node scripts/check-kai-production.mjs",
+    "test:chat:agent": "node scripts/check-insights-agent-local.mjs",
+    "test:prod:agent": "node scripts/check-insights-agent-production.mjs"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.1",

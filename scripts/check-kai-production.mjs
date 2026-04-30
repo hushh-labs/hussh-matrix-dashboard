@@ -147,6 +147,8 @@ async function main() {
   assert(kai.body?.data?.gcp, 'Kai production Cloud Run metrics missing');
   assertPublicSafePayload(kai.body, 'Kai analytics');
   const data = kai.body?.data || {};
+  const productionFreshnessKeys = data.freshness.sources.map((source) => source.key);
+  assert(!productionFreshnessKeys.includes('uat_validation'), 'Kai production freshness mixes UAT validation into production sources');
   const search = data.searchConsole;
   assert(search, 'Kai Search Console block missing');
   assert(Number.isFinite(Number(search.clicks)), 'Kai Search Console clicks not numeric');
@@ -155,11 +157,17 @@ async function main() {
   const searchCard = data.sourceCards?.find((card) => card.key === 'search_console');
   const ga4Card = data.sourceCards?.find((card) => card.key === 'ga4');
   const eventsCard = data.sourceCards?.find((card) => card.key === 'product_events');
+  const uatSearchCard = data.uatSourceCards?.find((card) => card.key === 'search_console');
+  const uatGa4Card = data.uatSourceCards?.find((card) => card.key === 'ga4');
+  const uatEventsCard = data.uatSourceCards?.find((card) => card.key === 'product_events');
   assertSourceSections(searchCard, 'Kai Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
   assert(Array.isArray(ga4Card?.sections) && ga4Card.sections.length >= 4, 'Kai GA4 sections missing');
   assertSourceSections(ga4Card, 'Kai GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
   for (const key of ['users', 'sessions', 'events']) assertCardMetricPresent(ga4Card, key);
   for (const key of ['dau', 'wau', 'sessions', 'events']) assertCardMetricPresent(eventsCard, key);
+  assertSourceSections(uatSearchCard, 'Kai UAT Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
+  assertSourceSections(uatGa4Card, 'Kai UAT GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
+  for (const key of ['dau', 'wau', 'sessions', 'events']) assertCardMetricPresent(uatEventsCard, key);
   results.push({
     check: 'kai-analytics',
     status: 'ok',
@@ -168,7 +176,9 @@ async function main() {
 
   const all = await checkJsonEndpoint(dashboard.url, '/api/analytics/all?window_days=7', options.timeoutMs);
   assert(all.body?.kai?.productionProduct?.data?.freshness, 'aggregate analytics missing Kai production freshness block');
-  results.push({ check: 'aggregate-analytics', status: 'ok', detail: 'contains Kai production freshness' });
+  const aggregateKai = all.body.kai.productionProduct.data;
+  assert(Array.isArray(aggregateKai.uatSourceCards) && aggregateKai.uatSourceCards.length >= 3, 'aggregate analytics missing Kai UAT source cards');
+  results.push({ check: 'aggregate-analytics', status: 'ok', detail: 'contains Kai production freshness and UAT source cards' });
 
   console.log(JSON.stringify({
     ok: true,
