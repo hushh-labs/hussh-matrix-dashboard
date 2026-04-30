@@ -315,6 +315,18 @@ async function main() {
       assert(result.body?.reply?.length > 20, 'reply too short');
     });
 
+    await test('answers a last 24-hour report request', async () => {
+      const result = await fetchJson(`${base}/api/chat`, {
+        method: 'POST',
+        body: { message: 'What happened in the last 24 hours across all products? Give me a report.' },
+        timeoutMs: 45_000,
+      });
+      assert(result.response.ok, `returned ${result.response.status}`);
+      assert(result.body?.reply?.length > 40, 'reply too short');
+      assert(/24-hour|24 hours|last 24/i.test(result.body.reply), 'reply should name the 24-hour window');
+      assert(Array.isArray(result.body.claims) && result.body.claims.length > 0, '24-hour report has no structured claims');
+    });
+
     await test('handles unknown metric gracefully', async () => {
       const result = await fetchJson(`${base}/api/chat`, {
         method: 'POST',

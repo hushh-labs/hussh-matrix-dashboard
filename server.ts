@@ -1400,6 +1400,18 @@ function defaultUtcRange(days: number): HushhAiDateRange {
   };
 }
 
+function last24HourUtcRange(now = new Date()): HushhAiDateRange {
+  const start = new Date(now.getTime() - 86_400_000);
+  return {
+    startDate: formatUtcDate(start),
+    endDate: formatUtcDate(now),
+    days: 1,
+    startTime: start.toISOString(),
+    endTime: now.toISOString(),
+    windowSeconds: 86_400,
+  };
+}
+
 async function fetchKaiGa4Summary(range?: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   const windowDays = Number.isFinite(KAI_GA4_WINDOW_DAYS) ? KAI_GA4_WINDOW_DAYS : 14;
   const effectiveRange = range ?? defaultUtcRange(windowDays);
@@ -3203,6 +3215,7 @@ app.get('/api/health', (_req, res) => {
 
 type ProductKey = 'hushh.ai' | 'kai.hushh.ai' | 'uat.kai.hushh.ai' | 'hushhtech.com';
 type AgentConfidence = 'high' | 'medium' | 'low';
+type AgentWindow = 'calendar_days' | 'last_24_hours';
 
 interface AgentRange {
   startDate: string;
@@ -3263,6 +3276,8 @@ interface ProductMetrics {
 
 interface MetricsSnapshot {
   generatedAt: string;
+  window: AgentWindow;
+  windowLabel: string;
   range: AgentRange;
   products: Record<ProductKey, ProductMetrics>;
   catalog: Array<Record<string, unknown>>;
@@ -3473,6 +3488,11 @@ const METRICS_TOOL_DECLARATIONS = [
           maximum: MAX_HUSHH_AI_RANGE_DAYS,
           description: 'Calendar-day range to summarize. Defaults to 7.',
         },
+        window: {
+          type: 'string',
+          enum: ['calendar_days', 'last_24_hours'],
+          description: 'Use last_24_hours for last day, past 24 hours, or 24-hour report questions.',
+        },
       },
       required: ['product'],
       additionalProperties: false,
@@ -3498,6 +3518,11 @@ const METRICS_TOOL_DECLARATIONS = [
           minimum: 1,
           maximum: MAX_HUSHH_AI_RANGE_DAYS,
           description: 'Calendar-day range to summarize. Defaults to 7.',
+        },
+        window: {
+          type: 'string',
+          enum: ['calendar_days', 'last_24_hours'],
+          description: 'Use last_24_hours for last day, past 24 hours, or 24-hour report questions.',
         },
       },
       required: ['product'],
@@ -3655,9 +3680,20 @@ function compactCloudRun(gcp: Record<string, unknown> | null, range: AgentRange)
   };
 }
 
+function sourceSectionMetric(section: Record<string, unknown> | undefined, key: string): number | null {
+  const metrics = recordArray(section?.metrics);
+  const metric = metrics.find((item) => item.key === key);
+  return optionalNumber(metric?.value);
+}
+
+function sourceSectionByKey(source: Record<string, unknown> | null, key: string): Record<string, unknown> | undefined {
+  return recordArray(source?.sections).find((section) => section.key === key);
+}
+
 function compactGa4(ga4: Record<string, unknown> | null, range: AgentRange): Record<string, unknown> | null {
   if (!ga4) return null;
   const rangeTotals = asRecord(ga4.rangeTotals) ?? {};
+  const last24Section = sourceSectionByKey(ga4, 'last_24_hours');
   return {
     metricPrefix: 'ga4',
     source: String(ga4.sourceLabel ?? ga4.source ?? 'GA4'),
@@ -3666,6 +3702,15 @@ function compactGa4(ga4: Record<string, unknown> | null, range: AgentRange): Rec
     users: optionalNumber(rangeTotals.users),
     sessions: optionalNumber(rangeTotals.sessions),
     events: optionalNumber(rangeTotals.events),
+    last24Hours: last24Section ? {
+      available: Boolean(last24Section.status === 'delayed' || last24Section.status === 'live' || last24Section.status === 'near_live'),
+      status: String(last24Section.status ?? 'unknown'),
+      source: String(last24Section.source ?? 'GA4 processed report'),
+      users: sourceSectionMetric(last24Section, 'users'),
+      sessions: sourceSectionMetric(last24Section, 'sessions'),
+      events: sourceSectionMetric(last24Section, 'events'),
+      note: typeof last24Section.blocker === 'string' ? sanitizeAgentText(last24Section.blocker) : null,
+    } : null,
     topEvents: recordArray(ga4.topEvents).slice(0, 8).map((row) => ({
       eventName: String(row.eventName ?? ''),
       events: toNumber(row.events),
@@ -3853,8 +3898,8 @@ function warningList(...values: unknown[]): string[] {
     .slice(0, 8);
 }
 
-async function buildMetricsSnapshot(rangeDays: number): Promise<MetricsSnapshot> {
-  const range = defaultUtcRange(rangeDays);
+async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, window: AgentWindow = 'calendar_days'): Promise<MetricsSnapshot> {
+  const range = typeof rangeInput === 'number' ? defaultUtcRange(rangeInput) : rangeInput;
   const compactRange = agentRange(range);
   const [
     uat,
@@ -3915,6 +3960,10 @@ async function buildMetricsSnapshot(rangeDays: number): Promise<MetricsSnapshot>
 
   return {
     generatedAt: fetchedAt,
+    window,
+    windowLabel: window === 'last_24_hours'
+      ? `rolling 24 hours ending ${fetchedAt}`
+      : `${compactRange.startDate} to ${compactRange.endDate}`,
     range: compactRange,
     catalog: METRIC_CATALOG,
     products: {
@@ -3963,12 +4012,27 @@ async function buildMetricsSnapshot(rangeDays: number): Promise<MetricsSnapshot>
 }
 
 async function getMetricsSnapshot(rangeDays: number): Promise<MetricsSnapshot> {
-  const key = String(clampChatRangeDays(rangeDays));
+  const key = `calendar:${clampChatRangeDays(rangeDays)}`;
   const now = Date.now();
   if (metricsSnapshotCache?.key === key && metricsSnapshotCache.expiresAt > now) {
     return metricsSnapshotCache.promise;
   }
-  const promise = buildMetricsSnapshot(Number(key));
+  const promise = buildMetricsSnapshot(clampChatRangeDays(rangeDays), 'calendar_days');
+  metricsSnapshotCache = {
+    key,
+    expiresAt: now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000,
+    promise,
+  };
+  return promise;
+}
+
+async function getLast24MetricsSnapshot(): Promise<MetricsSnapshot> {
+  const key = 'last_24_hours';
+  const now = Date.now();
+  if (metricsSnapshotCache?.key === key && metricsSnapshotCache.expiresAt > now) {
+    return metricsSnapshotCache.promise;
+  }
+  const promise = buildMetricsSnapshot(last24HourUtcRange(), 'last_24_hours');
   metricsSnapshotCache = {
     key,
     expiresAt: now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000,
@@ -3987,15 +4051,20 @@ async function executeAgentTool(name: string | undefined, args: Record<string, u
   const safeArgs = args ?? {};
   const product = productFromValue(safeArgs.product);
   const rangeDays = clampChatRangeDays(safeArgs.rangeDays);
+  const window = safeArgs.window === 'last_24_hours' ? 'last_24_hours' : 'calendar_days';
   if (safeName === 'get_metric_catalog') {
     return { tool: safeName, args: safeArgs, ok: true, data: { products: METRIC_CATALOG } };
   }
   if (safeName === 'get_product_metrics') {
-    const snapshot = await getMetricsSnapshot(rangeDays);
+    const snapshot = window === 'last_24_hours'
+      ? await getLast24MetricsSnapshot()
+      : await getMetricsSnapshot(rangeDays);
     return { tool: safeName, args: safeArgs, ok: true, data: selectSnapshotProducts(snapshot, product) };
   }
   if (safeName === 'get_source_status') {
-    const snapshot = await getMetricsSnapshot(rangeDays);
+    const snapshot = window === 'last_24_hours'
+      ? await getLast24MetricsSnapshot()
+      : await getMetricsSnapshot(rangeDays);
     const sourceFilter = typeof safeArgs.source === 'string' ? safeArgs.source.toLowerCase() : '';
     const sources = productsFor(product)
       .flatMap((key) => snapshot.products[key].sourceStatuses)
@@ -4034,6 +4103,7 @@ function historyToGeminiContents(history: ChatHistoryMessage[]) {
 const HUSSH_ANALYST_TOOL_PROMPT = `You are Hussh Insights AI, an analyst agent for metrics.hushh.ai.
 Use tools before answering any metrics question. Only request aggregate metrics. Never request or expose raw users, emails, prompts, tokens, project ids, dataset ids, stack traces, or provider diagnostics.
 Prefer get_product_metrics for numeric questions and get_source_status for availability/freshness questions. Use get_metric_catalog if the requested metric name is ambiguous.
+For "last day", "past day", "last 24 hours", "24-hour report", or "what happened in the last day" requests, call get_product_metrics with window="last_24_hours" and rangeDays=1.
 Treat the metric catalog as the semantic field model: use field labels, descriptions, synonyms, caveats, and example questions to map business language to the right aggregate metric.`;
 
 const HUSSH_ANALYST_SYNTHESIS_PROMPT = `You are Hussh Insights AI, a detailed analyst for metrics.hushh.ai.
@@ -4041,6 +4111,7 @@ Answer only from the provided aggregate tool results. Do not invent data.
 Return JSON matching the schema exactly.
 Every numeric claim in reply must appear in claims with a canonical metric id from the catalog when possible.
 Use product names exactly: hushh.ai, kai.hushh.ai, uat.kai.hushh.ai, hushhtech.com.
+When tool results have window="last_24_hours", call it a rolling 24-hour report and prefer the last24Hours GA4 section over selected rangeTotals for GA4 claims.
 Never blend kai.hushh.ai production with uat.kai.hushh.ai. If the user says "Kai UAT", use uat.kai.hushh.ai; if they say "Kai production" or "kai.hushh.ai", use kai.hushh.ai.
 Use complete sentences. Never end mid-sentence, after a comma, after an open parenthesis, or after words such as "of", "for", "with", "and", "DAU", or "DA".
 For "top 3 issues" or "act on" requests, return exactly three numbered action items in the reply.
@@ -4049,6 +4120,7 @@ Return 3-5 suggestedQuestions that are useful next steps for this exact answer.
 Detailed analyst style is preferred: exact number, date range, source, interpretation, then action.`;
 
 async function collectAgentToolResults(ai: any, message: string, history: ChatHistoryMessage[]): Promise<AgentToolResult[]> {
+  const inferredWindow = inferAgentWindow(message, history);
   const contents: any[] = [
     ...historyToGeminiContents(history),
     { role: 'user' as const, parts: [{ text: message }] },
@@ -4098,7 +4170,12 @@ async function collectAgentToolResults(ai: any, message: string, history: ChatHi
   }
 
   if (!toolResults.some((result) => result.tool === 'get_product_metrics')) {
-    toolResults.push(await executeAgentTool('get_product_metrics', { product: 'all', rangeDays: 7 }));
+    toolResults.push(await executeAgentTool(
+      'get_product_metrics',
+      inferredWindow === 'last_24_hours'
+        ? { product: 'all', rangeDays: 1, window: 'last_24_hours' }
+        : { product: 'all', rangeDays: 7 },
+    ));
   }
   return toolResults;
 }
@@ -4155,6 +4232,9 @@ function metricValueFromSnapshot(snapshot: MetricsSnapshot, product: ProductKey,
     'ga4.users': ga4?.users,
     'ga4.sessions': ga4?.sessions,
     'ga4.events': ga4?.events,
+    'ga4.last_24_hours.users': asRecord(ga4?.last24Hours)?.users,
+    'ga4.last_24_hours.sessions': asRecord(ga4?.last24Hours)?.sessions,
+    'ga4.last_24_hours.events': asRecord(ga4?.last24Hours)?.events,
     'search_console.clicks': searchConsole?.clicks,
     'search_console.impressions': searchConsole?.impressions,
     'search_console.ctr': searchConsole?.ctr,
@@ -4318,6 +4398,30 @@ function isCrossProductUserQuestion(text: string): boolean {
   );
 }
 
+function mentionsLast24Window(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    /\b(last|past|previous)\s*(24|twenty[-\s]?four)\s*(h|hr|hrs|hours?)\b/.test(lower)
+    || /\b24[-\s]?hour\b/.test(lower)
+    || /\b(last|past|previous)\s+day\b/.test(lower)
+    || /\bwhat (happened|changed) today\b/.test(lower)
+  );
+}
+
+function isLast24ReportQuestion(text: string): boolean {
+  const lower = text.toLowerCase();
+  return mentionsLast24Window(lower) && (
+    /\b(report|summary|brief|recap|review|status|happened|changed)\b/.test(lower)
+    || /\bwhat happened\b/.test(lower)
+    || /\bgive me\b/.test(lower)
+  );
+}
+
+function inferAgentWindow(message: string, history: ChatHistoryMessage[] = []): AgentWindow {
+  const context = `${history.map((item) => item.content).join('\n')}\n${message}`;
+  return mentionsLast24Window(context) ? 'last_24_hours' : 'calendar_days';
+}
+
 function buildCrossProductUsersAnswer(snapshot: MetricsSnapshot): AgentAnswer {
   const hushhAiGa4 = asRecord(snapshot.products['hushh.ai'].ga4);
   const kaiGa4 = asRecord(snapshot.products['kai.hushh.ai'].ga4);
@@ -4439,6 +4543,118 @@ function buildKaiEnvironmentSplitAnswer(snapshot: MetricsSnapshot): AgentAnswer 
   };
 }
 
+function ga4Last24(ga4: unknown): Record<string, unknown> | null {
+  return asRecord(asRecord(ga4)?.last24Hours);
+}
+
+function hasAnyNumber(...values: unknown[]): boolean {
+  return values.some((value) => optionalNumber(value) != null);
+}
+
+function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
+  const end = new Date(snapshot.generatedAt);
+  const start = new Date(end.getTime() - 86_400_000);
+  const windowText = `${start.toISOString()} to ${end.toISOString()}`;
+  const reliabilityProducts: ProductKey[] = ['hushh.ai', 'kai.hushh.ai', 'hushhtech.com'];
+  const reliabilityRows = reliabilityProducts
+    .map((product) => {
+      const cloudRun = asRecord(snapshot.products[product].cloudRun);
+      return {
+        product,
+        requests: optionalNumber(cloudRun?.requestCount) ?? 0,
+        errors: optionalNumber(cloudRun?.errorCount) ?? 0,
+        errorRate: optionalNumber(cloudRun?.errorRate),
+        p95LatencyMs: optionalNumber(cloudRun?.p95LatencyMs),
+      };
+    })
+    .filter((row) => row.requests > 0 || row.errorRate != null);
+  const highestError = [...reliabilityRows].sort((a, b) => (b.errorRate ?? -1) - (a.errorRate ?? -1))[0];
+  const reliabilityLine = reliabilityRows.length > 0
+    ? reliabilityRows.map((row) => `${row.product}: ${formatInteger(row.requests)} requests, ${formatInteger(row.errors)} 5xx, ${formatPercent(row.errorRate)} error rate${row.p95LatencyMs == null ? '' : `, ${formatInteger(row.p95LatencyMs)}ms p95`}`).join('; ')
+    : 'Cloud Run reliability metrics are not available for this window.';
+
+  const hushhAiLast24 = ga4Last24(snapshot.products['hushh.ai'].ga4);
+  const kaiProdLast24 = ga4Last24(snapshot.products['kai.hushh.ai'].ga4);
+  const kaiUatLast24 = ga4Last24(snapshot.products['uat.kai.hushh.ai'].ga4);
+  const hushhTechTraffic = asRecord(snapshot.products['hushhtech.com'].traffic);
+  const activityLines = [
+    hasAnyNumber(hushhAiLast24?.users, hushhAiLast24?.sessions, hushhAiLast24?.events)
+      ? `hushh.ai GA4 last 24h: ${formatOptionalInteger(hushhAiLast24?.users)} users, ${formatOptionalInteger(hushhAiLast24?.sessions)} sessions, ${formatOptionalInteger(hushhAiLast24?.events)} events`
+      : 'hushh.ai GA4 last-24h data is waiting or unavailable',
+    hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events)
+      ? `kai.hushh.ai production GA4 last 24h: ${formatOptionalInteger(kaiProdLast24?.users)} users, ${formatOptionalInteger(kaiProdLast24?.sessions)} sessions, ${formatOptionalInteger(kaiProdLast24?.events)} events`
+      : 'kai.hushh.ai production GA4 last-24h data is waiting or unavailable',
+    hasAnyNumber(kaiUatLast24?.users, kaiUatLast24?.sessions, kaiUatLast24?.events)
+      ? `uat.kai.hushh.ai UAT GA4 last 24h: ${formatOptionalInteger(kaiUatLast24?.users)} users, ${formatOptionalInteger(kaiUatLast24?.sessions)} sessions, ${formatOptionalInteger(kaiUatLast24?.events)} events`
+      : 'uat.kai.hushh.ai UAT GA4 last-24h data is waiting or unavailable',
+    hasAnyNumber(hushhTechTraffic?.active1DayUsers, hushhTechTraffic?.sessions, hushhTechTraffic?.pageViews)
+      ? `hushhtech.com traffic: ${formatOptionalInteger(hushhTechTraffic?.active1DayUsers)} 1-day active users, ${formatOptionalInteger(hushhTechTraffic?.sessions)} sessions, ${formatOptionalInteger(hushhTechTraffic?.pageViews)} page views`
+      : 'hushhtech.com 1-day traffic data is waiting or unavailable',
+  ];
+
+  const claims: MetricClaim[] = reliabilityRows.flatMap((row) => [
+    deterministicClaim(snapshot, row.product, 'cloud_run.request_count', 'Cloud Run requests', row.requests, 'requests', 'Cloud Run Monitoring'),
+    deterministicClaim(snapshot, row.product, 'cloud_run.error_count', 'Cloud Run 5xx errors', row.errors, 'errors', 'Cloud Run Monitoring'),
+    deterministicClaim(snapshot, row.product, 'cloud_run.error_rate', 'Cloud Run error rate', row.errorRate == null ? null : Number((row.errorRate * 100).toFixed(2)), '%', 'Cloud Run Monitoring'),
+  ]);
+  if (hasAnyNumber(hushhAiLast24?.users, hushhAiLast24?.sessions, hushhAiLast24?.events)) {
+    claims.push(
+      deterministicClaim(snapshot, 'hushh.ai', 'ga4.last_24_hours.users', 'GA4 last 24h users', optionalNumber(hushhAiLast24?.users), 'users', 'GA4'),
+      deterministicClaim(snapshot, 'hushh.ai', 'ga4.last_24_hours.events', 'GA4 last 24h events', optionalNumber(hushhAiLast24?.events), 'events', 'GA4'),
+    );
+  }
+  if (hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events)) {
+    claims.push(
+      deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.last_24_hours.users', 'Production GA4 last 24h users', optionalNumber(kaiProdLast24?.users), 'users', 'Kai production GA4'),
+      deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.last_24_hours.events', 'Production GA4 last 24h events', optionalNumber(kaiProdLast24?.events), 'events', 'Kai production GA4'),
+    );
+  }
+  if (hasAnyNumber(kaiUatLast24?.users, kaiUatLast24?.sessions, kaiUatLast24?.events)) {
+    claims.push(
+      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.last_24_hours.users', 'UAT GA4 last 24h users', optionalNumber(kaiUatLast24?.users), 'users', 'Kai UAT GA4'),
+      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.last_24_hours.events', 'UAT GA4 last 24h events', optionalNumber(kaiUatLast24?.events), 'events', 'Kai UAT GA4'),
+    );
+  }
+  if (hasAnyNumber(hushhTechTraffic?.active1DayUsers, hushhTechTraffic?.sessions, hushhTechTraffic?.pageViews)) {
+    claims.push(
+      deterministicClaim(snapshot, 'hushhtech.com', 'traffic.active_1_day_users', '1-day active users', optionalNumber(hushhTechTraffic?.active1DayUsers), 'users', 'hushhtech.com GA4 traffic'),
+      deterministicClaim(snapshot, 'hushhtech.com', 'traffic.sessions', 'Traffic sessions', optionalNumber(hushhTechTraffic?.sessions), 'sessions', 'hushhtech.com GA4 traffic'),
+      deterministicClaim(snapshot, 'hushhtech.com', 'traffic.page_views', 'Traffic page views', optionalNumber(hushhTechTraffic?.pageViews), 'page views', 'hushhtech.com GA4 traffic'),
+    );
+  }
+
+  const warnings = warningList(
+    'Search Console and some product-account sources are daily or delayed, so this report uses near-live Cloud Run plus last-24h/1-day aggregate traffic where available.',
+    !hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events) ? 'kai.hushh.ai production GA4 last-24h data is waiting or unavailable.' : null,
+    snapshot.products['hushh.ai'].warnings,
+    snapshot.products['kai.hushh.ai'].warnings,
+    snapshot.products['uat.kai.hushh.ai'].warnings,
+    snapshot.products['hushhtech.com'].warnings,
+  );
+
+  return {
+    reply: [
+      `Rolling 24-hour report for ${windowText}.`,
+      `Reliability: ${reliabilityLine}.`,
+      `Activity: ${activityLines.join('; ')}.`,
+      highestError
+        ? `Primary watch item: ${highestError.product} has the highest Cloud Run error rate in this window at ${formatPercent(highestError.errorRate)}.`
+        : 'Primary watch item: source availability is the main issue because reliability data is incomplete.',
+      'Keep production kai.hushh.ai and UAT uat.kai.hushh.ai separate; UAT activity is validation behavior, not production truth.',
+    ].join('\n'),
+    claims,
+    sources: sourceSubset(snapshot, [...PRODUCT_KEYS]),
+    warnings,
+    confidence: warnings.length > 1 ? 'medium' : 'high',
+    suggestedQuestions: [
+      'Turn this 24-hour report into priority actions.',
+      'Show only last-24-hour reliability by product.',
+      'Compare Kai production and Kai UAT for the last 24 hours.',
+      'What data sources are missing from this 24-hour report?',
+    ],
+  };
+}
+
 function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMessage[], snapshot: MetricsSnapshot): AgentAnswer {
   const contextText = `${history.map((item) => item.content).join('\n')}\n${message}`.toLowerCase();
   if (/^(ping|hello|hi|say hello)$/i.test(message.trim())) {
@@ -4454,6 +4670,10 @@ function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMess
         'What are the top 3 issues today?',
       ],
     };
+  }
+
+  if (isLast24ReportQuestion(contextText)) {
+    return buildLast24HourReportAnswer(snapshot);
   }
 
   if (isCrossProductUserQuestion(contextText)) {
@@ -4608,6 +4828,7 @@ function shouldUseDeterministicFastPath(message: string): boolean {
     /^(ping|hello|hi|say hello)$/i.test(message.trim())
     || isClearlyUnsupportedMetricQuestion(message)
     || isCrossProductUserQuestion(message)
+    || isLast24ReportQuestion(message)
     || (lower.includes('kai') && /(uat|production|prod|separat|split|compare)/i.test(message))
     || /top\s*3|act on|issues?|priorit/i.test(message)
     || (lower.includes('cloud run') && /(request|error rate|healthiest|compare|what about|exact)/i.test(message))
@@ -4659,8 +4880,11 @@ async function generateStructuredAgentAnswer(
 }
 
 async function runHusshInsightsAgent(message: string, history: ChatHistoryMessage[]) {
+  const inferredWindow = inferAgentWindow(message, history);
   if (shouldUseDeterministicFastPath(message)) {
-    const snapshot = await getMetricsSnapshot(7);
+    const snapshot = inferredWindow === 'last_24_hours'
+      ? await getLast24MetricsSnapshot()
+      : await getMetricsSnapshot(7);
     return {
       answer: buildDeterministicAgentAnswer(message, history, snapshot),
       usage: null,
@@ -4679,9 +4903,16 @@ async function runHusshInsightsAgent(message: string, history: ChatHistoryMessag
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     modelWarnings.push(`AI tool loop fallback: ${messageText}`);
-    toolResults = [await executeAgentTool('get_product_metrics', { product: 'all', rangeDays: 7 })];
+    toolResults = [await executeAgentTool(
+      'get_product_metrics',
+      inferredWindow === 'last_24_hours'
+        ? { product: 'all', rangeDays: 1, window: 'last_24_hours' }
+        : { product: 'all', rangeDays: 7 },
+    )];
   }
-  const snapshot = await getMetricsSnapshot(7);
+  const snapshot = inferredWindow === 'last_24_hours'
+    ? await getLast24MetricsSnapshot()
+    : await getMetricsSnapshot(7);
 
   let generated: { answer: AgentAnswer | null; usage: Record<string, number> | null; finishReason: string | null } = {
     answer: null,

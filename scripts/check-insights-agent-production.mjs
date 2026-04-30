@@ -411,7 +411,30 @@ async function main() {
     });
 
     // -----------------------------------------------------------------------
-    // 17. Regression — unknown metric must not hallucinate numbers
+    // 17. Regression — last 24-hour report must use the 24h report path
+    // -----------------------------------------------------------------------
+    const last24Report = await fetchJson(`${base}/api/chat`, {
+      method: 'POST',
+      body: {
+        message: 'What happened in the last 24 hours across all products? Give me a report with reliability, traffic, users, and source caveats.',
+      },
+      timeoutMs: CHAT_TIMEOUT_MS,
+    });
+    assert(last24Report.response.ok, `last 24-hour report returned HTTP ${last24Report.response.status}`);
+    assertAnalystShape(last24Report.body, 'last 24-hour report');
+    assert(/24-hour|24 hours|last 24/i.test(last24Report.body.reply), 'last 24-hour report should name the time window', last24Report.body.reply);
+    assert(/reliability|cloud run|traffic/i.test(last24Report.body.reply), 'last 24-hour report should include operational sections', last24Report.body.reply);
+    assert(findClaim(last24Report.body, 'hushh.ai', 'cloud_run.request_count')
+      || findClaim(last24Report.body, 'kai.hushh.ai', 'cloud_run.request_count'),
+    'last 24-hour report missing Cloud Run request claim');
+    results.push({
+      check: 'chat-last-24-hour-report',
+      status: 'ok',
+      detail: `claims=${last24Report.body.claims.length}, warnings=${last24Report.body.warnings.length}`,
+    });
+
+    // -----------------------------------------------------------------------
+    // 18. Regression — unknown metric must not hallucinate numbers
     // -----------------------------------------------------------------------
     const unknownMetric = await fetchJson(`${base}/api/chat`, {
       method: 'POST',

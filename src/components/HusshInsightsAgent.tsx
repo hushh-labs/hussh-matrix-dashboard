@@ -62,9 +62,13 @@ interface PromptOption {
 
 const STARTER_PROMPTS: PromptOption[] = [
   {
+    label: '24h report',
+    prompt: 'What happened in the last 24 hours across all products? Give me a report with reliability, traffic, users, source caveats, and recommended actions.',
+    tone: 'priority',
+  },
+  {
     label: 'All-product users',
     prompt: 'How many users does Hushh have across all products? Explain what is counted and what is not counted.',
-    tone: 'priority',
   },
   {
     label: 'Top 3 issues',
@@ -88,7 +92,8 @@ const DEEP_DIVE_PROMPTS: PromptOption[] = [
   },
   {
     label: 'What changed today?',
-    prompt: 'What changed today across Hushh products? Separate traffic, users, funnels, reliability, and data freshness.',
+    prompt: 'What happened in the last day across Hushh products? Separate reliability, traffic, users, funnels, source caveats, and data freshness.',
+    tone: 'priority',
   },
   {
     label: 'Source health audit',
