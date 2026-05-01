@@ -4519,7 +4519,7 @@ function buildKaiEnvironmentSplitAnswer(snapshot: MetricsSnapshot): AgentAnswer 
   return {
     reply: [
       `Kai production and Kai UAT are now separate in the analyst model for ${snapshot.range.startDate} to ${snapshot.range.endDate}.`,
-      `Production kai.hushh.ai: ${formatInteger(prodCloudRun?.requestCount)} Cloud Run requests, ${formatInteger(prodCloudRun?.errorCount)} non-2xx responses, and ${formatPercent(prodCloudRun?.errorRate)} error rate. Production GA4 users are ${prodGa4Available ? formatInteger(prodGa4?.users) : 'waiting'}, and production DB/product events are ${prodEvents?.available ? 'available' : 'waiting'}.`,
+      `Production kai.hushh.ai: ${formatInteger(prodCloudRun?.requestCount)} Cloud Run requests, ${formatInteger(prodCloudRun?.errorCount)} 5xx responses, and ${formatPercent(prodCloudRun?.errorRate)} error rate. Production GA4 users are ${prodGa4Available ? formatInteger(prodGa4?.users) : 'waiting'}, and production DB/product events are ${prodEvents?.available ? 'available' : 'waiting'}.`,
       `UAT uat.kai.hushh.ai: GA4 users are ${uatGa4Available ? formatInteger(uatGa4?.users) : 'waiting'}, GA4 sessions are ${uatGa4Available ? formatInteger(uatGa4?.sessions) : 'waiting'}, and UAT DB events are ${formatOptionalInteger(uatEvents?.totalEvents)} with DAU ${formatOptionalInteger(uatEvents?.dau)}.`,
       'Do not use UAT values as production truth; UAT is validation and test-environment behavior.',
     ].join('\n'),
@@ -4779,7 +4779,7 @@ function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMess
       confidence: 'high',
       suggestedQuestions: [
         'Show the daily reliability trend.',
-        'Which service had the most non-2xx responses?',
+        'Which service had the most 5xx responses?',
         'What action should we take on reliability?',
       ],
     };
