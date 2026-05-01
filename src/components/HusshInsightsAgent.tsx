@@ -32,6 +32,27 @@ interface AgentSource {
   available: boolean;
 }
 
+interface AgentKnowledgeSource {
+  id: string;
+  title: string;
+  category: 'metric_definition' | 'source_caveat' | 'runbook' | 'dashboard_context';
+}
+
+export interface MatrixAgentContext {
+  activeView?: 'overview' | 'platforms';
+  focusedProduct?: 'hushh.ai' | 'kai.hushh.ai' | 'uat.kai.hushh.ai' | 'hushhtech.com';
+  focusedEnvironment?: 'production' | 'uat';
+  focusedSource?: 'cloud_run' | 'ga4' | 'search_console' | 'product_events' | 'supabase' | 'business_funnel';
+  focusedMetricKey?: string;
+  focusedMetricLabel?: string;
+  panelTitle?: string;
+  selectedRange?: {
+    startDate: string;
+    endDate: string;
+    preset?: '7D' | '14D' | '30D' | '90D' | 'custom';
+  };
+}
+
 interface ChatResponse {
   reply: string;
   claims?: AgentClaim[];
@@ -39,6 +60,7 @@ interface ChatResponse {
   warnings?: string[];
   confidence?: 'high' | 'medium' | 'low';
   suggestedQuestions?: string[];
+  knowledgeSources?: AgentKnowledgeSource[];
 }
 
 interface ChatMessage {
@@ -51,6 +73,7 @@ interface ChatMessage {
   warnings?: string[];
   confidence?: 'high' | 'medium' | 'low';
   suggestedQuestions?: string[];
+  knowledgeSources?: AgentKnowledgeSource[];
   isError?: boolean;
 }
 
@@ -168,6 +191,13 @@ function statusClass(status: string, available: boolean) {
   return 'border-[#9a5b00]/15 bg-[#fff7e6] text-[#9a5b00]';
 }
 
+function knowledgeCategoryLabel(category: AgentKnowledgeSource['category']) {
+  if (category === 'metric_definition') return 'Metric';
+  if (category === 'source_caveat') return 'Caveat';
+  if (category === 'dashboard_context') return 'Context';
+  return 'Runbook';
+}
+
 function promptOptionClass(tone: PromptOption['tone'] = 'default') {
   if (tone === 'priority') return 'border-[#007aff]/20 bg-[#eef6ff]/95 text-[#005eb8] hover:border-[#007aff]/40 hover:bg-[#e3f1ff]';
   if (tone === 'warning') return 'border-[#9a5b00]/20 bg-[#fff7e6]/95 text-[#7a4b00] hover:border-[#9a5b00]/40 hover:bg-[#fff1d2]';
@@ -249,7 +279,7 @@ function PromptOptionTray({
   );
 }
 
-export default function HusshInsightsAgent() {
+export default function HusshInsightsAgent({ context }: { context?: MatrixAgentContext }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -301,7 +331,7 @@ export default function HusshInsightsAgent() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, history }),
+        body: JSON.stringify({ message: trimmed, history, context }),
       });
 
       if (!response.ok) {
@@ -321,6 +351,7 @@ export default function HusshInsightsAgent() {
         warnings: data.warnings ?? [],
         confidence: data.confidence,
         suggestedQuestions: data.suggestedQuestions ?? [],
+        knowledgeSources: data.knowledgeSources ?? [],
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -337,7 +368,7 @@ export default function HusshInsightsAgent() {
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, messages]);
+  }, [context, isLoading, messages]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -491,6 +522,19 @@ export default function HusshInsightsAgent() {
                                     </span>
                                   ))}
                                 </div>
+                                {(msg.knowledgeSources ?? []).length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {(msg.knowledgeSources ?? []).slice(0, 3).map((source) => (
+                                      <span
+                                        key={`${msg.id}-knowledge-${source.id}`}
+                                        className="rounded-full border border-black/[0.06] bg-[#f5f5f7]/85 px-2.5 py-1 text-[10px] font-bold text-[#6e6e73]"
+                                        title={source.title}
+                                      >
+                                        {knowledgeCategoryLabel(source.category)} · {source.title}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                                 {(msg.warnings ?? []).length > 0 && (
                                   <div className="rounded-xl border border-[#9a5b00]/15 bg-[#fff7e6]/80 px-3 py-2 text-[12px] font-medium leading-snug text-[#7a4b00]">
                                     {msg.warnings?.slice(0, 2).join(' ')}

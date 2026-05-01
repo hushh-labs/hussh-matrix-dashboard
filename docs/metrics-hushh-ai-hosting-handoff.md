@@ -74,7 +74,7 @@ Current platform sources:
 | HushhTech | Cloud Run Monitoring | `metrics.hushh.ai` reads `hushh-tech-prod/hushh-tech-website` directly through Google Cloud Monitoring |
 | HushhTech | Search Console BigQuery export | Preferred source. Search metrics appear when export tables are present in `hushh-ai-prod.searchconsole_hushhtech_com` |
 | HushhTech | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.hushhtech_search_console_api`; populated by Cloud Run Job `hushhtech-search-console-ingest` while the official export is waiting |
-| Hussh Insights AI | Gemini API | Server-only runtime key from Secret Manager secret `hushh-gemini-api-key`; answers are tool-grounded on aggregate dashboard metrics and return structured claims, sources, warnings, and confidence |
+| Matrix Agent One | Gemini API | Server-only runtime key from Secret Manager secret `hushh-gemini-api-key`; deterministic-first hybrid RAG analyst that uses aggregate metric tools for numeric truth, curated public-safe knowledge for definitions/caveats, visible dashboard context for follow-ups, and returns structured claims, sources, warnings, confidence, suggested questions, and knowledge sources |
 
 All product responses and `/api/analytics/all` expose a normalized
 `sourceCards` matrix with exactly three cards per product:

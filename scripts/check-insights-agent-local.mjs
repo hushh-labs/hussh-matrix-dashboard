@@ -255,6 +255,7 @@ async function main() {
       assert(Array.isArray(probe.body.claims), 'claims is not an array');
       assert(Array.isArray(probe.body.sources), 'sources is not an array');
       assert(Array.isArray(probe.body.warnings), 'warnings is not an array');
+      if (probe.body.knowledgeSources !== undefined) assert(Array.isArray(probe.body.knowledgeSources), 'knowledgeSources is not an array');
       assert(['high', 'medium', 'low'].includes(probe.body.confidence), `unexpected confidence ${probe.body.confidence}`);
     });
 
@@ -325,6 +326,100 @@ async function main() {
       assert(result.body?.reply?.length > 40, 'reply too short');
       assert(/24-hour|24 hours|last 24/i.test(result.body.reply), 'reply should name the 24-hour window');
       assert(Array.isArray(result.body.claims) && result.body.claims.length > 0, '24-hour report has no structured claims');
+    });
+
+    await test('uses visible UAT dashboard context for short follow-up', async () => {
+      const result = await fetchJson(`${base}/api/chat`, {
+        method: 'POST',
+        body: {
+          message: 'Explain this.',
+          context: {
+            activeView: 'overview',
+            focusedProduct: 'uat.kai.hushh.ai',
+            focusedEnvironment: 'uat',
+            focusedSource: 'ga4',
+            focusedMetricKey: 'ga4.events',
+            focusedMetricLabel: 'GA4 Events',
+            panelTitle: 'Kai UAT GA4 Events',
+            selectedRange: { startDate: '2026-04-25', endDate: '2026-05-01', preset: 'custom' },
+          },
+        },
+        timeoutMs: 45_000,
+      });
+      assert(result.response.ok, `returned ${result.response.status}`);
+      assert(/uat\.kai\.hushh\.ai|uat/i.test(result.body?.reply ?? ''), 'reply should use UAT context');
+      assert(!/kai\.hushh\.ai production/i.test(result.body?.reply ?? ''), 'reply should not pivot to Kai production');
+      assert(Array.isArray(result.body.knowledgeSources), 'knowledgeSources missing');
+    });
+
+    await test('preserves selected context date range unless last 24 hours is requested', async () => {
+      const result = await fetchJson(`${base}/api/chat`, {
+        method: 'POST',
+        body: {
+          message: 'What about users?',
+          context: {
+            activeView: 'overview',
+            focusedProduct: 'hushh.ai',
+            focusedEnvironment: 'production',
+            focusedSource: 'ga4',
+            focusedMetricKey: 'ga4.users',
+            focusedMetricLabel: 'Users',
+            panelTitle: 'Hushh AI GA4',
+            selectedRange: { startDate: '2026-04-25', endDate: '2026-05-01', preset: 'custom' },
+          },
+        },
+        timeoutMs: 45_000,
+      });
+      assert(result.response.ok, `returned ${result.response.status}`);
+      const claims = result.body?.claims ?? [];
+      if (claims.length > 0) {
+        assert(claims.every((claim) => claim.range?.startDate === '2026-04-25' && claim.range?.endDate === '2026-05-01'),
+          'claims should preserve the selected context date range');
+      }
+    });
+
+    await test('explains GA4 users without inventing account-user truth', async () => {
+      const result = await fetchJson(`${base}/api/chat`, {
+        method: 'POST',
+        body: { message: 'What does GA4 users mean?' },
+        timeoutMs: 45_000,
+      });
+      assert(result.response.ok, `returned ${result.response.status}`);
+      assert(/web audience|browser|device|analytics|GA4/i.test(result.body?.reply ?? ''), 'reply should define GA4 users');
+      assert(!/product-account truth|authenticated identity/i.test(result.body?.reply ?? '') || /not/i.test(result.body.reply), 'reply should not claim GA4 is account truth');
+      assert(Array.isArray(result.body.claims) && result.body.claims.length === 0, 'definition answer should not return numeric claims');
+      assert(Array.isArray(result.body.knowledgeSources) && result.body.knowledgeSources.length > 0, 'definition answer should include knowledge sources');
+    });
+
+    await test('states Cloud Run requests are not users', async () => {
+      const result = await fetchJson(`${base}/api/chat`, {
+        method: 'POST',
+        body: { message: 'Are Cloud Run requests users?' },
+        timeoutMs: 45_000,
+      });
+      assert(result.response.ok, `returned ${result.response.status}`);
+      assert(/not users|not people|not accounts|No\./i.test(result.body?.reply ?? ''), 'reply should reject request-as-user interpretation');
+      assert(Array.isArray(result.body.claims) && result.body.claims.length === 0, 'guardrail answer should not return numeric claims');
+    });
+
+    await test('ignores invalid oversized context safely', async () => {
+      const result = await fetchJson(`${base}/api/chat`, {
+        method: 'POST',
+        body: {
+          message: 'What does GA4 users mean?',
+          context: {
+            activeView: 'bad-view',
+            focusedProduct: 'mars',
+            focusedSource: 'stack_traces',
+            focusedMetricLabel: 'x'.repeat(5000),
+            selectedRange: { startDate: 'bad', endDate: 'bad', preset: 'bad' },
+          },
+        },
+        timeoutMs: 45_000,
+      });
+      assert(result.response.ok, `returned ${result.response.status}`);
+      assert(!/hushh-pda-uat|hushh-pda(?!\.)|hushh-ai-prod|analytics_\d+|searchconsole_|AIza[A-Za-z0-9_-]{30,}/i.test(result.text),
+        'invalid context path leaked internal identifiers');
     });
 
     await test('handles unknown metric gracefully', async () => {

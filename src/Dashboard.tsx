@@ -1,4 +1,4 @@
-import HusshInsightsAgent from './components/HusshInsightsAgent';
+import HusshInsightsAgent, { type MatrixAgentContext } from './components/HusshInsightsAgent';
 import { motion } from 'motion/react';
 import {
   Activity,
@@ -116,6 +116,9 @@ interface SourceMetricClickPayload {
   metric: ProductSourceCardMetric;
 }
 
+type MatrixAgentFocus = Omit<MatrixAgentContext, 'activeView' | 'selectedRange'>;
+type MatrixAgentSelectedRange = NonNullable<MatrixAgentContext['selectedRange']>;
+
 function toDateInputValue(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -141,6 +144,35 @@ function normalizeCustomRange(range: HushhAiDateRangeState): HushhAiDateRangeSta
     startDate: toDateInputValue(limitedStart),
     endDate: toDateInputValue(orderedEnd),
   };
+}
+
+function toAgentRange(range: HushhAiDateRangeState): MatrixAgentSelectedRange {
+  return {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    preset: range.preset === 'custom' ? 'custom' : `${range.preset}D` as MatrixAgentSelectedRange['preset'],
+  };
+}
+
+function agentSourceFromText(text: string, fallback: MatrixAgentContext['focusedSource']): MatrixAgentContext['focusedSource'] {
+  if (/cloud|request|5xx|error|latency|p95|reliability/i.test(text)) return 'cloud_run';
+  if (/ga4|audience|session|page view|traffic|engaged/i.test(text)) return 'ga4';
+  if (/search|click|impression|ctr|position/i.test(text)) return 'search_console';
+  if (/supabase|database|auth|profile|account/i.test(text)) return 'supabase';
+  if (/funnel|signup|persisted|onboarding|conversion/i.test(text)) return 'business_funnel';
+  if (/db|product event|dau|wau|mau|event/i.test(text)) return 'product_events';
+  return fallback;
+}
+
+function agentProductFromGroupKey(productKey: string): MatrixAgentContext['focusedProduct'] {
+  if (productKey === 'kai_production') return 'kai.hushh.ai';
+  if (productKey === 'kai_uat') return 'uat.kai.hushh.ai';
+  if (productKey === 'hushhtech') return 'hushhtech.com';
+  return 'hushh.ai';
+}
+
+function agentEnvironmentForProduct(product?: MatrixAgentContext['focusedProduct']): MatrixAgentContext['focusedEnvironment'] {
+  return product === 'uat.kai.hushh.ai' ? 'uat' : 'production';
 }
 
 function formatDurationFromMinutes(minutes: number | null | undefined): string {
@@ -1176,6 +1208,7 @@ export default function Dashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [usingMock, setUsingMock] = useState(false);
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
+  const [agentFocus, setAgentFocus] = useState<MatrixAgentFocus | null>(null);
 
   const loadData = useCallback(async (options: { background?: boolean } = {}) => {
     if (options.background) {
@@ -1264,6 +1297,23 @@ export default function Dashboard() {
   const hushhTechRangeLabel = data?.hushhTech?.window
     ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
     : 'Selected range';
+  const agentSelectedRange = (product?: MatrixAgentContext['focusedProduct']): MatrixAgentSelectedRange => {
+    if (product === 'hushh.ai') return toAgentRange(hushhAiRange);
+    if (product === 'kai.hushh.ai' || product === 'uat.kai.hushh.ai') return toAgentRange(kaiRange);
+    if (product === 'hushhtech.com' && data?.hushhTech?.window) {
+      return {
+        startDate: data.hushhTech.window.startDate,
+        endDate: data.hushhTech.window.endDate,
+        preset: 'custom',
+      };
+    }
+    return toAgentRange(activeTab === 'platforms' ? kaiRange : hushhAiRange);
+  };
+  const agentContext: MatrixAgentContext = {
+    activeView: activeTab,
+    ...(agentFocus ?? {}),
+    selectedRange: agentSelectedRange(agentFocus?.focusedProduct),
+  };
   const statusText = usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
 
@@ -1407,17 +1457,6 @@ export default function Dashboard() {
   };
 
   const openHushhAiGa4Detail = (focus: 'users' | 'sessions' | 'events' | 'engagement' | 'pages' | 'acquisition' | 'source' | 'landing' | 'geo' | 'timing' | 'all', label?: string) => {
-    const ga4 = data?.hushhAi?.ga4;
-    if (!ga4) {
-      setMetricDetail({
-        title: label ?? 'Hushh AI GA4',
-        subtitle: 'GA4 aggregate data is not available for hushh.ai yet.',
-        badge: 'Waiting',
-        sections: [],
-        caveats: ['No GA4 Data API aggregate rows are currently available.'],
-      });
-      return;
-    }
     const focusTitle: Record<typeof focus, string> = {
       users: 'Hushh AI Users',
       sessions: 'Hushh AI Sessions',
@@ -1431,6 +1470,38 @@ export default function Dashboard() {
       timing: 'Hushh AI Session Timing',
       all: 'Hushh AI GA4 Details',
     };
+    const metricKeyByFocus: Record<typeof focus, string> = {
+      users: 'ga4.users',
+      sessions: 'ga4.sessions',
+      events: 'ga4.events',
+      engagement: 'ga4.engaged_sessions',
+      pages: 'ga4.top_pages',
+      acquisition: 'ga4.acquisition',
+      source: 'ga4.source_medium',
+      landing: 'ga4.landing_pages',
+      geo: 'ga4.geo_device',
+      timing: 'ga4.session_timing',
+      all: 'ga4.users',
+    };
+    setAgentFocus({
+      focusedProduct: 'hushh.ai',
+      focusedEnvironment: 'production',
+      focusedSource: 'ga4',
+      focusedMetricKey: metricKeyByFocus[focus],
+      focusedMetricLabel: label ?? focusTitle[focus],
+      panelTitle: focusTitle[focus],
+    });
+    const ga4 = data?.hushhAi?.ga4;
+    if (!ga4) {
+      setMetricDetail({
+        title: label ?? 'Hushh AI GA4',
+        subtitle: 'GA4 aggregate data is not available for hushh.ai yet.',
+        badge: 'Waiting',
+        sections: [],
+        caveats: ['No GA4 Data API aggregate rows are currently available.'],
+      });
+      return;
+    }
     const selectedRange = ga4.range
       ? `${ga4.range.startDate} to ${ga4.range.endDate}`
       : `${hushhAiRange.startDate} to ${hushhAiRange.endDate}`;
@@ -1446,6 +1517,14 @@ export default function Dashboard() {
   };
 
   const openHushhAiProductEventsDetail = (label?: string) => {
+    setAgentFocus({
+      focusedProduct: 'hushh.ai',
+      focusedEnvironment: 'production',
+      focusedSource: 'product_events',
+      focusedMetricKey: 'product_events.expected',
+      focusedMetricLabel: label ?? 'Hushh AI Product Events',
+      panelTitle: 'Hushh AI Product Events',
+    });
     const productEvents = data?.hushhAi?.productEvents as {
       expectedEvents?: Array<{ eventName?: string; label?: string; status?: string; count?: number | null; note?: string }>;
       note?: string;
@@ -1479,6 +1558,14 @@ export default function Dashboard() {
   };
 
   const openHushhAiSearchDetail = (label?: string) => {
+    setAgentFocus({
+      focusedProduct: 'hushh.ai',
+      focusedEnvironment: 'production',
+      focusedSource: 'search_console',
+      focusedMetricKey: agentSourceFromText(label ?? 'search clicks', 'search_console') === 'search_console' ? 'search_console.clicks' : undefined,
+      focusedMetricLabel: label ?? 'Hushh AI Search Console',
+      panelTitle: 'Hushh AI Search Console',
+    });
     const search = data?.hushhAi?.searchConsole;
     setMetricDetail({
       title: label ?? 'Hushh AI Search Console',
@@ -1521,6 +1608,15 @@ export default function Dashboard() {
   };
 
   const openKaiProductionDetail = (label = 'Kai Production Details', focus?: BreakdownMetric) => {
+    const source = agentSourceFromText(`${label} ${focus?.label ?? ''}`, 'cloud_run');
+    setAgentFocus({
+      focusedProduct: 'kai.hushh.ai',
+      focusedEnvironment: 'production',
+      focusedSource: source,
+      focusedMetricKey: source === 'cloud_run' ? 'cloud_run.request_count' : source === 'ga4' ? 'ga4.users' : 'product_events.total_events',
+      focusedMetricLabel: focus?.label ?? label,
+      panelTitle: label,
+    });
     const ga4Warnings = data?.kaiProduction?.productionGa4?.warnings ?? [];
     setMetricDetail({
       title: label,
@@ -1555,6 +1651,15 @@ export default function Dashboard() {
   };
 
   const openKaiUatDetail = (label = 'Kai UAT Details', focus?: BreakdownMetric) => {
+    const source = agentSourceFromText(`${label} ${focus?.label ?? ''}`, 'ga4');
+    setAgentFocus({
+      focusedProduct: 'uat.kai.hushh.ai',
+      focusedEnvironment: 'uat',
+      focusedSource: source,
+      focusedMetricKey: source === 'product_events' ? 'product_events.total_events' : source === 'search_console' ? 'search_console.clicks' : 'ga4.events',
+      focusedMetricLabel: focus?.label ?? label,
+      panelTitle: label,
+    });
     const ga4Warnings = data?.kaiGa4?.warnings ?? [];
     setMetricDetail({
       title: label,
@@ -1599,6 +1704,23 @@ export default function Dashboard() {
   };
 
   const openHushhTechDetail = (label = 'HushhTech Details', focus?: BreakdownMetric) => {
+    const source = agentSourceFromText(`${label} ${focus?.label ?? ''}`, 'supabase');
+    setAgentFocus({
+      focusedProduct: 'hushhtech.com',
+      focusedEnvironment: 'production',
+      focusedSource: source,
+      focusedMetricKey: source === 'business_funnel'
+        ? 'funnel.signups'
+        : source === 'cloud_run'
+          ? 'cloud_run.request_count'
+          : source === 'ga4'
+            ? 'traffic.sessions'
+            : source === 'search_console'
+              ? 'search_console.clicks'
+              : 'supabase.total_users',
+      focusedMetricLabel: focus?.label ?? label,
+      panelTitle: label,
+    });
     const qualityWarnings = data?.hushhTech?.dataQualityWarnings ?? [];
     setMetricDetail({
       title: label,
@@ -1673,6 +1795,16 @@ export default function Dashboard() {
   };
 
   const handleSourceMetricClick = (payload: SourceMetricClickPayload) => {
+    const focusedProduct = agentProductFromGroupKey(payload.productKey);
+    const focusedSource = agentSourceFromText(`${payload.card.key} ${payload.card.label} ${payload.section?.label ?? ''} ${payload.metric.label}`, 'ga4');
+    setAgentFocus({
+      focusedProduct,
+      focusedEnvironment: agentEnvironmentForProduct(focusedProduct),
+      focusedSource,
+      focusedMetricKey: `${focusedSource}.${payload.metric.key}`,
+      focusedMetricLabel: payload.metric.label,
+      panelTitle: `${payload.card.label}${payload.section?.label ? ` · ${payload.section.label}` : ''}`,
+    });
     if (payload.productKey === 'hushh_ai' && payload.card.key === 'ga4') {
       if (/user/i.test(payload.metric.label)) openHushhAiGa4Detail('users', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
       else if (/session/i.test(payload.metric.label) && !/engaged/i.test(payload.metric.label)) openHushhAiGa4Detail('sessions', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
@@ -2415,7 +2547,7 @@ export default function Dashboard() {
       </div>
 
       <MetricDetailDialog detail={metricDetail} onClose={closeMetricDetail} />
-      <HusshInsightsAgent />
+      <HusshInsightsAgent context={agentContext} />
     </div>
   );
 }
