@@ -1763,44 +1763,45 @@ function ga4TotalsFromRow(row: Ga4RunReportRow | undefined, offset = 0) {
   };
 }
 
-function sumGa4Rows(rows: Ga4RunReportRow[] | undefined, metricOffset = 0) {
-  return (rows ?? []).reduce(
-    (totals, row) => ({
-      users: totals.users + ga4Metric(row, metricOffset),
-      sessions: totals.sessions + ga4Metric(row, metricOffset + 1),
-      events: totals.events + ga4Metric(row, metricOffset + 2),
-    }),
-    { users: 0, sessions: 0, events: 0 },
-  );
-}
+type Ga4SectionTotals = {
+  users: number | null;
+  sessions: number | null;
+  events: number | null;
+  available: boolean;
+  label?: string | null;
+  source?: string | null;
+  note?: string | null;
+  expectedLagSeconds?: number | null;
+};
 
 function buildGa4Sections(params: {
   generatedAt: string;
-  realtime?: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null };
-  last24Hours?: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null };
-  last7Days?: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null };
-  selectedTotal?: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null };
+  realtime?: Ga4SectionTotals;
+  last24Hours?: Ga4SectionTotals;
+  last7Days?: Ga4SectionTotals;
+  selectedTotal?: Ga4SectionTotals;
 }) {
   const toSection = (
     key: string,
     label: string,
     mode: string,
-    totals: { users: number | null; sessions: number | null; events: number | null; available: boolean; note?: string | null } | undefined,
+    totals: Ga4SectionTotals | undefined,
   ) => ({
     key,
-    label,
+    label: totals?.label ?? label,
     status: totals?.available ? (key === 'realtime' ? 'live' : 'delayed') : 'waiting',
     stateClass: sourceStateClass(totals?.available ? (key === 'realtime' ? 'live' : 'delayed') : 'waiting'),
-    source: mode,
+    source: totals?.source ?? mode,
     freshness: {
       generatedAt: params.generatedAt,
-      expectedLagSeconds: key === 'realtime' ? 60 : 86_400,
+      expectedLagSeconds: totals?.expectedLagSeconds ?? (key === 'realtime' ? 60 : 86_400),
     },
     metrics: [
       sourceMetric('users', key === 'realtime' ? 'Active Users' : 'Users', totals?.users),
       sourceMetric('sessions', 'Sessions', totals?.sessions),
       sourceMetric('events', 'Events', totals?.events),
     ],
+    note: totals?.note ?? null,
     blocker: totals?.available ? null : totals?.note ?? `${label} is waiting for GA4 rows.`,
   });
 
@@ -1824,7 +1825,7 @@ async function fetchGa4DataApiSummary(
   const coreMetrics = [{ name: 'activeUsers' }, { name: 'sessions' }, { name: 'eventCount' }];
 
   try {
-    const [realtime, last24Hourly, last7Totals, daily, totals, topEvents, geo] = await Promise.all([
+    const [realtime, lastDayTotals, last7Totals, daily, totals, topEvents, geo] = await Promise.all([
       runGa4RealtimeReport(propertyId, {
         minuteRanges: [{ name: 'last_30_minutes', startMinutesAgo: 29, endMinutesAgo: 0 }],
         metrics: [{ name: 'activeUsers' }, { name: 'eventCount' }],
@@ -1832,9 +1833,7 @@ async function fetchGa4DataApiSummary(
       }),
       runGa4Report(propertyId, {
         dateRanges: last24DateRanges,
-        dimensions: [{ name: 'dateHour' }],
         metrics: coreMetrics,
-        orderBys: [{ dimension: { dimensionName: 'dateHour' } }],
       }),
       runGa4Report(propertyId, {
         dateRanges: last7DateRanges,
@@ -1878,7 +1877,8 @@ async function fetchGa4DataApiSummary(
       available: true,
       note: null,
     };
-    const last24Totals = sumGa4Rows(last24Hourly.rows);
+    const lastDayRow = lastDayTotals.rows?.[0];
+    const lastDayProcessedTotals = ga4TotalsFromRow(lastDayRow);
     const last7Row = last7Totals.rows?.[0];
     const selectedTotals = ga4TotalsFromRow(totalsRow);
 
@@ -1907,9 +1907,11 @@ async function fetchGa4DataApiSummary(
           generatedAt,
           realtime: realtimeTotals,
           last24Hours: {
-            ...last24Totals,
+            ...lastDayProcessedTotals,
             available: true,
-            note: 'Last 24 hours is assembled from GA4 hourly processed rows.',
+            label: 'Last Day Aggregate',
+            source: 'GA4 processed date report',
+            note: 'GA4 Data API provides this as a processed yesterday-through-today date aggregate, not an exact rolling 24-hour unique-user window.',
           },
           last7Days: {
             ...ga4TotalsFromRow(last7Row),
@@ -3705,11 +3707,16 @@ function compactGa4(ga4: Record<string, unknown> | null, range: AgentRange): Rec
     last24Hours: last24Section ? {
       available: Boolean(last24Section.status === 'delayed' || last24Section.status === 'live' || last24Section.status === 'near_live'),
       status: String(last24Section.status ?? 'unknown'),
+      label: String(last24Section.label ?? 'Last 24 Hours'),
       source: String(last24Section.source ?? 'GA4 processed report'),
       users: sourceSectionMetric(last24Section, 'users'),
       sessions: sourceSectionMetric(last24Section, 'sessions'),
       events: sourceSectionMetric(last24Section, 'events'),
-      note: typeof last24Section.blocker === 'string' ? sanitizeAgentText(last24Section.blocker) : null,
+      note: typeof last24Section.note === 'string'
+        ? sanitizeAgentText(last24Section.note)
+        : typeof last24Section.blocker === 'string'
+          ? sanitizeAgentText(last24Section.blocker)
+          : null,
     } : null,
     topEvents: recordArray(ga4.topEvents).slice(0, 8).map((row) => ({
       eventName: String(row.eventName ?? ''),
@@ -3962,7 +3969,7 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
     generatedAt: fetchedAt,
     window,
     windowLabel: window === 'last_24_hours'
-      ? `rolling 24 hours ending ${fetchedAt}`
+      ? `24-hour operations snapshot ending ${fetchedAt}; source-specific activity windows are labeled per metric`
       : `${compactRange.startDate} to ${compactRange.endDate}`,
     range: compactRange,
     catalog: METRIC_CATALOG,
@@ -4111,7 +4118,7 @@ Answer only from the provided aggregate tool results. Do not invent data.
 Return JSON matching the schema exactly.
 Every numeric claim in reply must appear in claims with a canonical metric id from the catalog when possible.
 Use product names exactly: hushh.ai, kai.hushh.ai, uat.kai.hushh.ai, hushhtech.com.
-When tool results have window="last_24_hours", call it a rolling 24-hour report and prefer the last24Hours GA4 section over selected rangeTotals for GA4 claims.
+When tool results have window="last_24_hours", call Cloud Run reliability rolling 24-hour data. For GA4 or traffic sections, use the section label/source/note exactly; if a section says it is date-based or not exact rolling, state that caveat instead of calling it exact rolling 24-hour users.
 Never blend kai.hushh.ai production with uat.kai.hushh.ai. If the user says "Kai UAT", use uat.kai.hushh.ai; if they say "Kai production" or "kai.hushh.ai", use kai.hushh.ai.
 Use complete sentences. Never end mid-sentence, after a comma, after an open parenthesis, or after words such as "of", "for", "with", "and", "DAU", or "DA".
 For "top 3 issues" or "act on" requests, return exactly three numbered action items in the reply.
@@ -4551,6 +4558,30 @@ function hasAnyNumber(...values: unknown[]): boolean {
   return values.some((value) => optionalNumber(value) != null);
 }
 
+function ga4WindowLabel(ga4Window: Record<string, unknown> | null, fallback = 'last 24h'): string {
+  const label = typeof ga4Window?.label === 'string' && ga4Window.label.trim()
+    ? ga4Window.label.trim()
+    : fallback;
+  return label.toLowerCase();
+}
+
+function ga4WindowSource(ga4Window: Record<string, unknown> | null, fallback: string): string {
+  return typeof ga4Window?.source === 'string' && ga4Window.source.trim()
+    ? ga4Window.source.trim()
+    : fallback;
+}
+
+function ga4WindowNote(ga4Window: Record<string, unknown> | null): string | null {
+  return typeof ga4Window?.note === 'string' && ga4Window.note.trim()
+    ? ga4Window.note.trim()
+    : null;
+}
+
+function ga4ActivityLine(productLabel: string, ga4Window: Record<string, unknown> | null, unavailableText: string): string {
+  if (!hasAnyNumber(ga4Window?.users, ga4Window?.sessions, ga4Window?.events)) return unavailableText;
+  return `${productLabel} GA4 ${ga4WindowLabel(ga4Window)}: ${formatOptionalInteger(ga4Window?.users)} users, ${formatOptionalInteger(ga4Window?.sessions)} sessions, ${formatOptionalInteger(ga4Window?.events)} events`;
+}
+
 function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
   const end = new Date(snapshot.generatedAt);
   const start = new Date(end.getTime() - 86_400_000);
@@ -4578,15 +4609,9 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
   const kaiUatLast24 = ga4Last24(snapshot.products['uat.kai.hushh.ai'].ga4);
   const hushhTechTraffic = asRecord(snapshot.products['hushhtech.com'].traffic);
   const activityLines = [
-    hasAnyNumber(hushhAiLast24?.users, hushhAiLast24?.sessions, hushhAiLast24?.events)
-      ? `hushh.ai GA4 last 24h: ${formatOptionalInteger(hushhAiLast24?.users)} users, ${formatOptionalInteger(hushhAiLast24?.sessions)} sessions, ${formatOptionalInteger(hushhAiLast24?.events)} events`
-      : 'hushh.ai GA4 last-24h data is waiting or unavailable',
-    hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events)
-      ? `kai.hushh.ai production GA4 last 24h: ${formatOptionalInteger(kaiProdLast24?.users)} users, ${formatOptionalInteger(kaiProdLast24?.sessions)} sessions, ${formatOptionalInteger(kaiProdLast24?.events)} events`
-      : 'kai.hushh.ai production GA4 last-24h data is waiting or unavailable',
-    hasAnyNumber(kaiUatLast24?.users, kaiUatLast24?.sessions, kaiUatLast24?.events)
-      ? `uat.kai.hushh.ai UAT GA4 last 24h: ${formatOptionalInteger(kaiUatLast24?.users)} users, ${formatOptionalInteger(kaiUatLast24?.sessions)} sessions, ${formatOptionalInteger(kaiUatLast24?.events)} events`
-      : 'uat.kai.hushh.ai UAT GA4 last-24h data is waiting or unavailable',
+    ga4ActivityLine('hushh.ai', hushhAiLast24, 'hushh.ai GA4 last-day data is waiting or unavailable'),
+    ga4ActivityLine('kai.hushh.ai production', kaiProdLast24, 'kai.hushh.ai production GA4 last-24h data is waiting or unavailable'),
+    ga4ActivityLine('uat.kai.hushh.ai UAT', kaiUatLast24, 'uat.kai.hushh.ai UAT GA4 last-24h data is waiting or unavailable'),
     hasAnyNumber(hushhTechTraffic?.active1DayUsers, hushhTechTraffic?.sessions, hushhTechTraffic?.pageViews)
       ? `hushhtech.com traffic: ${formatOptionalInteger(hushhTechTraffic?.active1DayUsers)} 1-day active users, ${formatOptionalInteger(hushhTechTraffic?.sessions)} sessions, ${formatOptionalInteger(hushhTechTraffic?.pageViews)} page views`
       : 'hushhtech.com 1-day traffic data is waiting or unavailable',
@@ -4598,21 +4623,27 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
     deterministicClaim(snapshot, row.product, 'cloud_run.error_rate', 'Cloud Run error rate', row.errorRate == null ? null : Number((row.errorRate * 100).toFixed(2)), '%', 'Cloud Run Monitoring'),
   ]);
   if (hasAnyNumber(hushhAiLast24?.users, hushhAiLast24?.sessions, hushhAiLast24?.events)) {
+    const label = ga4WindowLabel(hushhAiLast24);
+    const source = ga4WindowSource(hushhAiLast24, 'GA4');
     claims.push(
-      deterministicClaim(snapshot, 'hushh.ai', 'ga4.last_24_hours.users', 'GA4 last 24h users', optionalNumber(hushhAiLast24?.users), 'users', 'GA4'),
-      deterministicClaim(snapshot, 'hushh.ai', 'ga4.last_24_hours.events', 'GA4 last 24h events', optionalNumber(hushhAiLast24?.events), 'events', 'GA4'),
+      deterministicClaim(snapshot, 'hushh.ai', 'ga4.last_24_hours.users', `GA4 ${label} users`, optionalNumber(hushhAiLast24?.users), 'users', source),
+      deterministicClaim(snapshot, 'hushh.ai', 'ga4.last_24_hours.events', `GA4 ${label} events`, optionalNumber(hushhAiLast24?.events), 'events', source),
     );
   }
   if (hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events)) {
+    const label = ga4WindowLabel(kaiProdLast24);
+    const source = ga4WindowSource(kaiProdLast24, 'Kai production GA4');
     claims.push(
-      deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.last_24_hours.users', 'Production GA4 last 24h users', optionalNumber(kaiProdLast24?.users), 'users', 'Kai production GA4'),
-      deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.last_24_hours.events', 'Production GA4 last 24h events', optionalNumber(kaiProdLast24?.events), 'events', 'Kai production GA4'),
+      deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.last_24_hours.users', `Production GA4 ${label} users`, optionalNumber(kaiProdLast24?.users), 'users', source),
+      deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.last_24_hours.events', `Production GA4 ${label} events`, optionalNumber(kaiProdLast24?.events), 'events', source),
     );
   }
   if (hasAnyNumber(kaiUatLast24?.users, kaiUatLast24?.sessions, kaiUatLast24?.events)) {
+    const label = ga4WindowLabel(kaiUatLast24);
+    const source = ga4WindowSource(kaiUatLast24, 'Kai UAT GA4');
     claims.push(
-      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.last_24_hours.users', 'UAT GA4 last 24h users', optionalNumber(kaiUatLast24?.users), 'users', 'Kai UAT GA4'),
-      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.last_24_hours.events', 'UAT GA4 last 24h events', optionalNumber(kaiUatLast24?.events), 'events', 'Kai UAT GA4'),
+      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.last_24_hours.users', `UAT GA4 ${label} users`, optionalNumber(kaiUatLast24?.users), 'users', source),
+      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.last_24_hours.events', `UAT GA4 ${label} events`, optionalNumber(kaiUatLast24?.events), 'events', source),
     );
   }
   if (hasAnyNumber(hushhTechTraffic?.active1DayUsers, hushhTechTraffic?.sessions, hushhTechTraffic?.pageViews)) {
@@ -4624,7 +4655,10 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
   }
 
   const warnings = warningList(
-    'Search Console and some product-account sources are daily or delayed, so this report uses near-live Cloud Run plus last-24h/1-day aggregate traffic where available.',
+    'Search Console and some product-account sources are daily or delayed, so this report uses rolling Cloud Run reliability plus source-specific traffic aggregates where available.',
+    ga4WindowNote(hushhAiLast24),
+    ga4WindowNote(kaiProdLast24),
+    ga4WindowNote(kaiUatLast24),
     !hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events) ? 'kai.hushh.ai production GA4 last-24h data is waiting or unavailable.' : null,
     snapshot.products['hushh.ai'].warnings,
     snapshot.products['kai.hushh.ai'].warnings,
@@ -4634,7 +4668,7 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
 
   return {
     reply: [
-      `Rolling 24-hour report for ${windowText}.`,
+      `24-hour operations report for ${windowText}. Cloud Run reliability uses the rolling window; activity metrics use the exact source window named on each metric.`,
       `Reliability: ${reliabilityLine}.`,
       `Activity: ${activityLines.join('; ')}.`,
       highestError

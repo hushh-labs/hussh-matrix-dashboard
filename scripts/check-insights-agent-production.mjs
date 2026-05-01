@@ -130,6 +130,15 @@ function ga4FromAnalytics(all, product) {
   return {};
 }
 
+function sectionByKey(source, key) {
+  return (source?.sections ?? []).find((section) => section?.key === key) ?? null;
+}
+
+function sectionMetric(section, key) {
+  const metric = (section?.metrics ?? []).find((item) => item?.key === key);
+  return numericValue(metric?.value);
+}
+
 function hushhTechSupabaseFromAnalytics(all) {
   return all?.hushhTech?.data?.supabase?.rangeTotals ?? {};
 }
@@ -427,6 +436,30 @@ async function main() {
     assert(findClaim(last24Report.body, 'hushh.ai', 'cloud_run.request_count')
       || findClaim(last24Report.body, 'kai.hushh.ai', 'cloud_run.request_count'),
     'last 24-hour report missing Cloud Run request claim');
+    const hushhAiTwoDay = await fetchJson(`${base}/api/analytics/hushhai?window_days=2`, { timeoutMs: options.timeoutMs });
+    assert(hushhAiTwoDay.response.ok, `hushh.ai two-day analytics returned HTTP ${hushhAiTwoDay.response.status}`);
+    const hushhAiGa4 = hushhAiTwoDay.body?.data?.ga4;
+    const hushhAiLastDay = sectionByKey(hushhAiGa4, 'last_24_hours');
+    const expectedHushhAiUsers = numericValue(hushhAiGa4?.rangeTotals?.users);
+    const actualHushhAiUsers = sectionMetric(hushhAiLastDay, 'users');
+    if (hushhAiGa4?.source === 'ga4-data-api' && expectedHushhAiUsers != null && actualHushhAiUsers != null) {
+      assert(
+        Math.abs(actualHushhAiUsers - expectedHushhAiUsers) <= 0.01,
+        'hushh.ai GA4 last-day users must use the aggregate distinct total, not summed hourly activeUsers',
+        `expected ${expectedHushhAiUsers}, got ${actualHushhAiUsers}`,
+      );
+      assertClaimMatches(last24Report.body, 'hushh.ai', 'ga4.last_24_hours.users', expectedHushhAiUsers);
+      assert(
+        /date aggregate|not an exact rolling|source window/i.test(`${last24Report.body.reply}\n${last24Report.body.warnings.join('\n')}`),
+        'last 24-hour report should caveat date-based GA4 user aggregates',
+        last24Report.body.reply,
+      );
+      assert(
+        !/hushh\.ai GA4 last 24h:\s*86 users/i.test(last24Report.body.reply),
+        'last 24-hour report should not repeat the known invalid summed-hourly 86-user wording',
+        last24Report.body.reply,
+      );
+    }
     results.push({
       check: 'chat-last-24-hour-report',
       status: 'ok',
