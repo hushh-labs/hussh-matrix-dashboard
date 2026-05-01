@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   TrendingUp,
   Users,
+  X,
 } from 'lucide-react';
 import {
   Area,
@@ -50,6 +51,8 @@ import type {
   KpiStat,
   PlatformStatus,
   ProductSourceCard,
+  ProductSourceCardMetric,
+  ProductSourceCardSection,
   ProductSourceGroup,
   ProductSourceStatus,
 } from './lib/types';
@@ -82,6 +85,35 @@ interface HushhAiDateRangeState {
   preset: DatePreset | 'custom';
   startDate: string;
   endDate: string;
+}
+
+interface DetailRow {
+  label: string;
+  value: string;
+  detail?: string;
+  meta?: string;
+}
+
+interface DetailSection {
+  title: string;
+  subtitle?: string;
+  rows: DetailRow[];
+}
+
+interface MetricDetailState {
+  title: string;
+  subtitle: string;
+  badge?: string;
+  summary?: DetailRow[];
+  sections: DetailSection[];
+  caveats?: string[];
+}
+
+interface SourceMetricClickPayload {
+  productKey: string;
+  card: ProductSourceCard;
+  section?: ProductSourceCardSection;
+  metric: ProductSourceCardMetric;
 }
 
 function toDateInputValue(date: Date): string {
@@ -179,10 +211,55 @@ function formatOptionalNumber(value: number | null | undefined, fallback = '—'
   return typeof value === 'number' && Number.isFinite(value) ? formatNumber(value) : fallback;
 }
 
+function formatOptionalPercent(value: number | null | undefined, decimals = 1): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${(value * 100).toFixed(decimals)}%` : '—';
+}
+
+function formatDurationFromSeconds(seconds: number | null | undefined): string {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return '—';
+  const rounded = Math.round(seconds);
+  if (rounded < 60) return `${rounded}s`;
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  if (minutes < 60) return `${minutes}m ${remainder}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
 function formatSourceMetricValue(status: ProductSourceStatus | undefined, value: number | null, displayValue?: string): string {
   if (displayValue) return displayValue;
   if (value == null) return status === 'waiting' || status === 'not_configured' ? 'Waiting' : '—';
   return formatNumber(value);
+}
+
+function eventDescription(eventName: string): string {
+  const normalized = eventName.toLowerCase();
+  if (normalized === 'page_view') return 'GA4 page-view event fired when a page/screen is viewed.';
+  if (normalized === 'session_start') return 'GA4 automatic event fired when a new session starts.';
+  if (normalized === 'first_visit') return 'GA4 automatic event fired for a first-time visitor/device.';
+  if (['fcp', 'lcp', 'cls', 'inp', 'ttfb'].includes(normalized)) {
+    return 'Web-vitals performance telemetry, not a product conversion event.';
+  }
+  return 'GA4 aggregate event. Product meaning depends on site instrumentation.';
+}
+
+function readableMetricLabel(value: string): string {
+  return value
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function safeUrlLabel(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.hostname}${url.pathname}`;
+  } catch {
+    return value.split('?')[0].split('#')[0];
+  }
+}
+
+function detailRow(label: string, value: string, detail?: string, meta?: string): DetailRow {
+  return { label, value, detail, meta };
 }
 
 function CustomTooltip({ active, payload, label }: any) {
@@ -271,10 +348,12 @@ function MetricListCard({
   title,
   subtitle,
   items,
+  onItemClick,
 }: {
   title: string;
   subtitle: string;
   items: BreakdownMetric[];
+  onItemClick?: (item: BreakdownMetric) => void;
 }) {
   return (
     <div className={cn(appleCard, 'p-5')}>
@@ -289,8 +368,9 @@ function MetricListCard({
           {items.map((item) => {
             const isMissingMetric = item.label.startsWith('Missing');
             const valueColor = isMissingMetric && item.value > 0 ? 'text-[#b25000]' : 'text-[#1d1d1f]';
-            return (
-              <div key={`${item.label}-${item.detail ?? ''}`} className="flex min-h-14 items-center justify-between gap-4 py-3">
+            const rowClass = 'flex min-h-14 w-full items-center justify-between gap-4 py-3 text-left';
+            const rowContent = (
+              <>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     {item.color && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />}
@@ -302,7 +382,24 @@ function MetricListCard({
                   <p className={cn('text-sm font-bold', valueColor)}>{item.displayValue ?? formatNumber(item.value)}</p>
                   {item.percentage != null && <p className="text-xs font-medium text-[#86868b]">{item.percentage}%</p>}
                 </div>
-              </div>
+              </>
+            );
+            return (
+              onItemClick ? (
+                <button
+                  key={`${item.label}-${item.detail ?? ''}`}
+                  type="button"
+                  onClick={() => onItemClick(item)}
+                  className={cn(rowClass, 'rounded-md px-2 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+                  aria-label={`Show details for ${item.label}`}
+                >
+                  {rowContent}
+                </button>
+              ) : (
+                <div key={`${item.label}-${item.detail ?? ''}`} className={rowClass}>
+                  {rowContent}
+                </div>
+              )
             );
           })}
         </div>
@@ -311,9 +408,47 @@ function MetricListCard({
   );
 }
 
-function SourceCard({ card }: { card: ProductSourceCard }) {
+function SourceCard({
+  productKey,
+  card,
+  onMetricClick,
+}: {
+  productKey: string;
+  card: ProductSourceCard;
+  onMetricClick?: (payload: SourceMetricClickPayload) => void;
+}) {
   const metricItems = card.metrics.slice(0, 4);
   const sections = (card.sections ?? []).filter((section) => section.metrics.length > 0 || section.blocker);
+  const renderMetricTile = (metricItem: ProductSourceCardMetric, section?: ProductSourceCardSection) => {
+    const metricContent = (
+      <>
+        <p className="truncate text-[10px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
+        <p className="mt-1 truncate text-base font-semibold text-[#1d1d1f]">
+          {formatSourceMetricValue(section?.status ?? card.status, metricItem.value, metricItem.displayValue)}
+        </p>
+      </>
+    );
+    const className = 'min-h-[54px] rounded-md border border-black/[0.03] bg-white/80 p-2 text-left';
+    if (!onMetricClick) {
+      return (
+        <div key={`${section?.key ?? 'card'}-${metricItem.key}`} className={className}>
+          {metricContent}
+        </div>
+      );
+    }
+    return (
+      <button
+        key={`${section?.key ?? 'card'}-${metricItem.key}`}
+        type="button"
+        onClick={() => onMetricClick({ productKey, card, section, metric: metricItem })}
+        className={cn(className, 'transition hover:border-[#007aff]/20 hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+        aria-label={`Show details for ${card.label} ${section?.label ? `${section.label} ` : ''}${metricItem.label}`}
+      >
+        {metricContent}
+      </button>
+    );
+  };
+
   return (
     <div className={cn(appleCard, 'min-h-[214px] p-5')}>
       <div className="flex items-start justify-between gap-3">
@@ -344,14 +479,7 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
                   ) : null}
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-                  {section.metrics.slice(0, 4).map((metricItem) => (
-                    <div key={`${section.key}-${metricItem.key}`} className="min-h-[54px] rounded-md border border-black/[0.03] bg-white/80 p-2">
-                      <p className="truncate text-[10px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
-                      <p className="mt-1 truncate text-base font-semibold text-[#1d1d1f]">
-                        {formatSourceMetricValue(section.status ?? card.status, metricItem.value, metricItem.displayValue)}
-                      </p>
-                    </div>
-                  ))}
+                  {section.metrics.slice(0, 4).map((metricItem) => renderMetricTile(metricItem, section))}
                 </div>
                 {sectionMeta ? (
                   <p className="mt-2 text-[11px] font-semibold leading-5 text-[#86868b]">{sectionMeta}</p>
@@ -370,14 +498,34 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
               Waiting for aggregate event rows.
             </div>
           ) : (
-            metricItems.map((metricItem) => (
-              <div key={metricItem.key} className={cn(applePanel, 'min-h-[72px] p-3')}>
-                <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
-                <p className="mt-2 truncate text-lg font-semibold text-[#1d1d1f]">
-                  {formatSourceMetricValue(card.status, metricItem.value, metricItem.displayValue)}
-                </p>
-              </div>
-            ))
+            metricItems.map((metricItem) => {
+              const content = (
+                <>
+                  <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
+                  <p className="mt-2 truncate text-lg font-semibold text-[#1d1d1f]">
+                    {formatSourceMetricValue(card.status, metricItem.value, metricItem.displayValue)}
+                  </p>
+                </>
+              );
+              if (!onMetricClick) {
+                return (
+                  <div key={metricItem.key} className={cn(applePanel, 'min-h-[72px] p-3')}>
+                    {content}
+                  </div>
+                );
+              }
+              return (
+                <button
+                  key={metricItem.key}
+                  type="button"
+                  onClick={() => onMetricClick({ productKey, card, metric: metricItem })}
+                  className={cn(applePanel, 'min-h-[72px] p-3 text-left transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+                  aria-label={`Show details for ${card.label} ${metricItem.label}`}
+                >
+                  {content}
+                </button>
+              );
+            })
           )}
         </div>
       )}
@@ -389,7 +537,13 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
   );
 }
 
-function SourceMatrix({ groups }: { groups: ProductSourceGroup[] }) {
+function SourceMatrix({
+  groups,
+  onMetricClick,
+}: {
+  groups: ProductSourceGroup[];
+  onMetricClick?: (payload: SourceMetricClickPayload) => void;
+}) {
   const orderedKeys = ['search_console', 'ga4', 'product_events'];
   return (
     <section className={dashboardBand}>
@@ -399,6 +553,7 @@ function SourceMatrix({ groups }: { groups: ProductSourceGroup[] }) {
           const cards = orderedKeys
             .map((key) => group.sourceCards.find((card) => card.key === key))
             .filter((card): card is ProductSourceCard => Boolean(card));
+          const metricClickHandler = group.productKey === 'hushh_ai' ? onMetricClick : undefined;
           return (
             <div key={group.productKey} className="space-y-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -410,7 +565,7 @@ function SourceMatrix({ groups }: { groups: ProductSourceGroup[] }) {
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 {cards.map((card) => (
                   <div key={`${group.productKey}-${card.key}`}>
-                    <SourceCard card={card} />
+                    <SourceCard productKey={group.productKey} card={card} onMetricClick={metricClickHandler} />
                   </div>
                 ))}
               </div>
@@ -482,19 +637,123 @@ function DateRangeControl({
 function ChartShell({
   title,
   subtitle,
+  action,
   children,
 }: {
   title: string;
   subtitle: string;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className={cn(appleCard, 'p-5')}>
-      <div className="mb-5">
-        <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">{subtitle}</p>
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
+          <p className="mt-1 text-sm font-medium text-[#86868b]">{subtitle}</p>
+        </div>
+        {action}
       </div>
       <div className="h-[300px] w-full">{children}</div>
+    </div>
+  );
+}
+
+function MetricDetailDialog({
+  detail,
+  onClose,
+}: {
+  detail: MetricDetailState | null;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!detail) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [detail, onClose]);
+
+  if (!detail) return null;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/28 p-3 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="metric-detail-title">
+      <button type="button" className="absolute inset-0 cursor-default" aria-label="Close metric details" onClick={onClose} />
+      <div className={cn(appleCard, 'relative max-h-[88vh] w-full max-w-5xl overflow-hidden bg-white shadow-[0_24px_80px_rgba(0,0,0,0.18)]')}>
+        <div className="flex items-start justify-between gap-4 border-b border-black/[0.06] p-5 sm:p-6">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 id="metric-detail-title" className="text-2xl font-semibold text-[#1d1d1f]">{detail.title}</h2>
+              {detail.badge ? (
+                <span className="rounded-full border border-[#007aff]/15 bg-[#e8f2ff]/80 px-2.5 py-1 text-xs font-bold text-[#005eb8]">
+                  {detail.badge}
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-[#6e6e73]">{detail.subtitle}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f5f5f7] text-[#6e6e73] transition hover:bg-[#e8e8ed] hover:text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+            aria-label="Close metric details"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="max-h-[calc(88vh-112px)] overflow-y-auto p-5 sm:p-6">
+          {detail.summary && detail.summary.length > 0 ? (
+            <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {detail.summary.map((row) => (
+                <div key={`${row.label}-${row.value}`} className={cn(applePanel, 'p-3')}>
+                  <p className="text-[11px] font-bold uppercase text-[#86868b]">{row.label}</p>
+                  <p className="mt-2 text-xl font-semibold text-[#1d1d1f]">{row.value}</p>
+                  {row.detail ? <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">{row.detail}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="space-y-5">
+            {detail.sections.map((section) => (
+              <section key={section.title} className={cn(applePanel, 'p-4')}>
+                <div className="mb-3">
+                  <h3 className="text-base font-semibold text-[#1d1d1f]">{section.title}</h3>
+                  {section.subtitle ? <p className="mt-1 text-xs font-semibold leading-5 text-[#86868b]">{section.subtitle}</p> : null}
+                </div>
+                {section.rows.length === 0 ? (
+                  <EmptyState>No aggregate detail rows available for this metric yet.</EmptyState>
+                ) : (
+                  <div className="divide-y divide-black/5 overflow-hidden rounded-lg border border-black/[0.04] bg-white/80">
+                    {section.rows.map((row) => (
+                      <div key={`${section.title}-${row.label}-${row.value}-${row.meta ?? ''}`} className="grid gap-2 p-3 sm:grid-cols-[1.2fr_0.6fr_1.4fr] sm:items-center">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-[#1d1d1f]">{row.label}</p>
+                          {row.meta ? <p className="mt-1 truncate text-xs font-medium text-[#86868b]">{row.meta}</p> : null}
+                        </div>
+                        <p className="text-sm font-bold text-[#1d1d1f] sm:text-right">{row.value}</p>
+                        {row.detail ? <p className="text-xs font-medium leading-5 text-[#6e6e73]">{row.detail}</p> : <span />}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
+
+          {detail.caveats && detail.caveats.length > 0 ? (
+            <div className="mt-5 rounded-lg border border-[#9a5b00]/15 bg-[#fff7e6]/80 p-4">
+              <p className="text-xs font-bold uppercase text-[#9a5b00]">Source caveats</p>
+              <ul className="mt-2 space-y-1.5 text-sm font-medium leading-6 text-[#7a4a00]">
+                {detail.caveats.map((caveat) => (
+                  <li key={caveat}>{caveat}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -802,6 +1061,7 @@ export default function Dashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [usingMock, setUsingMock] = useState(false);
+  const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
 
   const loadData = useCallback(async (options: { background?: boolean } = {}) => {
     if (options.background) {
@@ -891,6 +1151,279 @@ export default function Dashboard() {
     ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
     : 'Selected range';
   const statusText = usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
+  const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
+
+  const ga4SummaryRows = () => {
+    const totals = data?.hushhAi?.ga4?.rangeTotals;
+    return [
+      detailRow('Users', formatOptionalNumber(totals?.users), 'GA4 active users for the selected range.'),
+      detailRow('Sessions', formatOptionalNumber(totals?.sessions), 'Visits started on hushh.ai; one user can create multiple sessions.'),
+      detailRow('Events', formatOptionalNumber(totals?.events), 'Aggregate GA4 event count across automatic and instrumented events.'),
+      detailRow('Engaged Sessions', formatOptionalNumber(totals?.engagedSessions), `${formatOptionalPercent(totals?.engagementRate)} engagement rate`),
+      detailRow('Avg Session Duration', formatDurationFromSeconds(totals?.averageSessionDuration), 'Average GA4 session duration.'),
+    ];
+  };
+
+  const ga4Caveats = () => {
+    const warnings = data?.hushhAi?.ga4?.warnings ?? [];
+    return [
+      'Privacy boundary: this dashboard uses aggregate GA4 Data API reports only, not raw user identities or person-level rows.',
+      ...warnings.filter((warning) => !/user-level\/session-level/i.test(warning)),
+    ];
+  };
+
+  const buildHushhAiGa4Sections = (focus: string): DetailSection[] => {
+    const ga4 = data?.hushhAi?.ga4;
+    const acquisition = ga4?.acquisition;
+    const timing = ga4?.sessionTiming;
+    const sections: DetailSection[] = [];
+    const add = (section: DetailSection) => {
+      if (section.rows.length === 0) return;
+      if (!sections.some((existing) => existing.title === section.title)) sections.push(section);
+    };
+
+    if (focus === 'events' || focus === 'all') {
+      add({
+        title: 'Top GA4 Events',
+        subtitle: 'Event names and counts returned by GA4 Data API. Web-vitals rows are performance telemetry, not conversion events.',
+        rows: (ga4?.topEvents ?? []).map((event) => detailRow(
+          readableMetricLabel(event.eventName),
+          `${formatNumber(event.events)} events`,
+          eventDescription(event.eventName),
+          `${formatNumber(event.users)} users · ${event.eventName}`,
+        )),
+      });
+    }
+
+    if (focus === 'pages' || focus === 'all') {
+      add({
+        title: 'Top Pages / Screens',
+        subtitle: 'Aggregate page/screen views. Query strings are intentionally not exposed.',
+        rows: (ga4?.topPages ?? []).map((page) => detailRow(
+          page.path || page.title || '(not set)',
+          `${formatOptionalNumber(page.views)} views`,
+          `${formatOptionalNumber(page.users)} users · ${formatOptionalNumber(page.events)} events`,
+          page.title,
+        )),
+      });
+    }
+
+    add({
+      title: 'Where Users And Sessions Came From',
+      subtitle: 'GA4 session default channel group. Users are aggregate active users, not account identities.',
+      rows: (acquisition?.sessionChannels ?? []).map((channel) => detailRow(
+        channel.channel ?? '(not set)',
+        `${formatOptionalNumber(channel.sessions)} sessions`,
+        `${formatOptionalNumber(channel.users)} users · ${formatOptionalNumber(channel.newUsers)} new users · ${formatOptionalNumber(channel.engagedSessions)} engaged · ${formatDurationFromSeconds(channel.averageSessionDuration)} avg duration`,
+        `${formatOptionalNumber(channel.events)} events`,
+      )),
+    });
+
+    add({
+      title: 'Source / Medium',
+      subtitle: 'GA4 source attribution for sessions.',
+      rows: (acquisition?.sessionSourceMedium ?? []).map((source) => detailRow(
+        source.sourceMedium ?? '(not set)',
+        `${formatOptionalNumber(source.sessions)} sessions`,
+        `${formatOptionalNumber(source.users)} users · ${formatOptionalNumber(source.newUsers)} new users · ${formatOptionalNumber(source.engagedSessions)} engaged`,
+        `${formatOptionalNumber(source.events)} events`,
+      )),
+    });
+
+    add({
+      title: 'Landing Pages',
+      subtitle: 'First page in each GA4 session, grouped with channel context.',
+      rows: (acquisition?.landingPages ?? []).map((page) => detailRow(
+        page.landingPage ?? '(not set)',
+        `${formatOptionalNumber(page.sessions)} sessions`,
+        `${formatOptionalNumber(page.users)} users · ${formatOptionalNumber(page.engagedSessions)} engaged · ${formatOptionalNumber(page.events)} events`,
+        page.channel,
+      )),
+    });
+
+    add({
+      title: 'Geo + Device',
+      subtitle: 'Aggregate country/device mix from GA4.',
+      rows: (acquisition?.geoDevice ?? []).map((geo) => detailRow(
+        `${geo.country ?? '(not set)'} · ${geo.deviceCategory ?? '(not set)'}`,
+        `${formatOptionalNumber(geo.sessions)} sessions`,
+        `${formatOptionalNumber(geo.users)} users · ${formatOptionalNumber(geo.engagedSessions)} engaged`,
+        `${formatOptionalNumber(geo.events)} events`,
+      )),
+    });
+
+    add({
+      title: 'Session Timing',
+      subtitle: `Top session hours in ${timing?.timezoneLabel ?? 'GA4 property timezone'}.`,
+      rows: (timing?.topDateHours ?? []).map((bucket) => detailRow(
+        bucket.label,
+        `${formatOptionalNumber(bucket.sessions)} sessions`,
+        `${formatOptionalNumber(bucket.users)} users · ${formatOptionalNumber(bucket.engagedSessions)} engaged · ${formatDurationFromSeconds(bucket.averageSessionDuration)} avg duration`,
+        `${formatOptionalNumber(bucket.events)} events`,
+      )),
+    });
+
+    if (focus !== 'events') {
+      add({
+        title: 'Top GA4 Events',
+        subtitle: 'Event context for the same selected range.',
+        rows: (ga4?.topEvents ?? []).slice(0, 8).map((event) => detailRow(
+          readableMetricLabel(event.eventName),
+          `${formatNumber(event.events)} events`,
+          eventDescription(event.eventName),
+          `${formatNumber(event.users)} users · ${event.eventName}`,
+        )),
+      });
+    }
+
+    if (focus !== 'pages') {
+      add({
+        title: 'Top Pages / Screens',
+        subtitle: 'Page context for the same selected range.',
+        rows: (ga4?.topPages ?? []).slice(0, 8).map((page) => detailRow(
+          page.path || page.title || '(not set)',
+          `${formatOptionalNumber(page.views)} views`,
+          `${formatOptionalNumber(page.users)} users · ${formatOptionalNumber(page.events)} events`,
+          page.title,
+        )),
+      });
+    }
+
+    return sections;
+  };
+
+  const openHushhAiGa4Detail = (focus: 'users' | 'sessions' | 'events' | 'engagement' | 'pages' | 'acquisition' | 'source' | 'landing' | 'geo' | 'timing' | 'all', label?: string) => {
+    const ga4 = data?.hushhAi?.ga4;
+    if (!ga4) {
+      setMetricDetail({
+        title: label ?? 'Hushh AI GA4',
+        subtitle: 'GA4 aggregate data is not available for hushh.ai yet.',
+        badge: 'Waiting',
+        sections: [],
+        caveats: ['No GA4 Data API aggregate rows are currently available.'],
+      });
+      return;
+    }
+    const focusTitle: Record<typeof focus, string> = {
+      users: 'Hushh AI Users',
+      sessions: 'Hushh AI Sessions',
+      events: 'Hushh AI GA4 Events',
+      engagement: 'Hushh AI Engagement',
+      pages: 'Hushh AI Pages / Screens',
+      acquisition: 'Hushh AI Acquisition',
+      source: 'Hushh AI Source / Medium',
+      landing: 'Hushh AI Landing Pages',
+      geo: 'Hushh AI Geo + Device',
+      timing: 'Hushh AI Session Timing',
+      all: 'Hushh AI GA4 Details',
+    };
+    const selectedRange = ga4.range
+      ? `${ga4.range.startDate} to ${ga4.range.endDate}`
+      : `${hushhAiRange.startDate} to ${hushhAiRange.endDate}`;
+    const sectionFocus = focus === 'events' || focus === 'pages' ? focus : 'all';
+    setMetricDetail({
+      title: label ?? focusTitle[focus],
+      subtitle: `hushh.ai GA4 Data API aggregate details for ${selectedRange}.`,
+      badge: ga4.available === false ? 'Waiting' : 'GA4 aggregate',
+      summary: ga4SummaryRows(),
+      sections: buildHushhAiGa4Sections(sectionFocus),
+      caveats: ga4Caveats(),
+    });
+  };
+
+  const openHushhAiProductEventsDetail = (label?: string) => {
+    const productEvents = data?.hushhAi?.productEvents as {
+      expectedEvents?: Array<{ eventName?: string; label?: string; status?: string; count?: number | null; note?: string }>;
+      note?: string;
+      status?: string;
+    } | null | undefined;
+    setMetricDetail({
+      title: label ?? 'Hushh AI Product Events',
+      subtitle: 'These are the product/custom events we expect to track once a real hushh.ai aggregate source exists.',
+      badge: productEvents?.status === 'not_configured' ? 'Not configured' : 'Waiting',
+      summary: [
+        detailRow('Source', 'DB / Product Events', 'No real hushh.ai aggregate event source is configured yet.'),
+        detailRow('Status', productEvents?.status === 'not_configured' ? 'Not configured' : 'Waiting'),
+      ],
+      sections: [
+        {
+          title: 'Expected Product Events',
+          subtitle: 'No numeric value is shown here until a first-party aggregate source exists.',
+          rows: (productEvents?.expectedEvents ?? []).map((event) => detailRow(
+            event.label ?? readableMetricLabel(event.eventName ?? 'Product Event'),
+            event.count == null ? 'Not configured' : formatNumber(event.count),
+            event.note ?? 'Waiting for a real hushh.ai product-event aggregate source.',
+            event.eventName,
+          )),
+        },
+      ],
+      caveats: [
+        productEvents?.note ?? 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
+        'Until this source exists, GA4 can show traffic/events but cannot verify signup, login, CTA, demo, or contact funnel truth.',
+      ],
+    });
+  };
+
+  const openHushhAiSearchDetail = (label?: string) => {
+    const search = data?.hushhAi?.searchConsole;
+    setMetricDetail({
+      title: label ?? 'Hushh AI Search Console',
+      subtitle: `Search Console aggregate details for ${search?.range?.startDate ?? hushhAiRange.startDate} to ${search?.range?.endDate ?? hushhAiRange.endDate}.`,
+      badge: search?.available ? 'Search aggregate' : 'Waiting',
+      summary: [
+        detailRow('Clicks', formatOptionalNumber(search?.clicks)),
+        detailRow('Impressions', formatOptionalNumber(search?.impressions)),
+        detailRow('CTR', search?.ctr == null ? '—' : `${(search.ctr * 100).toFixed(1)}%`),
+        detailRow('Avg Position', search?.averagePosition == null ? '—' : search.averagePosition.toFixed(1)),
+      ],
+      sections: [
+        {
+          title: 'Top Queries',
+          rows: (search?.queries ?? []).slice(0, 12).map((query) => detailRow(
+            query.query,
+            `${formatOptionalNumber(query.clicks)} clicks`,
+            `${formatOptionalNumber(query.impressions)} impressions · ${query.ctr == null ? '—' : `${(query.ctr * 100).toFixed(1)}%`} CTR · ${query.averagePosition == null ? '—' : query.averagePosition.toFixed(1)} avg position`,
+          )),
+        },
+        {
+          title: 'Top Pages',
+          rows: (search?.pages ?? []).slice(0, 12).map((page) => detailRow(
+            safeUrlLabel(page.pageUrl),
+            `${formatOptionalNumber(page.clicks)} clicks`,
+            `${formatOptionalNumber(page.impressions)} impressions · ${page.averagePosition == null ? '—' : page.averagePosition.toFixed(1)} avg position`,
+          )),
+        },
+        {
+          title: 'Countries',
+          rows: (search?.countries ?? []).slice(0, 12).map((country) => detailRow(
+            country.country,
+            `${formatOptionalNumber(country.clicks)} clicks`,
+            `${formatOptionalNumber(country.impressions)} impressions`,
+          )),
+        },
+      ],
+      caveats: ['Search Console is daily/delayed search visibility data, not product user identity.'],
+    });
+  };
+
+  const handleSourceMetricClick = (payload: SourceMetricClickPayload) => {
+    if (payload.productKey !== 'hushh_ai') return;
+    if (payload.card.key === 'ga4') {
+      if (/user/i.test(payload.metric.label)) openHushhAiGa4Detail('users', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
+      else if (/session/i.test(payload.metric.label) && !/engaged/i.test(payload.metric.label)) openHushhAiGa4Detail('sessions', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
+      else if (/event/i.test(payload.metric.label)) openHushhAiGa4Detail('events', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
+      else openHushhAiGa4Detail('engagement', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
+    } else if (payload.card.key === 'product_events') {
+      openHushhAiProductEventsDetail(payload.metric.label);
+    } else if (payload.card.key === 'search_console') {
+      openHushhAiSearchDetail(`${payload.card.label} · ${payload.metric.label}`);
+    }
+  };
+
+  const handleHushhAiMetricListClick = (kind: 'users' | 'sessions' | 'events' | 'engagement' | 'pages' | 'acquisition' | 'source' | 'landing' | 'geo' | 'timing' | 'product') => (item: BreakdownMetric) => {
+    if (kind === 'product') openHushhAiProductEventsDetail(item.label);
+    else openHushhAiGa4Detail(kind, item.label);
+  };
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#cce4ff] selection:text-[#003b76]">
@@ -958,7 +1491,7 @@ export default function Dashboard() {
 
         {activeTab === 'overview' ? (
           <main className="space-y-10">
-            <SourceMatrix groups={sourceGroups} />
+            <SourceMatrix groups={sourceGroups} onMetricClick={handleSourceMetricClick} />
 
             <section className={dashboardBand}>
               <SectionHeader kicker="Current selected ranges" title="Key metrics" />
@@ -1186,11 +1719,18 @@ export default function Dashboard() {
                   title="GA4 Engagement"
                   subtitle="Users, sessions, events, and engaged-session quality"
                   items={hushhAiEngagementMetrics}
+                  onItemClick={(item) => {
+                    if (/user/i.test(item.label)) openHushhAiGa4Detail('users', item.label);
+                    else if (/session/i.test(item.label) && !/engaged/i.test(item.label)) openHushhAiGa4Detail('sessions', item.label);
+                    else if (/event/i.test(item.label)) openHushhAiGa4Detail('events', item.label);
+                    else openHushhAiGa4Detail('engagement', item.label);
+                  }}
                 />
                 <MetricListCard
                   title="Future Product Events"
                   subtitle="Custom hushh.ai funnel events waiting for a real aggregate source"
                   items={hushhAiProductEventMetrics}
+                  onItemClick={handleHushhAiMetricListClick('product')}
                 />
               </div>
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
@@ -1198,30 +1738,47 @@ export default function Dashboard() {
                   title="Where Sessions Came From"
                   subtitle="GA4 session channel groups"
                   items={hushhAiAcquisitionMetrics}
+                  onItemClick={handleHushhAiMetricListClick('acquisition')}
                 />
                 <MetricListCard
                   title="Source / Medium"
                   subtitle="GA4 session source attribution"
                   items={hushhAiSourceMediumMetrics}
+                  onItemClick={handleHushhAiMetricListClick('source')}
                 />
                 <MetricListCard
                   title="Landing Pages"
                   subtitle="First page in each GA4 session"
                   items={hushhAiLandingPageMetrics}
+                  onItemClick={handleHushhAiMetricListClick('landing')}
                 />
                 <MetricListCard
                   title="Geo + Device"
                   subtitle="Aggregate country and device mix"
                   items={hushhAiGeoDeviceMetrics}
+                  onItemClick={handleHushhAiMetricListClick('geo')}
                 />
                 <MetricListCard
                   title="Session Timing"
                   subtitle="Top session hours in GA4 property timezone"
                   items={hushhAiSessionTimingMetrics}
+                  onItemClick={handleHushhAiMetricListClick('timing')}
                 />
               </div>
               <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <ChartShell title="Top Pages / Screens" subtitle="GA4 aggregate page views for hushh.ai">
+                <ChartShell
+                  title="Top Pages / Screens"
+                  subtitle="GA4 aggregate page views for hushh.ai"
+                  action={(
+                    <button
+                      type="button"
+                      onClick={() => openHushhAiGa4Detail('pages')}
+                      className="rounded-full bg-[#f5f5f7] px-3 py-1.5 text-xs font-bold text-[#007aff] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+                    >
+                      Details
+                    </button>
+                  )}
+                >
                   {hushhAiTopPageMetrics.length === 0 ? (
                     <EmptyState>Waiting for GA4 page and screen aggregates.</EmptyState>
                   ) : (
@@ -1231,12 +1788,24 @@ export default function Dashboard() {
                         <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
                         <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
                         <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="value" name="Page views" fill="#007aff" radius={[0, 6, 6, 0]} />
+                        <Bar dataKey="value" name="Page views" fill="#007aff" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('pages')} cursor="pointer" />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
                 </ChartShell>
-                <ChartShell title="Top GA4 Events" subtitle="Aggregate events that show what visitors are doing">
+                <ChartShell
+                  title="Top GA4 Events"
+                  subtitle="Aggregate events that show what visitors are doing"
+                  action={(
+                    <button
+                      type="button"
+                      onClick={() => openHushhAiGa4Detail('events')}
+                      className="rounded-full bg-[#f5f5f7] px-3 py-1.5 text-xs font-bold text-[#007aff] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+                    >
+                      Details
+                    </button>
+                  )}
+                >
                   {hushhAiTopEventMetrics.length === 0 ? (
                     <EmptyState>Waiting for GA4 event aggregates.</EmptyState>
                   ) : (
@@ -1246,7 +1815,7 @@ export default function Dashboard() {
                         <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
                         <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
                         <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="value" name="Events" fill="#34c759" radius={[0, 6, 6, 0]} />
+                        <Bar dataKey="value" name="Events" fill="#34c759" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('events')} cursor="pointer" />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -1460,6 +2029,7 @@ export default function Dashboard() {
         )}
       </div>
 
+      <MetricDetailDialog detail={metricDetail} onClose={closeMetricDetail} />
       <HusshInsightsAgent />
     </div>
   );
