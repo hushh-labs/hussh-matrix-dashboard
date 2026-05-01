@@ -334,6 +334,7 @@ export interface HushhTechGcp {
 export interface HushhTechTraffic {
   source: string;
   available: boolean;
+  processedMetricsVerified?: boolean;
   overview: {
     active1DayUsers: number;
     active7DayUsers: number;

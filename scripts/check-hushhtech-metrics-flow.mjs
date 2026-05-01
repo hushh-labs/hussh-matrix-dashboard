@@ -269,6 +269,7 @@ async function checkDashboardFlow(options) {
   assertSourceSections(searchCard, 'HushhTech Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
   const ga4ProcessedTrafficAllZero = trafficSignalsAreAllZero(data.traffic?.overview);
   if (ga4ProcessedTrafficAllZero) {
+    assert(data.traffic?.processedMetricsVerified === false, 'HushhTech traffic should mark processed metrics as unverified when all processed traffic is zero');
     assert(ga4Card?.status === 'waiting', 'HushhTech GA4 card should be waiting when processed traffic is unverified', String(ga4Card?.status || 'missing'));
     assert(
       /processed traffic is all zero/i.test(String(ga4Card?.blocker || '')),

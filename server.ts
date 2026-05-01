@@ -1386,6 +1386,13 @@ async function fetchHushhTechAnalytics(range: HushhAiDateRange): Promise<{ data:
   }
   if (hushhTechGa4NeedsVerification(asRecord(summary.traffic))) {
     warnings.add(HUSHHTECH_GA4_ZERO_TRAFFIC_WARNING);
+    const traffic = asRecord(summary.traffic) ?? {};
+    const existingNote = typeof traffic.note === 'string' && traffic.note.trim() ? traffic.note.trim() : null;
+    summary.traffic = {
+      ...traffic,
+      processedMetricsVerified: false,
+      note: existingNote ? `${existingNote} ${HUSHHTECH_GA4_ZERO_TRAFFIC_WARNING}` : HUSHHTECH_GA4_ZERO_TRAFFIC_WARNING,
+    };
   }
   summary.dataQualityWarnings = Array.from(warnings);
   summary.sourceCards = buildHushhTechSourceCards(summary);
@@ -2499,7 +2506,17 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
 function buildGa4SourceCard(ga4: Record<string, unknown> | null, source: string, blocker: string) {
   const available = Boolean(ga4?.available);
   const totals = asRecord(ga4?.rangeTotals) ?? {};
-  const sections = Array.isArray(ga4?.sections) ? ga4.sections : [];
+  const sections = (Array.isArray(ga4?.sections) ? ga4.sections : []).map((section) => {
+    const sectionRecord = asRecord(section);
+    if (!sectionRecord || sectionRecord.status !== 'waiting' || !Array.isArray(sectionRecord.metrics)) return section;
+    return {
+      ...sectionRecord,
+      metrics: sectionRecord.metrics.map((metric) => {
+        const metricRecord = asRecord(metric);
+        return metricRecord ? { ...metricRecord, value: null } : metric;
+      }),
+    };
+  });
   return {
     key: 'ga4',
     label: 'GA4',
@@ -2511,9 +2528,9 @@ function buildGa4SourceCard(ga4: Record<string, unknown> | null, source: string,
       expectedLagSeconds: metricValue(ga4?.expectedLagSeconds ?? 86_400),
     },
     metrics: [
-      sourceMetric('users', 'Users', totals.users),
-      sourceMetric('sessions', 'Sessions', totals.sessions),
-      sourceMetric('events', 'Events', totals.events),
+      sourceMetric('users', 'Users', available ? totals.users : null),
+      sourceMetric('sessions', 'Sessions', available ? totals.sessions : null),
+      sourceMetric('events', 'Events', available ? totals.events : null),
     ],
     sections,
     blocker: available ? null : (typeof ga4?.note === 'string' ? ga4.note : blocker),
