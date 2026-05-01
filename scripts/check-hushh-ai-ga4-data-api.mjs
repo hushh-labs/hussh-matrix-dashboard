@@ -136,13 +136,11 @@ async function main() {
       },
     },
     {
-      name: 'last24Hourly',
+      name: 'lastDayAggregate',
       url: `${baseUrl}:runReport`,
       body: {
         dateRanges: [{ startDate: 'yesterday', endDate: 'today' }],
-        dimensions: [{ name: 'dateHour' }],
         metrics: coreMetrics,
-        orderBys: [{ dimension: { dimensionName: 'dateHour' } }],
       },
     },
     {
