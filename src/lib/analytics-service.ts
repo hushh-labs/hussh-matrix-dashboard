@@ -113,8 +113,34 @@ function firstNumber(...values: Array<number | null | undefined>): number {
   return asNumber(values.find((value) => typeof value === 'number' && Number.isFinite(value)));
 }
 
+function firstOptionalNumber(...values: Array<number | null | undefined>): number | null {
+  return values.find((value) => typeof value === 'number' && Number.isFinite(value)) ?? null;
+}
+
 function strongestNumber(...values: Array<number | null | undefined>): number {
   return values.reduce((max, value) => Math.max(max, asNumber(value)), 0);
+}
+
+function sourceCardByKey(cards: ProductSourceCard[] | undefined, key: string): ProductSourceCard | undefined {
+  return cards?.find((card) => card.key === key);
+}
+
+function sourceCardText(card: ProductSourceCard | undefined): string {
+  if (!card) return '';
+  const sectionText = (card.sections ?? [])
+    .flatMap((section) => [section.blocker, section.source])
+    .filter(Boolean)
+    .join(' ');
+  return [card.blocker, card.source, sectionText].filter(Boolean).join(' ');
+}
+
+function verifiedHushhTechTrafficOverview(hushhTech: HushhTechMetricsSummary | null): HushhTechMetricsSummary['traffic']['overview'] | null {
+  if (!hushhTech?.traffic?.available) return null;
+  if (hushhTech.traffic.processedMetricsVerified === false) return null;
+  const ga4Card = sourceCardByKey(hushhTech.sourceCards, 'ga4');
+  const sourceText = sourceCardText(ga4Card);
+  if (/processed traffic is all zero|processed GA4 traffic as unverified/i.test(sourceText)) return null;
+  return hushhTech.traffic.overview;
 }
 
 function formatMetricLabel(value: string): string {
@@ -550,7 +576,7 @@ function buildPlatforms(
   const aiGcp = hushhAi?.gcp;
   const aiSearch = hushhAi?.searchConsole;
   const techAuthUsers = hushhTech?.supabase?.metrics.find((row) => row.metricKey === 'auth_users');
-  const traffic = hushhTech?.traffic?.overview;
+  const traffic = verifiedHushhTechTrafficOverview(hushhTech);
   const audience = hushhTech?.audience;
   const search = hushhTech?.searchPerformance;
   const hushhTechSourceWarnings = [
@@ -559,8 +585,8 @@ function buildPlatforms(
   ].filter(Boolean).join('; ') || null;
   const kaiProdFeed = kaiProduction?.productionFeed?.status;
   const kaiProdGcp = kaiProduction?.gcp;
-  const hushhTechSessions = firstNumber(audience?.sessions, traffic?.sessions);
-  const hushhTechMau = firstNumber(audience?.mau, traffic?.active28DayUsers);
+  const hushhTechSessions = firstOptionalNumber(audience?.sessions, traffic?.sessions);
+  const hushhTechMau = firstOptionalNumber(audience?.mau, traffic?.active28DayUsers);
   const hushhTechVisitors = strongestNumber(techAuthUsers?.value, audience?.mau, traffic?.active28DayUsers, hushhTech?.businessFunnel.overview.persistedUsers);
   const hushhTechAvailable = Boolean(
     hushhTech && (hushhTech.businessFunnel || hushhTech.gcp?.available || hushhTech.traffic?.available || hushhTech.audience || hushhTech.supabase),
@@ -614,11 +640,11 @@ function buildPlatforms(
       color: '#9334e6',
       available: hushhTechAvailable,
       environment: 'production',
-      productionReady: Boolean(hushhTech?.businessFunnel && hushhTech?.traffic?.available),
+      productionReady: Boolean(hushhTech?.businessFunnel && traffic),
       knownBlockers: hushhTechSourceWarnings ?? hushhTech?.traffic?.note ?? search?.note ?? null,
       visitors: hushhTechVisitors ? formatNumber(hushhTechVisitors) : hushhTechMau ? formatNumber(hushhTechMau) : '—',
       change: hushhTech ? `${formatNumber(hushhTech.businessFunnel.overview.signups)} signups` : '—',
-      avgSession: hushhTechSessions ? `${formatNumber(hushhTechSessions)} sessions` : '—',
+      avgSession: hushhTechSessions != null ? `${formatNumber(hushhTechSessions)} sessions` : 'GA4 traffic waiting',
       bounceRate: formatPercent(traffic?.engagementRate),
     },
   ];
@@ -632,7 +658,7 @@ function buildKpiStats(
   hushhTech: HushhTechMetricsSummary | null,
 ): KpiStat[] {
   const business = hushhTech?.businessFunnel.overview;
-  const traffic = hushhTech?.traffic?.overview;
+  const traffic = verifiedHushhTechTrafficOverview(hushhTech);
   const audience = hushhTech?.audience;
   const search = hushhTech?.searchPerformance?.overview;
   const gcp = hushhTech?.gcp;
@@ -644,8 +670,8 @@ function buildKpiStats(
   const kaiTopEvent = kaiGa4?.topEvents?.[0];
   const kaiProdGcp = kaiProduction?.gcp;
   const kaiProdGa4 = kaiProduction?.productionGa4;
-  const hushhTechSessions = firstNumber(audience?.sessions, traffic?.sessions);
-  const hushhTechPageViews = firstNumber(audience?.pageViews, traffic?.screenPageViews);
+  const hushhTechSessions = firstOptionalNumber(audience?.sessions, traffic?.sessions);
+  const hushhTechPageViews = firstOptionalNumber(audience?.pageViews, traffic?.screenPageViews);
 
   return [
     {
@@ -691,19 +717,19 @@ function buildKpiStats(
       change: business ? `${formatNumber(business.persistedUsers)} persisted` : undefined,
     },
     {
-      label: 'hushhtech.com Sessions',
-      value: hushhTech ? formatNumber(hushhTechSessions) : '—',
+      label: 'hushhtech.com GA4 Sessions',
+      value: hushhTech ? (hushhTechSessions != null ? formatNumber(hushhTechSessions) : 'Waiting') : '—',
       icon: 'Globe',
-      change: hushhTech ? `${formatNumber(hushhTechPageViews)} page views` : undefined,
+      change: hushhTech ? (hushhTechSessions != null ? `${formatNumber(hushhTechPageViews ?? 0)} page views` : 'GA4 unverified') : undefined,
     },
     {
-      label: 'Cloud Run Requests',
+      label: 'hushhtech.com Requests',
       value: gcp ? formatNumber(gcp.requestCount) : '—',
       icon: 'TrendingUp',
-      suffix: gcp?.available ? 'requests' : 'pending',
+      suffix: gcp?.available ? 'Cloud Run' : 'pending',
     },
     {
-      label: 'Search Clicks',
+      label: 'hushhtech.com Search',
       value: search ? formatNumber(search.clicks) : '—',
       icon: 'MapPin',
       change: search ? `${formatNumber(search.impressions)} impressions` : undefined,
@@ -783,9 +809,11 @@ function buildTrafficData(
     }
   }
 
-  for (const row of hushhTech?.traffic?.series ?? []) {
-    const point = ensurePoint(row.date);
-    point.tech = firstNumber(row.sessions, row.activeUsers, row.screenPageViews);
+  if (verifiedHushhTechTrafficOverview(hushhTech)) {
+    for (const row of hushhTech?.traffic?.series ?? []) {
+      const point = ensurePoint(row.date);
+      point.tech = firstNumber(row.sessions, row.activeUsers, row.screenPageViews);
+    }
   }
 
   for (const row of hushhAi?.gcp?.series ?? []) {
@@ -973,19 +1001,23 @@ function buildTopCountries(hushhTech: HushhTechMetricsSummary | null): CountryDa
 function buildHushhTechAudienceMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
   if (!hushhTech) return [];
   const audience = hushhTech.audience;
-  const traffic = hushhTech.traffic.overview;
+  const traffic = verifiedHushhTechTrafficOverview(hushhTech);
   const search = hushhTech.search;
-  const source = audience?.source ?? hushhTech.traffic.source;
+  const source = audience?.source ?? (traffic ? hushhTech.traffic.source : 'GA4 traffic unverified');
+  const trafficMetric = (label: string, audienceValue: number | null | undefined, trafficValue: number | null | undefined, metricSource = source) => {
+    const value = firstOptionalNumber(audienceValue, trafficValue);
+    return value == null ? metric(label, 0, metricSource, 'Waiting') : metric(label, value, metricSource);
+  };
 
   return [
-    metric('DAU', firstNumber(audience?.dau, traffic.active1DayUsers), source),
-    metric('WAU', firstNumber(audience?.wau, traffic.active7DayUsers), source),
-    metric('MAU', firstNumber(audience?.mau, traffic.active28DayUsers), source),
-    metric('Sessions', firstNumber(audience?.sessions, traffic.sessions), hushhTech.traffic.source),
-    metric('Page Views', firstNumber(audience?.pageViews, traffic.screenPageViews), hushhTech.traffic.source),
+    trafficMetric('DAU', audience?.dau, traffic?.active1DayUsers),
+    trafficMetric('WAU', audience?.wau, traffic?.active7DayUsers),
+    trafficMetric('MAU', audience?.mau, traffic?.active28DayUsers),
+    trafficMetric('Sessions', audience?.sessions, traffic?.sessions, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
+    trafficMetric('Page Views', audience?.pageViews, traffic?.screenPageViews, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
     metric('Events', asNumber(audience?.events), source),
     metric('Searches', asNumber(search?.totalSearches), 'first-party safe search events'),
-    metric('Realtime Active', asNumber(traffic.realtimeActiveUsers), 'GA4 realtime'),
+    trafficMetric('Realtime Active', null, traffic?.realtimeActiveUsers, traffic ? 'GA4 realtime' : 'GA4 realtime waiting'),
   ];
 }
 
@@ -1009,7 +1041,7 @@ function buildHushhTechOpsMetrics(hushhTech: HushhTechMetricsSummary | null): Br
   if (!hushhTech) return [];
   const gcp = hushhTech.gcp;
   const search = hushhTech.searchPerformance;
-  const traffic = hushhTech.traffic.overview;
+  const traffic = verifiedHushhTechTrafficOverview(hushhTech);
   const successRate = gcp?.errorRate != null ? 1 - gcp.errorRate : null;
 
   return [
@@ -1021,14 +1053,14 @@ function buildHushhTechOpsMetrics(hushhTech: HushhTechMetricsSummary | null): Br
     metric('Search Impressions', asNumber(search?.overview.impressions), search?.source),
     metric('Search CTR', asNumber(search?.overview.ctr), search?.source, formatPercent(search?.overview.ctr)),
     metric('Search Avg Position', asNumber(search?.overview.averagePosition), search?.source, search?.overview.averagePosition?.toFixed(1) ?? '—'),
-    metric('Avg Session Duration', asNumber(traffic.averageSessionDuration), hushhTech.traffic.source, formatDuration(traffic.averageSessionDuration)),
+    metric('Avg Session Duration', asNumber(traffic?.averageSessionDuration), traffic ? hushhTech.traffic.source : 'GA4 traffic unverified', traffic ? formatDuration(traffic.averageSessionDuration) : 'Waiting'),
   ];
 }
 
 function buildHushhTechReportTotals(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
   if (!hushhTech) return [];
   const business = hushhTech.businessFunnel.overview;
-  const traffic = hushhTech.traffic.overview;
+  const traffic = verifiedHushhTechTrafficOverview(hushhTech);
   const audience = hushhTech.audience;
   const coverage = hushhTech.dataCoverage ?? {};
   const search = hushhTech.searchPerformance?.overview;
@@ -1062,25 +1094,29 @@ function buildHushhTechReportTotals(hushhTech: HushhTechMetricsSummary | null): 
 function buildHushhTechSevenDayMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
   if (!hushhTech) return [];
   const audience = hushhTech.audience;
-  const traffic = hushhTech.traffic.overview;
+  const traffic = verifiedHushhTechTrafficOverview(hushhTech);
   const business = hushhTech.businessFunnel.overview;
   const search = hushhTech.searchPerformance?.overview;
-  const source = audience?.source ?? hushhTech.traffic.source;
+  const source = audience?.source ?? (traffic ? hushhTech.traffic.source : 'GA4 traffic unverified');
+  const trafficMetric = (label: string, audienceValue: number | null | undefined, trafficValue: number | null | undefined, metricSource = source) => {
+    const value = firstOptionalNumber(audienceValue, trafficValue);
+    return value == null ? metric(label, 0, metricSource, 'Waiting') : metric(label, value, metricSource);
+  };
 
   return [
-    metric('7d DAU', firstNumber(audience?.dau, traffic.active1DayUsers), source),
-    metric('7d WAU', firstNumber(audience?.wau, traffic.active7DayUsers), source),
-    metric('7d MAU', firstNumber(audience?.mau, traffic.active28DayUsers), source),
-    metric('7d Sessions', firstNumber(audience?.sessions, traffic.sessions), hushhTech.traffic.source),
-    metric('7d Engaged Sessions', asNumber(traffic.engagedSessions), hushhTech.traffic.source),
-    metric('7d Page Views', firstNumber(audience?.pageViews, traffic.screenPageViews), hushhTech.traffic.source),
-    metric('7d New Users', asNumber(traffic.newUsers), hushhTech.traffic.source),
+    trafficMetric('7d DAU', audience?.dau, traffic?.active1DayUsers),
+    trafficMetric('7d WAU', audience?.wau, traffic?.active7DayUsers),
+    trafficMetric('7d MAU', audience?.mau, traffic?.active28DayUsers),
+    trafficMetric('7d Sessions', audience?.sessions, traffic?.sessions, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
+    trafficMetric('7d Engaged Sessions', null, traffic?.engagedSessions, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
+    trafficMetric('7d Page Views', audience?.pageViews, traffic?.screenPageViews, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
+    trafficMetric('7d New Users', null, traffic?.newUsers, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
     metric('7d Events', asNumber(audience?.events), source),
     metric('7d Signups', business.signups, hushhTech.businessFunnel.source),
     metric('7d Persisted Users', business.persistedUsers, hushhTech.businessFunnel.source),
     metric('7d Cloud Run Requests', asNumber(hushhTech.gcp?.requestCount), hushhTech.gcp?.source),
-    metric('Engagement Rate', asNumber(traffic.engagementRate), hushhTech.traffic.source, formatPercent(traffic.engagementRate)),
-    metric('Avg Session Duration', asNumber(traffic.averageSessionDuration), hushhTech.traffic.source, formatDuration(traffic.averageSessionDuration)),
+    metric('Engagement Rate', asNumber(traffic?.engagementRate), traffic ? hushhTech.traffic.source : 'GA4 traffic unverified', traffic ? formatPercent(traffic.engagementRate) : 'Waiting'),
+    metric('Avg Session Duration', asNumber(traffic?.averageSessionDuration), traffic ? hushhTech.traffic.source : 'GA4 traffic unverified', traffic ? formatDuration(traffic.averageSessionDuration) : 'Waiting'),
     metric('Search CTR', asNumber(search?.ctr), 'Search Console', formatPercent(search?.ctr)),
   ];
 }

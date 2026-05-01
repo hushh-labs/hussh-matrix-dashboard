@@ -952,7 +952,7 @@ export default function Dashboard() {
             <SourceMatrix groups={sourceGroups} />
 
             <section className={dashboardBand}>
-              <SectionHeader kicker="Today" title="Key metrics" />
+              <SectionHeader kicker="Current selected ranges" title="Key metrics" />
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {kpiStats.map((stat, index) => (
                   <div key={stat.label}>
