@@ -259,7 +259,11 @@ async function checkApiFlow(options) {
 
   const hushhAiEvents = hushhAi.body?.data?.sourceCards?.find((card) => card.key === 'product_events');
   assert(hushhAiEvents?.status === 'not_configured', 'Hushh AI DB product-events should remain not_configured until aggregate source exists');
-  assert(Array.isArray(hushhAiEvents?.metrics) && hushhAiEvents.metrics.length === 0, 'Hushh AI product-events should not fake DB numbers');
+  assert(Array.isArray(hushhAiEvents?.metrics), 'Hushh AI product-events metrics should be an array');
+  for (const metric of hushhAiEvents.metrics) {
+    assert(metric?.value == null, 'Hushh AI product-event placeholders should not fake DB numbers');
+    assert(metric?.displayValue === 'Not configured', 'Hushh AI product-event placeholders should stay marked not configured');
+  }
 
   const techCards = hushhTech.body.data.sourceCards;
   const techSearch = techCards.find((card) => card.key === 'search_console');
