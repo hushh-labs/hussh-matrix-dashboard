@@ -191,7 +191,7 @@ function buildContextualPrompts(message: ChatMessage | undefined): PromptOption[
   if (sourceText.includes('cloud') || message.content.toLowerCase().includes('request')) {
     prompts.push({
       label: 'Reliability trend',
-      prompt: 'Show the Cloud Run request, non-2xx, error-rate, and p95 latency trend behind the last answer.',
+      prompt: 'Show the Cloud Run request, 5xx, error-rate, and p95 latency trend behind the last answer.',
     });
   }
 

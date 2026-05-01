@@ -576,7 +576,7 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
     <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
         <h3 className="text-lg font-semibold text-[#1d1d1f]">Daily Status</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">Users, sessions, exits, traffic, and latency by date</p>
+        <p className="mt-1 text-sm font-medium text-[#86868b]">Supabase users, sessions, and exits by date</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No Hushh AI daily rows available yet.</EmptyState>
@@ -592,8 +592,6 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
                 <th className="border-b border-black/5 px-4 py-3 text-right">Sessions</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Avg Session</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Exit Signals</th>
-                <th className="border-b border-black/5 px-4 py-3 text-right">Requests</th>
-                <th className="border-b border-black/5 py-3 pl-4 text-right">P95</th>
               </tr>
             </thead>
             <tbody>
@@ -606,8 +604,6 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.sessionsStarted)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatDurationFromMinutes(row.avgSessionMinutes)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.deletedUsers + row.deleteRequests)}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.requests)}</td>
-                  <td className="border-b border-black/5 py-3 pl-4 text-right">{row.p95LatencyMs ? `${Math.round(row.p95LatencyMs)}ms` : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -637,7 +633,7 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
                 <th className="border-b border-black/5 px-4 py-3 text-right">Sessions</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Events</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Requests</th>
-                <th className="border-b border-black/5 px-4 py-3 text-right">Non-2xx</th>
+                <th className="border-b border-black/5 px-4 py-3 text-right">5xx</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Error Rate</th>
                 <th className="border-b border-black/5 py-3 pl-4 text-right">P95</th>
               </tr>
@@ -1013,7 +1009,7 @@ export default function Dashboard() {
                     </ResponsiveContainer>
                   )}
                 </ChartShell>
-                <ChartShell title="Production Traffic + Reliability" subtitle="Cloud Run requests, non-2xx responses, and latency context">
+                <ChartShell title="Production Traffic + Reliability" subtitle="Cloud Run requests, 5xx responses, and latency context">
                   {kaiProductionDailyStatus.length === 0 ? (
                     <EmptyState>No Kai production traffic rows available yet.</EmptyState>
                   ) : (
@@ -1034,7 +1030,7 @@ export default function Dashboard() {
                         <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
                         <Tooltip content={<CustomTooltip />} />
                         <Area type="monotone" dataKey="requests" name="Requests" stroke="#12b5cb" strokeWidth={2.5} fill="url(#kaiProdRequests)" />
-                        <Area type="monotone" dataKey="errors" name="Non-2xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#kaiProdErrors)" />
+                        <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#kaiProdErrors)" />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
@@ -1148,7 +1144,7 @@ export default function Dashboard() {
                   subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
                   items={hushhAiDailySummaryMetrics}
                 />
-                <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, non-2xx responses, and latency context">
+                <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, 5xx responses, and latency context">
                   {hushhAiDailyStatus.length === 0 ? (
                     <EmptyState>No Hushh AI traffic rows available yet.</EmptyState>
                   ) : (
@@ -1169,7 +1165,7 @@ export default function Dashboard() {
                         <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
                         <Tooltip content={<CustomTooltip />} />
                         <Area type="monotone" dataKey="requests" name="Requests" stroke="#007aff" strokeWidth={2.5} fill="url(#hushhAiRequests)" />
-                        <Area type="monotone" dataKey="errors" name="Non-2xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiErrors)" />
+                        <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiErrors)" />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}

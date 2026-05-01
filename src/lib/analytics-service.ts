@@ -429,6 +429,9 @@ function buildKaiProductionDailyStatus(kaiProduction: KaiProductionSummary | nul
 
 function buildKaiUatDailyStatus(rows: FeedRow[], kaiGa4: KaiGa4Summary | null): KaiUatDailyStatusPoint[] {
   const byDate = new Map<string, KaiUatDailyStatusPoint>();
+  const rangeStart = kaiGa4?.range?.startDate ?? null;
+  const rangeEnd = kaiGa4?.range?.endDate ?? null;
+  const inGa4Range = (date: string) => !rangeStart || !rangeEnd || (date >= rangeStart && date <= rangeEnd);
   const ensurePoint = (date: string, label = date.slice(5)) => {
     const current = byDate.get(date) ?? {
       date,
@@ -457,6 +460,7 @@ function buildKaiUatDailyStatus(rows: FeedRow[], kaiGa4: KaiGa4Summary | null): 
   for (const row of rows.filter((item) => item.metric_group === 'usage' && metricDateValue(item))) {
     const date = metricDateValue(row);
     if (!date) continue;
+    if (!inGa4Range(date)) continue;
     const point = ensurePoint(date);
     if (row.metric_name === 'daily_active_users') point.feedDau = optionalMetricNumber(row);
     if (row.metric_name === 'sessions') point.feedSessions = optionalMetricNumber(row);
@@ -476,7 +480,7 @@ function buildKaiProductionDailySummaryMetrics(kaiProduction: KaiProductionSumma
     metric('Production Sessions', asNumber(ga4?.rangeTotals?.sessions), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('Production Events', asNumber(ga4?.rangeTotals?.events), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.serviceName),
-    metric('Cloud Run Non-2xx', asNumber(gcp?.errorCount), gcp?.serviceName),
+    metric('Cloud Run 5xx', asNumber(gcp?.errorCount), gcp?.serviceName),
     metric('Cloud Run Error Rate', asNumber(gcp?.errorRate), gcp?.serviceName, formatPercent(gcp?.errorRate)),
     metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.serviceName, formatLatency(gcp?.p95LatencyMs)),
   ];
@@ -574,7 +578,7 @@ function buildPlatforms(
       visitors: aiGcp ? formatNumber(aiGcp.requestCount) : aiSearch?.available ? formatNumber(aiSearch.clicks) : '—',
       change: aiSearch?.available
         ? `${formatNumber(aiSearch.impressions)} impressions`
-        : `${formatNumber(aiGcp?.errorCount ?? 0)} non-2xx`,
+        : `${formatNumber(aiGcp?.errorCount ?? 0)} 5xx`,
       avgSession: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : '—',
       bounceRate: formatPercent(aiGcp?.errorRate),
     },
@@ -587,7 +591,7 @@ function buildPlatforms(
       productionReady: kaiProdFeed?.productionReady ?? false,
       knownBlockers: kaiProdFeed?.knownBlockers ?? null,
       visitors: kaiProdGcp ? formatNumber(kaiProdGcp.requestCount) : '—',
-      change: kaiProdGcp ? `${formatNumber(kaiProdGcp.errorCount)} non-2xx` : 'Production traffic waiting',
+      change: kaiProdGcp ? `${formatNumber(kaiProdGcp.errorCount)} 5xx` : 'Production traffic waiting',
       avgSession: kaiProdGcp?.p95LatencyMs != null ? `${formatLatency(kaiProdGcp.p95LatencyMs)} p95` : '—',
       bounceRate: kaiProdGcp ? formatPercent(kaiProdGcp.errorRate) : '—',
     },
@@ -802,8 +806,8 @@ function buildHushhAiOpsMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric
 
   return [
     metric('Cloud Run Requests', gcp.requestCount, gcp.serviceName),
-    metric('Cloud Run Non-2xx', gcp.errorCount, gcp.serviceName),
-    metric('Cloud Run Non-2xx Rate', gcp.errorRate ?? 0, gcp.serviceName, formatPercent(gcp.errorRate)),
+    metric('Cloud Run 5xx', gcp.errorCount, gcp.serviceName),
+    metric('Cloud Run 5xx Rate', gcp.errorRate ?? 0, gcp.serviceName, formatPercent(gcp.errorRate)),
     metric('Cloud Run P95 Latency', gcp.p95LatencyMs ?? 0, gcp.serviceName, formatLatency(gcp.p95LatencyMs)),
     metric('Cloud Run Max Instances', gcp.instanceCount ?? 0, gcp.sourceProjectId),
   ];
