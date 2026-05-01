@@ -262,6 +262,121 @@ function detailRow(label: string, value: string, detail?: string, meta?: string)
   return { label, value, detail, meta };
 }
 
+function metricRows(items: BreakdownMetric[], limit = 24): DetailRow[] {
+  return items.slice(0, limit).map((item) => detailRow(
+    item.label,
+    item.displayValue ?? formatNumber(item.value),
+    item.detail,
+    item.percentage == null ? undefined : `${item.percentage}%`,
+  ));
+}
+
+function focusMetricSummary(items: BreakdownMetric[], focus?: BreakdownMetric, limit = 4): DetailRow[] {
+  const rows = metricRows(items);
+  if (!focus) return rows.slice(0, limit);
+  return [
+    detailRow('Clicked Metric', focus.displayValue ?? formatNumber(focus.value), focus.detail, focus.label),
+    ...rows.filter((row) => row.label !== focus.label).slice(0, Math.max(0, limit - 1)),
+  ];
+}
+
+function kaiProductionDailyRows(rows: KaiDailyStatusPoint[]): DetailRow[] {
+  return rows.map((row) => detailRow(
+    row.date,
+    `${formatNumber(row.requests)} requests`,
+    `${formatNumber(row.errors)} 5xx · ${row.errorRate == null ? '—' : `${(row.errorRate * 100).toFixed(3)}%`} error rate · ${row.p95LatencyMs == null ? '—' : `${Math.round(row.p95LatencyMs)}ms`} p95`,
+    `GA4 users/sessions/events: ${formatOptionalNumber(row.users, 'Waiting')} / ${formatOptionalNumber(row.sessions, 'Waiting')} / ${formatOptionalNumber(row.events, 'Waiting')}`,
+  ));
+}
+
+function kaiUatDailyRows(rows: KaiUatDailyStatusPoint[]): DetailRow[] {
+  return rows.map((row) => detailRow(
+    row.date,
+    `${formatOptionalNumber(row.ga4Users)} GA4 users`,
+    `${formatOptionalNumber(row.ga4Sessions)} GA4 sessions · ${formatOptionalNumber(row.ga4Events)} GA4 events`,
+    `DB DAU/sessions/events: ${formatOptionalNumber(row.feedDau)} / ${formatOptionalNumber(row.feedSessions)} / ${formatOptionalNumber(row.feedEvents)}`,
+  ));
+}
+
+function hushhTechDailyRows(rows: HushhAiDailyStatusPoint[]): DetailRow[] {
+  return rows.map((row) => detailRow(
+    row.date,
+    `${formatNumber(row.totalUsers)} total users`,
+    `${formatNumber(row.newUsers)} new · ${formatNumber(row.activeUsers)} active · ${formatNumber(row.sessionsStarted)} sessions`,
+    `${formatNumber(row.deletedUsers + row.deleteRequests)} exit signals`,
+  ));
+}
+
+function sourceCardRows(card: ProductSourceCard): DetailRow[] {
+  const topRows = card.metrics.map((metricItem) => detailRow(
+    metricItem.label,
+    formatSourceMetricValue(card.status, metricItem.value, metricItem.displayValue),
+    card.source,
+    metricItem.key,
+  ));
+  const sectionRows = (card.sections ?? []).flatMap((section) => section.metrics.map((metricItem) => detailRow(
+    `${section.label} · ${metricItem.label}`,
+    formatSourceMetricValue(section.status ?? card.status, metricItem.value, metricItem.displayValue),
+    section.source ?? card.source,
+    metricItem.key,
+  )));
+  return [...topRows, ...sectionRows];
+}
+
+function sourceCardSections(cards: ProductSourceCard[] | undefined, titlePrefix = 'Source'): DetailSection[] {
+  return (cards ?? []).map((card) => ({
+    title: `${titlePrefix}: ${card.label}`,
+    subtitle: `${card.source} · ${sourceStatusLabel(card.status, card.key)} · refreshed ${formatAge(card.freshness.generatedAt)}`,
+    rows: sourceCardRows(card),
+  })).filter((section) => section.rows.length > 0);
+}
+
+function sourceCardDetail(payload: SourceMetricClickPayload): MetricDetailState {
+  const { productKey, card, section, metric } = payload;
+  const productLabel = productKey === 'kai_production'
+    ? 'Kai Production'
+    : productKey === 'kai_uat'
+      ? 'Kai UAT'
+      : productKey === 'hushhtech'
+        ? 'HushhTech'
+        : 'Hushh AI';
+  const metricStatus = section?.status ?? card.status;
+  return {
+    title: `${productLabel} · ${section?.label ?? card.label} · ${metric.label}`,
+    subtitle: `${card.label} aggregate detail from ${section?.source ?? card.source}.`,
+    badge: sourceStatusLabel(metricStatus, card.key),
+    summary: [
+      detailRow('Clicked Metric', formatSourceMetricValue(metricStatus, metric.value, metric.displayValue), metric.key),
+      detailRow('Source', section?.source ?? card.source),
+      detailRow('Status', sourceStatusLabel(metricStatus, card.key)),
+      detailRow('Freshness', formatAge(section?.freshness?.generatedAt ?? card.freshness.generatedAt)),
+    ],
+    sections: [
+      {
+        title: 'All Metrics In This Source',
+        subtitle: card.blocker ?? section?.blocker ?? 'Aggregate-only values shown by this source card.',
+        rows: sourceCardRows(card),
+      },
+    ],
+    caveats: [
+      'Aggregate-only source detail; raw user identities, emails, prompts, and person-level rows are not exposed.',
+      card.blocker ?? section?.blocker ?? `${card.label} is ${sourceStatusLabel(card.status, card.key).toLowerCase()}.`,
+    ],
+  };
+}
+
+function DetailActionButton({ label = 'Details', onClick }: { label?: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-full bg-[#f5f5f7] px-3 py-1.5 text-xs font-bold text-[#007aff] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+    >
+      {label}
+    </button>
+  );
+}
+
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
 
@@ -553,7 +668,6 @@ function SourceMatrix({
           const cards = orderedKeys
             .map((key) => group.sourceCards.find((card) => card.key === key))
             .filter((card): card is ProductSourceCard => Boolean(card));
-          const metricClickHandler = group.productKey === 'hushh_ai' ? onMetricClick : undefined;
           return (
             <div key={group.productKey} className="space-y-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -565,7 +679,7 @@ function SourceMatrix({
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 {cards.map((card) => (
                   <div key={`${group.productKey}-${card.key}`}>
-                    <SourceCard productKey={group.productKey} card={card} onMetricClick={metricClickHandler} />
+                    <SourceCard productKey={group.productKey} card={card} onMetricClick={onMetricClick} />
                   </div>
                 ))}
               </div>
@@ -1406,17 +1520,170 @@ export default function Dashboard() {
     });
   };
 
+  const openKaiProductionDetail = (label = 'Kai Production Details', focus?: BreakdownMetric) => {
+    const ga4Warnings = data?.kaiProduction?.productionGa4?.warnings ?? [];
+    setMetricDetail({
+      title: label,
+      subtitle: `kai.hushh.ai production aggregate details for ${kaiRange.startDate} to ${kaiRange.endDate}.`,
+      badge: 'Production',
+      summary: focusMetricSummary(kaiProductionDailySummaryMetrics, focus),
+      sections: [
+        {
+          title: 'Production Range Summary',
+          subtitle: 'GA4 remains Waiting until the production export is verified; Cloud Run values are live reliability aggregates.',
+          rows: metricRows(kaiProductionDailySummaryMetrics),
+        },
+        {
+          title: 'Production Reliability By Day',
+          subtitle: 'Cloud Run request, 5xx, error-rate, and p95 aggregates by date.',
+          rows: kaiProductionDailyRows(kaiProductionDailyStatus),
+        },
+        {
+          title: 'Production Readiness',
+          subtitle: 'Production feed and GA4 export status only. UAT is intentionally separate.',
+          rows: metricRows(kaiProductionReadinessMetrics),
+        },
+        ...sourceCardSections(data?.kaiProduction?.sourceCards, 'Kai Production Source'),
+      ],
+      caveats: [
+        'Kai production GA4 users/sessions/events stay Waiting until the production GA4 export is verified.',
+        'Request and reliability values come from Cloud Run aggregate monitoring and use 5xx response counts.',
+        'UAT validation traffic is not mixed into production truth.',
+        ...ga4Warnings,
+      ],
+    });
+  };
+
+  const openKaiUatDetail = (label = 'Kai UAT Details', focus?: BreakdownMetric) => {
+    const ga4Warnings = data?.kaiGa4?.warnings ?? [];
+    setMetricDetail({
+      title: label,
+      subtitle: `uat.kai.hushh.ai UAT aggregate details for ${kaiRange.startDate} to ${kaiRange.endDate}.`,
+      badge: 'UAT',
+      summary: focusMetricSummary(kaiUatDailySummaryMetrics, focus),
+      sections: [
+        {
+          title: 'UAT Range Summary',
+          subtitle: 'GA4 export and UAT DB aggregate values for the selected range.',
+          rows: metricRows(kaiUatDailySummaryMetrics),
+        },
+        {
+          title: 'UAT Daily Status',
+          subtitle: 'GA4 daily rows aligned with UAT DB aggregate rows for the same selected range.',
+          rows: kaiUatDailyRows(kaiUatDailyStatus),
+        },
+        {
+          title: 'Kai UAT GA4 Events',
+          subtitle: 'Top GA4 event aggregates for uat.kai.hushh.ai.',
+          rows: metricRows(kaiEventMetrics),
+        },
+        {
+          title: 'Kai UAT Geo + Device',
+          subtitle: 'Aggregate country, device, and platform mix.',
+          rows: metricRows(kaiGeoMetrics),
+        },
+        {
+          title: 'Kai UAT Usage Snapshot',
+          subtitle: 'Latest public UAT feed aggregate rows.',
+          rows: metricRows(kaiUsageMetrics),
+        },
+        ...sourceCardSections(data?.kaiProduction?.uatSourceCards, 'Kai UAT Source'),
+      ],
+      caveats: [
+        'Kai UAT is validation traffic for uat.kai.hushh.ai; it is not production truth.',
+        'DB/Product Events are aggregate UAT feed metrics, not raw event/user rows.',
+        'GA4 and DB windows are shown separately when the underlying source timing differs.',
+        ...ga4Warnings,
+      ],
+    });
+  };
+
+  const openHushhTechDetail = (label = 'HushhTech Details', focus?: BreakdownMetric) => {
+    const qualityWarnings = data?.hushhTech?.dataQualityWarnings ?? [];
+    setMetricDetail({
+      title: label,
+      subtitle: `hushhtech.com aggregate details for ${hushhTechRangeLabel}.`,
+      badge: 'Production',
+      summary: focusMetricSummary(hushhTechReportTotals, focus),
+      sections: [
+        {
+          title: 'Total Report',
+          subtitle: 'Users, funnel, search, infra, and stored aggregate totals.',
+          rows: metricRows(hushhTechReportTotals),
+        },
+        {
+          title: 'Last 7 Days',
+          subtitle: 'Traffic values are shown only when the processed GA4 source is verified.',
+          rows: metricRows(hushhTechSevenDayMetrics),
+        },
+        {
+          title: 'Database Metrics',
+          subtitle: 'Public-safe Supabase aggregate counts.',
+          rows: metricRows(hushhTechDatabaseMetrics),
+        },
+        {
+          title: 'Database Range Summary',
+          subtitle: hushhTechRangeLabel,
+          rows: metricRows(hushhTechDailySummaryMetrics),
+        },
+        {
+          title: 'Daily Status',
+          subtitle: 'Supabase users, sessions, and exits by date. Cloud Run daily request columns are intentionally not shown here.',
+          rows: hushhTechDailyRows(hushhTechDailyStatus),
+        },
+        {
+          title: 'Funnel',
+          subtitle: 'Supabase business funnel aggregates.',
+          rows: metricRows(hushhTechBusinessMetrics),
+        },
+        {
+          title: 'Activity',
+          subtitle: 'Pages, routes, and event aggregates when first-party rows exist.',
+          rows: metricRows(hushhTechActivityMetrics),
+        },
+        {
+          title: 'Funnel Detail',
+          subtitle: 'Signup, onboarding, KYC, profile, and chat aggregate steps.',
+          rows: metricRows(hushhTechFunnelMetrics),
+        },
+        {
+          title: 'Audience',
+          subtitle: 'GA4/audience aggregate metrics with suspicious processed traffic surfaced as Waiting.',
+          rows: metricRows(hushhTechAudienceMetrics),
+        },
+        {
+          title: 'Search + Ops',
+          subtitle: 'Search Console and Cloud Run aggregate operations metrics.',
+          rows: metricRows(hushhTechOpsMetrics),
+        },
+        {
+          title: 'Data Coverage',
+          subtitle: 'Connected provider coverage and public-safe collection status.',
+          rows: metricRows(hushhTechCoverageMetrics),
+        },
+        ...sourceCardSections(data?.hushhTech?.sourceCards, 'HushhTech Source'),
+      ],
+      caveats: [
+        'HushhTech Supabase/database values are aggregate counts only; raw auth users, emails, and session rows are not exposed.',
+        'HushhTech processed GA4 traffic can be suspicious or zero; the dashboard preserves source caveats instead of treating those zeros as product truth.',
+        'Cloud Run totals are aggregate infra totals, not daily database rows.',
+        ...qualityWarnings,
+      ],
+    });
+  };
+
   const handleSourceMetricClick = (payload: SourceMetricClickPayload) => {
-    if (payload.productKey !== 'hushh_ai') return;
-    if (payload.card.key === 'ga4') {
+    if (payload.productKey === 'hushh_ai' && payload.card.key === 'ga4') {
       if (/user/i.test(payload.metric.label)) openHushhAiGa4Detail('users', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
       else if (/session/i.test(payload.metric.label) && !/engaged/i.test(payload.metric.label)) openHushhAiGa4Detail('sessions', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
       else if (/event/i.test(payload.metric.label)) openHushhAiGa4Detail('events', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
       else openHushhAiGa4Detail('engagement', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
-    } else if (payload.card.key === 'product_events') {
+    } else if (payload.productKey === 'hushh_ai' && payload.card.key === 'product_events') {
       openHushhAiProductEventsDetail(payload.metric.label);
-    } else if (payload.card.key === 'search_console') {
+    } else if (payload.productKey === 'hushh_ai' && payload.card.key === 'search_console') {
       openHushhAiSearchDetail(`${payload.card.label} · ${payload.metric.label}`);
+    } else {
+      setMetricDetail(sourceCardDetail(payload));
     }
   };
 
@@ -1534,8 +1801,13 @@ export default function Dashboard() {
                   title="Production Range Summary"
                   subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
                   items={kaiProductionDailySummaryMetrics}
+                  onItemClick={(item) => openKaiProductionDetail(`Kai Production · ${item.label}`, item)}
                 />
-                <ChartShell title="Users, Sessions, Events" subtitle="Production GA4 export; shows waiting until analytics_526603671 materializes">
+                <ChartShell
+                  title="Users, Sessions, Events"
+                  subtitle="Production GA4 export; shows waiting until analytics_526603671 materializes"
+                  action={<DetailActionButton onClick={() => openKaiProductionDetail('Kai Production GA4 Details')} />}
+                >
                   {!kaiProductionGa4Available ? (
                     <EmptyState>Production GA4 export is not ready yet. Cloud Run production traffic is shown below.</EmptyState>
                   ) : (
@@ -1552,7 +1824,11 @@ export default function Dashboard() {
                     </ResponsiveContainer>
                   )}
                 </ChartShell>
-                <ChartShell title="Production Traffic + Reliability" subtitle="Cloud Run requests, 5xx responses, and latency context">
+                <ChartShell
+                  title="Production Traffic + Reliability"
+                  subtitle="Cloud Run requests, 5xx responses, and latency context"
+                  action={<DetailActionButton onClick={() => openKaiProductionDetail('Kai Production Reliability Details')} />}
+                >
                   {kaiProductionDailyStatus.length === 0 ? (
                     <EmptyState>No Kai production traffic rows available yet.</EmptyState>
                   ) : (
@@ -1578,7 +1854,12 @@ export default function Dashboard() {
                     </ResponsiveContainer>
                   )}
                 </ChartShell>
-                <MetricListCard title="Production Readiness" subtitle="Production feed and GA4 export only; UAT is tracked in its own matrix." items={kaiProductionReadinessMetrics} />
+                <MetricListCard
+                  title="Production Readiness"
+                  subtitle="Production feed and GA4 export only; UAT is tracked in its own matrix."
+                  items={kaiProductionReadinessMetrics}
+                  onItemClick={(item) => openKaiProductionDetail(`Kai Production Readiness · ${item.label}`, item)}
+                />
                 <div className="xl:col-span-2">
                   <KaiDailyStatusTable rows={kaiProductionDailyStatus} />
                 </div>
@@ -1615,8 +1896,13 @@ export default function Dashboard() {
                   title="UAT Range Summary"
                   subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
                   items={kaiUatDailySummaryMetrics}
+                  onItemClick={(item) => openKaiUatDetail(`Kai UAT · ${item.label}`, item)}
                 />
-                <ChartShell title="UAT Users, Sessions, Events" subtitle="uat.kai.hushh.ai GA4 export">
+                <ChartShell
+                  title="UAT Users, Sessions, Events"
+                  subtitle="uat.kai.hushh.ai GA4 export"
+                  action={<DetailActionButton onClick={() => openKaiUatDetail('Kai UAT GA4 Details')} />}
+                >
                   {kaiUatDailyStatus.length === 0 ? (
                     <EmptyState>No Kai UAT GA4 daily rows available yet.</EmptyState>
                   ) : (
@@ -1633,7 +1919,11 @@ export default function Dashboard() {
                     </ResponsiveContainer>
                   )}
                 </ChartShell>
-                <ChartShell title="UAT DB Events" subtitle="UAT public feed DAU, sessions, and total events">
+                <ChartShell
+                  title="UAT DB Events"
+                  subtitle="UAT public feed DAU, sessions, and total events"
+                  action={<DetailActionButton onClick={() => openKaiUatDetail('Kai UAT DB Event Details')} />}
+                >
                   {kaiUatDailyStatus.length === 0 ? (
                     <EmptyState>No Kai UAT DB daily rows available yet.</EmptyState>
                   ) : (
@@ -1826,16 +2116,36 @@ export default function Dashboard() {
             <section className={dashboardBand}>
               <SectionHeader kicker="hushhtech.com" title="Complete report" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <MetricListCard title="Total Report" subtitle="Users, funnel, search, infra, and stored aggregates" items={hushhTechReportTotals} />
-                <MetricListCard title="Last 7 Days" subtitle="DAU, WAU, MAU, sessions, views, events, and engagement" items={hushhTechSevenDayMetrics} />
+                <MetricListCard
+                  title="Total Report"
+                  subtitle="Users, funnel, search, infra, and stored aggregates"
+                  items={hushhTechReportTotals}
+                  onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)}
+                />
+                <MetricListCard
+                  title="Last 7 Days"
+                  subtitle="DAU, WAU, MAU, sessions, views, events, and engagement"
+                  items={hushhTechSevenDayMetrics}
+                  onItemClick={(item) => openHushhTechDetail(`HushhTech 7D · ${item.label}`, item)}
+                />
               </div>
             </section>
 
             <section className={dashboardBand}>
               <SectionHeader kicker="hushhtech.com Supabase" title="Database truth metrics" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <MetricListCard title="Top 10 Database Metrics" subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts" items={hushhTechDatabaseMetrics} />
-                <MetricListCard title="Database Range Summary" subtitle={hushhTechRangeLabel} items={hushhTechDailySummaryMetrics} />
+                <MetricListCard
+                  title="Top 10 Database Metrics"
+                  subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts"
+                  items={hushhTechDatabaseMetrics}
+                  onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)}
+                />
+                <MetricListCard
+                  title="Database Range Summary"
+                  subtitle={hushhTechRangeLabel}
+                  items={hushhTechDailySummaryMetrics}
+                  onItemClick={(item) => openHushhTechDetail(`HushhTech Database Range · ${item.label}`, item)}
+                />
               </div>
               <div className="mt-4">
                 <DailyStatusTable rows={hushhTechDailyStatus} />
@@ -1894,8 +2204,18 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 gap-4">
                 <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
                 <MetricListCard title="hushh.ai Search" subtitle="Search Console export metrics" items={hushhAiSearchMetrics} />
-                <MetricListCard title="hushhtech.com Audience" subtitle="Public endpoint audience and traffic" items={hushhTechAudienceMetrics} />
-                <MetricListCard title="Search + Ops" subtitle="Search Console, GA4, and Cloud Run" items={hushhTechOpsMetrics} />
+                <MetricListCard
+                  title="hushhtech.com Audience"
+                  subtitle="Public endpoint audience and traffic"
+                  items={hushhTechAudienceMetrics}
+                  onItemClick={(item) => openHushhTechDetail(`HushhTech Audience · ${item.label}`, item)}
+                />
+                <MetricListCard
+                  title="Search + Ops"
+                  subtitle="Search Console, GA4, and Cloud Run"
+                  items={hushhTechOpsMetrics}
+                  onItemClick={(item) => openHushhTechDetail(`HushhTech Search + Ops · ${item.label}`, item)}
+                />
               </div>
             </section>
 
@@ -1980,19 +2300,54 @@ export default function Dashboard() {
             </section>
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
-              <MetricListCard title="Kai UAT GA4 Events" subtitle="uat.kai.hushh.ai GA4 export, top events" items={kaiEventMetrics} />
-              <MetricListCard title="Kai UAT Geo + Device" subtitle="UAT country, device, and platform mix" items={kaiGeoMetrics} />
-              <MetricListCard title="Kai UAT Usage Snapshot" subtitle="Latest UAT public feed usage rows" items={kaiUsageMetrics} />
+              <MetricListCard
+                title="Kai UAT GA4 Events"
+                subtitle="uat.kai.hushh.ai GA4 export, top events"
+                items={kaiEventMetrics}
+                onItemClick={(item) => openKaiUatDetail(`Kai UAT GA4 Event · ${item.label}`, item)}
+              />
+              <MetricListCard
+                title="Kai UAT Geo + Device"
+                subtitle="UAT country, device, and platform mix"
+                items={kaiGeoMetrics}
+                onItemClick={(item) => openKaiUatDetail(`Kai UAT Geo + Device · ${item.label}`, item)}
+              />
+              <MetricListCard
+                title="Kai UAT Usage Snapshot"
+                subtitle="Latest UAT public feed usage rows"
+                items={kaiUsageMetrics}
+                onItemClick={(item) => openKaiUatDetail(`Kai UAT Usage · ${item.label}`, item)}
+              />
             </section>
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
-              <MetricListCard title="hushhtech.com Funnel" subtitle="Supabase business funnel aggregates" items={hushhTechBusinessMetrics} />
-              <MetricListCard title="hushhtech.com Activity" subtitle="Pages, routes, and event aggregates" items={hushhTechActivityMetrics} />
+              <MetricListCard
+                title="hushhtech.com Funnel"
+                subtitle="Supabase business funnel aggregates"
+                items={hushhTechBusinessMetrics}
+                onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel · ${item.label}`, item)}
+              />
+              <MetricListCard
+                title="hushhtech.com Activity"
+                subtitle="Pages, routes, and event aggregates"
+                items={hushhTechActivityMetrics}
+                onItemClick={(item) => openHushhTechDetail(`HushhTech Activity · ${item.label}`, item)}
+              />
             </section>
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
-              <MetricListCard title="hushhtech.com Funnel Detail" subtitle="Signup, onboarding, KYC, profile, and chat steps" items={hushhTechFunnelMetrics} />
-              <MetricListCard title="Data Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} />
+              <MetricListCard
+                title="hushhtech.com Funnel Detail"
+                subtitle="Signup, onboarding, KYC, profile, and chat steps"
+                items={hushhTechFunnelMetrics}
+                onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel Detail · ${item.label}`, item)}
+              />
+              <MetricListCard
+                title="Data Coverage"
+                subtitle="Connected provider coverage"
+                items={hushhTechCoverageMetrics}
+                onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)}
+              />
             </section>
           </main>
         ) : (
@@ -2014,16 +2369,46 @@ export default function Dashboard() {
             </section>
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
-              <MetricListCard title="Activation Rates" subtitle="Investor and RIA activation" items={kaiActivationMetrics} />
-              <MetricListCard title="Platform Mix" subtitle="Users by platform, latest feed day" items={platformMix} />
-              <MetricListCard title="Feature Engagement" subtitle="Governed feature events" items={featureEngagement} />
+              <MetricListCard
+                title="Activation Rates"
+                subtitle="Investor and RIA activation"
+                items={kaiActivationMetrics}
+                onItemClick={(item) => openKaiUatDetail(`Kai UAT Activation · ${item.label}`, item)}
+              />
+              <MetricListCard
+                title="Platform Mix"
+                subtitle="Users by platform, latest feed day"
+                items={platformMix}
+                onItemClick={(item) => openKaiUatDetail(`Kai UAT Platform Mix · ${item.label}`, item)}
+              />
+              <MetricListCard
+                title="Feature Engagement"
+                subtitle="Governed feature events"
+                items={featureEngagement}
+                onItemClick={(item) => openKaiUatDetail(`Kai UAT Feature Engagement · ${item.label}`, item)}
+              />
             </section>
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
-              <MetricListCard title="Instrumentation Health" subtitle="Governed event schema coverage" items={instrumentationHealth} />
+              <MetricListCard
+                title="Instrumentation Health"
+                subtitle="Governed event schema coverage"
+                items={instrumentationHealth}
+                onItemClick={(item) => openKaiUatDetail(`Kai UAT Instrumentation · ${item.label}`, item)}
+              />
               <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
-              <MetricListCard title="hushhtech.com Database" subtitle="Top Supabase aggregate counts" items={hushhTechDatabaseMetrics} />
-              <MetricListCard title="hushhtech.com Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} />
+              <MetricListCard
+                title="hushhtech.com Database"
+                subtitle="Top Supabase aggregate counts"
+                items={hushhTechDatabaseMetrics}
+                onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)}
+              />
+              <MetricListCard
+                title="hushhtech.com Coverage"
+                subtitle="Connected provider coverage"
+                items={hushhTechCoverageMetrics}
+                onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)}
+              />
             </section>
           </main>
         )}
