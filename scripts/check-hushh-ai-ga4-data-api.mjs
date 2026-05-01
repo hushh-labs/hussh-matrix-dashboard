@@ -163,6 +163,64 @@ async function main() {
       },
     },
     {
+      name: 'topPages',
+      url: `${baseUrl}:runReport`,
+      body: {
+        dateRanges: [{ startDate: options.startDate, endDate: options.endDate }],
+        dimensions: [{ name: 'pagePath' }, { name: 'pageTitle' }],
+        metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }, { name: 'eventCount' }],
+        orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }],
+        limit: '20',
+      },
+    },
+    {
+      name: 'sessionChannels',
+      url: `${baseUrl}:runReport`,
+      body: {
+        dateRanges: [{ startDate: options.startDate, endDate: options.endDate }],
+        dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'activeUsers' },
+          { name: 'newUsers' },
+          { name: 'engagedSessions' },
+          { name: 'averageSessionDuration' },
+          { name: 'eventCount' },
+        ],
+        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: '12',
+      },
+    },
+    {
+      name: 'sessionSourceMedium',
+      url: `${baseUrl}:runReport`,
+      body: {
+        dateRanges: [{ startDate: options.startDate, endDate: options.endDate }],
+        dimensions: [{ name: 'sessionSourceMedium' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'activeUsers' },
+          { name: 'newUsers' },
+          { name: 'engagedSessions' },
+          { name: 'averageSessionDuration' },
+          { name: 'eventCount' },
+        ],
+        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: '12',
+      },
+    },
+    {
+      name: 'landingPages',
+      url: `${baseUrl}:runReport`,
+      body: {
+        dateRanges: [{ startDate: options.startDate, endDate: options.endDate }],
+        dimensions: [{ name: 'sessionDefaultChannelGroup' }, { name: 'landingPage' }],
+        metrics: [{ name: 'sessions' }, { name: 'activeUsers' }, { name: 'engagedSessions' }, { name: 'eventCount' }],
+        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: '15',
+      },
+    },
+    {
       name: 'geoDevice',
       url: `${baseUrl}:runReport`,
       body: {
@@ -171,6 +229,34 @@ async function main() {
         metrics: [{ name: 'eventCount' }, { name: 'activeUsers' }],
         orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
         limit: '20',
+      },
+    },
+    {
+      name: 'sessionTimingHourly',
+      url: `${baseUrl}:runReport`,
+      body: {
+        dateRanges: [{ startDate: options.startDate, endDate: options.endDate }],
+        dimensions: [{ name: 'dateHour' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'engagedSessions' },
+          { name: 'averageSessionDuration' },
+          { name: 'eventCount' },
+          { name: 'activeUsers' },
+        ],
+        orderBys: [{ dimension: { dimensionName: 'dateHour' } }],
+        limit: '2400',
+      },
+    },
+    {
+      name: 'hourOfDay',
+      url: `${baseUrl}:runReport`,
+      body: {
+        dateRanges: [{ startDate: options.startDate, endDate: options.endDate }],
+        dimensions: [{ name: 'hour' }],
+        metrics: [{ name: 'sessions' }, { name: 'engagedSessions' }, { name: 'eventCount' }, { name: 'activeUsers' }],
+        orderBys: [{ dimension: { dimensionName: 'hour' } }],
+        limit: '24',
       },
     },
     {

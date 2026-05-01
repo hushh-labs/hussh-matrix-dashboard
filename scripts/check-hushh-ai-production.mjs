@@ -159,6 +159,17 @@ async function main() {
   assert(ga4, 'Hushh AI GA4 block missing');
   assert(typeof ga4.available === 'boolean', 'Hushh AI GA4 availability missing');
   assert(Array.isArray(ga4.sections) && ga4.sections.length >= 4, 'Hushh AI GA4 sections missing');
+  assert(Array.isArray(ga4.topPages), 'Hushh AI GA4 top pages/screens missing');
+  assert(Array.isArray(ga4.topEvents), 'Hushh AI GA4 top events missing');
+  assert(Object.prototype.hasOwnProperty.call(ga4.rangeTotals ?? {}, 'engagedSessions'), 'Hushh AI GA4 engaged sessions missing');
+  assert(Object.prototype.hasOwnProperty.call(ga4.rangeTotals ?? {}, 'engagementRate'), 'Hushh AI GA4 engagement rate missing');
+  assert(Object.prototype.hasOwnProperty.call(ga4.rangeTotals ?? {}, 'averageSessionDuration'), 'Hushh AI GA4 average session duration missing');
+  assert(Array.isArray(ga4.acquisition?.sessionChannels), 'Hushh AI GA4 session channel acquisition missing');
+  assert(Array.isArray(ga4.acquisition?.sessionSourceMedium), 'Hushh AI GA4 source/medium acquisition missing');
+  assert(Array.isArray(ga4.acquisition?.landingPages), 'Hushh AI GA4 landing-page acquisition missing');
+  assert(Array.isArray(ga4.sessionTiming?.hourly), 'Hushh AI GA4 hourly session timing missing');
+  assert(Array.isArray(ga4.sessionTiming?.topDateHours), 'Hushh AI GA4 top session timing buckets missing');
+  assert(Array.isArray(ga4.warnings), 'Hushh AI GA4 caveat warnings missing');
   const configuredGa4Source = String(health.body?.config?.hushhAiGa4 || '');
   if (configuredGa4Source.startsWith('properties/')) {
     assert(
@@ -171,6 +182,12 @@ async function main() {
   assertSourceSections(ga4Card, 'Hushh AI GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
   const events = hushhAi.body?.data?.productEvents;
   assert(events?.status === 'not_configured', 'Hushh AI DB product-events should be not_configured');
+  const expectedEvents = events?.expectedEvents ?? [];
+  assert(Array.isArray(expectedEvents), 'Hushh AI future product event placeholders missing');
+  for (const eventName of ['signup_started', 'signup_completed', 'login', 'cta_clicked', 'demo_requested', 'contact_submitted', 'product_page_viewed']) {
+    const placeholder = expectedEvents.find((event) => event?.eventName === eventName);
+    assert(placeholder?.status === 'not_configured', `Hushh AI future product event ${eventName} should be not_configured`);
+  }
   results.push({
     check: 'hushh-ai-analytics',
     status: 'ok',

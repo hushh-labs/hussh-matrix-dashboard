@@ -864,6 +864,15 @@ export default function Dashboard() {
   const instrumentationHealth = data?.instrumentationHealth ?? [];
   const hushhAiOpsMetrics = data?.hushhAiOpsMetrics ?? [];
   const hushhAiSearchMetrics = data?.hushhAiSearchMetrics ?? [];
+  const hushhAiEngagementMetrics = data?.hushhAiEngagementMetrics ?? [];
+  const hushhAiTopPageMetrics = data?.hushhAiTopPageMetrics ?? [];
+  const hushhAiTopEventMetrics = data?.hushhAiTopEventMetrics ?? [];
+  const hushhAiProductEventMetrics = data?.hushhAiProductEventMetrics ?? [];
+  const hushhAiAcquisitionMetrics = data?.hushhAiAcquisitionMetrics ?? [];
+  const hushhAiSourceMediumMetrics = data?.hushhAiSourceMediumMetrics ?? [];
+  const hushhAiLandingPageMetrics = data?.hushhAiLandingPageMetrics ?? [];
+  const hushhAiGeoDeviceMetrics = data?.hushhAiGeoDeviceMetrics ?? [];
+  const hushhAiSessionTimingMetrics = data?.hushhAiSessionTimingMetrics ?? [];
   const hushhAiDailyStatus = data?.hushhAiDailyStatus ?? [];
   const hushhAiDailySummaryMetrics = data?.hushhAiDailySummaryMetrics ?? [];
   const hushhAiFreshness = data?.hushhAi?.freshness;
@@ -1168,6 +1177,77 @@ export default function Dashboard() {
                         <Area type="monotone" dataKey="requests" name="Requests" stroke="#007aff" strokeWidth={2.5} fill="url(#hushhAiRequests)" />
                         <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiErrors)" />
                       </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <MetricListCard
+                  title="GA4 Engagement"
+                  subtitle="Users, sessions, events, and engaged-session quality"
+                  items={hushhAiEngagementMetrics}
+                />
+                <MetricListCard
+                  title="Future Product Events"
+                  subtitle="Custom hushh.ai funnel events waiting for a real aggregate source"
+                  items={hushhAiProductEventMetrics}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                <MetricListCard
+                  title="Where Sessions Came From"
+                  subtitle="GA4 session channel groups"
+                  items={hushhAiAcquisitionMetrics}
+                />
+                <MetricListCard
+                  title="Source / Medium"
+                  subtitle="GA4 session source attribution"
+                  items={hushhAiSourceMediumMetrics}
+                />
+                <MetricListCard
+                  title="Landing Pages"
+                  subtitle="First page in each GA4 session"
+                  items={hushhAiLandingPageMetrics}
+                />
+                <MetricListCard
+                  title="Geo + Device"
+                  subtitle="Aggregate country and device mix"
+                  items={hushhAiGeoDeviceMetrics}
+                />
+                <MetricListCard
+                  title="Session Timing"
+                  subtitle="Top session hours in GA4 property timezone"
+                  items={hushhAiSessionTimingMetrics}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <ChartShell title="Top Pages / Screens" subtitle="GA4 aggregate page views for hushh.ai">
+                  {hushhAiTopPageMetrics.length === 0 ? (
+                    <EmptyState>Waiting for GA4 page and screen aggregates.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={hushhAiTopPageMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                        <CartesianGrid stroke="#ececf0" horizontal={false} />
+                        <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                        <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
+                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                        <Bar dataKey="value" name="Page views" fill="#007aff" radius={[0, 6, 6, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </ChartShell>
+                <ChartShell title="Top GA4 Events" subtitle="Aggregate events that show what visitors are doing">
+                  {hushhAiTopEventMetrics.length === 0 ? (
+                    <EmptyState>Waiting for GA4 event aggregates.</EmptyState>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={hushhAiTopEventMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                        <CartesianGrid stroke="#ececf0" horizontal={false} />
+                        <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                        <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
+                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                        <Bar dataKey="value" name="Events" fill="#34c759" radius={[0, 6, 6, 0]} />
+                      </BarChart>
                     </ResponsiveContainer>
                   )}
                 </ChartShell>

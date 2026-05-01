@@ -61,8 +61,8 @@ Current platform sources:
 | Hushh AI | Cloud Run Monitoring | Last 7 days request count, error count, error rate, p95 latency, instance count, and daily request series |
 | Hushh AI | Search Console BigQuery export | Search metrics appear when export tables are present in `hushh-pda.searchconsole_searchconsole_hushh_ai` |
 | Hushh AI | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.hushh_ai_search_console_api`; populated by Cloud Run Job `hushh-ai-search-console-ingest` for root `hushh.ai` URLs |
-| Hushh AI | GA4 | Reads GA4 Data API from property `458078330` / measurement ID `G-PPEF1CSJ5H`; Cloud Run impersonates the GA-authorized `646258530541-compute@developer.gserviceaccount.com` service account |
-| Hushh AI | DB / Product Events | Normalized card shows `not_configured` until a real Hushh AI DB aggregate source is provided; do not wire HushhTech Supabase into Hushh AI |
+| Hushh AI | GA4 | Reads aggregate GA4 Data API reports from property `458078330` / measurement ID `G-PPEF1CSJ5H`; includes users, sessions, events, engaged sessions, engagement rate, average session duration, top pages/screens, top events, session channel/source attribution, landing pages, geo/device mix, and hourly session timing. Cloud Run impersonates the GA-authorized `646258530541-compute@developer.gserviceaccount.com` service account |
+| Hushh AI | DB / Product Events | Normalized card shows `not_configured` until a real Hushh AI DB aggregate source is provided. Future event placeholders are signup started, signup completed, login, CTA clicked, demo requested, contact submitted, and product page viewed; do not wire HushhTech Supabase into Hushh AI |
 | Hushh AI | Live refresh layer | API responses are no-store, the UI auto-refreshes every 30 seconds, and source freshness labels distinguish near-live, delayed, and pending analytics sources |
 | Kai | BigQuery public feed | UAT dashboard metrics, funnel, usage, engagement, geo, and instrumentation health |
 | Kai | GA4 BigQuery export | UAT GA4 aggregates from `hushh-pda-uat.analytics_533362555` |
@@ -151,7 +151,7 @@ why some sections may show neutral empty states:
 | HushhTech Search Console | Official bulk export tables have not materialized yet | GCP-only fallback is active in `hushh-ai-prod.hushhtech_search_console_api`; Scheduler job `hushhtech-search-console-ingest-daily` refreshes the last 16 days every 6 hours |
 | Hushh AI Search Console | Official export dataset exists, but export tables may not be present yet | GCP-only fallback is active in `hushh-ai-prod.hushh_ai_search_console_api`; Scheduler refreshes the last 16 days every 6 hours |
 | Hushh AI GA4 | GA4 Data API must use numeric property `458078330`; measurement ID `G-PPEF1CSJ5H` is not a Data API property identifier. GA4 UI rejects the custom `metrics-dashboard-runtime` service account, but the property can authorize `646258530541-compute@developer.gserviceaccount.com` | Keep `roles/iam.serviceAccountTokenCreator` on the target service account for `metrics-dashboard-runtime`; grant Viewer or Analyst on GA4 property `458078330` to `646258530541-compute@developer.gserviceaccount.com`; validate with `npm run test:ga4:hushh-ai` |
-| Hushh AI DB / product events | No Hushh AI DB aggregate source is confirmed in metrics runtime config | Keep the product events card in `not_configured`; do not use HushhTech Supabase |
+| Hushh AI DB / product events | No Hushh AI DB aggregate source is confirmed in metrics runtime config | Keep the product events card and future event placeholders in `not_configured`; do not use HushhTech Supabase |
 | Kai Search Console | Official domain export is shared with `sc-domain:hushh.ai` and may not have tables yet | GCP-only fallback is active in `hushh-ai-prod.kai_search_console_api` with Kai URL filters; Scheduler refreshes the last 16 days every 6 hours |
 
 ## Operational Commands

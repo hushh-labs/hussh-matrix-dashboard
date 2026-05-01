@@ -1697,6 +1697,9 @@ function waitingGa4Summary(
       users: null,
       sessions: null,
       events: null,
+      engagedSessions: null,
+      engagementRate: null,
+      averageSessionDuration: null,
     },
     sections: buildGa4Sections({
       generatedAt: new Date().toISOString(),
@@ -1707,11 +1710,34 @@ function waitingGa4Summary(
     }),
     daily: dateSpine(range).map((date) => ({
       eventDate: date,
-      events: 0,
-      users: 0,
-      sessions: 0,
+      events: null,
+      users: null,
+      sessions: null,
+      engagedSessions: null,
+      engagementRate: null,
+      averageSessionDuration: null,
     })),
     topEvents: [],
+    topPages: [],
+    acquisition: {
+      sessionChannels: [],
+      sessionSourceMedium: [],
+      landingPages: [],
+      geoDevice: [],
+    },
+    sessionTiming: {
+      timezoneLabel: 'GA4 property timezone',
+      hourly: [],
+      hourOfDay: [],
+      topDateHours: [],
+    },
+    warnings: [
+      'GA4 aggregate data only; no user-level/session-level rows.',
+      'Users are non-additive across days and dimensions.',
+      'Hourly timestamps are in the GA4 property timezone.',
+      'Last-day/today data is processed GA4 reporting data and may change.',
+      'DB/Product Events are not configured, so conversion/signup/product behavior is unavailable.',
+    ],
     geo: [],
     note: `${productLabel} ${note}`,
   };
@@ -1738,6 +1764,29 @@ function formatGa4ApiDate(value: string): string {
   return /^\d{8}$/.test(value)
     ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
     : value;
+}
+
+function compactGa4DateHour(value: string): string {
+  return String(value || '').replace(/\D/g, '').slice(0, 10);
+}
+
+function formatGa4ApiDateHour(value: string): string {
+  const compact = compactGa4DateHour(value);
+  if (/^\d{10}$/.test(compact)) {
+    return `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)} ${compact.slice(8, 10)}:00`;
+  }
+  return value || '(not set)';
+}
+
+function dateHourSpine(range: HushhAiDateRange): string[] {
+  const hours: string[] = [];
+  for (const date of dateSpine(range)) {
+    const compactDate = date.replace(/-/g, '');
+    for (let hour = 0; hour < 24; hour += 1) {
+      hours.push(`${compactDate}${String(hour).padStart(2, '0')}`);
+    }
+  }
+  return hours;
 }
 
 async function ga4AuthorizedClient() {
@@ -1786,6 +1835,9 @@ function ga4TotalsFromRow(row: Ga4RunReportRow | undefined, offset = 0) {
     users: ga4Metric(row, offset),
     sessions: ga4Metric(row, offset + 1),
     events: ga4Metric(row, offset + 2),
+    engagedSessions: ga4Metric(row, offset + 3),
+    engagementRate: ga4Metric(row, offset + 4),
+    averageSessionDuration: ga4Metric(row, offset + 5),
   };
 }
 
@@ -1793,6 +1845,9 @@ type Ga4SectionTotals = {
   users: number | null;
   sessions: number | null;
   events: number | null;
+  engagedSessions?: number | null;
+  engagementRate?: number | null;
+  averageSessionDuration?: number | null;
   available: boolean;
   label?: string | null;
   source?: string | null;
@@ -1826,6 +1881,14 @@ function buildGa4Sections(params: {
       sourceMetric('users', key === 'realtime' ? 'Active Users' : 'Users', totals?.users),
       sourceMetric('sessions', 'Sessions', totals?.sessions),
       sourceMetric('events', 'Events', totals?.events),
+      sourceMetric('engaged_sessions', 'Engaged Sessions', totals?.engagedSessions),
+      sourceMetric('engagement_rate', 'Engagement Rate', totals?.engagementRate, formatSourcePercent(totals?.engagementRate)),
+      sourceMetric(
+        'average_session_duration',
+        'Avg Session Duration',
+        totals?.averageSessionDuration,
+        formatSourceDuration(totals?.averageSessionDuration),
+      ),
     ],
     note: totals?.note ?? null,
     blocker: totals?.available ? null : totals?.note ?? `${label} is waiting for GA4 rows.`,
@@ -1848,10 +1911,39 @@ async function fetchGa4DataApiSummary(
   const dateRanges = [{ startDate: range.startDate, endDate: range.endDate }];
   const last7DateRanges = [{ startDate: '7daysAgo', endDate: 'today' }];
   const last24DateRanges = [{ startDate: 'yesterday', endDate: 'today' }];
-  const coreMetrics = [{ name: 'activeUsers' }, { name: 'sessions' }, { name: 'eventCount' }];
+  const ga4Warnings = [
+    'GA4 aggregate data only; no user-level/session-level rows.',
+    'Users are non-additive across days and dimensions.',
+    'Hourly timestamps are in the GA4 property timezone.',
+    'Last-day/today data is processed GA4 reporting data and may change.',
+    'DB/Product Events are not configured, so conversion/signup/product behavior is unavailable.',
+  ];
+  const coreMetrics = [
+    { name: 'activeUsers' },
+    { name: 'sessions' },
+    { name: 'eventCount' },
+    { name: 'engagedSessions' },
+    { name: 'engagementRate' },
+    { name: 'averageSessionDuration' },
+  ];
 
   try {
-    const [realtime, lastDayTotals, last7Totals, daily, totals, topEvents, geo] = await Promise.all([
+    const [
+      realtime,
+      lastDayTotals,
+      last7Totals,
+      daily,
+      totals,
+      topEvents,
+      topPages,
+      geo,
+      sessionChannels,
+      sessionSourceMedium,
+      landingPages,
+      geoDevice,
+      hourlySessions,
+      hourOfDay,
+    ] = await Promise.all([
       runGa4RealtimeReport(propertyId, {
         minuteRanges: [{ name: 'last_30_minutes', startMinutesAgo: 29, endMinutesAgo: 0 }],
         metrics: [{ name: 'activeUsers' }, { name: 'eventCount' }],
@@ -1884,10 +1976,94 @@ async function fetchGa4DataApiSummary(
       }),
       runGa4Report(propertyId, {
         dateRanges,
+        dimensions: [{ name: 'pagePath' }, { name: 'pageTitle' }],
+        metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }, { name: 'eventCount' }],
+        orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }],
+        limit: '20',
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
         dimensions: [{ name: 'platform' }, { name: 'deviceCategory' }, { name: 'country' }],
         metrics: [{ name: 'eventCount' }, { name: 'activeUsers' }],
         orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
         limit: '20',
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'activeUsers' },
+          { name: 'newUsers' },
+          { name: 'engagedSessions' },
+          { name: 'averageSessionDuration' },
+          { name: 'eventCount' },
+        ],
+        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: '12',
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'sessionSourceMedium' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'activeUsers' },
+          { name: 'newUsers' },
+          { name: 'engagedSessions' },
+          { name: 'averageSessionDuration' },
+          { name: 'eventCount' },
+        ],
+        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: '12',
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'sessionDefaultChannelGroup' }, { name: 'landingPage' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'activeUsers' },
+          { name: 'engagedSessions' },
+          { name: 'eventCount' },
+        ],
+        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: '15',
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'country' }, { name: 'deviceCategory' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'activeUsers' },
+          { name: 'engagedSessions' },
+          { name: 'eventCount' },
+        ],
+        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: '20',
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'dateHour' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'engagedSessions' },
+          { name: 'averageSessionDuration' },
+          { name: 'eventCount' },
+          { name: 'activeUsers' },
+        ],
+        orderBys: [{ dimension: { dimensionName: 'dateHour' } }],
+        limit: String(Math.min(range.days * 24, 2_400)),
+      }),
+      runGa4Report(propertyId, {
+        dateRanges,
+        dimensions: [{ name: 'hour' }],
+        metrics: [
+          { name: 'sessions' },
+          { name: 'engagedSessions' },
+          { name: 'eventCount' },
+          { name: 'activeUsers' },
+        ],
+        orderBys: [{ dimension: { dimensionName: 'hour' } }],
+        limit: '24',
       }),
     ]);
 
@@ -1907,6 +2083,25 @@ async function fetchGa4DataApiSummary(
     const lastDayProcessedTotals = ga4TotalsFromRow(lastDayRow);
     const last7Row = last7Totals.rows?.[0];
     const selectedTotals = ga4TotalsFromRow(totalsRow);
+    const hourlyByDateHour = new Map(
+      (hourlySessions.rows ?? []).map((row) => [compactGa4DateHour(ga4Dimension(row, 0)), row]),
+    );
+    const hourly = dateHourSpine(range).map((dateHour) => {
+      const row = hourlyByDateHour.get(dateHour);
+      return {
+        dateHour,
+        label: formatGa4ApiDateHour(dateHour),
+        sessions: ga4Metric(row, 0),
+        engagedSessions: ga4Metric(row, 1),
+        averageSessionDuration: ga4Metric(row, 2),
+        events: ga4Metric(row, 3),
+        users: ga4Metric(row, 4),
+      };
+    });
+    const topDateHours = hourly
+      .filter((row) => row.sessions > 0)
+      .sort((a, b) => b.sessions - a.sessions || b.events - a.events)
+      .slice(0, 12);
 
     return {
       data: {
@@ -1928,6 +2123,9 @@ async function fetchGa4DataApiSummary(
           users: selectedTotals.users,
           sessions: selectedTotals.sessions,
           events: selectedTotals.events,
+          engagedSessions: selectedTotals.engagedSessions,
+          engagementRate: selectedTotals.engagementRate,
+          averageSessionDuration: selectedTotals.averageSessionDuration,
         },
         sections: buildGa4Sections({
           generatedAt,
@@ -1955,12 +2153,22 @@ async function fetchGa4DataApiSummary(
             users: ga4Metric(row, 0),
             sessions: ga4Metric(row, 1),
             events: ga4Metric(row, 2),
+            engagedSessions: ga4Metric(row, 3),
+            engagementRate: ga4Metric(row, 4),
+            averageSessionDuration: ga4Metric(row, 5),
           };
         }),
         topEvents: (topEvents.rows ?? []).map((row) => ({
           eventName: ga4Dimension(row, 0),
           events: ga4Metric(row, 0),
           users: ga4Metric(row, 1),
+        })),
+        topPages: (topPages.rows ?? []).map((row) => ({
+          path: ga4Dimension(row, 0) || '(not set)',
+          title: ga4Dimension(row, 1) || '(not set)',
+          views: ga4Metric(row, 0),
+          users: ga4Metric(row, 1),
+          events: ga4Metric(row, 2),
         })),
         geo: (geo.rows ?? []).map((row) => ({
           platform: ga4Dimension(row, 0),
@@ -1969,6 +2177,56 @@ async function fetchGa4DataApiSummary(
           events: ga4Metric(row, 0),
           users: ga4Metric(row, 1),
         })),
+        acquisition: {
+          sessionChannels: (sessionChannels.rows ?? []).map((row) => ({
+            channel: ga4Dimension(row, 0) || '(not set)',
+            sessions: ga4Metric(row, 0),
+            users: ga4Metric(row, 1),
+            newUsers: ga4Metric(row, 2),
+            engagedSessions: ga4Metric(row, 3),
+            averageSessionDuration: ga4Metric(row, 4),
+            events: ga4Metric(row, 5),
+          })),
+          sessionSourceMedium: (sessionSourceMedium.rows ?? []).map((row) => ({
+            sourceMedium: ga4Dimension(row, 0) || '(not set)',
+            sessions: ga4Metric(row, 0),
+            users: ga4Metric(row, 1),
+            newUsers: ga4Metric(row, 2),
+            engagedSessions: ga4Metric(row, 3),
+            averageSessionDuration: ga4Metric(row, 4),
+            events: ga4Metric(row, 5),
+          })),
+          landingPages: (landingPages.rows ?? []).map((row) => ({
+            channel: ga4Dimension(row, 0) || '(not set)',
+            landingPage: ga4Dimension(row, 1) || '(not set)',
+            sessions: ga4Metric(row, 0),
+            users: ga4Metric(row, 1),
+            engagedSessions: ga4Metric(row, 2),
+            events: ga4Metric(row, 3),
+          })),
+          geoDevice: (geoDevice.rows ?? []).map((row) => ({
+            country: ga4Dimension(row, 0) || '(not set)',
+            deviceCategory: ga4Dimension(row, 1) || '(not set)',
+            sessions: ga4Metric(row, 0),
+            users: ga4Metric(row, 1),
+            engagedSessions: ga4Metric(row, 2),
+            events: ga4Metric(row, 3),
+          })),
+        },
+        sessionTiming: {
+          timezoneLabel: 'GA4 property timezone',
+          hourly,
+          hourOfDay: (hourOfDay.rows ?? []).map((row) => ({
+            hour: ga4Dimension(row, 0) || '(not set)',
+            label: `${String(ga4Dimension(row, 0) || '0').padStart(2, '0')}:00`,
+            sessions: ga4Metric(row, 0),
+            engagedSessions: ga4Metric(row, 1),
+            events: ga4Metric(row, 2),
+            users: ga4Metric(row, 3),
+          })),
+          topDateHours,
+        },
+        warnings: ga4Warnings,
       },
       error: null,
     };
@@ -2375,6 +2633,17 @@ function formatSourcePercent(value: unknown): string | null {
   return parsed == null ? null : `${(parsed * 100).toFixed(1)}%`;
 }
 
+function formatSourceDuration(value: unknown): string | null {
+  const parsed = metricValue(value);
+  if (parsed == null) return null;
+  const seconds = Math.round(parsed);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainder}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function formatSourcePosition(value: unknown): string | null {
   const parsed = metricValue(value);
   return parsed == null ? null : parsed.toFixed(1);
@@ -2677,12 +2946,29 @@ function hushhAiGa4SourceLabel(): string {
 }
 
 function buildHushhAiProductEvents(fetchedAt: string): Record<string, unknown> {
+  const expectedEvents = [
+    ['signup_started', 'Signup Started'],
+    ['signup_completed', 'Signup Completed'],
+    ['login', 'Login'],
+    ['cta_clicked', 'CTA Clicked'],
+    ['demo_requested', 'Demo Requested'],
+    ['contact_submitted', 'Contact Submitted'],
+    ['product_page_viewed', 'Product Page Viewed'],
+  ].map(([eventName, label]) => ({
+    eventName,
+    label,
+    status: 'not_configured',
+    count: null,
+    note: 'Waiting for a real hushh.ai product-event aggregate source.',
+  }));
+
   return {
     source: 'hushh-ai-db-status',
     available: false,
     status: 'not_configured',
     generatedAt: fetchedAt,
     metrics: [],
+    expectedEvents,
     note: 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
   };
 }
@@ -2711,7 +2997,16 @@ function buildHushhAiSourceCards(
         generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : new Date().toISOString(),
         expectedLagSeconds: null,
       },
-      metrics: [],
+      metrics: (Array.isArray(productEvents?.expectedEvents) ? productEvents.expectedEvents : [])
+        .map((event) => {
+          const eventRecord = asRecord(event);
+          return sourceMetric(
+            String(eventRecord?.eventName ?? ''),
+            String(eventRecord?.label ?? 'Product Event'),
+            null,
+            'Not configured',
+          );
+        }),
       blocker: eventsAvailable ? null : String(productEvents?.note ?? 'Hushh AI product events are not ingested into the dashboard yet.'),
     },
   ];

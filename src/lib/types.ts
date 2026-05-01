@@ -394,9 +394,12 @@ export interface HushhTechMetricsSummary {
 
 export interface KaiGa4DailyMetric {
   eventDate: string;
-  events: number;
-  users: number;
-  sessions: number;
+  events: number | null;
+  users: number | null;
+  sessions: number | null;
+  engagedSessions?: number | null;
+  engagementRate?: number | null;
+  averageSessionDuration?: number | null;
 }
 
 export interface KaiGa4EventMetric {
@@ -413,6 +416,31 @@ export interface KaiGa4GeoMetric {
   users: number;
 }
 
+export interface Ga4AcquisitionMetric {
+  channel?: string;
+  sourceMedium?: string;
+  landingPage?: string;
+  country?: string;
+  deviceCategory?: string;
+  sessions: number | null;
+  users: number | null;
+  newUsers?: number | null;
+  engagedSessions?: number | null;
+  averageSessionDuration?: number | null;
+  events: number | null;
+}
+
+export interface Ga4SessionTimingMetric {
+  dateHour?: string;
+  hour?: string;
+  label: string;
+  sessions: number | null;
+  engagedSessions?: number | null;
+  averageSessionDuration?: number | null;
+  events: number | null;
+  users: number | null;
+}
+
 export interface KaiGa4Summary {
   sourceLabel?: string;
   generatedAt?: string;
@@ -426,13 +454,36 @@ export interface KaiGa4Summary {
     days: number;
   };
   rangeTotals?: {
-    users: number;
-    sessions: number;
-    events: number;
+    users: number | null;
+    sessions: number | null;
+    events: number | null;
+    engagedSessions?: number | null;
+    engagementRate?: number | null;
+    averageSessionDuration?: number | null;
   };
   sections?: ProductSourceCardSection[];
   daily: KaiGa4DailyMetric[];
   topEvents: KaiGa4EventMetric[];
+  topPages?: Array<{
+    path: string;
+    title?: string;
+    views: number | null;
+    users: number | null;
+    events: number | null;
+  }>;
+  acquisition?: {
+    sessionChannels?: Ga4AcquisitionMetric[];
+    sessionSourceMedium?: Ga4AcquisitionMetric[];
+    landingPages?: Ga4AcquisitionMetric[];
+    geoDevice?: Ga4AcquisitionMetric[];
+  };
+  sessionTiming?: {
+    timezoneLabel?: string;
+    hourly?: Ga4SessionTimingMetric[];
+    hourOfDay?: Ga4SessionTimingMetric[];
+    topDateHours?: Ga4SessionTimingMetric[];
+  };
+  warnings?: string[];
   geo: KaiGa4GeoMetric[];
 }
 
@@ -670,6 +721,15 @@ export interface DashboardData {
   hushhAi: HushhAiSummary | null;
   hushhAiOpsMetrics: BreakdownMetric[];
   hushhAiSearchMetrics: BreakdownMetric[];
+  hushhAiEngagementMetrics: BreakdownMetric[];
+  hushhAiTopPageMetrics: BreakdownMetric[];
+  hushhAiTopEventMetrics: BreakdownMetric[];
+  hushhAiProductEventMetrics: BreakdownMetric[];
+  hushhAiAcquisitionMetrics: BreakdownMetric[];
+  hushhAiSourceMediumMetrics: BreakdownMetric[];
+  hushhAiLandingPageMetrics: BreakdownMetric[];
+  hushhAiGeoDeviceMetrics: BreakdownMetric[];
+  hushhAiSessionTimingMetrics: BreakdownMetric[];
   hushhAiDailyStatus: HushhAiDailyStatusPoint[];
   hushhAiDailySummaryMetrics: BreakdownMetric[];
   dataQualityWarnings: string[];
