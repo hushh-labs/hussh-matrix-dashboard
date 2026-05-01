@@ -69,7 +69,7 @@ Current platform sources:
 | Kai | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.kai_search_console_api`; populated by Cloud Run Job `kai-search-console-ingest` for `kai.hushh.ai` and `uat.kai.hushh.ai` URLs |
 | Kai | Production feed | Status-only until the production GA4 export dataset materializes |
 | Kai | Production Cloud Run Monitoring | `kai.hushh.ai` requests, 5xx responses, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp` |
-| HushhTech | Public summary endpoint | `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic |
+| HushhTech | Public summary endpoint | `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic; all-zero processed GA4 traffic is shown as unverified until the HushhTech web tag/property is confirmed |
 | HushhTech | Supabase Management API | Top aggregate database metrics plus date-range daily status for new users, active users, sessions, exit signals, product usage, and analytics events |
 | HushhTech | Cloud Run Monitoring | `metrics.hushh.ai` reads `hushh-tech-prod/hushh-tech-website` directly through Google Cloud Monitoring |
 | HushhTech | Search Console BigQuery export | Preferred source. Search metrics appear when export tables are present in `hushh-ai-prod.searchconsole_hushhtech_com` |
