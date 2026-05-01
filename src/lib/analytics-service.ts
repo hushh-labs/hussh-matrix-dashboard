@@ -225,6 +225,15 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhAi: null,
     hushhAiOpsMetrics: [],
     hushhAiSearchMetrics: [],
+    hushhAiEngagementMetrics: [],
+    hushhAiTopPageMetrics: [],
+    hushhAiTopEventMetrics: [],
+    hushhAiProductEventMetrics: [],
+    hushhAiAcquisitionMetrics: [],
+    hushhAiSourceMediumMetrics: [],
+    hushhAiLandingPageMetrics: [],
+    hushhAiGeoDeviceMetrics: [],
+    hushhAiSessionTimingMetrics: [],
     hushhAiDailyStatus: [],
     hushhAiDailySummaryMetrics: [],
     dataQualityWarnings: [],
@@ -858,6 +867,112 @@ function buildHushhAiSearchMetrics(hushhAi: HushhAiSummary | null): BreakdownMet
   ];
 }
 
+function waitingMetric(label: string, detail: string, value: number | null | undefined, displayValue?: string): BreakdownMetric {
+  return value == null
+    ? metric(label, 0, detail, displayValue ?? 'Waiting')
+    : metric(label, value, detail, displayValue);
+}
+
+function buildHushhAiEngagementMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const ga4 = hushhAi?.ga4;
+  const totals = ga4?.rangeTotals;
+  const source = ga4?.sourceLabel ?? 'GA4 Data API';
+  if (!ga4) return [];
+
+  return [
+    waitingMetric('GA4 Users', source, totals?.users, undefined),
+    waitingMetric('GA4 Sessions', 'Visits started on hushh.ai; one user can create multiple sessions.', totals?.sessions),
+    waitingMetric('GA4 Events', 'Aggregate tracked interactions such as page views, clicks, and GA4 automatic events.', totals?.events),
+    waitingMetric('Engaged Sessions', 'Sessions with meaningful engagement by GA4 rules.', totals?.engagedSessions),
+    waitingMetric(
+      'Engagement Rate',
+      'Share of sessions that were engaged.',
+      totals?.engagementRate,
+      totals?.engagementRate == null ? undefined : formatPercent(totals.engagementRate),
+    ),
+    waitingMetric(
+      'Avg Session Duration',
+      'Average engagement time per session.',
+      totals?.averageSessionDuration,
+      totals?.averageSessionDuration == null ? undefined : formatDuration(totals.averageSessionDuration),
+    ),
+  ];
+}
+
+function buildHushhAiTopPageMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  return (hushhAi?.ga4?.topPages ?? []).slice(0, 8).map((row) => metric(
+    row.path || row.title || '(not set)',
+    asNumber(row.views),
+    `${formatNumber(asNumber(row.users))} users · ${formatNumber(asNumber(row.events))} events`,
+  ));
+}
+
+function buildHushhAiTopEventMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  return (hushhAi?.ga4?.topEvents ?? []).slice(0, 8).map((row) => metric(
+    formatMetricLabel(row.eventName),
+    row.events,
+    `${formatNumber(row.users)} users`,
+  ));
+}
+
+function buildHushhAiProductEventMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const productEvents = hushhAi?.productEvents && typeof hushhAi.productEvents === 'object'
+    ? hushhAi.productEvents as { expectedEvents?: Array<{ label?: string; eventName?: string; status?: string }> }
+    : null;
+  return (productEvents?.expectedEvents ?? []).map((row) => metric(
+    row.label ?? formatMetricLabel(row.eventName ?? 'Product Event'),
+    0,
+    'Waiting for a real hushh.ai product-event aggregate source',
+    row.status === 'not_configured' ? 'Not configured' : 'Waiting',
+  ));
+}
+
+function buildHushhAiAcquisitionMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const channels = hushhAi?.ga4?.acquisition?.sessionChannels ?? [];
+  return channels.slice(0, 8).map((row) => metric(
+    row.channel ?? '(not set)',
+    asNumber(row.sessions),
+    `${formatNumber(asNumber(row.users))} users · ${formatNumber(asNumber(row.engagedSessions))} engaged · ${formatDuration(row.averageSessionDuration)}`,
+  ));
+}
+
+function buildHushhAiSourceMediumMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const sources = hushhAi?.ga4?.acquisition?.sessionSourceMedium ?? [];
+  return sources.slice(0, 8).map((row) => metric(
+    row.sourceMedium ?? '(not set)',
+    asNumber(row.sessions),
+    `${formatNumber(asNumber(row.users))} users · ${formatNumber(asNumber(row.events))} events`,
+  ));
+}
+
+function buildHushhAiLandingPageMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const landingPages = hushhAi?.ga4?.acquisition?.landingPages ?? [];
+  return landingPages.slice(0, 8).map((row) => metric(
+    row.landingPage ?? '(not set)',
+    asNumber(row.sessions),
+    `${row.channel ?? 'Unknown'} · ${formatNumber(asNumber(row.users))} users · ${formatNumber(asNumber(row.events))} events`,
+  ));
+}
+
+function buildHushhAiGeoDeviceMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const rows = hushhAi?.ga4?.acquisition?.geoDevice ?? [];
+  return rows.slice(0, 8).map((row) => metric(
+    `${row.country ?? '(not set)'} · ${row.deviceCategory ?? '(not set)'}`,
+    asNumber(row.sessions),
+    `${formatNumber(asNumber(row.users))} users · ${formatNumber(asNumber(row.engagedSessions))} engaged`,
+  ));
+}
+
+function buildHushhAiSessionTimingMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+  const timing = hushhAi?.ga4?.sessionTiming;
+  const timezone = timing?.timezoneLabel ?? 'GA4 property timezone';
+  return (timing?.topDateHours ?? []).slice(0, 8).map((row) => metric(
+    row.label,
+    asNumber(row.sessions),
+    `${timezone} · ${formatNumber(asNumber(row.engagedSessions))} engaged · ${formatDuration(row.averageSessionDuration)}`,
+  ));
+}
+
 function emptyDailyPoint(date: string, label = date.slice(5)): HushhAiDailyStatusPoint {
   return {
     date,
@@ -1282,6 +1397,15 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     hushhAi,
     hushhAiOpsMetrics: buildHushhAiOpsMetrics(hushhAi),
     hushhAiSearchMetrics: buildHushhAiSearchMetrics(hushhAi),
+    hushhAiEngagementMetrics: buildHushhAiEngagementMetrics(hushhAi),
+    hushhAiTopPageMetrics: buildHushhAiTopPageMetrics(hushhAi),
+    hushhAiTopEventMetrics: buildHushhAiTopEventMetrics(hushhAi),
+    hushhAiProductEventMetrics: buildHushhAiProductEventMetrics(hushhAi),
+    hushhAiAcquisitionMetrics: buildHushhAiAcquisitionMetrics(hushhAi),
+    hushhAiSourceMediumMetrics: buildHushhAiSourceMediumMetrics(hushhAi),
+    hushhAiLandingPageMetrics: buildHushhAiLandingPageMetrics(hushhAi),
+    hushhAiGeoDeviceMetrics: buildHushhAiGeoDeviceMetrics(hushhAi),
+    hushhAiSessionTimingMetrics: buildHushhAiSessionTimingMetrics(hushhAi),
     hushhAiDailyStatus: buildHushhAiDailyStatus(hushhAi),
     hushhAiDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAi),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
