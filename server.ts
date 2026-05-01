@@ -1342,6 +1342,22 @@ function mergeHushhTechCoverage(summary: Record<string, unknown>): Record<string
   return coverage;
 }
 
+const HUSHHTECH_GA4_ZERO_TRAFFIC_WARNING =
+  'HushhTech GA4 Data API is reachable, but processed traffic is all zero for this window. Treat processed GA4 traffic as unverified until the HushhTech web tag/property is confirmed.';
+
+function hushhTechGa4NeedsVerification(traffic: Record<string, unknown> | null | undefined): boolean {
+  if (!traffic?.available) return false;
+  const overview = asRecord(traffic.overview) ?? {};
+  const processedSignals = [
+    overview.active1DayUsers,
+    overview.active7DayUsers,
+    overview.sessions,
+    overview.screenPageViews,
+    overview.newUsers,
+  ].map((value) => metricValue(value) ?? 0);
+  return processedSignals.every((value) => value === 0);
+}
+
 async function fetchHushhTechAnalytics(range: HushhAiDateRange): Promise<{ data: Record<string, unknown> | null; error: string | null }> {
   const [publicSummary, gcp, searchConsole, supabase] = await Promise.all([
     fetchHushhTechPublicAnalytics(range),
@@ -1367,6 +1383,9 @@ async function fetchHushhTechAnalytics(range: HushhAiDateRange): Promise<{ data:
   if (supabase.error) warnings.add('HushhTech Supabase database aggregates are unavailable.');
   if (searchConsole.data && asRecord(searchConsole.data)?.available === false) {
     warnings.add(String(asRecord(searchConsole.data)?.note ?? 'Search Console is waiting.'));
+  }
+  if (hushhTechGa4NeedsVerification(asRecord(summary.traffic))) {
+    warnings.add(HUSHHTECH_GA4_ZERO_TRAFFIC_WARNING);
   }
   summary.dataQualityWarnings = Array.from(warnings);
   summary.sourceCards = buildHushhTechSourceCards(summary);
@@ -2505,21 +2524,27 @@ function buildHushhTechGa4SourceCard(summary: Record<string, unknown>) {
   const traffic = asRecord(summary.traffic);
   const overview = asRecord(traffic?.overview) ?? {};
   const available = Boolean(traffic?.available);
+  const needsVerification = hushhTechGa4NeedsVerification(traffic);
+  const processedStatus = available && !needsVerification ? 'delayed' : 'waiting';
+  const processedBlocker = needsVerification
+    ? HUSHHTECH_GA4_ZERO_TRAFFIC_WARNING
+    : String(traffic?.note ?? 'GA4 Data API is waiting or returned no traffic rows.');
+  const processedValue = (value: unknown) => (needsVerification ? null : value);
   return {
     key: 'ga4',
     label: 'GA4',
-    status: available ? 'delayed' : 'waiting',
-    stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+    status: processedStatus,
+    stateClass: sourceStateClass(processedStatus),
     source: publicGa4SourceLabel(traffic?.source ?? 'ga4-data-api'),
     freshness: {
       generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
       expectedLagSeconds: 86_400,
     },
     metrics: [
-      sourceMetric('active_7_day_users', '7d Active Users', overview.active7DayUsers),
-      sourceMetric('sessions', 'Sessions', overview.sessions),
-      sourceMetric('page_views', 'Page Views', overview.screenPageViews),
-      sourceMetric('new_users', 'New Users', overview.newUsers),
+      sourceMetric('active_7_day_users', '7d Active Users', processedValue(overview.active7DayUsers)),
+      sourceMetric('sessions', 'Sessions', processedValue(overview.sessions)),
+      sourceMetric('page_views', 'Page Views', processedValue(overview.screenPageViews)),
+      sourceMetric('new_users', 'New Users', processedValue(overview.newUsers)),
     ],
     sections: [
       {
@@ -2540,59 +2565,59 @@ function buildHushhTechGa4SourceCard(summary: Record<string, unknown>) {
       {
         key: 'last_24_hours',
         label: 'Last 24 Hours',
-        status: available ? 'delayed' : 'waiting',
-        stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+        status: processedStatus,
+        stateClass: sourceStateClass(processedStatus),
         source: 'GA4 processed report',
         freshness: {
           generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
           expectedLagSeconds: 86_400,
         },
         metrics: [
-          sourceMetric('users', 'Users', overview.active1DayUsers),
-          sourceMetric('sessions', 'Sessions', overview.sessions),
-          sourceMetric('page_views', 'Page Views', overview.screenPageViews),
-          sourceMetric('new_users', 'New Users', overview.newUsers),
+          sourceMetric('users', 'Users', processedValue(overview.active1DayUsers)),
+          sourceMetric('sessions', 'Sessions', processedValue(overview.sessions)),
+          sourceMetric('page_views', 'Page Views', processedValue(overview.screenPageViews)),
+          sourceMetric('new_users', 'New Users', processedValue(overview.newUsers)),
         ],
-        blocker: available ? null : String(traffic?.note ?? 'Last 24 hours GA4 data is waiting.'),
+        blocker: processedStatus === 'delayed' ? null : processedBlocker,
       },
       {
         key: 'last_7_days',
         label: 'Last 7 Days',
-        status: available ? 'delayed' : 'waiting',
-        stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+        status: processedStatus,
+        stateClass: sourceStateClass(processedStatus),
         source: 'GA4 processed report',
         freshness: {
           generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
           expectedLagSeconds: 86_400,
         },
         metrics: [
-          sourceMetric('users', 'Users', overview.active7DayUsers),
-          sourceMetric('sessions', 'Sessions', overview.sessions),
-          sourceMetric('page_views', 'Page Views', overview.screenPageViews),
-          sourceMetric('new_users', 'New Users', overview.newUsers),
+          sourceMetric('users', 'Users', processedValue(overview.active7DayUsers)),
+          sourceMetric('sessions', 'Sessions', processedValue(overview.sessions)),
+          sourceMetric('page_views', 'Page Views', processedValue(overview.screenPageViews)),
+          sourceMetric('new_users', 'New Users', processedValue(overview.newUsers)),
         ],
-        blocker: available ? null : String(traffic?.note ?? 'Last 7 days GA4 data is waiting.'),
+        blocker: processedStatus === 'delayed' ? null : processedBlocker,
       },
       {
         key: 'selected_total',
         label: 'Selected Total',
-        status: available ? 'delayed' : 'waiting',
-        stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
+        status: processedStatus,
+        stateClass: sourceStateClass(processedStatus),
         source: 'GA4 selected range',
         freshness: {
           generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
           expectedLagSeconds: 86_400,
         },
         metrics: [
-          sourceMetric('users', 'Users', overview.active7DayUsers),
-          sourceMetric('sessions', 'Sessions', overview.sessions),
-          sourceMetric('page_views', 'Page Views', overview.screenPageViews),
-          sourceMetric('new_users', 'New Users', overview.newUsers),
+          sourceMetric('users', 'Users', processedValue(overview.active7DayUsers)),
+          sourceMetric('sessions', 'Sessions', processedValue(overview.sessions)),
+          sourceMetric('page_views', 'Page Views', processedValue(overview.screenPageViews)),
+          sourceMetric('new_users', 'New Users', processedValue(overview.newUsers)),
         ],
-        blocker: available ? null : String(traffic?.note ?? 'Selected range GA4 data is waiting.'),
+        blocker: processedStatus === 'delayed' ? null : processedBlocker,
       },
     ],
-    blocker: available ? null : String(traffic?.note ?? 'GA4 Data API is waiting or returned no traffic rows.'),
+    blocker: processedStatus === 'delayed' ? null : processedBlocker,
   };
 }
 
@@ -3786,20 +3811,23 @@ function compactTraffic(summary: Record<string, unknown> | null, range: AgentRan
   const traffic = asRecord(summary?.traffic);
   const overview = asRecord(traffic?.overview);
   if (!overview) return null;
+  const needsVerification = hushhTechGa4NeedsVerification(traffic);
+  const verifiedMetric = (value: unknown) => (needsVerification ? null : optionalNumber(value));
   return {
     metricPrefix: 'traffic',
     source: 'hushhtech.com GA4 traffic',
-    available: Boolean(traffic?.available),
+    available: Boolean(traffic?.available) && !needsVerification,
     range,
-    active1DayUsers: optionalNumber(overview.active1DayUsers),
-    active7DayUsers: optionalNumber(overview.active7DayUsers),
-    active28DayUsers: optionalNumber(overview.active28DayUsers),
-    sessions: optionalNumber(overview.sessions),
-    engagedSessions: optionalNumber(overview.engagedSessions),
-    pageViews: optionalNumber(overview.screenPageViews),
-    newUsers: optionalNumber(overview.newUsers),
+    active1DayUsers: verifiedMetric(overview.active1DayUsers),
+    active7DayUsers: verifiedMetric(overview.active7DayUsers),
+    active28DayUsers: verifiedMetric(overview.active28DayUsers),
+    sessions: verifiedMetric(overview.sessions),
+    engagedSessions: verifiedMetric(overview.engagedSessions),
+    pageViews: verifiedMetric(overview.screenPageViews),
+    newUsers: verifiedMetric(overview.newUsers),
     engagementRate: optionalNumber(overview.engagementRate),
     realtimeActiveUsers: optionalNumber(overview.realtimeActiveUsers),
+    note: needsVerification ? HUSHHTECH_GA4_ZERO_TRAFFIC_WARNING : null,
   };
 }
 

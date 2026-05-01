@@ -574,6 +574,9 @@ Acceptance checks:
 - Supabase top 10 database metrics show aggregate counts only.
 - HushhTech Search Console metrics come from the official GCP export or
   `hushh-ai-prod.hushhtech_search_console_api`, never Supabase.
+- HushhTech processed GA4 traffic is treated as unverified when the GA4 Data
+  API is reachable but every processed traffic metric is zero for the selected
+  window; do not present those zeros as confirmed traffic truth.
 - `/api/analytics/all` returns a normalized three-source matrix for Hushh AI,
   Kai, and HushhTech with `search_console`, `ga4`, and `product_events` cards.
 - OTP rows, emails, raw diagnostics, and tokens are not visible.

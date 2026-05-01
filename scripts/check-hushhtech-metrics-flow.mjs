@@ -92,6 +92,12 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function trafficSignalsAreAllZero(overview) {
+  return ['active1DayUsers', 'active7DayUsers', 'sessions', 'screenPageViews', 'newUsers']
+    .map((key) => toNumber(overview?.[key]))
+    .every((value) => value === 0);
+}
+
 function ageMinutes(isoDate) {
   const time = Date.parse(isoDate);
   if (!Number.isFinite(time)) return Number.POSITIVE_INFINITY;
@@ -195,9 +201,7 @@ async function checkProductSummary(options) {
   assertNoSensitivePayload(summary.body, 'HushhTech summary');
 
   const trafficOverview = summary.body.traffic?.overview || {};
-  const trafficSignals = ['active1DayUsers', 'active7DayUsers', 'sessions', 'screenPageViews', 'newUsers']
-    .map((key) => toNumber(trafficOverview[key]));
-  const allTrafficZero = trafficSignals.every((value) => value === 0);
+  const allTrafficZero = trafficSignalsAreAllZero(trafficOverview);
 
   results.push(result(
     'product-summary-ga4',
@@ -263,7 +267,17 @@ async function checkDashboardFlow(options) {
   assertCardMetricEquals(searchCard, 'clicks', search.overview.clicks);
   assertCardMetricEquals(searchCard, 'impressions', search.overview.impressions);
   assertSourceSections(searchCard, 'HushhTech Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
-  assertCardMetricEquals(ga4Card, 'sessions', data.traffic?.overview?.sessions);
+  const ga4ProcessedTrafficAllZero = trafficSignalsAreAllZero(data.traffic?.overview);
+  if (ga4ProcessedTrafficAllZero) {
+    assert(ga4Card?.status === 'waiting', 'HushhTech GA4 card should be waiting when processed traffic is unverified', String(ga4Card?.status || 'missing'));
+    assert(
+      /processed traffic is all zero/i.test(String(ga4Card?.blocker || '')),
+      'HushhTech GA4 card is missing the unverified processed traffic caveat',
+      String(ga4Card?.blocker || ''),
+    );
+  } else {
+    assertCardMetricEquals(ga4Card, 'sessions', data.traffic?.overview?.sessions);
+  }
   assert(Array.isArray(ga4Card?.sections) && ga4Card.sections.length >= 4, 'HushhTech GA4 sections missing');
   assertSourceSections(ga4Card, 'HushhTech GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
   assertCardMetricEquals(eventsCard, 'total_users', data.supabase?.rangeTotals?.totalUsers);

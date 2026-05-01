@@ -51,6 +51,7 @@ import type {
   PlatformStatus,
   ProductSourceCard,
   ProductSourceGroup,
+  ProductSourceStatus,
 } from './lib/types';
 
 const iconMap: Record<string, typeof Activity> = {
@@ -178,9 +179,9 @@ function formatOptionalNumber(value: number | null | undefined, fallback = '—'
   return typeof value === 'number' && Number.isFinite(value) ? formatNumber(value) : fallback;
 }
 
-function formatSourceMetricValue(card: ProductSourceCard, value: number | null, displayValue?: string): string {
+function formatSourceMetricValue(status: ProductSourceStatus | undefined, value: number | null, displayValue?: string): string {
   if (displayValue) return displayValue;
-  if (value == null) return card.status === 'waiting' || card.status === 'not_configured' ? 'Waiting' : '—';
+  if (value == null) return status === 'waiting' || status === 'not_configured' ? 'Waiting' : '—';
   return formatNumber(value);
 }
 
@@ -347,7 +348,7 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
                     <div key={`${section.key}-${metricItem.key}`} className="min-h-[54px] rounded-md border border-black/[0.03] bg-white/80 p-2">
                       <p className="truncate text-[10px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
                       <p className="mt-1 truncate text-base font-semibold text-[#1d1d1f]">
-                        {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
+                        {formatSourceMetricValue(section.status ?? card.status, metricItem.value, metricItem.displayValue)}
                       </p>
                     </div>
                   ))}
@@ -373,7 +374,7 @@ function SourceCard({ card }: { card: ProductSourceCard }) {
               <div key={metricItem.key} className={cn(applePanel, 'min-h-[72px] p-3')}>
                 <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
                 <p className="mt-2 truncate text-lg font-semibold text-[#1d1d1f]">
-                  {formatSourceMetricValue(card, metricItem.value, metricItem.displayValue)}
+                  {formatSourceMetricValue(card.status, metricItem.value, metricItem.displayValue)}
                 </p>
               </div>
             ))
