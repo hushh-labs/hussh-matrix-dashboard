@@ -1625,32 +1625,61 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
     });
     const productEvents = data?.hushhAi?.productEvents as {
       expectedEvents?: Array<{ eventName?: string; label?: string; status?: string; count?: number | null; note?: string }>;
+      metrics?: Array<{ key?: string; label?: string; value?: number | null; displayValue?: string; detail?: string }>;
+      topEvents?: Array<{ eventName?: string; events?: number | null; actors?: number | null; sessions?: number | null }>;
+      topRequestTypes?: Array<{ requestType?: string; events?: number | null; actors?: number | null; sessions?: number | null }>;
+      latestEventAt?: string | null;
       note?: string;
       status?: string;
     } | null | undefined;
+    const topProductEvents = productEvents?.topEvents ?? [];
+    const topRequestTypes = productEvents?.topRequestTypes ?? [];
     setMetricDetail({
       title: label ?? 'Hushh AI Product Events',
-      subtitle: 'These are the product/custom events we expect to track once a real hushh.ai aggregate source exists.',
-      badge: productEvents?.status === 'not_configured' ? 'Not configured' : 'Waiting',
-      summary: [
-        detailRow('Source', 'DB / Product Events', 'No real hushh.ai aggregate event source is configured yet.'),
-        detailRow('Status', productEvents?.status === 'not_configured' ? 'Not configured' : 'Waiting'),
-      ],
+      subtitle: `Live aggregate product-event details for ${hushhAiRange.startDate} to ${hushhAiRange.endDate}.`,
+      badge: productEvents?.status === 'live' ? 'Live' : 'Waiting',
+      summary: metricRows(hushhAiProductEventMetrics, 6),
       sections: [
         {
-          title: 'Expected Product Events',
-          subtitle: 'No numeric value is shown here until a first-party aggregate source exists.',
+          title: 'Aggregate Metrics',
+          subtitle: 'DB aggregate counts from product and chat event tables.',
+          rows: metricRows(hushhAiProductEventMetrics, 12),
+        },
+        {
+          title: 'Top Product Events',
+          subtitle: 'Most frequent aggregate product event names in the selected range.',
+          rows: topProductEvents.map((event) => detailRow(
+            readableMetricLabel(event.eventName ?? 'Product Event'),
+            formatOptionalNumber(event.events),
+            `${formatOptionalNumber(event.actors)} actors · ${formatOptionalNumber(event.sessions)} sessions`,
+            event.eventName,
+          )),
+        },
+        {
+          title: 'Top Chat Request Types',
+          subtitle: 'Aggregate chat request types from the selected range.',
+          rows: topRequestTypes.map((request) => detailRow(
+            readableMetricLabel(request.requestType ?? 'Request Type'),
+            formatOptionalNumber(request.events),
+            `${formatOptionalNumber(request.actors)} actors · ${formatOptionalNumber(request.sessions)} sessions`,
+            request.requestType,
+          )),
+        },
+        {
+          title: 'Expected Funnel Events',
+          subtitle: 'Tracked funnel event names; zero means the live source returned no events for that name.',
           rows: (productEvents?.expectedEvents ?? []).map((event) => detailRow(
             event.label ?? readableMetricLabel(event.eventName ?? 'Product Event'),
-            event.count == null ? 'Not configured' : formatNumber(event.count),
-            event.note ?? 'Waiting for a real hushh.ai product-event aggregate source.',
+            event.count == null ? '—' : formatNumber(event.count),
+            event.note ?? 'Live aggregate source returned this count.',
             event.eventName,
           )),
         },
       ],
       caveats: [
-        productEvents?.note ?? 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
-        'Until this source exists, GA4 can show traffic/events but cannot verify signup, login, CTA, demo, or contact funnel truth.',
+        productEvents?.note ?? 'Hushh AI product event aggregates are available.',
+        productEvents?.latestEventAt ? `Latest event timestamp: ${productEvents.latestEventAt}.` : 'Latest event timestamp is not available.',
+        'Aggregate counts only; raw query text, answers, users, anonymous IDs, sessions, and metadata are not shown.',
       ],
     });
   };
@@ -2321,8 +2350,8 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
             }}
           />
           <MetricListCard
-            title="Future Product Events"
-            subtitle="Custom hushh.ai funnel events waiting for a real aggregate source"
+            title="Product Events"
+            subtitle="Live DB aggregate events, actors, sessions, search, and chat signals"
             items={hushhAiProductEventMetrics}
             onItemClick={handleHushhAiMetricListClick('product')}
           />
@@ -2350,7 +2379,7 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
               </ResponsiveContainer>
             )}
           </ChartShell>
-          <ChartShell title="Top GA4 Events" subtitle="Aggregate events that show what visitors are doing" action={<DetailActionButton label="Details" onClick={() => openHushhAiGa4Detail('events')} />}>
+          <ChartShell title="Top GA4 Events" subtitle="GA4 automatic, page, engagement, and web-vitals events" action={<DetailActionButton label="Details" onClick={() => openHushhAiGa4Detail('events')} />}>
             {hushhAiTopEventMetrics.length === 0 ? (
               <EmptyState>Waiting for GA4 event aggregates.</EmptyState>
             ) : (

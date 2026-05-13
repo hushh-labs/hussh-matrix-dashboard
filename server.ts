@@ -1928,14 +1928,13 @@ async function fetchGa4DataApiSummary(
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const dateRanges = [{ startDate: range.startDate, endDate: range.endDate }];
-  const last7DateRanges = [{ startDate: '7daysAgo', endDate: 'today' }];
+  const last7DateRanges = [{ startDate: '6daysAgo', endDate: 'today' }];
   const last24DateRanges = [{ startDate: 'yesterday', endDate: 'today' }];
   const ga4Warnings = [
     'GA4 aggregate data only; no user-level/session-level rows.',
     'Users are non-additive across days and dimensions.',
     'Hourly timestamps are in the GA4 property timezone.',
     'Last-day/today data is processed GA4 reporting data and may change.',
-    'DB/Product Events are not configured, so conversion/signup/product behavior is unavailable.',
   ];
   const coreMetrics = [
     { name: 'activeUsers' },
