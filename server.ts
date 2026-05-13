@@ -68,6 +68,21 @@ const KAI_PROD_METRICS_WINDOW_DAYS = parseInt(process.env.KAI_PROD_METRICS_WINDO
 const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod';
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
+const HUSHH_AI_PRODUCT_EVENTS_PROJECT =
+  process.env.HUSHH_AI_PRODUCT_EVENTS_PROJECT || 'hushh-ai-prod';
+const HUSHH_AI_PRODUCT_EVENTS_DATASET =
+  process.env.HUSHH_AI_PRODUCT_EVENTS_DATASET || 'hushh_search_console';
+const HUSHH_AI_UAT_GCP_PROJECT = process.env.HUSHH_AI_UAT_GCP_PROJECT || 'hushh-ai-uat';
+const HUSHH_AI_UAT_CLOUD_RUN_SERVICE =
+  process.env.HUSHH_AI_UAT_CLOUD_RUN_SERVICE || 'hushh-ai-website';
+const HUSHH_AI_UAT_METRICS_WINDOW_DAYS = parseInt(
+  process.env.HUSHH_AI_UAT_METRICS_WINDOW_DAYS || String(HUSHH_AI_METRICS_WINDOW_DAYS),
+  10,
+);
+const HUSHH_AI_UAT_PRODUCT_EVENTS_PROJECT =
+  process.env.HUSHH_AI_UAT_PRODUCT_EVENTS_PROJECT || 'hushh-ai-uat';
+const HUSHH_AI_UAT_PRODUCT_EVENTS_DATASET =
+  process.env.HUSHH_AI_UAT_PRODUCT_EVENTS_DATASET || 'hushh_search_console';
 const HUSHH_AI_SEARCH_PROJECT = process.env.HUSHH_AI_SEARCH_PROJECT || BQ_PROD_PROJECT;
 const HUSHH_AI_SEARCH_DATASET =
   process.env.HUSHH_AI_SEARCH_DATASET || 'searchconsole_searchconsole_hushh_ai';
@@ -143,7 +158,7 @@ const PUBLIC_OMIT_KEYS = new Set([
   'sourceTable',
   'pageFilterRegex',
 ]);
-const PUBLIC_UNSAFE_VALUE_PATTERN = /analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda(?:-uat)?|ibsisfnjxeowvdtvgzff/i;
+const PUBLIC_UNSAFE_VALUE_PATTERN = /analytics_\d+|searchconsole_|hushh_search_console|_search_console_api|hushh-ai-(?:prod|uat)|hushh-pda(?:-uat)?|ibsisfnjxeowvdtvgzff/i;
 
 function sanitizePublicPayload(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => sanitizePublicPayload(item));
@@ -244,6 +259,10 @@ function parseProductDateRange(
 
 function parseHushhAiDateRange(query: Record<string, unknown>): HushhAiDateRange {
   return parseProductDateRange(query, 'hushh_ai', HUSHH_AI_METRICS_WINDOW_DAYS);
+}
+
+function parseHushhAiUatDateRange(query: Record<string, unknown>): HushhAiDateRange {
+  return parseProductDateRange(query, 'hushh_ai_uat', HUSHH_AI_UAT_METRICS_WINDOW_DAYS);
 }
 
 function parseKaiDateRange(query: Record<string, unknown>): HushhAiDateRange {
@@ -2415,6 +2434,10 @@ async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult
   return fetchCloudRunSummary(HUSHH_AI_GCP_PROJECT, HUSHH_AI_CLOUD_RUN_SERVICE, range, 'Hushh AI');
 }
 
+async function fetchHushhAiUatCloudRun(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  return fetchCloudRunSummary(HUSHH_AI_UAT_GCP_PROJECT, HUSHH_AI_UAT_CLOUD_RUN_SERVICE, range, 'Hushh AI UAT');
+}
+
 async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   return fetchProductSearchConsole({
     productLabel: 'Hushh AI',
@@ -2428,6 +2451,30 @@ async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataR
     rowLimit: HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT,
     pageFilterRegex: HUSHH_AI_SEARCH_CONSOLE_PAGE_FILTER_REGEX,
   }, range);
+}
+
+function waitingHushhAiUatSearchConsole(range: HushhAiDateRange): Record<string, unknown> {
+  return unavailableProductSearchConsole({
+    productLabel: 'Hushh AI UAT',
+    sourceProjectId: '',
+    sourceDataset: '',
+    fallbackProjectId: '',
+    fallbackDataset: '',
+    siteUrl: 'https://uat.hushh.ai',
+    searchType: 'web',
+    dataState: 'all',
+    rowLimit: 10,
+  }, range, 'Hushh AI UAT Search Console source is not configured in metrics.hushh.ai yet.');
+}
+
+function waitingHushhAiUatGa4Summary(range: HushhAiDateRange): Record<string, unknown> {
+  return waitingGa4Summary(
+    'Hushh AI UAT',
+    range,
+    '',
+    '',
+    'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.',
+  );
 }
 
 async function fetchKaiSearchConsoleFor(
@@ -2945,68 +2992,551 @@ function hushhAiGa4SourceLabel(): string {
   return 'not_configured';
 }
 
-function buildHushhAiProductEvents(fetchedAt: string): Record<string, unknown> {
-  const expectedEvents = [
-    ['signup_started', 'Signup Started'],
-    ['signup_completed', 'Signup Completed'],
-    ['login', 'Login'],
-    ['cta_clicked', 'CTA Clicked'],
-    ['demo_requested', 'Demo Requested'],
-    ['contact_submitted', 'Contact Submitted'],
-    ['product_page_viewed', 'Product Page Viewed'],
-  ].map(([eventName, label]) => ({
+interface SearchConsoleAppAnalyticsConfig {
+  productLabel: string;
+  sourceProjectId: string;
+  sourceDataset: string;
+}
+
+const HUSHH_AI_EXPECTED_PRODUCT_EVENTS = [
+  ['signup_started', 'Signup Started'],
+  ['signup_completed', 'Signup Completed'],
+  ['login', 'Login'],
+  ['cta_clicked', 'CTA Clicked'],
+  ['demo_requested', 'Demo Requested'],
+  ['contact_submitted', 'Contact Submitted'],
+  ['product_page_viewed', 'Product Page Viewed'],
+];
+
+function emptyProductEventTotals(): Record<string, unknown> {
+  return {
+    totalEvents: null,
+    eventUsers: null,
+    actors: null,
+    sessions: null,
+    dau: null,
+    wau: null,
+    mau: null,
+    searchEvents: null,
+    followupEvents: null,
+    productEvents: null,
+    chatEvents: null,
+  };
+}
+
+function productEventMetrics(totals: Record<string, unknown>) {
+  return [
+    sourceMetric('total_events', 'Events', totals.totalEvents),
+    sourceMetric('actors', 'Actors', totals.actors ?? totals.eventUsers),
+    sourceMetric('sessions', 'Sessions', totals.sessions),
+    sourceMetric('dau', 'DAU', totals.dau),
+    sourceMetric('wau', 'WAU', totals.wau),
+    sourceMetric('mau', 'MAU', totals.mau),
+    sourceMetric('search_events', 'Search Events', totals.searchEvents),
+    sourceMetric('followup_events', 'Follow-ups', totals.followupEvents),
+    sourceMetric('product_events', 'Product Events', totals.productEvents),
+    sourceMetric('chat_events', 'Chat Events', totals.chatEvents),
+  ];
+}
+
+function emptyProductEventsDaily(range: HushhAiDateRange): Array<Record<string, unknown>> {
+  return dateSpine(range).map((date) => ({
+    date,
+    label: date.slice(5),
+    totalEvents: null,
+    eventUsers: null,
+    actors: null,
+    sessions: null,
+    dau: null,
+    searchEvents: null,
+    followupEvents: null,
+    productEvents: null,
+    chatEvents: null,
+  }));
+}
+
+function publicAggregateName(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  return /^[A-Za-z0-9_.:-]{1,80}$/.test(raw) ? raw : '(other)';
+}
+
+function productEventsDailySpine(
+  range: HushhAiDateRange,
+  rows: Record<string, unknown>[],
+): Array<Record<string, unknown>> {
+  const byDate = new Map(rows.map((row) => [String(row.date), row]));
+  return dateSpine(range).map((date) => {
+    const row = byDate.get(date);
+    const eventUsers = toNumber(row?.eventUsers);
+    return {
+      date,
+      label: date.slice(5),
+      totalEvents: toNumber(row?.totalEvents),
+      eventUsers,
+      actors: eventUsers,
+      sessions: toNumber(row?.sessions),
+      dau: eventUsers,
+      searchEvents: toNumber(row?.searchEvents),
+      followupEvents: toNumber(row?.followupEvents),
+      productEvents: toNumber(row?.productEvents),
+      chatEvents: toNumber(row?.chatEvents),
+      firstEventAt: timestampString(row?.firstEventAt),
+      latestEventAt: timestampString(row?.latestEventAt),
+    };
+  });
+}
+
+function sumProductEventDaily(
+  rows: Record<string, unknown>[],
+  actorTotal: unknown,
+): Record<string, unknown> {
+  return rows.reduce<Record<string, unknown>>((totals, row) => ({
+    totalEvents: toNumber(totals.totalEvents) + toNumber(row.totalEvents),
+    eventUsers: actorTotal,
+    actors: actorTotal,
+    sessions: toNumber(totals.sessions) + toNumber(row.sessions),
+    searchEvents: toNumber(totals.searchEvents) + toNumber(row.searchEvents),
+    followupEvents: toNumber(totals.followupEvents) + toNumber(row.followupEvents),
+    productEvents: toNumber(totals.productEvents) + toNumber(row.productEvents),
+    chatEvents: toNumber(totals.chatEvents) + toNumber(row.chatEvents),
+  }), {
+    totalEvents: 0,
+    eventUsers: actorTotal,
+    actors: actorTotal,
+    sessions: 0,
+    searchEvents: 0,
+    followupEvents: 0,
+    productEvents: 0,
+    chatEvents: 0,
+  });
+}
+
+function buildProductEventSections(
+  generatedAt: string,
+  available: boolean,
+  rangeTotals: Record<string, unknown>,
+  daily: Record<string, unknown>[],
+) {
+  const latestAvailableDaily = daily
+    .filter((row) => toNumber(row.totalEvents) > 0)
+    .at(-1) ?? daily.at(-1);
+  const lastSevenDailySum = sumProductEventDaily(daily.slice(-7), rangeTotals.wau);
+  const lastSevenTotals = {
+    totalEvents: rangeTotals.last7Events ?? lastSevenDailySum.totalEvents,
+    eventUsers: rangeTotals.wau,
+    actors: rangeTotals.wau,
+    sessions: rangeTotals.last7Sessions ?? lastSevenDailySum.sessions,
+    searchEvents: rangeTotals.last7SearchEvents ?? lastSevenDailySum.searchEvents,
+    followupEvents: rangeTotals.last7FollowupEvents ?? lastSevenDailySum.followupEvents,
+    productEvents: rangeTotals.last7ProductEvents ?? lastSevenDailySum.productEvents,
+    chatEvents: rangeTotals.last7ChatEvents ?? lastSevenDailySum.chatEvents,
+    dau: rangeTotals.dau,
+    wau: rangeTotals.wau,
+    mau: rangeTotals.mau,
+  };
+  const latestDayTotals = latestAvailableDaily
+    ? {
+        ...latestAvailableDaily,
+        eventUsers: latestAvailableDaily.actors ?? latestAvailableDaily.eventUsers,
+        dau: latestAvailableDaily.dau ?? latestAvailableDaily.eventUsers,
+        wau: rangeTotals.wau,
+        mau: rangeTotals.mau,
+      }
+    : emptyProductEventTotals();
+
+  const toSection = (
+    key: string,
+    label: string,
+    source: string,
+    totals: Record<string, unknown>,
+    blocker: string | null,
+  ) => ({
+    key,
+    label,
+    status: available ? 'live' : 'waiting',
+    stateClass: sourceStateClass(available ? 'live' : 'waiting'),
+    source,
+    freshness: {
+      generatedAt,
+      expectedLagSeconds: null,
+    },
+    metrics: productEventMetrics(available ? totals : emptyProductEventTotals()),
+    blocker: available ? null : blocker,
+  });
+
+  return [
+    toSection(
+      'last_24_hours',
+      'Latest Available Day',
+      latestAvailableDaily?.date ? `DB daily aggregate · ${latestAvailableDaily.date}` : 'DB daily aggregate',
+      latestDayTotals,
+      'Product event daily aggregates are waiting for data.',
+    ),
+    toSection(
+      'last_7_days',
+      'Last 7 Days',
+      'DB 7-day aggregate',
+      lastSevenTotals,
+      'Product event 7-day aggregates are waiting for data.',
+    ),
+    toSection(
+      'selected_total',
+      'Selected Total',
+      'DB selected range aggregate',
+      rangeTotals,
+      'Product event selected-range aggregates are waiting for data.',
+    ),
+  ];
+}
+
+function expectedHushhAiEvents(
+  eventCounts: Map<string, number>,
+  available: boolean,
+): Array<Record<string, unknown>> {
+  return HUSHH_AI_EXPECTED_PRODUCT_EVENTS.map(([eventName, label]) => ({
     eventName,
     label,
-    status: 'not_configured',
-    count: null,
-    note: 'Waiting for a real hushh.ai product-event aggregate source.',
+    status: available ? 'live' : 'waiting',
+    count: available ? eventCounts.get(eventName) ?? 0 : null,
+    note: available ? null : 'Waiting for product-event aggregate data.',
   }));
+}
+
+function unavailableSearchConsoleAppAnalytics(
+  config: SearchConsoleAppAnalyticsConfig,
+  range: HushhAiDateRange,
+  status: 'waiting' | 'unavailable',
+  note: string,
+): Record<string, unknown> {
+  const generatedAt = new Date().toISOString();
+  const rangeTotals = emptyProductEventTotals();
+  const daily = emptyProductEventsDaily(range);
+  return {
+    source: 'search-console-app-analytics-waiting',
+    sourceLabel: publicProductEventsSourceLabel(config.productLabel),
+    sourceProjectId: config.sourceProjectId,
+    sourceDataset: config.sourceDataset,
+    available: false,
+    status,
+    generatedAt,
+    realtimeMode: 'events_aggregate',
+    expectedLagSeconds: null,
+    range: {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      days: range.days,
+    },
+    rangeTotals,
+    metrics: [],
+    daily,
+    topEvents: [],
+    topRequestTypes: [],
+    expectedEvents: expectedHushhAiEvents(new Map(), false),
+    sections: buildProductEventSections(generatedAt, false, rangeTotals, daily),
+    note,
+  };
+}
+
+async function fetchSearchConsoleAppAnalytics(
+  config: SearchConsoleAppAnalyticsConfig,
+  range: HushhAiDateRange,
+): Promise<DataResult<Record<string, unknown>>> {
+  const queryProject = BQ_JOB_PROJECT || config.sourceProjectId;
+  const datasetRef = `\`${config.sourceProjectId}.${config.sourceDataset}\``;
+  const unavailableNote = `${config.productLabel} product event aggregates are waiting or unavailable.`;
+  const generatedAt = new Date().toISOString();
+  const endDate = parseUtcDate(range.endDate) as Date;
+  const activeWindowStartDate = formatUtcDate(addUtcDays(endDate, -29));
+  const scanStartDate = activeWindowStartDate < range.startDate ? activeWindowStartDate : range.startDate;
+  const productTable = `${datasetRef}.product_events`;
+  const chatTable = `${datasetRef}.chat_events`;
+  const startTimestamp = `TIMESTAMP(${sqlStringLiteral(`${scanStartDate}T00:00:00.000Z`)})`;
+  const endTimestamp = `TIMESTAMP(${sqlStringLiteral(range.endTime)})`;
+  const selectedStartDate = `DATE ${sqlStringLiteral(range.startDate)}`;
+  const selectedEndDate = `DATE ${sqlStringLiteral(range.endDate)}`;
+  const actorExpr = "COALESCE(user_id, CONCAT('anon:', anonymous_id))";
+  const searchPredicate = "event_source = 'chat' AND REGEXP_CONTAINS(LOWER(COALESCE(request_type, '')), r'(search|query)')";
+  const followupPredicate = "event_source = 'chat' AND REGEXP_CONTAINS(LOWER(COALESCE(request_type, '')), r'(follow_?up|refine|clarif)')";
+  const baseEventsCte = `
+    WITH all_events AS (
+      SELECT
+        DATE(event_ts) AS event_date,
+        event_ts,
+        'product' AS event_source,
+        event_name,
+        CAST(NULL AS STRING) AS request_type,
+        session_id,
+        ${actorExpr} AS actor_id
+      FROM ${productTable}
+      WHERE event_ts >= ${startTimestamp}
+        AND event_ts < ${endTimestamp}
+      UNION ALL
+      SELECT
+        DATE(event_ts) AS event_date,
+        event_ts,
+        'chat' AS event_source,
+        CAST(NULL AS STRING) AS event_name,
+        request_type,
+        session_id,
+        ${actorExpr} AS actor_id
+      FROM ${chatTable}
+      WHERE event_ts >= ${startTimestamp}
+        AND event_ts < ${endTimestamp}
+    ),
+    selected_events AS (
+      SELECT *
+      FROM all_events
+      WHERE event_date BETWEEN ${selectedStartDate} AND ${selectedEndDate}
+    )
+  `;
+  const analyticsQuery = `
+    ${baseEventsCte},
+    aggregate AS (
+      SELECT
+        (SELECT COUNT(*) FROM selected_events) AS totalEvents,
+        (SELECT COUNT(DISTINCT actor_id) FROM selected_events) AS eventUsers,
+        (SELECT COUNT(DISTINCT actor_id) FROM selected_events) AS actors,
+        (SELECT COUNT(DISTINCT session_id) FROM selected_events) AS sessions,
+        (SELECT COUNTIF(event_source = 'product') FROM selected_events) AS productEvents,
+        (SELECT COUNTIF(event_source = 'chat') FROM selected_events) AS chatEvents,
+        (SELECT COUNTIF(${searchPredicate}) FROM selected_events) AS searchEvents,
+        (SELECT COUNTIF(${followupPredicate}) FROM selected_events) AS followupEvents,
+        (SELECT COUNT(DISTINCT IF(event_date = ${selectedEndDate}, actor_id, NULL)) FROM all_events) AS dau,
+        (SELECT COUNT(DISTINCT IF(event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}, actor_id, NULL)) FROM all_events) AS wau,
+        (SELECT COUNT(DISTINCT IF(event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 29 DAY) AND ${selectedEndDate}, actor_id, NULL)) FROM all_events) AS mau,
+        (SELECT COUNTIF(event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7Events,
+        (SELECT COUNT(DISTINCT IF(event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}, session_id, NULL)) FROM all_events) AS last7Sessions,
+        (SELECT COUNTIF(event_source = 'product' AND event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7ProductEvents,
+        (SELECT COUNTIF(event_source = 'chat' AND event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7ChatEvents,
+        (SELECT COUNTIF(${searchPredicate} AND event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7SearchEvents,
+        (SELECT COUNTIF(${followupPredicate} AND event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7FollowupEvents,
+        (SELECT FORMAT_TIMESTAMP('%FT%TZ', MIN(event_ts)) FROM selected_events) AS firstEventAt,
+        (SELECT FORMAT_TIMESTAMP('%FT%TZ', MAX(event_ts)) FROM selected_events) AS latestEventAt
+    ),
+    daily AS (
+      SELECT
+        CAST(event_date AS STRING) AS date,
+        COUNT(*) AS totalEvents,
+        COUNT(DISTINCT actor_id) AS eventUsers,
+        COUNT(DISTINCT actor_id) AS actors,
+        COUNT(DISTINCT session_id) AS sessions,
+        COUNTIF(event_source = 'product') AS productEvents,
+        COUNTIF(event_source = 'chat') AS chatEvents,
+        COUNTIF(${searchPredicate}) AS searchEvents,
+        COUNTIF(${followupPredicate}) AS followupEvents,
+        FORMAT_TIMESTAMP('%FT%TZ', MIN(event_ts)) AS firstEventAt,
+        FORMAT_TIMESTAMP('%FT%TZ', MAX(event_ts)) AS latestEventAt
+      FROM selected_events
+      GROUP BY date
+    ),
+    top_events AS (
+      SELECT
+        event_name AS eventName,
+        COUNT(*) AS events,
+        COUNT(DISTINCT ${actorExpr}) AS eventUsers,
+        COUNT(DISTINCT ${actorExpr}) AS actors,
+        COUNT(DISTINCT session_id) AS sessions
+      FROM ${productTable}
+      WHERE event_ts >= TIMESTAMP(${sqlStringLiteral(range.startTime)})
+        AND event_ts < ${endTimestamp}
+        AND event_name IS NOT NULL
+        AND REGEXP_CONTAINS(event_name, r'^[A-Za-z0-9_.:-]{1,80}$')
+      GROUP BY eventName
+    ),
+    top_request_types AS (
+      SELECT
+        request_type AS requestType,
+        COUNT(*) AS events,
+        COUNT(DISTINCT ${actorExpr}) AS eventUsers,
+        COUNT(DISTINCT ${actorExpr}) AS actors,
+        COUNT(DISTINCT session_id) AS sessions
+      FROM ${chatTable}
+      WHERE event_ts >= TIMESTAMP(${sqlStringLiteral(range.startTime)})
+        AND event_ts < ${endTimestamp}
+        AND request_type IS NOT NULL
+        AND REGEXP_CONTAINS(request_type, r'^[A-Za-z0-9_.:-]{1,80}$')
+      GROUP BY requestType
+    ),
+    expected_events AS (
+      SELECT event_name AS eventName, COUNT(*) AS events
+      FROM ${productTable}
+      WHERE event_ts >= TIMESTAMP(${sqlStringLiteral(range.startTime)})
+        AND event_ts < ${endTimestamp}
+        AND event_name IN (${HUSHH_AI_EXPECTED_PRODUCT_EVENTS.map(([eventName]) => sqlStringLiteral(eventName)).join(', ')})
+      GROUP BY eventName
+    )
+    SELECT
+      (SELECT AS STRUCT * FROM aggregate) AS aggregate,
+      ARRAY(SELECT AS STRUCT * FROM daily ORDER BY date) AS daily,
+      ARRAY(SELECT AS STRUCT * FROM top_events ORDER BY events DESC, eventName LIMIT 15) AS topEvents,
+      ARRAY(SELECT AS STRUCT * FROM top_request_types ORDER BY events DESC, requestType LIMIT 10) AS topRequestTypes,
+      ARRAY(SELECT AS STRUCT * FROM expected_events) AS expectedEvents
+  `;
+
+  const analytics = await queryBigQuerySql(queryProject, analyticsQuery);
+  const queryErrors = [analytics.error].filter(Boolean);
+  if (analytics.error || analytics.rows.length === 0) {
+    return {
+      data: unavailableSearchConsoleAppAnalytics(
+        config,
+        range,
+        'unavailable',
+        `${config.productLabel} product event aggregate query is unavailable for this window.`,
+      ),
+      error: null,
+    };
+  }
+
+  const analyticsRow = analytics.rows[0] ?? {};
+  const aggregateRow = asRecord(analyticsRow.aggregate) ?? {};
+  const dailyRows = recordArray(analyticsRow.daily);
+  const topEventsRows = recordArray(analyticsRow.topEvents);
+  const topRequestTypeRows = recordArray(analyticsRow.topRequestTypes);
+  const expectedEventRows = recordArray(analyticsRow.expectedEvents);
+  const rangeTotals = {
+    totalEvents: toNumber(aggregateRow.totalEvents),
+    eventUsers: toNumber(aggregateRow.eventUsers),
+    actors: toNumber(aggregateRow.actors),
+    sessions: toNumber(aggregateRow.sessions),
+    dau: toNumber(aggregateRow.dau),
+    wau: toNumber(aggregateRow.wau),
+    mau: toNumber(aggregateRow.mau),
+    searchEvents: toNumber(aggregateRow.searchEvents),
+    followupEvents: toNumber(aggregateRow.followupEvents),
+    productEvents: toNumber(aggregateRow.productEvents),
+    chatEvents: toNumber(aggregateRow.chatEvents),
+    last7Events: toNumber(aggregateRow.last7Events),
+    last7Sessions: toNumber(aggregateRow.last7Sessions),
+    last7ProductEvents: toNumber(aggregateRow.last7ProductEvents),
+    last7ChatEvents: toNumber(aggregateRow.last7ChatEvents),
+    last7SearchEvents: toNumber(aggregateRow.last7SearchEvents),
+    last7FollowupEvents: toNumber(aggregateRow.last7FollowupEvents),
+    firstEventAt: timestampString(aggregateRow.firstEventAt),
+    latestEventAt: timestampString(aggregateRow.latestEventAt),
+  };
+  const daily = productEventsDailySpine(range, dailyRows);
+  const latestDataDate = daily
+    .filter((row) => toNumber(row.totalEvents) > 0)
+    .map((row) => String(row.date))
+    .at(-1) ?? null;
+  const topEvents = topEventsRows.map((row) => ({
+    eventName: publicAggregateName(row.eventName),
+    events: toNumber(row.events),
+    eventUsers: toNumber(row.eventUsers),
+    actors: toNumber(row.actors),
+    sessions: toNumber(row.sessions),
+  }));
+  const topRequestTypes = topRequestTypeRows.map((row) => ({
+    requestType: publicAggregateName(row.requestType),
+    events: toNumber(row.events),
+    eventUsers: toNumber(row.eventUsers),
+    actors: toNumber(row.actors),
+    sessions: toNumber(row.sessions),
+  }));
+  const expectedEventCounts = new Map(
+    expectedEventRows.map((row) => [String(row.eventName), toNumber(row.events)]),
+  );
 
   return {
-    source: 'hushh-ai-db-status',
-    available: false,
-    status: 'not_configured',
-    generatedAt: fetchedAt,
-    metrics: [],
-    expectedEvents,
-    note: 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
+    data: {
+      source: 'search-console-app-analytics',
+      sourceLabel: publicProductEventsSourceLabel(config.productLabel),
+      sourceProjectId: config.sourceProjectId,
+      sourceDataset: config.sourceDataset,
+      available: true,
+      status: 'live',
+      generatedAt,
+      latestDataDate,
+      latestEventAt: rangeTotals.latestEventAt,
+      realtimeMode: 'events_aggregate',
+      expectedLagSeconds: null,
+      range: {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        days: range.days,
+      },
+      rangeTotals,
+      metrics: productEventMetrics(rangeTotals),
+      daily,
+      topEvents,
+      topRequestTypes,
+      expectedEvents: expectedHushhAiEvents(expectedEventCounts, true),
+      sections: buildProductEventSections(generatedAt, true, rangeTotals, daily),
+      warnings: [
+        'Aggregate product event counts only; raw query text, answers, users, anonymous IDs, sessions, and metadata are not returned.',
+        'DAU, WAU, and MAU are distinct actor aggregates ending on the selected range end date.',
+      ],
+      note: queryErrors.length > 0
+        ? `${config.productLabel} product event aggregates are partially available. Some optional aggregate slices are waiting.`
+        : `${config.productLabel} product event aggregates are available.`,
+    },
+    error: null,
   };
+}
+
+async function fetchHushhAiProductEvents(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  return fetchSearchConsoleAppAnalytics({
+    productLabel: 'Hushh AI',
+    sourceProjectId: HUSHH_AI_PRODUCT_EVENTS_PROJECT,
+    sourceDataset: HUSHH_AI_PRODUCT_EVENTS_DATASET,
+  }, range);
+}
+
+async function fetchHushhAiUatProductEvents(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  return fetchSearchConsoleAppAnalytics({
+    productLabel: 'Hushh AI UAT',
+    sourceProjectId: HUSHH_AI_UAT_PRODUCT_EVENTS_PROJECT,
+    sourceDataset: HUSHH_AI_UAT_PRODUCT_EVENTS_DATASET,
+  }, range);
 }
 
 function buildHushhAiSourceCards(
   searchConsole: Record<string, unknown> | null,
   ga4: Record<string, unknown> | null,
   productEvents: Record<string, unknown> | null,
+  options: {
+    productLabel?: string;
+    searchConsoleFallback?: string;
+    ga4Source?: string;
+    ga4Blocker?: string;
+  } = {},
 ) {
+  const productLabel = options.productLabel ?? 'Hushh AI';
   const eventsAvailable = Boolean(productEvents?.available);
   const eventsStatus = eventsAvailable ? 'live' : String(productEvents?.status ?? 'waiting');
+  const eventRangeTotals = asRecord(productEvents?.rangeTotals) ?? {};
+  const eventSections = Array.isArray(productEvents?.sections) ? productEvents.sections : [];
+  const eventMetrics = eventsAvailable
+    ? productEventMetrics(eventRangeTotals)
+    : (Array.isArray(productEvents?.expectedEvents) ? productEvents.expectedEvents : [])
+      .map((event) => {
+        const eventRecord = asRecord(event);
+        return sourceMetric(
+          String(eventRecord?.eventName ?? ''),
+          String(eventRecord?.label ?? 'Product Event'),
+          null,
+          'Waiting',
+        );
+      });
   return [
-    buildSearchConsoleSourceCard(searchConsole, 'hushh.ai Search Console'),
+    buildSearchConsoleSourceCard(searchConsole, options.searchConsoleFallback ?? 'hushh.ai Search Console'),
     buildGa4SourceCard(
       ga4,
-      hushhAiGa4SourceLabel(),
-      'Hushh AI GA4 source is not configured in metrics.hushh.ai yet.',
+      options.ga4Source ?? hushhAiGa4SourceLabel(),
+      options.ga4Blocker ?? 'Hushh AI GA4 source is not configured in metrics.hushh.ai yet.',
     ),
     {
       key: 'product_events',
       label: 'DB / Product Events',
       status: eventsStatus,
       stateClass: sourceStateClass(eventsStatus),
-      source: publicProductEventsSourceLabel('Hushh AI'),
+      source: String(productEvents?.sourceLabel ?? publicProductEventsSourceLabel(productLabel)),
       freshness: {
         generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : new Date().toISOString(),
         expectedLagSeconds: null,
       },
-      metrics: (Array.isArray(productEvents?.expectedEvents) ? productEvents.expectedEvents : [])
-        .map((event) => {
-          const eventRecord = asRecord(event);
-          return sourceMetric(
-            String(eventRecord?.eventName ?? ''),
-            String(eventRecord?.label ?? 'Product Event'),
-            null,
-            'Not configured',
-          );
-        }),
+      metrics: eventMetrics,
+      sections: eventSections,
       blocker: eventsAvailable ? null : String(productEvents?.note ?? 'Hushh AI product events are not ingested into the dashboard yet.'),
     },
   ];
@@ -3409,23 +3939,53 @@ app.get('/api/analytics/kai', async (req, res) => {
 
 app.get('/api/analytics/hushhai', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
-  const [gcp, searchConsole, ga4] = await Promise.all([
+  const [gcp, searchConsole, ga4, productEvents] = await Promise.all([
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
     fetchHushhAiGa4Summary(hushhAiRange),
+    fetchHushhAiProductEvents(hushhAiRange),
   ]);
-  const error = [gcp.error, searchConsole.error, ga4.error].filter(Boolean).join('; ') || null;
+  const error = [gcp.error, searchConsole.error, ga4.error, productEvents.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
-  const productEvents = buildHushhAiProductEvents(fetchedAt);
-  res.status(error && !gcp.data && !searchConsole.data ? 502 : 200).json(sanitizePublicPayload({
+  res.status(error && !gcp.data && !searchConsole.data && !productEvents.data ? 502 : 200).json(sanitizePublicPayload({
     platform: 'hushh.ai',
     data: {
       gcp: gcp.data,
       searchConsole: searchConsole.data,
       ga4: ga4.data,
-      productEvents,
-      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data, ga4.data, productEvents),
-      sourceCards: buildHushhAiSourceCards(searchConsole.data, ga4.data, productEvents),
+      productEvents: productEvents.data,
+      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data, ga4.data, productEvents.data),
+      sourceCards: buildHushhAiSourceCards(searchConsole.data, ga4.data, productEvents.data),
+    },
+    error,
+    fetchedAt,
+  }));
+});
+
+app.get('/api/analytics/hushhai/uat', async (req, res) => {
+  const hushhAiUatRange = parseHushhAiUatDateRange(req.query as Record<string, unknown>);
+  const [gcp, productEvents] = await Promise.all([
+    fetchHushhAiUatCloudRun(hushhAiUatRange),
+    fetchHushhAiUatProductEvents(hushhAiUatRange),
+  ]);
+  const searchConsole = waitingHushhAiUatSearchConsole(hushhAiUatRange);
+  const ga4 = waitingHushhAiUatGa4Summary(hushhAiUatRange);
+  const error = [gcp.error, productEvents.error].filter(Boolean).join('; ') || null;
+  const fetchedAt = new Date().toISOString();
+  res.status(error && !gcp.data && !productEvents.data ? 502 : 200).json(sanitizePublicPayload({
+    platform: 'uat.hushh.ai',
+    data: {
+      gcp: gcp.data,
+      searchConsole,
+      ga4,
+      productEvents: productEvents.data,
+      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole, ga4, productEvents.data),
+      sourceCards: buildHushhAiSourceCards(searchConsole, ga4, productEvents.data, {
+        productLabel: 'Hushh AI UAT',
+        searchConsoleFallback: 'Hushh AI UAT Search Console',
+        ga4Source: 'not_configured',
+        ga4Blocker: 'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.',
+      }),
     },
     error,
     fetchedAt,
@@ -3434,6 +3994,7 @@ app.get('/api/analytics/hushhai', async (req, res) => {
 
 app.get('/api/analytics/all', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
+  const hushhAiUatRange = parseHushhAiUatDateRange(req.query as Record<string, unknown>);
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
   const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
   const [
@@ -3444,10 +4005,6 @@ app.get('/api/analytics/all', async (req, res) => {
     kaiProductionGcp,
     kaiProductionSearchConsole,
     kaiUatSearchConsole,
-    hushhAiGcp,
-    hushhAiSearchConsole,
-    hushhAiGa4,
-    hushhTech,
   ] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
@@ -3456,13 +4013,29 @@ app.get('/api/analytics/all', async (req, res) => {
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
     fetchKaiProductionSearchConsole(kaiRange),
     fetchKaiUatSearchConsole(kaiRange),
+  ]);
+  const [
+    hushhAiGcp,
+    hushhAiSearchConsole,
+    hushhAiGa4,
+    hushhAiProductEvents,
+  ] = await Promise.all([
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
     fetchHushhAiGa4Summary(hushhAiRange),
-    fetchHushhTechAnalytics(hushhTechRange),
+    fetchHushhAiProductEvents(hushhAiRange),
   ]);
+  const [
+    hushhAiUatGcp,
+    hushhAiUatProductEvents,
+  ] = await Promise.all([
+    fetchHushhAiUatCloudRun(hushhAiUatRange),
+    fetchHushhAiUatProductEvents(hushhAiUatRange),
+  ]);
+  const hushhTech = await fetchHushhTechAnalytics(hushhTechRange);
   const fetchedAt = new Date().toISOString();
-  const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
+  const hushhAiUatSearchConsole = waitingHushhAiUatSearchConsole(hushhAiUatRange);
+  const hushhAiUatGa4 = waitingHushhAiUatGa4Summary(hushhAiUatRange);
   res.json(sanitizePublicPayload({
     kai: {
       uat: { environment: 'uat', rows: uat.rows, error: uat.error },
@@ -3506,11 +4079,34 @@ app.get('/api/analytics/all', async (req, res) => {
         gcp: hushhAiGcp.data,
         searchConsole: hushhAiSearchConsole.data,
         ga4: hushhAiGa4.data,
-        productEvents: hushhAiProductEvents,
-        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents),
-        sourceCards: buildHushhAiSourceCards(hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents),
+        productEvents: hushhAiProductEvents.data,
+        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents.data),
+        sourceCards: buildHushhAiSourceCards(hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents.data),
       },
-      error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error].filter(Boolean).join('; ') || null,
+      error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error, hushhAiProductEvents.error].filter(Boolean).join('; ') || null,
+    },
+    hushhAiUat: {
+      platform: 'uat.hushh.ai',
+      data: {
+        gcp: hushhAiUatGcp.data,
+        searchConsole: hushhAiUatSearchConsole,
+        ga4: hushhAiUatGa4,
+        productEvents: hushhAiUatProductEvents.data,
+        freshness: buildHushhAiFreshness(
+          fetchedAt,
+          hushhAiUatGcp.data,
+          hushhAiUatSearchConsole,
+          hushhAiUatGa4,
+          hushhAiUatProductEvents.data,
+        ),
+        sourceCards: buildHushhAiSourceCards(hushhAiUatSearchConsole, hushhAiUatGa4, hushhAiUatProductEvents.data, {
+          productLabel: 'Hushh AI UAT',
+          searchConsoleFallback: 'Hushh AI UAT Search Console',
+          ga4Source: 'not_configured',
+          ga4Blocker: 'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.',
+        }),
+      },
+      error: [hushhAiUatGcp.error, hushhAiUatProductEvents.error].filter(Boolean).join('; ') || null,
     },
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
     fetchedAt,
@@ -3532,6 +4128,9 @@ app.get('/api/health', (_req, res) => {
       kaiSearchConsoleFallback: `${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`,
       kaiSearchConsoleSiteUrl: KAI_SEARCH_CONSOLE_SITE_URL,
       hushhAiCloudRun: `${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`,
+      hushhAiProductEvents: `${HUSHH_AI_PRODUCT_EVENTS_PROJECT}.${HUSHH_AI_PRODUCT_EVENTS_DATASET}`,
+      hushhAiUatCloudRun: `${HUSHH_AI_UAT_GCP_PROJECT}/${HUSHH_AI_UAT_CLOUD_RUN_SERVICE}`,
+      hushhAiUatProductEvents: `${HUSHH_AI_UAT_PRODUCT_EVENTS_PROJECT}.${HUSHH_AI_UAT_PRODUCT_EVENTS_DATASET}`,
       hushhAiSearchConsole: `${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}`,
       hushhAiSearchConsoleFallback: `${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`,
       hushhAiSearchConsoleSiteUrl: HUSHH_AI_SEARCH_CONSOLE_SITE_URL,
@@ -4610,6 +5209,7 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
     hushhAiGcp,
     hushhAiSearchConsole,
     hushhAiGa4,
+    hushhAiProductEvents,
     hushhTech,
   ] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
@@ -4622,15 +5222,16 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
     fetchHushhAiCloudRun(range),
     fetchHushhAiSearchConsole(range),
     fetchHushhAiGa4Summary(range),
+    fetchHushhAiProductEvents(range),
     fetchHushhTechAnalytics(range),
   ]);
   const fetchedAt = new Date().toISOString();
-  const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
+  const hushhAiProductEventsData = hushhAiProductEvents.data;
   const hushhTechData = hushhTech.data;
   const hushhTechSourceCards = recordArray(hushhTechData?.sourceCards);
 
   const hushhAiSources = recordArray(
-    buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents).sources,
+    buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEventsData).sources,
   ).map((source) => sourceFromFreshness('hushh.ai', source));
   const kaiSources = recordArray(
     buildKaiFreshness(fetchedAt, production.rows, kaiProductionGcp.data, kaiProductionGa4.data).sources,
@@ -4671,9 +5272,9 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
         cloudRun: compactCloudRun(hushhAiGcp.data, compactRange),
         ga4: compactGa4(hushhAiGa4.data, compactRange),
         searchConsole: compactSearchConsole(hushhAiSearchConsole.data, compactRange),
-        productEvents: compactProductEvents(hushhAiProductEvents, compactRange),
+        productEvents: compactProductEvents(hushhAiProductEventsData, compactRange),
         sourceStatuses: hushhAiSources,
-        warnings: warningList(hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error, hushhAiProductEvents.note),
+        warnings: warningList(hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error, hushhAiProductEvents.error, hushhAiProductEventsData?.note),
       },
       'kai.hushh.ai': {
         product: 'kai.hushh.ai',

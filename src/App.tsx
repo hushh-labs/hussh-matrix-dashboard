@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import Dashboard from "./Dashboard";
+import DashboardLayout from "./components/DashboardLayout";
 
 export default function App() {
-  return <Dashboard />;
+  return <DashboardLayout />;
 }

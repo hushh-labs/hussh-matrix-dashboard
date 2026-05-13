@@ -42,6 +42,7 @@ interface AllAnalyticsResponse {
     productionProduct?: { platform: string; data: KaiProductionSummary | null; error?: string | null };
   };
   hushhAi?: { platform: string; data: HushhAiSummary | null; error?: string | null };
+  hushhAiUat?: { platform: string; data: HushhAiSummary | null; error?: string | null };
   hushhTech: { platform: string; data: HushhTechMetricsSummary | null; error?: string | null };
   fetchedAt: string;
 }
@@ -49,6 +50,8 @@ interface AllAnalyticsResponse {
 interface FetchAllAnalyticsOptions {
   hushhAiStartDate?: string;
   hushhAiEndDate?: string;
+  hushhAiUatStartDate?: string;
+  hushhAiUatEndDate?: string;
   kaiStartDate?: string;
   kaiEndDate?: string;
 }
@@ -57,6 +60,8 @@ function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
   const params = new URLSearchParams();
   if (options?.hushhAiStartDate) params.set('hushh_ai_start_date', options.hushhAiStartDate);
   if (options?.hushhAiEndDate) params.set('hushh_ai_end_date', options.hushhAiEndDate);
+  if (options?.hushhAiUatStartDate) params.set('hushh_ai_uat_start_date', options.hushhAiUatStartDate);
+  if (options?.hushhAiUatEndDate) params.set('hushh_ai_uat_end_date', options.hushhAiUatEndDate);
   if (options?.kaiStartDate) params.set('kai_start_date', options.kaiStartDate);
   if (options?.kaiEndDate) params.set('kai_end_date', options.kaiEndDate);
   const query = params.toString();
@@ -236,11 +241,25 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhAiSessionTimingMetrics: [],
     hushhAiDailyStatus: [],
     hushhAiDailySummaryMetrics: [],
+    hushhAiUat: null,
+    hushhAiUatOpsMetrics: [],
+    hushhAiUatSearchMetrics: [],
+    hushhAiUatEngagementMetrics: [],
+    hushhAiUatTopPageMetrics: [],
+    hushhAiUatTopEventMetrics: [],
+    hushhAiUatProductEventMetrics: [],
+    hushhAiUatAcquisitionMetrics: [],
+    hushhAiUatSourceMediumMetrics: [],
+    hushhAiUatLandingPageMetrics: [],
+    hushhAiUatGeoDeviceMetrics: [],
+    hushhAiUatSessionTimingMetrics: [],
+    hushhAiUatDailyStatus: [],
+    hushhAiUatDailySummaryMetrics: [],
     dataQualityWarnings: [],
     feedWarnings: [],
     sourceGroups: [],
-    platforms: buildPlatforms(null, null, null, null, null),
-    kpiStats: buildKpiStats(null, null, null, null, null),
+    platforms: buildPlatforms(null, null, null, null, null, null),
+    kpiStats: buildKpiStats(null, null, null, null, null, null),
     trafficData: [],
     acquisitionChannels: [],
     topCountries: [],
@@ -580,10 +599,9 @@ function buildPlatforms(
   kaiUsage: UsageSummary | null,
   kaiProduction: KaiProductionSummary | null,
   hushhAi: HushhAiSummary | null,
+  hushhAiUat: HushhAiSummary | null,
   hushhTech: HushhTechMetricsSummary | null,
 ): PlatformStatus[] {
-  const aiGcp = hushhAi?.gcp;
-  const aiSearch = hushhAi?.searchConsole;
   const techAuthUsers = hushhTech?.supabase?.metrics.find((row) => row.metricKey === 'auth_users');
   const traffic = verifiedHushhTechTrafficOverview(hushhTech);
   const audience = hushhTech?.audience;
@@ -600,23 +618,66 @@ function buildPlatforms(
   const hushhTechAvailable = Boolean(
     hushhTech && (hushhTech.businessFunnel || hushhTech.gcp?.available || hushhTech.traffic?.available || hushhTech.audience || hushhTech.supabase),
   );
+  const buildHushhAiPlatform = (
+    summary: HushhAiSummary | null,
+    name: string,
+    url: string,
+    color: string,
+    environment: 'production' | 'uat',
+  ): PlatformStatus => {
+    const gcp = summary?.gcp;
+    const search = summary?.searchConsole;
+    const ga4 = summary?.ga4;
+    const ga4Users = firstOptionalNumber(ga4?.rangeTotals?.users);
+    const ga4Sessions = firstOptionalNumber(ga4?.rangeTotals?.sessions);
+    const ga4Events = firstOptionalNumber(ga4?.rangeTotals?.events);
+    const available = Boolean(gcp || search?.available || ga4?.available || summary?.sourceCards?.length);
+    return {
+      name,
+      url,
+      color,
+      available,
+      environment,
+      productionReady: environment === 'production' ? Boolean(gcp) : false,
+      knownBlockers: null,
+      visitors: environment === 'production'
+        ? gcp
+          ? formatNumber(gcp.requestCount)
+          : search?.available
+            ? formatNumber(search.clicks)
+            : ga4Users != null
+              ? formatNumber(ga4Users)
+              : '—'
+        : gcp
+          ? formatNumber(gcp.requestCount)
+          : ga4Users != null
+            ? formatNumber(ga4Users)
+            : search?.available
+              ? formatNumber(search.clicks)
+              : '—',
+      change: environment === 'production'
+        ? search?.available
+          ? `${formatNumber(search.impressions)} impressions`
+          : `${formatNumber(gcp?.errorCount ?? 0)} 5xx`
+        : gcp
+          ? `${formatNumber(gcp.errorCount)} 5xx`
+          : ga4Events != null
+            ? `${formatNumber(ga4Events)} GA4 events`
+            : search?.available
+              ? `${formatNumber(search.impressions)} impressions`
+              : 'UAT metrics waiting',
+      avgSession: gcp?.p95LatencyMs != null
+        ? `${formatLatency(gcp.p95LatencyMs)} p95`
+        : ga4Sessions != null
+          ? `${formatNumber(ga4Sessions)} sessions`
+          : '—',
+      bounceRate: gcp ? formatPercent(gcp.errorRate) : formatPercent(ga4?.rangeTotals?.engagementRate),
+    };
+  };
 
   return [
-    {
-      name: 'hushh.ai',
-      url: 'hushh.ai',
-      color: '#1a73e8',
-      available: Boolean(aiGcp || aiSearch?.available),
-      environment: 'production',
-      productionReady: Boolean(aiGcp),
-      knownBlockers: null,
-      visitors: aiGcp ? formatNumber(aiGcp.requestCount) : aiSearch?.available ? formatNumber(aiSearch.clicks) : '—',
-      change: aiSearch?.available
-        ? `${formatNumber(aiSearch.impressions)} impressions`
-        : `${formatNumber(aiGcp?.errorCount ?? 0)} 5xx`,
-      avgSession: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : '—',
-      bounceRate: formatPercent(aiGcp?.errorRate),
-    },
+    buildHushhAiPlatform(hushhAi, 'hushh.ai', 'hushh.ai', '#1a73e8', 'production'),
+    buildHushhAiPlatform(hushhAiUat, 'uat.hushh.ai', 'uat.hushh.ai', '#ff9500', 'uat'),
     {
       name: 'kai.hushh.ai',
       url: 'kai.hushh.ai',
@@ -664,6 +725,7 @@ function buildKpiStats(
   kaiGa4: KaiGa4Summary | null,
   kaiProduction: KaiProductionSummary | null,
   hushhAi: HushhAiSummary | null,
+  hushhAiUat: HushhAiSummary | null,
   hushhTech: HushhTechMetricsSummary | null,
 ): KpiStat[] {
   const business = hushhTech?.businessFunnel.overview;
@@ -673,6 +735,8 @@ function buildKpiStats(
   const gcp = hushhTech?.gcp;
   const aiGcp = hushhAi?.gcp;
   const aiSearch = hushhAi?.searchConsole;
+  const aiUatGcp = hushhAiUat?.gcp;
+  const aiUatGa4 = hushhAiUat?.ga4;
   const hushhTechDatabaseMetric = (key: string) => hushhTech?.supabase?.metrics.find((row) => row.metricKey === key);
   const authUsers = hushhTechDatabaseMetric('auth_users');
   const userProfileSync = hushhTechDatabaseMetric('user_profile_sync');
@@ -706,6 +770,20 @@ function buildKpiStats(
       value: aiGcp ? formatNumber(aiGcp.requestCount) : '—',
       icon: 'Server',
       change: aiGcp?.p95LatencyMs != null ? `${formatLatency(aiGcp.p95LatencyMs)} p95` : undefined,
+    },
+    {
+      label: 'Hushh AI UAT',
+      value: aiUatGcp
+        ? formatNumber(aiUatGcp.requestCount)
+        : aiUatGa4?.available
+          ? formatNumber(aiUatGa4.rangeTotals?.users ?? 0)
+          : '—',
+      icon: 'Activity',
+      change: aiUatGcp?.p95LatencyMs != null
+        ? `${formatLatency(aiUatGcp.p95LatencyMs)} p95`
+        : aiUatGa4?.available
+          ? `${formatNumber(aiUatGa4.rangeTotals?.events ?? 0)} events`
+          : 'UAT waiting',
     },
     {
       label: 'hushhtech.com Users',
@@ -757,6 +835,7 @@ function buildKpiStats(
 function buildSourceGroups(
   kaiProduction: KaiProductionSummary | null,
   hushhAi: HushhAiSummary | null,
+  hushhAiUat: HushhAiSummary | null,
   hushhTech: HushhTechMetricsSummary | null,
 ): ProductSourceGroup[] {
   return [
@@ -766,6 +845,13 @@ function buildSourceGroups(
       domain: 'hushh.ai',
       primaryEnvironment: 'production',
       sourceCards: hushhAi?.sourceCards ?? [],
+    },
+    {
+      productKey: 'hushh_ai_uat',
+      productName: 'Hushh AI UAT',
+      domain: 'uat.hushh.ai',
+      primaryEnvironment: 'uat',
+      sourceCards: hushhAiUat?.sourceCards ?? [],
     },
     {
       productKey: 'kai_production',
@@ -794,13 +880,14 @@ function buildSourceGroups(
 function buildTrafficData(
   rows: FeedRow[],
   hushhAi: HushhAiSummary | null,
+  hushhAiUat: HushhAiSummary | null,
   hushhTech: HushhTechMetricsSummary | null,
 ): TrafficPoint[] {
   const byDate = new Map<string, TrafficPoint & { sortKey: string }>();
 
   const ensurePoint = (date: string) => {
     const label = date.includes('-') ? date.slice(5) : date;
-    const current = byDate.get(date) ?? { sortKey: date, time: label, kaiProd: 0, kaiUat: 0, tech: 0, ai: 0 };
+    const current = byDate.get(date) ?? { sortKey: date, time: label, kaiProd: 0, kaiUat: 0, tech: 0, ai: 0, aiUat: 0 };
     byDate.set(date, current);
     return current;
   };
@@ -829,6 +916,12 @@ function buildTrafficData(
     if (!row.label) continue;
     const point = ensurePoint(row.label);
     point.ai = row.value;
+  }
+
+  for (const row of hushhAiUat?.gcp?.series ?? []) {
+    if (!row.label) continue;
+    const point = ensurePoint(row.label);
+    point.aiUat = row.value;
   }
 
   return Array.from(byDate.values())
@@ -873,6 +966,128 @@ function waitingMetric(label: string, detail: string, value: number | null | und
     : metric(label, value, detail, displayValue);
 }
 
+interface ProductEventsAggregateRow {
+  key?: string;
+  metricKey?: string;
+  metricName?: string;
+  eventName?: string;
+  label?: string;
+  value?: number | null;
+  count?: number | null;
+  events?: number | null;
+  users?: number | null;
+  sessions?: number | null;
+  status?: string;
+  note?: string;
+  detail?: string;
+  displayValue?: string;
+}
+
+interface ProductEventsAggregate {
+  status?: string;
+  note?: string;
+  source?: string;
+  metrics?: ProductEventsAggregateRow[];
+  expectedEvents?: ProductEventsAggregateRow[];
+  events?: ProductEventsAggregateRow[];
+  topEvents?: ProductEventsAggregateRow[];
+  rangeTotals?: Record<string, unknown>;
+  daily?: Array<Record<string, unknown>>;
+}
+
+function productEventsAggregate(hushhAi: HushhAiSummary | null): ProductEventsAggregate | null {
+  return hushhAi?.productEvents && typeof hushhAi.productEvents === 'object'
+    ? hushhAi.productEvents as ProductEventsAggregate
+    : null;
+}
+
+function productEventRows(value: unknown): ProductEventsAggregateRow[] {
+  return Array.isArray(value)
+    ? value.filter((row): row is ProductEventsAggregateRow => Boolean(row) && typeof row === 'object')
+    : [];
+}
+
+function productEventDailyRows(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+    : [];
+}
+
+function productEventLabel(row: ProductEventsAggregateRow): string {
+  return row.label ?? formatMetricLabel(row.eventName ?? row.metricName ?? row.metricKey ?? row.key ?? 'Product Event');
+}
+
+function productEventValue(row: ProductEventsAggregateRow): number | null {
+  return firstOptionalNumber(row.value, row.count, row.events, row.users, row.sessions);
+}
+
+function productEventDetail(row: ProductEventsAggregateRow, fallbackDetail: string): string {
+  if (row.detail) return row.detail;
+  if (row.note) return row.note;
+  const details = [
+    row.users != null ? `${formatNumber(asNumber(row.users))} users` : null,
+    row.sessions != null ? `${formatNumber(asNumber(row.sessions))} sessions` : null,
+  ].filter(Boolean).join(' · ');
+  return details || fallbackDetail;
+}
+
+function productEventMetric(row: ProductEventsAggregateRow, fallbackDetail: string): BreakdownMetric {
+  const value = productEventValue(row);
+  const displayValue = row.displayValue
+    ?? (value == null
+      ? row.status === 'not_configured'
+        ? 'Not configured'
+        : row.status
+          ? formatMetricLabel(row.status)
+          : 'Waiting'
+      : undefined);
+  return metric(productEventLabel(row), asNumber(value), productEventDetail(row, fallbackDetail), displayValue);
+}
+
+function sourceStatusLabelLikeDisplay(status: ProductSourceCard['status']): string {
+  if (status === 'not_configured') return 'Not configured';
+  if (status === 'collecting_not_ingested') return 'Collecting';
+  if (status === 'waiting') return 'Waiting';
+  if (status === 'unavailable') return 'Unavailable';
+  return formatMetricLabel(String(status));
+}
+
+function productEventTotalsMetrics(productEvents: ProductEventsAggregate | null): BreakdownMetric[] {
+  const totals = productEvents?.rangeTotals;
+  if (!totals) return [];
+  const allowedTotals: Array<[string, string]> = [
+    ['totalUsers', 'Total Users'],
+    ['newUsers', 'New Users'],
+    ['activeUsers', 'Active Users'],
+    ['returningUsers', 'Returning Users'],
+    ['sessionsStarted', 'Sessions Started'],
+    ['sessionUsers', 'Session Users'],
+    ['productActiveUsers', 'Product Active Users'],
+    ['analyticsEvents', 'Analytics Events'],
+    ['analyticsEventUsers', 'Analytics Event Users'],
+    ['totalEvents', 'Total Events'],
+    ['events', 'Events'],
+    ['users', 'Users'],
+    ['sessions', 'Sessions'],
+    ['dau', 'DAU'],
+    ['wau', 'WAU'],
+    ['mau', 'MAU'],
+    ['signups', 'Signups'],
+    ['logins', 'Logins'],
+    ['ctaClicks', 'CTA Clicks'],
+    ['demoRequests', 'Demo Requests'],
+    ['contactSubmissions', 'Contact Submissions'],
+  ];
+  return allowedTotals
+    .map(([key, label]) => {
+      const value = totals[key];
+      return typeof value === 'number' && Number.isFinite(value)
+        ? metric(label, value, productEvents.source ?? 'Product Events aggregate')
+        : null;
+    })
+    .filter((row): row is BreakdownMetric => Boolean(row));
+}
+
 function buildHushhAiEngagementMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
   const ga4 = hushhAi?.ga4;
   const totals = ga4?.rangeTotals;
@@ -881,7 +1096,7 @@ function buildHushhAiEngagementMetrics(hushhAi: HushhAiSummary | null): Breakdow
 
   return [
     waitingMetric('GA4 Users', source, totals?.users, undefined),
-    waitingMetric('GA4 Sessions', 'Visits started on hushh.ai; one user can create multiple sessions.', totals?.sessions),
+    waitingMetric('GA4 Sessions', 'Visits started on the product site; one user can create multiple sessions.', totals?.sessions),
     waitingMetric('GA4 Events', 'Aggregate tracked interactions such as page views, clicks, and GA4 automatic events.', totals?.events),
     waitingMetric('Engaged Sessions', 'Sessions with meaningful engagement by GA4 rules.', totals?.engagedSessions),
     waitingMetric(
@@ -916,14 +1131,29 @@ function buildHushhAiTopEventMetrics(hushhAi: HushhAiSummary | null): BreakdownM
 }
 
 function buildHushhAiProductEventMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
-  const productEvents = hushhAi?.productEvents && typeof hushhAi.productEvents === 'object'
-    ? hushhAi.productEvents as { expectedEvents?: Array<{ label?: string; eventName?: string; status?: string }> }
-    : null;
-  return (productEvents?.expectedEvents ?? []).map((row) => metric(
-    row.label ?? formatMetricLabel(row.eventName ?? 'Product Event'),
-    0,
-    'Waiting for a real hushh.ai product-event aggregate source',
-    row.status === 'not_configured' ? 'Not configured' : 'Waiting',
+  const productEvents = productEventsAggregate(hushhAi);
+  const fallbackDetail = productEvents?.source ?? 'Product Events aggregate';
+  const rows = [
+    ...productEventTotalsMetrics(productEvents),
+    ...productEventRows(productEvents?.metrics).map((row) => productEventMetric(row, fallbackDetail)),
+    ...productEventRows(productEvents?.events).map((row) => productEventMetric(row, fallbackDetail)),
+    ...productEventRows(productEvents?.topEvents).map((row) => productEventMetric(row, fallbackDetail)),
+  ];
+
+  if (rows.length > 0) return rows.slice(0, 12);
+
+  const card = sourceCardByKey(hushhAi?.sourceCards, 'product_events');
+  const cardRows = (card?.metrics ?? []).map((row) => metric(
+    row.label,
+    asNumber(row.value),
+    card.source,
+    row.displayValue ?? (row.value == null ? sourceStatusLabelLikeDisplay(card.status) : undefined),
+  ));
+  if (cardRows.length > 0) return cardRows.slice(0, 12);
+
+  return productEventRows(productEvents?.expectedEvents).map((row) => productEventMetric(
+    row,
+    productEvents?.note ?? 'Waiting for a real product-event aggregate source',
   ));
 }
 
@@ -971,6 +1201,31 @@ function buildHushhAiSessionTimingMetrics(hushhAi: HushhAiSummary | null): Break
     asNumber(row.sessions),
     `${timezone} · ${formatNumber(asNumber(row.engagedSessions))} engaged · ${formatDuration(row.averageSessionDuration)}`,
   ));
+}
+
+function recordString(row: Record<string, unknown>, key: string): string | null {
+  const value = row[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function recordNumber(row: Record<string, unknown>, key: string): number | null {
+  const value = row[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function applyFirstDailyNumber(
+  point: HushhAiDailyStatusPoint,
+  targetKey: keyof HushhAiDailyStatusPoint,
+  row: Record<string, unknown>,
+  sourceKeys: string[],
+) {
+  for (const key of sourceKeys) {
+    const value = recordNumber(row, key);
+    if (value != null) {
+      (point as unknown as Record<string, number>)[String(targetKey)] = value;
+      return;
+    }
+  }
 }
 
 function emptyDailyPoint(date: string, label = date.slice(5)): HushhAiDailyStatusPoint {
@@ -1023,17 +1278,54 @@ function buildHushhAiDailyStatus(hushhAi: HushhAiSummary | null): HushhAiDailySt
     point.instanceCount = row.instanceCount;
   }
 
+  for (const row of hushhAi?.ga4?.daily ?? []) {
+    const date = String(row.eventDate);
+    const point = ensurePoint(date);
+    point.activeUsers = asNumber(row.users);
+    point.sessionsStarted = asNumber(row.sessions);
+    point.analyticsEvents = asNumber(row.events);
+  }
+
+  for (const row of productEventDailyRows(productEventsAggregate(hushhAi)?.daily)) {
+    const date = recordString(row, 'date') ?? recordString(row, 'eventDate');
+    if (!date) continue;
+    const point = ensurePoint(date, recordString(row, 'label') ?? date.slice(5));
+    applyFirstDailyNumber(point, 'totalUsers', row, ['totalUsers']);
+    applyFirstDailyNumber(point, 'newUsers', row, ['newUsers']);
+    applyFirstDailyNumber(point, 'confirmedUsers', row, ['confirmedUsers']);
+    applyFirstDailyNumber(point, 'activeUsers', row, ['activeUsers', 'users']);
+    applyFirstDailyNumber(point, 'returningUsers', row, ['returningUsers']);
+    applyFirstDailyNumber(point, 'deletedUsers', row, ['deletedUsers']);
+    applyFirstDailyNumber(point, 'deleteRequests', row, ['deleteRequests']);
+    applyFirstDailyNumber(point, 'sessionsStarted', row, ['sessionsStarted', 'sessions']);
+    applyFirstDailyNumber(point, 'sessionUsers', row, ['sessionUsers']);
+    applyFirstDailyNumber(point, 'avgSessionMinutes', row, ['avgSessionMinutes']);
+    applyFirstDailyNumber(point, 'productActiveUsers', row, ['productActiveUsers']);
+    applyFirstDailyNumber(point, 'analyticsEvents', row, ['analyticsEvents', 'totalEvents', 'events']);
+    applyFirstDailyNumber(point, 'analyticsEventUsers', row, ['analyticsEventUsers']);
+  }
+
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function buildHushhAiDailySummaryMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
   const gcp = hushhAi?.gcp;
-  if (!gcp) return [];
-  return [
-    metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.serviceName),
-    metric('Cloud Run Error Rate', asNumber(gcp?.errorRate), gcp?.serviceName, formatPercent(gcp?.errorRate)),
-    metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.serviceName, formatLatency(gcp?.p95LatencyMs)),
+  const ga4 = hushhAi?.ga4;
+  const productEvents = productEventsAggregate(hushhAi);
+  const summary = [
+    ...(gcp ? [
+      metric('Cloud Run Requests', asNumber(gcp.requestCount), gcp.serviceName),
+      metric('Cloud Run Error Rate', asNumber(gcp.errorRate), gcp.serviceName, formatPercent(gcp.errorRate)),
+      metric('Cloud Run P95 Latency', asNumber(gcp.p95LatencyMs), gcp.serviceName, formatLatency(gcp.p95LatencyMs)),
+    ] : []),
+    ...(ga4 ? [
+      waitingMetric('GA4 Users', ga4.sourceLabel ?? 'GA4 Data API', ga4.rangeTotals?.users),
+      waitingMetric('GA4 Sessions', ga4.sourceLabel ?? 'GA4 Data API', ga4.rangeTotals?.sessions),
+      waitingMetric('GA4 Events', ga4.sourceLabel ?? 'GA4 Data API', ga4.rangeTotals?.events),
+    ] : []),
+    ...productEventTotalsMetrics(productEvents).slice(0, 5),
   ];
+  return summary;
 }
 
 function buildHushhTechDailyStatus(hushhTech: HushhTechMetricsSummary | null): HushhAiDailyStatusPoint[] {
@@ -1330,6 +1622,7 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
   const kaiGa4 = result.kai.ga4?.data ?? null;
   const kaiProduction = result.kai.productionProduct?.data ?? null;
   const hushhAi = result.hushhAi?.data ?? null;
+  const hushhAiUat = result.hushhAiUat?.data ?? null;
   const hushhTech = result.hushhTech.data;
   const feedWarnings = [
     result.kai.uat.error,
@@ -1337,10 +1630,11 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     result.kai.ga4?.error,
     result.kai.productionProduct?.error,
     result.hushhAi?.error,
+    result.hushhAiUat?.error,
     result.hushhTech.error,
   ].filter((value): value is string => Boolean(value));
 
-  if (activeRows.length === 0 && !hushhTech) {
+  if (activeRows.length === 0 && !hushhAi && !hushhAiUat && !hushhTech) {
     return {
       ...emptyDashboard('Analytics feeds are unavailable. Check BigQuery ADC/IAM, the hushhtech.com endpoint, and the Express server logs.', result.fetchedAt),
       feedWarnings,
@@ -1408,12 +1702,26 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     hushhAiSessionTimingMetrics: buildHushhAiSessionTimingMetrics(hushhAi),
     hushhAiDailyStatus: buildHushhAiDailyStatus(hushhAi),
     hushhAiDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAi),
+    hushhAiUat,
+    hushhAiUatOpsMetrics: buildHushhAiOpsMetrics(hushhAiUat),
+    hushhAiUatSearchMetrics: buildHushhAiSearchMetrics(hushhAiUat),
+    hushhAiUatEngagementMetrics: buildHushhAiEngagementMetrics(hushhAiUat),
+    hushhAiUatTopPageMetrics: buildHushhAiTopPageMetrics(hushhAiUat),
+    hushhAiUatTopEventMetrics: buildHushhAiTopEventMetrics(hushhAiUat),
+    hushhAiUatProductEventMetrics: buildHushhAiProductEventMetrics(hushhAiUat),
+    hushhAiUatAcquisitionMetrics: buildHushhAiAcquisitionMetrics(hushhAiUat),
+    hushhAiUatSourceMediumMetrics: buildHushhAiSourceMediumMetrics(hushhAiUat),
+    hushhAiUatLandingPageMetrics: buildHushhAiLandingPageMetrics(hushhAiUat),
+    hushhAiUatGeoDeviceMetrics: buildHushhAiGeoDeviceMetrics(hushhAiUat),
+    hushhAiUatSessionTimingMetrics: buildHushhAiSessionTimingMetrics(hushhAiUat),
+    hushhAiUatDailyStatus: buildHushhAiDailyStatus(hushhAiUat),
+    hushhAiUatDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAiUat),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
     feedWarnings,
-    sourceGroups: buildSourceGroups(kaiProduction, hushhAi, hushhTech),
-    platforms: buildPlatforms(kaiFeed, kaiUsage, kaiProduction, hushhAi, hushhTech),
-    kpiStats: buildKpiStats(kaiUsage, kaiGa4, kaiProduction, hushhAi, hushhTech),
-    trafficData: buildTrafficData(allKaiRows, hushhAi, hushhTech),
+    sourceGroups: buildSourceGroups(kaiProduction, hushhAi, hushhAiUat, hushhTech),
+    platforms: buildPlatforms(kaiFeed, kaiUsage, kaiProduction, hushhAi, hushhAiUat, hushhTech),
+    kpiStats: buildKpiStats(kaiUsage, kaiGa4, kaiProduction, hushhAi, hushhAiUat, hushhTech),
+    trafficData: buildTrafficData(allKaiRows, hushhAi, hushhAiUat, hushhTech),
     acquisitionChannels: buildAcquisitionChannels(hushhTech),
     topCountries: buildTopCountries(hushhTech),
   };

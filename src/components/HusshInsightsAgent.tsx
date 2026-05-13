@@ -40,7 +40,7 @@ interface AgentKnowledgeSource {
 
 export interface MatrixAgentContext {
   activeView?: 'overview' | 'platforms';
-  focusedProduct?: 'hushh.ai' | 'kai.hushh.ai' | 'uat.kai.hushh.ai' | 'hushhtech.com';
+  focusedProduct?: 'hushh.ai' | 'uat.hushh.ai' | 'kai.hushh.ai' | 'uat.kai.hushh.ai' | 'hushhtech.com';
   focusedEnvironment?: 'production' | 'uat';
   focusedSource?: 'cloud_run' | 'ga4' | 'search_console' | 'product_events' | 'supabase' | 'business_funnel';
   focusedMetricKey?: string;
@@ -107,7 +107,7 @@ const STARTER_PROMPTS: PromptOption[] = [
   },
   {
     label: 'Growth summary',
-    prompt: 'Give me a growth summary for hushh.ai, hushhtech.com, kai production, and Kai UAT for the selected range.',
+    prompt: 'Give me a growth summary for hushh.ai, uat.hushh.ai, hushhtech.com, kai production, and Kai UAT for the selected range.',
   },
 ];
 
