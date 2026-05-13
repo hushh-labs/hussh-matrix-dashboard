@@ -2453,27 +2453,55 @@ async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataR
 }
 
 function waitingHushhAiUatSearchConsole(range: HushhAiDateRange): Record<string, unknown> {
-  return unavailableProductSearchConsole({
-    productLabel: 'Hushh AI UAT',
-    sourceProjectId: '',
-    sourceDataset: '',
-    fallbackProjectId: '',
-    fallbackDataset: '',
-    siteUrl: 'https://uat.hushh.ai',
-    searchType: 'web',
-    dataState: 'all',
-    rowLimit: 10,
-  }, range, 'Hushh AI UAT Search Console source is not configured in metrics.hushh.ai yet.');
+  const note = 'Hushh AI UAT Search Console source is not configured in metrics.hushh.ai yet.';
+  return {
+    ...unavailableProductSearchConsole({
+      productLabel: 'Hushh AI UAT',
+      sourceProjectId: '',
+      sourceDataset: '',
+      fallbackProjectId: '',
+      fallbackDataset: '',
+      siteUrl: 'https://uat.hushh.ai',
+      searchType: 'web',
+      dataState: 'all',
+      rowLimit: 10,
+    }, range, note),
+    source: 'not_configured',
+    sourceLabel: 'Search Console not configured',
+    status: 'not_configured',
+    realtimeMode: 'not_configured',
+    expectedLagSeconds: null,
+    rangeTotals: {
+      clicks: null,
+      impressions: null,
+      ctr: null,
+      averagePosition: null,
+    },
+    clicks: null,
+    impressions: null,
+    daily: [],
+    note,
+  };
 }
 
 function waitingHushhAiUatGa4Summary(range: HushhAiDateRange): Record<string, unknown> {
-  return waitingGa4Summary(
-    'Hushh AI UAT',
-    range,
-    '',
-    '',
-    'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.',
-  );
+  const note = 'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.';
+  return {
+    ...waitingGa4Summary(
+      'Hushh AI UAT',
+      range,
+      '',
+      '',
+      note,
+    ),
+    sourceLabel: 'GA4 not configured',
+    status: 'not_configured',
+    realtimeMode: 'not_configured',
+    expectedLagSeconds: null,
+    sections: [],
+    daily: [],
+    note,
+  };
 }
 
 async function fetchKaiSearchConsoleFor(
@@ -2597,6 +2625,10 @@ function buildHushhAiFreshness(
   searchConsole: Record<string, unknown> | null,
   ga4: Record<string, unknown> | null = null,
   productEvents: Record<string, unknown> | null = null,
+  options: {
+    includeSearchConsole?: boolean;
+    includeGa4?: boolean;
+  } = {},
 ) {
   const searchAvailable = Boolean(searchConsole?.available);
   const ga4Available = Boolean(ga4?.available);
@@ -2604,50 +2636,55 @@ function buildHushhAiFreshness(
   const productEventsState = eventsAvailable
     ? 'live'
     : String(productEvents?.status ?? 'waiting');
+  const sources = [
+    {
+      key: 'gcp',
+      label: 'Cloud Run',
+      state: gcp ? 'near_live' : 'unavailable',
+      realtimeLevel: gcp ? 'monitoring_lag' : 'unavailable',
+      generatedAt: typeof gcp?.generatedAt === 'string' ? gcp.generatedAt : fetchedAt,
+      expectedLagSeconds: 300,
+      detail: gcp ? 'Google Cloud Monitoring can lag by a few minutes' : 'Cloud Run Monitoring unavailable',
+    },
+  ];
+  if (options.includeSearchConsole !== false) {
+    sources.push({
+      key: 'search_console',
+      label: 'Search Console',
+      state: searchAvailable ? 'delayed' : 'waiting',
+      realtimeLevel: 'delayed_export',
+      generatedAt: typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : fetchedAt,
+      expectedLagSeconds: 86_400,
+      detail: searchAvailable ? 'Search Console exports are delayed' : 'export tables/data not ready for this window',
+    });
+  }
+  if (options.includeGa4 !== false) {
+    sources.push({
+      key: 'ga4',
+      label: 'GA4',
+      state: ga4Available ? 'delayed' : 'waiting',
+      realtimeLevel: 'delayed_export',
+      generatedAt: typeof ga4?.generatedAt === 'string' ? ga4.generatedAt : fetchedAt,
+      expectedLagSeconds: 86_400,
+      detail: ga4Available ? 'GA4 export is available with daily export lag' : 'GA4 source is not configured or has not exported rows yet',
+    });
+  }
+  sources.push({
+    key: 'product_events',
+    label: 'DB / Product Events',
+    state: productEventsState,
+    realtimeLevel: eventsAvailable ? 'events_aggregate' : 'not_configured',
+    generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : fetchedAt,
+    expectedLagSeconds: eventsAvailable ? null : null,
+    detail: eventsAvailable
+      ? 'Product event aggregates are available'
+      : String(productEvents?.note ?? 'Hushh AI DB aggregate source is not configured yet'),
+  });
   return {
     mode: 'polling',
     refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
     fetchedAt,
-    sources: [
-      {
-        key: 'gcp',
-        label: 'Cloud Run',
-        state: gcp ? 'near_live' : 'unavailable',
-        realtimeLevel: gcp ? 'monitoring_lag' : 'unavailable',
-        generatedAt: typeof gcp?.generatedAt === 'string' ? gcp.generatedAt : fetchedAt,
-        expectedLagSeconds: 300,
-        detail: gcp ? 'Google Cloud Monitoring can lag by a few minutes' : 'Cloud Run Monitoring unavailable',
-      },
-      {
-        key: 'search_console',
-        label: 'Search Console',
-        state: searchAvailable ? 'delayed' : 'waiting',
-        realtimeLevel: 'delayed_export',
-        generatedAt: typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : fetchedAt,
-        expectedLagSeconds: 86_400,
-        detail: searchAvailable ? 'Search Console exports are delayed' : 'export tables/data not ready for this window',
-      },
-      {
-        key: 'ga4',
-        label: 'GA4',
-        state: ga4Available ? 'delayed' : 'waiting',
-        realtimeLevel: 'delayed_export',
-        generatedAt: typeof ga4?.generatedAt === 'string' ? ga4.generatedAt : fetchedAt,
-        expectedLagSeconds: 86_400,
-        detail: ga4Available ? 'GA4 export is available with daily export lag' : 'GA4 source is not configured or has not exported rows yet',
-      },
-      {
-        key: 'product_events',
-        label: 'DB / Product Events',
-        state: productEventsState,
-        realtimeLevel: eventsAvailable ? 'events_aggregate' : 'not_configured',
-        generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : fetchedAt,
-        expectedLagSeconds: eventsAvailable ? null : null,
-        detail: eventsAvailable
-          ? 'Product event aggregates are available'
-          : String(productEvents?.note ?? 'Hushh AI DB aggregate source is not configured yet'),
-      },
-    ],
+    sources,
   };
 }
 
@@ -3498,6 +3535,8 @@ function buildHushhAiSourceCards(
     searchConsoleFallback?: string;
     ga4Source?: string;
     ga4Blocker?: string;
+    includeSearchConsole?: boolean;
+    includeGa4?: boolean;
   } = {},
 ) {
   const productLabel = options.productLabel ?? 'Hushh AI';
@@ -3517,13 +3556,18 @@ function buildHushhAiSourceCards(
           'Waiting',
         );
       });
-  return [
-    buildSearchConsoleSourceCard(searchConsole, options.searchConsoleFallback ?? 'hushh.ai Search Console'),
-    buildGa4SourceCard(
+  const cards = [];
+  if (options.includeSearchConsole !== false) {
+    cards.push(buildSearchConsoleSourceCard(searchConsole, options.searchConsoleFallback ?? 'hushh.ai Search Console'));
+  }
+  if (options.includeGa4 !== false) {
+    cards.push(buildGa4SourceCard(
       ga4,
       options.ga4Source ?? hushhAiGa4SourceLabel(),
       options.ga4Blocker ?? 'Hushh AI GA4 source is not configured in metrics.hushh.ai yet.',
-    ),
+    ));
+  }
+  cards.push(
     {
       key: 'product_events',
       label: 'DB / Product Events',
@@ -3538,7 +3582,8 @@ function buildHushhAiSourceCards(
       sections: eventSections,
       blocker: eventsAvailable ? null : String(productEvents?.note ?? 'Hushh AI product events are not ingested into the dashboard yet.'),
     },
-  ];
+  );
+  return cards;
 }
 
 function kaiFeedMetricValue(rows: Record<string, unknown>[], group: string, name: string): number | null {
@@ -3978,12 +4023,17 @@ app.get('/api/analytics/hushhai/uat', async (req, res) => {
       searchConsole,
       ga4,
       productEvents: productEvents.data,
-      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole, ga4, productEvents.data),
+      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole, ga4, productEvents.data, {
+        includeSearchConsole: false,
+        includeGa4: false,
+      }),
       sourceCards: buildHushhAiSourceCards(searchConsole, ga4, productEvents.data, {
         productLabel: 'Hushh AI UAT',
         searchConsoleFallback: 'Hushh AI UAT Search Console',
         ga4Source: 'not_configured',
         ga4Blocker: 'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.',
+        includeSearchConsole: false,
+        includeGa4: false,
       }),
     },
     error,
@@ -4097,12 +4147,18 @@ app.get('/api/analytics/all', async (req, res) => {
           hushhAiUatSearchConsole,
           hushhAiUatGa4,
           hushhAiUatProductEvents.data,
+          {
+            includeSearchConsole: false,
+            includeGa4: false,
+          },
         ),
         sourceCards: buildHushhAiSourceCards(hushhAiUatSearchConsole, hushhAiUatGa4, hushhAiUatProductEvents.data, {
           productLabel: 'Hushh AI UAT',
           searchConsoleFallback: 'Hushh AI UAT Search Console',
           ga4Source: 'not_configured',
           ga4Blocker: 'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.',
+          includeSearchConsole: false,
+          includeGa4: false,
         }),
       },
       error: [hushhAiUatGcp.error, hushhAiUatProductEvents.error].filter(Boolean).join('; ') || null,

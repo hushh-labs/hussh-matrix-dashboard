@@ -1369,18 +1369,22 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
   const hushhAiDailySummaryMetrics = data?.hushhAiDailySummaryMetrics ?? [];
   const hushhAiFreshness = data?.hushhAi?.freshness;
   const hushhAiUatOpsMetrics = data?.hushhAiUatOpsMetrics ?? [];
-  const hushhAiUatSearchMetrics = data?.hushhAiUatSearchMetrics ?? [];
-  const hushhAiUatEngagementMetrics = data?.hushhAiUatEngagementMetrics ?? [];
-  const hushhAiUatTopPageMetrics = data?.hushhAiUatTopPageMetrics ?? [];
-  const hushhAiUatTopEventMetrics = data?.hushhAiUatTopEventMetrics ?? [];
+  const hushhAiUatSearchAvailable = Boolean(data?.hushhAiUat?.searchConsole?.available);
+  const hushhAiUatGa4Available = Boolean(data?.hushhAiUat?.ga4?.available);
+  const hushhAiUatSearchMetrics = hushhAiUatSearchAvailable ? data?.hushhAiUatSearchMetrics ?? [] : [];
+  const hushhAiUatEngagementMetrics = hushhAiUatGa4Available ? data?.hushhAiUatEngagementMetrics ?? [] : [];
+  const hushhAiUatTopPageMetrics = hushhAiUatGa4Available ? data?.hushhAiUatTopPageMetrics ?? [] : [];
+  const hushhAiUatTopEventMetrics = hushhAiUatGa4Available ? data?.hushhAiUatTopEventMetrics ?? [] : [];
   const hushhAiUatProductEventMetrics = data?.hushhAiUatProductEventMetrics ?? [];
-  const hushhAiUatAcquisitionMetrics = data?.hushhAiUatAcquisitionMetrics ?? [];
-  const hushhAiUatSourceMediumMetrics = data?.hushhAiUatSourceMediumMetrics ?? [];
-  const hushhAiUatLandingPageMetrics = data?.hushhAiUatLandingPageMetrics ?? [];
-  const hushhAiUatGeoDeviceMetrics = data?.hushhAiUatGeoDeviceMetrics ?? [];
-  const hushhAiUatSessionTimingMetrics = data?.hushhAiUatSessionTimingMetrics ?? [];
+  const hushhAiUatAcquisitionMetrics = hushhAiUatGa4Available ? data?.hushhAiUatAcquisitionMetrics ?? [] : [];
+  const hushhAiUatSourceMediumMetrics = hushhAiUatGa4Available ? data?.hushhAiUatSourceMediumMetrics ?? [] : [];
+  const hushhAiUatLandingPageMetrics = hushhAiUatGa4Available ? data?.hushhAiUatLandingPageMetrics ?? [] : [];
+  const hushhAiUatGeoDeviceMetrics = hushhAiUatGa4Available ? data?.hushhAiUatGeoDeviceMetrics ?? [] : [];
+  const hushhAiUatSessionTimingMetrics = hushhAiUatGa4Available ? data?.hushhAiUatSessionTimingMetrics ?? [] : [];
   const hushhAiUatDailyStatus = data?.hushhAiUatDailyStatus ?? [];
-  const hushhAiUatDailySummaryMetrics = data?.hushhAiUatDailySummaryMetrics ?? [];
+  const hushhAiUatDailySummaryMetrics = (data?.hushhAiUatDailySummaryMetrics ?? []).filter((item) => (
+    hushhAiUatGa4Available || !item.label.startsWith('GA4 ')
+  ));
   const hushhAiUatFreshness = data?.hushhAiUat?.freshness;
   const hushhTechAudienceMetrics = data?.hushhTechAudienceMetrics ?? [];
   const hushhTechBusinessMetrics = data?.hushhTechBusinessMetrics ?? [];
@@ -2475,58 +2479,64 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           />
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <MetricListCard
-            title="UAT GA4 Engagement"
-            subtitle="Users, sessions, events, and engaged-session quality"
-            items={hushhAiUatEngagementMetrics}
-            onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT GA4 · ${item.label}`, item)}
-          />
+          {hushhAiUatGa4Available && (
+            <MetricListCard
+              title="UAT GA4 Engagement"
+              subtitle="Users, sessions, events, and engaged-session quality"
+              items={hushhAiUatEngagementMetrics}
+              onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT GA4 · ${item.label}`, item)}
+            />
+          )}
           <MetricListCard
             title="UAT Product Events"
-            subtitle="Custom uat.hushh.ai funnel events from aggregate product sources"
+            subtitle="Live aggregate events, actors, sessions, search, and chat signals"
             items={hushhAiUatProductEventMetrics}
             onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Product Events · ${item.label}`, item)}
           />
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          <MetricListCard title="UAT Session Channels" subtitle="GA4 session channel groups" items={hushhAiUatAcquisitionMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Acquisition · ${item.label}`, item)} />
-          <MetricListCard title="UAT Source / Medium" subtitle="GA4 session source attribution" items={hushhAiUatSourceMediumMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Source · ${item.label}`, item)} />
-          <MetricListCard title="UAT Landing Pages" subtitle="First page in each GA4 session" items={hushhAiUatLandingPageMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Landing · ${item.label}`, item)} />
-          <MetricListCard title="UAT Geo + Device" subtitle="Aggregate country and device mix" items={hushhAiUatGeoDeviceMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Geo · ${item.label}`, item)} />
-          <MetricListCard title="UAT Session Timing" subtitle="Top session hours in GA4 property timezone" items={hushhAiUatSessionTimingMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Timing · ${item.label}`, item)} />
-        </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <ChartShell title="UAT Top Pages / Screens" subtitle="GA4 aggregate page views for uat.hushh.ai" action={<DetailActionButton label="Details" onClick={() => openHushhAiUatDetail('Hushh AI UAT Pages / Screens')} />}>
-            {hushhAiUatTopPageMetrics.length === 0 ? (
-              <EmptyState>Waiting for UAT GA4 page and screen aggregates.</EmptyState>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={hushhAiUatTopPageMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                  <CartesianGrid stroke="#ececf0" horizontal={false} />
-                  <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
-                  <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                  <Bar dataKey="value" name="Page views" fill="#ff9500" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT Pages / Screens')} cursor="pointer" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </ChartShell>
-          <ChartShell title="UAT Top GA4 Events" subtitle="Aggregate UAT events that show validation behavior" action={<DetailActionButton label="Details" onClick={() => openHushhAiUatDetail('Hushh AI UAT GA4 Events')} />}>
-            {hushhAiUatTopEventMetrics.length === 0 ? (
-              <EmptyState>Waiting for UAT GA4 event aggregates.</EmptyState>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={hushhAiUatTopEventMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                  <CartesianGrid stroke="#ececf0" horizontal={false} />
-                  <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
-                  <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                  <Bar dataKey="value" name="Events" fill="#af52de" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT GA4 Events')} cursor="pointer" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </ChartShell>
-        </div>
+        {hushhAiUatGa4Available && (
+          <>
+            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              <MetricListCard title="UAT Session Channels" subtitle="GA4 session channel groups" items={hushhAiUatAcquisitionMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Acquisition · ${item.label}`, item)} />
+              <MetricListCard title="UAT Source / Medium" subtitle="GA4 session source attribution" items={hushhAiUatSourceMediumMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Source · ${item.label}`, item)} />
+              <MetricListCard title="UAT Landing Pages" subtitle="First page in each GA4 session" items={hushhAiUatLandingPageMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Landing · ${item.label}`, item)} />
+              <MetricListCard title="UAT Geo + Device" subtitle="Aggregate country and device mix" items={hushhAiUatGeoDeviceMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Geo · ${item.label}`, item)} />
+              <MetricListCard title="UAT Session Timing" subtitle="Top session hours in GA4 property timezone" items={hushhAiUatSessionTimingMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Timing · ${item.label}`, item)} />
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <ChartShell title="UAT Top Pages / Screens" subtitle="GA4 aggregate page views for uat.hushh.ai" action={<DetailActionButton label="Details" onClick={() => openHushhAiUatDetail('Hushh AI UAT Pages / Screens')} />}>
+                {hushhAiUatTopPageMetrics.length === 0 ? (
+                  <EmptyState>Waiting for UAT GA4 page and screen aggregates.</EmptyState>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hushhAiUatTopPageMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                      <CartesianGrid stroke="#ececf0" horizontal={false} />
+                      <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                      <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                      <Bar dataKey="value" name="Page views" fill="#ff9500" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT Pages / Screens')} cursor="pointer" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </ChartShell>
+              <ChartShell title="UAT Top GA4 Events" subtitle="Aggregate UAT events that show validation behavior" action={<DetailActionButton label="Details" onClick={() => openHushhAiUatDetail('Hushh AI UAT GA4 Events')} />}>
+                {hushhAiUatTopEventMetrics.length === 0 ? (
+                  <EmptyState>Waiting for UAT GA4 event aggregates.</EmptyState>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hushhAiUatTopEventMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                      <CartesianGrid stroke="#ececf0" horizontal={false} />
+                      <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                      <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                      <Bar dataKey="value" name="Events" fill="#af52de" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT GA4 Events')} cursor="pointer" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </ChartShell>
+            </div>
+          </>
+        )}
       </section>
     </>
   );
@@ -2623,7 +2633,9 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
           <MetricListCard title="hushh.ai Search" subtitle="Search Console export metrics" items={hushhAiSearchMetrics} />
           <MetricListCard title="uat.hushh.ai GCP" subtitle="Hushh AI UAT Cloud Run metrics" items={hushhAiUatOpsMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT GCP · ${item.label}`, item)} />
-          <MetricListCard title="uat.hushh.ai Search" subtitle="Hushh AI UAT Search Console metrics" items={hushhAiUatSearchMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Search · ${item.label}`, item)} />
+          {hushhAiUatSearchAvailable && (
+            <MetricListCard title="uat.hushh.ai Search" subtitle="Hushh AI UAT Search Console metrics" items={hushhAiUatSearchMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Search · ${item.label}`, item)} />
+          )}
           <MetricListCard title="hushhtech.com Audience" subtitle="Public endpoint audience and traffic" items={hushhTechAudienceMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Audience · ${item.label}`, item)} />
           <MetricListCard title="Search + Ops" subtitle="Search Console, GA4, and Cloud Run" items={hushhTechOpsMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Search + Ops · ${item.label}`, item)} />
         </div>

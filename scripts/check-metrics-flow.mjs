@@ -211,6 +211,26 @@ function assertSourceCards(cards, label) {
   }
 }
 
+function assertHushhAiUatSourceCards(cards, label) {
+  assert(Array.isArray(cards), `${label} sourceCards missing`);
+  const keys = cards.map((card) => card.key).sort();
+  assert(keys.length === 1 && keys[0] === 'product_events', `${label} should expose only configured UAT source cards`, keys.join(','));
+  const card = cards[0];
+  assert(typeof card.status === 'string' && card.status.length > 0, `${label} product_events missing status`);
+  assert(typeof card.source === 'string' && card.source.length > 0, `${label} product_events missing source`);
+  assert(card.freshness?.generatedAt, `${label} product_events missing freshness.generatedAt`);
+  assert(Array.isArray(card.metrics), `${label} product_events metrics must be an array`);
+}
+
+function assertHushhAiUatFreshness(freshness, label) {
+  const sources = Array.isArray(freshness?.sources) ? freshness.sources : [];
+  const keys = sources.map((source) => source.key).sort();
+  assert(keys.includes('gcp'), `${label} freshness missing Cloud Run source`, keys.join(','));
+  assert(keys.includes('product_events'), `${label} freshness missing product-events source`, keys.join(','));
+  assert(!keys.includes('search_console'), `${label} freshness should not expose unconfigured Search Console`, keys.join(','));
+  assert(!keys.includes('ga4'), `${label} freshness should not expose unconfigured GA4`, keys.join(','));
+}
+
 async function checkApiFlow(options) {
   const results = [];
   const health = await fetchJson(`${options.dashboardUrl}/api/health`, options.timeoutMs);
@@ -240,13 +260,15 @@ async function checkApiFlow(options) {
   assertPublicSafePayload(all.body, 'aggregate analytics');
 
   assertSourceCards(hushhAi.body?.data?.sourceCards, 'Hushh AI');
-  assertSourceCards(hushhAiUat.body?.data?.sourceCards, 'Hushh AI UAT');
+  assertHushhAiUatSourceCards(hushhAiUat.body?.data?.sourceCards, 'Hushh AI UAT');
   assertSourceCards(kai.body?.data?.sourceCards, 'Kai');
   assertSourceCards(hushhTech.body?.data?.sourceCards, 'HushhTech');
   assertSourceCards(all.body?.hushhAi?.data?.sourceCards, 'aggregate Hushh AI');
-  assertSourceCards(all.body?.hushhAiUat?.data?.sourceCards, 'aggregate Hushh AI UAT');
+  assertHushhAiUatSourceCards(all.body?.hushhAiUat?.data?.sourceCards, 'aggregate Hushh AI UAT');
   assertSourceCards(all.body?.kai?.productionProduct?.data?.sourceCards, 'aggregate Kai');
   assertSourceCards(all.body?.hushhTech?.data?.sourceCards, 'aggregate HushhTech');
+  assertHushhAiUatFreshness(hushhAiUat.body?.data?.freshness, 'Hushh AI UAT');
+  assertHushhAiUatFreshness(all.body?.hushhAiUat?.data?.freshness, 'aggregate Hushh AI UAT');
   assert(!all.body?.hushhAi?.data?.supabase, 'aggregate Hushh AI incorrectly includes Supabase data');
 
   const kaiCards = kai.body.data.sourceCards;
@@ -258,7 +280,6 @@ async function checkApiFlow(options) {
 
   for (const [label, body] of [
     ['Hushh AI', hushhAi.body?.data],
-    ['Hushh AI UAT', hushhAiUat.body?.data],
     ['Kai', kai.body?.data],
     ['HushhTech', hushhTech.body?.data],
   ]) {
@@ -298,8 +319,8 @@ async function checkApiFlow(options) {
     assertSourceCardMetric(techEvents, key);
   }
 
-  results.push(result('three-source-api-contract', 'ok', 'all products expose search_console, ga4, product_events'));
-  results.push(result('source-timeline-contract', 'ok', 'GA4 and Search Console expose required timeline sections'));
+  results.push(result('source-api-contract', 'ok', 'configured production sources expose search_console, ga4, product_events; Hushh AI UAT exposes configured product_events only'));
+  results.push(result('source-timeline-contract', 'ok', 'configured GA4 and Search Console sources expose required timeline sections'));
   results.push(result('source-boundaries', 'ok', 'Hushh AI has no Supabase; Kai uses UAT primary sources'));
   return results;
 }
