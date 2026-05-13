@@ -9,7 +9,7 @@ export default function DashboardLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <div className="flex h-screen bg-white text-[#1d1d1f]">
+    <div className="flex h-screen bg-[#f8f9fa] text-[#202124]">
       <Sidebar
         selectedProject={selectedProject}
         onSelectProject={setSelectedProject}
