@@ -1,13 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
 }
 
 :root {
-  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
-  color: #1d1d1f;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  color: #202124;
   background: #ffffff;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -16,14 +15,14 @@
 }
 
 html {
-  background: #ffffff;
+  background: #f8f9fa;
   scroll-behavior: smooth;
 }
 
 body {
   min-width: 320px;
   margin: 0;
-  background: #ffffff;
+  background: #f8f9fa;
 }
 
 button,

@@ -72,10 +72,10 @@ const iconMap: Record<string, typeof Activity> = {
   Users,
 };
 
-const appleCard = 'rounded-2xl border border-black/[0.04] bg-white';
-const applePanel = 'rounded-xl bg-[#f5f5f7]';
-const appleLabel = 'text-[11px] font-semibold uppercase tracking-wider text-[#86868b]';
-const dashboardBand = 'mt-8';
+const gCard = 'rounded-lg border border-[#dadce0] bg-white';
+const gPanel = 'rounded-lg bg-[#f1f3f4]';
+const gLabel = 'text-xs font-normal text-[#5f6368]';
+const dashboardBand = 'mt-6';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
@@ -214,11 +214,11 @@ function freshnessLabel(source: HushhAiFreshnessSource): string {
 }
 
 function freshnessClass(source: HushhAiFreshnessSource): string {
-  if (source.state === 'live') return 'border border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]';
+  if (source.state === 'live') return 'border border-[#137333]/15 bg-[#ecfdf3]/80 text-[#137333]';
   if (source.state === 'near_live') return 'border border-[#005eb8]/15 bg-[#e8f2ff]/80 text-[#005eb8]';
-  if (source.state === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f4edff]/80 text-[#6d38a8]';
+  if (source.state === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f3e8fd]/80 text-[#6d38a8]';
   if (source.state === 'delayed' || source.state === 'waiting') return 'border border-[#9a5b00]/15 bg-[#fff7e6]/80 text-[#9a5b00]';
-  return 'border border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]';
+  return 'border border-black/[0.06] bg-[#f1f3f4] text-[#80868b]';
 }
 
 function sourceStatusLabel(status: string, sourceKey?: string): string {
@@ -233,11 +233,11 @@ function sourceStatusLabel(status: string, sourceKey?: string): string {
 }
 
 function sourceStatusClass(status: string): string {
-  if (status === 'live' || status === 'near_live') return 'border border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]';
+  if (status === 'live' || status === 'near_live') return 'border border-[#137333]/15 bg-[#ecfdf3]/80 text-[#137333]';
   if (status === 'delayed') return 'border border-[#005eb8]/15 bg-[#e8f2ff]/80 text-[#005eb8]';
-  if (status === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f4edff]/80 text-[#6d38a8]';
+  if (status === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f3e8fd]/80 text-[#6d38a8]';
   if (status === 'waiting' || status === 'not_configured') return 'border border-[#9a5b00]/15 bg-[#fff7e6]/80 text-[#9a5b00]';
-  return 'border border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]';
+  return 'border border-black/[0.06] bg-[#f1f3f4] text-[#80868b]';
 }
 
 function formatOptionalNumber(value: number | null | undefined, fallback = '—'): string {
@@ -414,7 +414,7 @@ function DetailActionButton({ label = 'Details', onClick }: { label?: string; on
     <button
       type="button"
       onClick={onClick}
-      className="rounded-full bg-[#f5f5f7] px-3 py-1.5 text-xs font-bold text-[#007aff] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+      className="rounded-full bg-[#f1f3f4] px-3 py-1.5 text-xs font-bold text-[#1a73e8] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35"
     >
       {label}
     </button>
@@ -426,15 +426,15 @@ function CustomTooltip({ active, payload, label }: any) {
 
   return (
     <div className="rounded-lg border border-black/10 bg-white/95 p-3 text-sm shadow-xl backdrop-blur-xl">
-      {label && <p className="mb-2 font-semibold text-[#6e6e73]">{label}</p>}
+      {label && <p className="mb-2 font-semibold text-[#80868b]">{label}</p>}
       <div className="space-y-1.5">
         {payload.map((entry: any, index: number) => {
           const color = entry.color || entry.payload.fill || entry.stroke;
           return (
             <div key={`${entry.name}-${index}`} className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
-              <span className="font-medium text-[#6e6e73]">{entry.name}</span>
-              <span className="ml-auto font-semibold text-[#1d1d1f]">{formatOptionalNumber(entry.value)}</span>
+              <span className="font-medium text-[#80868b]">{entry.name}</span>
+              <span className="ml-auto font-semibold text-[#202124]">{formatOptionalNumber(entry.value)}</span>
             </div>
           );
         })}
@@ -445,7 +445,7 @@ function CustomTooltip({ active, payload, label }: any) {
 
 function EmptyState({ children }: { children: string }) {
   return (
-    <div className="flex min-h-[160px] items-center justify-center rounded-lg border border-dashed border-black/[0.08] bg-[#f6f6f8] px-4 text-center text-sm font-semibold text-[#86868b]">
+    <div className="flex min-h-[160px] items-center justify-center rounded-lg border border-dashed border-black/[0.08] bg-[#f6f6f8] px-4 text-center text-sm font-semibold text-[#5f6368]">
       {children}
     </div>
   );
@@ -461,10 +461,10 @@ function SectionHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h2 className="text-[22px] font-bold text-[#1d1d1f] sm:text-[26px]">{title}</h2>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">{kicker}</p>
+        <h2 className="text-xl font-normal text-[#202124]">{title}</h2>
+        <p className="mt-0.5 text-sm text-[#5f6368]">{kicker}</p>
       </div>
       {action}
     </div>
@@ -477,14 +477,14 @@ function MetricCard({ stat, index }: { stat: KpiStat; index: number }) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04 }}
-      className={cn(appleCard, 'px-6 py-5')}
+      className={cn(gCard, 'p-5')}
     >
-      <p className={cn(appleLabel, 'font-bold')}>{stat.label}</p>
-      <div className="mt-2 flex items-baseline gap-3">
-        <p className="text-[32px] font-extrabold leading-tight tracking-tight text-[#1d1d1f] sm:text-[44px]">{stat.value}</p>
-        {stat.suffix && <span className="text-sm font-semibold text-[#86868b]">{stat.suffix}</span>}
+      <p className="text-xs text-[#5f6368]">{stat.label}</p>
+      <div className="mt-2 flex items-baseline gap-2">
+        <p className="text-[28px] font-normal leading-tight text-[#202124] sm:text-4xl">{stat.value}</p>
+        {stat.suffix && <span className="text-sm text-[#5f6368]">{stat.suffix}</span>}
         {stat.change && (
-          <span className="text-base font-bold text-[#34c759]">{stat.change}</span>
+          <span className="text-sm font-medium text-[#1e8e3e]">{stat.change}</span>
         )}
       </div>
     </motion.div>
@@ -503,14 +503,14 @@ function MetricListCard({
   onItemClick?: (item: BreakdownMetric) => void;
 }) {
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-[15px] font-bold text-[#1d1d1f]">{title}</h3>
-          <p className="mt-0.5 text-xs font-medium text-[#86868b]">{subtitle}</p>
+          <h3 className="text-sm font-medium text-[#202124]">{title}</h3>
+          <p className="mt-0.5 text-xs text-[#5f6368]">{subtitle}</p>
         </div>
         {onItemClick && (
-          <span className="shrink-0 text-sm font-semibold text-[#007aff]">See All</span>
+          <span className="shrink-0 text-xs font-medium text-[#1a73e8]">See All</span>
         )}
       </div>
       {items.length === 0 ? (
@@ -519,20 +519,20 @@ function MetricListCard({
         <div className="divide-y divide-black/[0.04]">
           {items.map((item) => {
             const isMissingMetric = item.label.startsWith('Missing');
-            const valueColor = isMissingMetric && item.value > 0 ? 'text-[#b25000]' : 'text-[#1d1d1f]';
+            const valueColor = isMissingMetric && item.value > 0 ? 'text-[#e37400]' : 'text-[#202124]';
             const rowClass = 'flex min-h-12 w-full items-center justify-between gap-4 py-2.5 text-left';
             const rowContent = (
               <>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     {item.color && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />}
-                    <p className="truncate text-[14px] font-medium text-[#1d1d1f]">{item.label}</p>
+                    <p className="truncate text-[14px] font-medium text-[#202124]">{item.label}</p>
                   </div>
-                  {item.detail && <p className="mt-0.5 truncate text-xs font-medium text-[#86868b]">{item.detail}</p>}
+                  {item.detail && <p className="mt-0.5 truncate text-xs font-medium text-[#5f6368]">{item.detail}</p>}
                 </div>
                 <div className="shrink-0 text-right">
                   <p className={cn('text-[14px] font-bold tabular-nums', valueColor)}>{item.displayValue ?? formatNumber(item.value)}</p>
-                  {item.percentage != null && <p className="text-[11px] font-medium text-[#86868b]">{item.percentage}%</p>}
+                  {item.percentage != null && <p className="text-[11px] font-medium text-[#5f6368]">{item.percentage}%</p>}
                 </div>
               </>
             );
@@ -542,7 +542,7 @@ function MetricListCard({
                   key={`${item.label}-${item.detail ?? ''}`}
                   type="button"
                   onClick={() => onItemClick(item)}
-                  className={cn(rowClass, 'rounded-lg px-1.5 transition hover:bg-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+                  className={cn(rowClass, 'rounded-lg px-1.5 transition hover:bg-[#f1f3f4] focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35')}
                   aria-label={`Show details for ${item.label}`}
                 >
                   {rowContent}
@@ -574,8 +574,8 @@ function SourceCard({
   const renderMetricTile = (metricItem: ProductSourceCardMetric, section?: ProductSourceCardSection) => {
     const metricContent = (
       <>
-        <p className="truncate text-[10px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
-        <p className="mt-1 truncate text-base font-semibold text-[#1d1d1f]">
+        <p className="truncate text-[10px] font-bold uppercase text-[#5f6368]">{metricItem.label}</p>
+        <p className="mt-1 truncate text-base font-semibold text-[#202124]">
           {formatSourceMetricValue(section?.status ?? card.status, metricItem.value, metricItem.displayValue)}
         </p>
       </>
@@ -593,7 +593,7 @@ function SourceCard({
         key={`${section?.key ?? 'card'}-${metricItem.key}`}
         type="button"
         onClick={() => onMetricClick({ productKey, card, section, metric: metricItem })}
-        className={cn(className, 'transition hover:border-[#007aff]/20 hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+        className={cn(className, 'transition hover:border-[#1a73e8]/20 hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35')}
         aria-label={`Show details for ${card.label} ${section?.label ? `${section.label} ` : ''}${metricItem.label}`}
       >
         {metricContent}
@@ -602,11 +602,11 @@ function SourceCard({
   };
 
   return (
-    <div className={cn(appleCard, 'min-h-[214px] px-6 py-5')}>
+    <div className={cn(gCard, 'min-h-[214px] px-6 py-5')}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-[15px] font-bold text-[#1d1d1f]">{card.label}</p>
-          <p className="mt-0.5 truncate text-xs font-medium text-[#86868b]">{card.source}</p>
+          <p className="truncate text-sm font-medium text-[#202124]">{card.label}</p>
+          <p className="mt-0.5 truncate text-xs font-medium text-[#5f6368]">{card.source}</p>
         </div>
         <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-bold', sourceStatusClass(card.status))}>
           {sourceStatusLabel(card.status, card.key)}
@@ -621,9 +621,9 @@ function SourceCard({
               section.freshness?.generatedAt ? `refreshed ${formatAge(section.freshness.generatedAt)}` : null,
             ].filter(Boolean).join(' · ');
             return (
-              <div key={section.key} className={cn(applePanel, 'p-3')}>
+              <div key={section.key} className={cn(gPanel, 'p-3')}>
                 <div className="flex items-center justify-between gap-2">
-                  <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{section.label}</p>
+                  <p className="truncate text-[11px] font-bold uppercase text-[#5f6368]">{section.label}</p>
                   {section.status ? (
                     <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', sourceStatusClass(section.status))}>
                       {sourceStatusLabel(section.status, card.key)}
@@ -634,10 +634,10 @@ function SourceCard({
                   {section.metrics.slice(0, 4).map((metricItem) => renderMetricTile(metricItem, section))}
                 </div>
                 {sectionMeta ? (
-                  <p className="mt-2 text-[11px] font-semibold leading-5 text-[#86868b]">{sectionMeta}</p>
+                  <p className="mt-2 text-[11px] font-semibold leading-5 text-[#5f6368]">{sectionMeta}</p>
                 ) : null}
                 {section.blocker ? (
-                  <p className="mt-2 text-xs font-medium leading-5 text-[#6e6e73]">{section.blocker}</p>
+                  <p className="mt-2 text-xs font-medium leading-5 text-[#80868b]">{section.blocker}</p>
                 ) : null}
               </div>
             );
@@ -646,22 +646,22 @@ function SourceCard({
       ) : (
         <div className="mt-5 grid grid-cols-2 gap-2">
           {metricItems.length === 0 ? (
-            <div className={cn(applePanel, 'col-span-2 flex min-h-[84px] items-center px-3 text-sm font-semibold text-[#86868b]')}>
+            <div className={cn(gPanel, 'col-span-2 flex min-h-[84px] items-center px-3 text-sm font-semibold text-[#5f6368]')}>
               Waiting for aggregate event rows.
             </div>
           ) : (
             metricItems.map((metricItem) => {
               const content = (
                 <>
-                  <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
-                  <p className="mt-2 truncate text-lg font-semibold text-[#1d1d1f]">
+                  <p className="truncate text-[11px] font-bold uppercase text-[#5f6368]">{metricItem.label}</p>
+                  <p className="mt-2 truncate text-lg font-semibold text-[#202124]">
                     {formatSourceMetricValue(card.status, metricItem.value, metricItem.displayValue)}
                   </p>
                 </>
               );
               if (!onMetricClick) {
                 return (
-                  <div key={metricItem.key} className={cn(applePanel, 'min-h-[72px] p-3')}>
+                  <div key={metricItem.key} className={cn(gPanel, 'min-h-[72px] p-3')}>
                     {content}
                   </div>
                 );
@@ -671,7 +671,7 @@ function SourceCard({
                   key={metricItem.key}
                   type="button"
                   onClick={() => onMetricClick({ productKey, card, metric: metricItem })}
-                  className={cn(applePanel, 'min-h-[72px] p-3 text-left transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+                  className={cn(gPanel, 'min-h-[72px] p-3 text-left transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35')}
                   aria-label={`Show details for ${card.label} ${metricItem.label}`}
                 >
                   {content}
@@ -682,7 +682,7 @@ function SourceCard({
         </div>
       )}
 
-      <div className="mt-4 min-h-[40px] text-xs font-medium leading-5 text-[#6e6e73]">
+      <div className="mt-4 min-h-[40px] text-xs font-medium leading-5 text-[#80868b]">
         {card.blocker ? card.blocker : `Freshness: ${formatAge(card.freshness.generatedAt)}`}
       </div>
     </div>
@@ -709,11 +709,11 @@ function SourceMatrix({
             <div key={group.productKey} className="space-y-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <h3 className="text-lg font-bold text-[#1d1d1f]">{group.productName}</h3>
-                  <p className="text-sm font-bold text-[#86868b]">{group.domain} · primary: {group.primaryEnvironment.toUpperCase()}</p>
+                  <h3 className="text-base font-medium text-[#202124]">{group.productName}</h3>
+                  <p className="text-sm text-[#5f6368]">{group.domain} · primary: {group.primaryEnvironment.toUpperCase()}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {cards.map((card) => (
                   <div key={`${group.productKey}-${card.key}`}>
                     <SourceCard productKey={group.productKey} card={card} onMetricClick={onMetricClick} />
@@ -743,15 +743,15 @@ function DateRangeControl({
   const presets: DatePreset[] = [7, 14, 30, 90];
 
   return (
-    <div className="flex w-full flex-col gap-2 rounded-xl bg-[#f5f5f7] p-1.5 md:w-auto">
-      <div className="inline-flex rounded-lg p-0.5">
+    <div className="flex w-full flex-col gap-2 rounded-lg border border-[#dadce0] bg-white p-1.5 md:w-auto">
+      <div className="inline-flex rounded p-0.5">
         {presets.map((days) => (
           <button
             key={days}
             onClick={() => onPreset(days)}
             className={cn(
-              'h-8 flex-1 rounded-full px-3 text-[11px] font-bold transition md:flex-none',
-              range.preset === days ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+              'h-8 flex-1 rounded px-3 text-xs font-medium transition md:flex-none',
+              range.preset === days ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'text-[#5f6368] hover:bg-[#f1f3f4] hover:text-[#202124]',
             )}
           >
             {days}D
@@ -759,24 +759,24 @@ function DateRangeControl({
         ))}
       </div>
       <div className="grid grid-cols-2 gap-1.5">
-        <label className="flex h-8 items-center gap-1.5 rounded-lg bg-white px-2 text-[11px] font-semibold text-[#6e6e73]">
+        <label className="flex h-8 items-center gap-1.5 rounded border border-[#dadce0] px-2 text-xs text-[#5f6368]">
           <CalendarDays className="h-3 w-3 shrink-0" />
           <input
             type="date"
             value={range.startDate}
             max={today}
             onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', startDate: event.target.value }))}
-            className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-[#1d1d1f] outline-none"
+            className="min-w-0 flex-1 bg-transparent text-xs text-[#202124] outline-none"
             aria-label={`${ariaLabelPrefix} start date`}
           />
         </label>
-        <label className="flex h-8 items-center rounded-lg bg-white px-2 text-[11px] font-semibold text-[#6e6e73]">
+        <label className="flex h-8 items-center rounded border border-[#dadce0] px-2 text-xs text-[#5f6368]">
           <input
             type="date"
             value={range.endDate}
             max={today}
             onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', endDate: event.target.value }))}
-            className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-[#1d1d1f] outline-none"
+            className="min-w-0 flex-1 bg-transparent text-xs text-[#202124] outline-none"
             aria-label={`${ariaLabelPrefix} end date`}
           />
         </label>
@@ -797,11 +797,11 @@ function ChartShell({
   children: ReactNode;
 }) {
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5 flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-[15px] font-bold text-[#1d1d1f]">{title}</h3>
-          <p className="mt-0.5 text-xs font-medium text-[#86868b]">{subtitle}</p>
+          <h3 className="text-sm font-medium text-[#202124]">{title}</h3>
+          <p className="mt-0.5 text-xs text-[#5f6368]">{subtitle}</p>
         </div>
         {action}
       </div>
@@ -831,23 +831,23 @@ function MetricDetailDialog({
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/28 p-3 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="metric-detail-title">
       <button type="button" className="absolute inset-0 cursor-default" aria-label="Close metric details" onClick={onClose} />
-      <div className={cn(appleCard, 'relative max-h-[92vh] w-full max-w-5xl overflow-hidden bg-white shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:max-h-[88vh]')}>
+      <div className={cn(gCard, 'relative max-h-[92vh] w-full max-w-5xl overflow-hidden bg-white shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:max-h-[88vh]')}>
         <div className="flex items-start justify-between gap-3 border-b border-black/[0.06] p-4 sm:gap-4 sm:p-6">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 id="metric-detail-title" className="text-lg font-semibold text-[#1d1d1f] sm:text-2xl">{detail.title}</h2>
+              <h2 id="metric-detail-title" className="text-lg font-semibold text-[#202124] sm:text-2xl">{detail.title}</h2>
               {detail.badge ? (
-                <span className="rounded-full border border-[#007aff]/15 bg-[#e8f2ff]/80 px-2.5 py-1 text-xs font-bold text-[#005eb8]">
+                <span className="rounded-full border border-[#1a73e8]/15 bg-[#e8f2ff]/80 px-2.5 py-1 text-xs font-bold text-[#005eb8]">
                   {detail.badge}
                 </span>
               ) : null}
             </div>
-            <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-[#6e6e73]">{detail.subtitle}</p>
+            <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-[#80868b]">{detail.subtitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f5f5f7] text-[#6e6e73] transition hover:bg-[#e8e8ed] hover:text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f1f3f4] text-[#80868b] transition hover:bg-[#dadce0] hover:text-[#202124] focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35"
             aria-label="Close metric details"
           >
             <X className="h-5 w-5" />
@@ -857,10 +857,10 @@ function MetricDetailDialog({
           {detail.summary && detail.summary.length > 0 ? (
             <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {detail.summary.map((row) => (
-                <div key={`${row.label}-${row.value}`} className={cn(applePanel, 'p-3')}>
-                  <p className="text-[11px] font-bold uppercase text-[#86868b]">{row.label}</p>
-                  <p className="mt-2 text-xl font-semibold text-[#1d1d1f]">{row.value}</p>
-                  {row.detail ? <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">{row.detail}</p> : null}
+                <div key={`${row.label}-${row.value}`} className={cn(gPanel, 'p-3')}>
+                  <p className="text-[11px] font-bold uppercase text-[#5f6368]">{row.label}</p>
+                  <p className="mt-2 text-xl font-semibold text-[#202124]">{row.value}</p>
+                  {row.detail ? <p className="mt-1 text-xs font-medium leading-5 text-[#5f6368]">{row.detail}</p> : null}
                 </div>
               ))}
             </div>
@@ -868,10 +868,10 @@ function MetricDetailDialog({
 
           <div className="space-y-5">
             {detail.sections.map((section) => (
-              <section key={section.title} className={cn(applePanel, 'p-4')}>
+              <section key={section.title} className={cn(gPanel, 'p-4')}>
                 <div className="mb-3">
-                  <h3 className="text-base font-semibold text-[#1d1d1f]">{section.title}</h3>
-                  {section.subtitle ? <p className="mt-1 text-xs font-semibold leading-5 text-[#86868b]">{section.subtitle}</p> : null}
+                  <h3 className="text-base font-semibold text-[#202124]">{section.title}</h3>
+                  {section.subtitle ? <p className="mt-1 text-xs font-semibold leading-5 text-[#5f6368]">{section.subtitle}</p> : null}
                 </div>
                 {section.rows.length === 0 ? (
                   <EmptyState>No aggregate detail rows available for this metric yet.</EmptyState>
@@ -880,11 +880,11 @@ function MetricDetailDialog({
                     {section.rows.map((row) => (
                       <div key={`${section.title}-${row.label}-${row.value}-${row.meta ?? ''}`} className="grid gap-2 p-3 sm:grid-cols-[1.2fr_0.6fr_1.4fr] sm:items-center">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-[#1d1d1f]">{row.label}</p>
-                          {row.meta ? <p className="mt-1 truncate text-xs font-medium text-[#86868b]">{row.meta}</p> : null}
+                          <p className="truncate text-sm font-semibold text-[#202124]">{row.label}</p>
+                          {row.meta ? <p className="mt-1 truncate text-xs font-medium text-[#5f6368]">{row.meta}</p> : null}
                         </div>
-                        <p className="text-sm font-bold text-[#1d1d1f] sm:text-right">{row.value}</p>
-                        {row.detail ? <p className="text-xs font-medium leading-5 text-[#6e6e73]">{row.detail}</p> : <span />}
+                        <p className="text-sm font-bold text-[#202124] sm:text-right">{row.value}</p>
+                        {row.detail ? <p className="text-xs font-medium leading-5 text-[#80868b]">{row.detail}</p> : <span />}
                       </div>
                     ))}
                   </div>
@@ -932,12 +932,12 @@ function ProductLivePanel({
   const refreshSeconds = freshness?.refreshIntervalSeconds ?? 30;
 
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className={appleLabel}>{kicker}</p>
-          <h3 className="mt-1 text-[15px] font-bold text-[#1d1d1f]">{title} · auto-updating every {refreshSeconds}s</h3>
-          <p className="mt-2 text-sm font-medium leading-6 text-[#6e6e73]">
+          <p className={gLabel}>{kicker}</p>
+          <h3 className="mt-1 text-sm font-medium text-[#202124]">{title} · auto-updating every {refreshSeconds}s</h3>
+          <p className="mt-2 text-sm font-medium leading-6 text-[#80868b]">
             Last dashboard pull: {formatTimestamp(lastUpdated)} · {formatAge(lastUpdated)}
           </p>
         </div>
@@ -946,8 +946,8 @@ function ProductLivePanel({
           className={cn(
             'inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold transition',
             autoRefresh
-              ? 'bg-[#1d1d1f] text-white hover:bg-[#323236]'
-              : 'bg-[#f5f5f7] text-[#1d1d1f] hover:bg-[#e8e8ed]',
+              ? 'bg-[#202124] text-white hover:bg-[#323236]'
+              : 'bg-[#f1f3f4] text-[#202124] hover:bg-[#dadce0]',
           )}
         >
           {autoRefresh ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -957,17 +957,17 @@ function ProductLivePanel({
 
       <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         {sources.map((source) => (
-          <div key={source.key} className={cn(applePanel, 'p-4')}>
+          <div key={source.key} className={cn(gPanel, 'p-4')}>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-bold text-[#1d1d1f]">{source.label}</p>
-                <p className="mt-1 text-xs font-semibold text-[#86868b]">{formatAge(source.generatedAt)}</p>
+                <p className="text-sm font-bold text-[#202124]">{source.label}</p>
+                <p className="mt-1 text-xs font-semibold text-[#5f6368]">{formatAge(source.generatedAt)}</p>
               </div>
               <span className={cn('rounded-full px-2.5 py-1 text-xs font-bold', freshnessClass(source))}>
                 {freshnessLabel(source)}
               </span>
             </div>
-            <p className="mt-3 text-xs font-medium leading-5 text-[#6e6e73]">{source.detail}</p>
+            <p className="mt-3 text-xs font-medium leading-5 text-[#80868b]">{source.detail}</p>
           </div>
         ))}
       </div>
@@ -1014,13 +1014,13 @@ function ActivityDots({
   const maxValue = rows.reduce((max, row) => Math.max(max, dailyActivityValue(row)), 0);
 
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h3 className="text-[15px] font-bold text-[#1d1d1f]">{title}</h3>
-          <p className="mt-0.5 text-xs font-medium text-[#86868b]">{subtitle}</p>
+          <h3 className="text-sm font-medium text-[#202124]">{title}</h3>
+          <p className="mt-0.5 text-xs font-medium text-[#5f6368]">{subtitle}</p>
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#86868b]">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#5f6368]">
           <span>Less</span>
           {activityScale.map((color) => (
             <span
@@ -1057,10 +1057,10 @@ function ActivityDots({
 
 function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-[15px] font-bold text-[#1d1d1f]">Daily Status</h3>
-        <p className="mt-0.5 text-xs font-medium text-[#86868b]">Supabase users, sessions, and exits by date</p>
+        <h3 className="text-sm font-medium text-[#202124]">Daily Status</h3>
+        <p className="mt-0.5 text-xs font-medium text-[#5f6368]">Supabase users, sessions, and exits by date</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No Hushh AI daily rows available yet.</EmptyState>
@@ -1068,7 +1068,7 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
         <div className="overflow-x-auto">
           <table className="min-w-[920px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr className="text-xs font-bold uppercase text-[#86868b]">
+              <tr className="text-xs font-bold uppercase text-[#5f6368]">
                 <th className="border-b border-black/5 py-3 pr-4">Date</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Total</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">New</th>
@@ -1080,8 +1080,8 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                <tr key={row.date} className="font-semibold text-[#202124]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#80868b]">{row.date}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.totalUsers)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.newUsers)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.activeUsers)}</td>
@@ -1100,10 +1100,10 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
 
 function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-[15px] font-bold text-[#1d1d1f]">Kai Production Reliability Status</h3>
-        <p className="mt-0.5 text-xs font-medium text-[#86868b]">Production GA4 stays Waiting until verified; request and reliability columns come from Cloud Run.</p>
+        <h3 className="text-sm font-medium text-[#202124]">Kai Production Reliability Status</h3>
+        <p className="mt-0.5 text-xs font-medium text-[#5f6368]">Production GA4 stays Waiting until verified; request and reliability columns come from Cloud Run.</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No Kai production daily rows available yet.</EmptyState>
@@ -1111,7 +1111,7 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
         <div className="overflow-x-auto">
           <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr className="text-xs font-bold uppercase text-[#86868b]">
+              <tr className="text-xs font-bold uppercase text-[#5f6368]">
                 <th className="border-b border-black/5 py-3 pr-4">Date</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Users</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Sessions</th>
@@ -1124,8 +1124,8 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                <tr key={row.date} className="font-semibold text-[#202124]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#80868b]">{row.date}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.users, 'Waiting')}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.sessions, 'Waiting')}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.events, 'Waiting')}</td>
@@ -1145,10 +1145,10 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
 
 function KaiUatDailyStatusTable({ rows }: { rows: KaiUatDailyStatusPoint[] }) {
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-[15px] font-bold text-[#1d1d1f]">Kai UAT Daily Status</h3>
-        <p className="mt-0.5 text-xs font-medium text-[#86868b]">uat.kai.hushh.ai GA4 and UAT DB aggregate events by date.</p>
+        <h3 className="text-sm font-medium text-[#202124]">Kai UAT Daily Status</h3>
+        <p className="mt-0.5 text-xs font-medium text-[#5f6368]">uat.kai.hushh.ai GA4 and UAT DB aggregate events by date.</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No Kai UAT daily rows available yet.</EmptyState>
@@ -1156,7 +1156,7 @@ function KaiUatDailyStatusTable({ rows }: { rows: KaiUatDailyStatusPoint[] }) {
         <div className="overflow-x-auto">
           <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr className="text-xs font-bold uppercase text-[#86868b]">
+              <tr className="text-xs font-bold uppercase text-[#5f6368]">
                 <th className="border-b border-black/5 py-3 pr-4">Date</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Users</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Sessions</th>
@@ -1168,8 +1168,8 @@ function KaiUatDailyStatusTable({ rows }: { rows: KaiUatDailyStatusPoint[] }) {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                <tr key={row.date} className="font-semibold text-[#202124]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#80868b]">{row.date}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Users)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Sessions)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Events)}</td>
@@ -1190,10 +1190,10 @@ function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
   const maxUsers = Math.max(...steps.map((step) => step.users), 1);
 
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-[15px] font-bold text-[#1d1d1f]">{title}</h3>
-        <p className="mt-0.5 text-xs font-medium text-[#86868b]">Latest feed day</p>
+        <h3 className="text-sm font-medium text-[#202124]">{title}</h3>
+        <p className="mt-0.5 text-xs font-medium text-[#5f6368]">Latest feed day</p>
       </div>
       {steps.length === 0 ? (
         <EmptyState>No funnel rows available yet.</EmptyState>
@@ -1204,11 +1204,11 @@ function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
             return (
               <div key={step.step}>
                 <div className="mb-2 flex items-center justify-between gap-4">
-                  <span className="text-sm font-semibold text-[#1d1d1f]">{step.step}</span>
-                  <span className="text-sm font-bold text-[#6e6e73]">{formatNumber(step.users)}</span>
+                  <span className="text-sm font-semibold text-[#202124]">{step.step}</span>
+                  <span className="text-sm font-bold text-[#80868b]">{formatNumber(step.users)}</span>
                 </div>
-                <div className="h-2.5 overflow-hidden rounded-full bg-[#f5f5f7]">
-                  <div className="h-full rounded-full bg-[#007aff] transition-all duration-700" style={{ width: `${width}%` }} />
+                <div className="h-2.5 overflow-hidden rounded-full bg-[#f1f3f4]">
+                  <div className="h-full rounded-full bg-[#1a73e8] transition-all duration-700" style={{ width: `${width}%` }} />
                 </div>
               </div>
             );
@@ -1221,22 +1221,22 @@ function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
 
 function PlatformCard({ platform }: { platform: PlatformStatus }) {
   return (
-    <div className={cn(appleCard, 'px-6 py-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: platform.color }} />
           <div className="min-w-0">
-            <h3 className="truncate text-[15px] font-bold text-[#1d1d1f]">{platform.name}</h3>
+            <h3 className="truncate text-sm font-medium text-[#202124]">{platform.name}</h3>
             <div className="mt-1 flex items-center gap-1.5 text-xs font-bold">
               {platform.available ? (
                 <>
-                  <CheckCircle2 className="h-3.5 w-3.5 text-[#248a3d]" />
-                  <span className="text-[#248a3d]">Live aggregate data</span>
+                  <CheckCircle2 className="h-3.5 w-3.5 text-[#137333]" />
+                  <span className="text-[#137333]">Live aggregate data</span>
                 </>
               ) : (
                 <>
-                  <Clock className="h-3.5 w-3.5 text-[#86868b]" />
-                  <span className="text-[#86868b]">Syncing metrics</span>
+                  <Clock className="h-3.5 w-3.5 text-[#5f6368]" />
+                  <span className="text-[#5f6368]">Syncing metrics</span>
                 </>
               )}
             </div>
@@ -1246,29 +1246,29 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
           href={`https://${platform.url}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#f5f5f7] text-[#6e6e73] transition hover:bg-[#e8e8ed] hover:text-[#1d1d1f]"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#f1f3f4] text-[#80868b] transition hover:bg-[#dadce0] hover:text-[#202124]"
           aria-label={`Open ${platform.name}`}
         >
           <ExternalLink className="h-4 w-4" />
         </a>
       </div>
 
-      <div className="mt-6 grid grid-cols-2 gap-3">
-        <div className={cn(applePanel, 'p-4')}>
-          <p className={cn(appleLabel, 'font-bold')}>Primary Metric</p>
-          <p className="mt-2 text-2xl font-extrabold text-[#1d1d1f] sm:text-3xl">{platform.visitors}</p>
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <div className={cn(gPanel, 'p-3')}>
+          <p className="text-xs text-[#5f6368]">Primary Metric</p>
+          <p className="mt-1 text-xl font-normal text-[#202124] sm:text-2xl">{platform.visitors}</p>
         </div>
-        <div className={cn(applePanel, 'p-4')}>
-          <p className={cn(appleLabel, 'font-bold')}>Change</p>
-          <p className="mt-2 text-lg font-bold text-[#34c759]">{platform.change}</p>
+        <div className={cn(gPanel, 'p-3')}>
+          <p className="text-xs text-[#5f6368]">Change</p>
+          <p className="mt-1 text-base font-medium text-[#1e8e3e]">{platform.change}</p>
         </div>
-        <div className={cn(applePanel, 'p-4')}>
-          <p className={cn(appleLabel, 'font-bold')}>Sessions</p>
-          <p className="mt-2 text-lg font-bold text-[#1d1d1f]">{platform.avgSession}</p>
+        <div className={cn(gPanel, 'p-3')}>
+          <p className="text-xs text-[#5f6368]">Sessions</p>
+          <p className="mt-1 text-base font-normal text-[#202124]">{platform.avgSession}</p>
         </div>
-        <div className={cn(applePanel, 'p-4')}>
-          <p className={cn(appleLabel, 'font-bold')}>Health</p>
-          <p className="mt-2 text-lg font-bold text-[#1d1d1f]">{platform.bounceRate}</p>
+        <div className={cn(gPanel, 'p-3')}>
+          <p className="text-xs text-[#5f6368]">Health</p>
+          <p className="mt-1 text-base font-normal text-[#202124]">{platform.bounceRate}</p>
         </div>
       </div>
 
@@ -2044,20 +2044,20 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
       });
 
   const renderContentHeader = () => (
-    <div className="sticky top-0 z-20 border-b border-black/[0.04] bg-white/80 px-4 py-3 backdrop-blur-xl sm:px-8 lg:px-10">
+    <div className="sticky top-0 z-20 border-b border-[#dadce0] bg-white px-4 py-3 sm:px-6 lg:px-8">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
           <div className="h-10 w-10 shrink-0 lg:hidden" />
-          <h1 className="truncate text-[17px] font-bold text-[#1d1d1f]">{projectLabel}</h1>
+          <h1 className="truncate text-lg font-normal text-[#202124]">{projectLabel}</h1>
           {projectMeta && (
-            <span className="hidden text-[13px] font-medium text-[#86868b] sm:inline">{projectMeta.domain}</span>
+            <span className="hidden text-sm text-[#5f6368] sm:inline">{projectMeta.domain}</span>
           )}
           {projectMeta && (
             <span className={cn(
-              'hidden shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold sm:inline-flex',
+              'hidden shrink-0 rounded px-1.5 py-0.5 text-xs font-medium sm:inline-flex',
               projectMeta.environment === 'production'
-                ? 'bg-[#e8f8ee] text-[#1f7a36]'
-                : 'bg-[#f4edff] text-[#af52de]',
+                ? 'bg-[#e6f4ea] text-[#137333]'
+                : 'bg-[#f3e8fd] text-[#a142f4]',
             )}>
               {projectMeta.environment === 'production' ? 'Production' : 'UAT'}
             </span>
@@ -2065,14 +2065,14 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
         </div>
         <div className="flex shrink-0 items-center gap-3">
           {!usingMock && (
-            <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-[#34c759] sm:inline-flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#34c759]" />
+            <span className="hidden items-center gap-1.5 text-xs text-[#1e8e3e] sm:inline-flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#1e8e3e]" />
               Live
             </span>
           )}
           <button
             onClick={() => loadData()}
-            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#f5f5f7] px-3.5 text-xs font-semibold text-[#1d1d1f] transition hover:bg-[#e8e8ed]"
+            className="inline-flex h-9 items-center gap-1.5 rounded border border-[#dadce0] bg-white px-3 text-sm font-medium text-[#1a73e8] transition hover:bg-[#f1f3f4]"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
             <span className="hidden sm:inline">Refresh</span>
@@ -2112,13 +2112,7 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
         />
       </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
-        <MetricListCard
-          title="Production Range Summary"
-          subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
-          items={kaiProductionDailySummaryMetrics}
-          onItemClick={(item) => openKaiProductionDetail(`Kai Production · ${item.label}`, item)}
-        />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <ChartShell
           title="Users, Sessions, Events"
           subtitle="Production GA4 export; shows waiting until analytics_526603671 materializes"
@@ -2129,13 +2123,13 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid stroke="#ececf0" vertical={false} />
-                <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                <Bar dataKey="users" name="Users" fill="#12b5cb" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="sessions" name="Sessions" fill="#007aff" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="events" name="Events" fill="#af52de" radius={[6, 6, 0, 0]} />
+                <CartesianGrid stroke="#e8eaed" vertical={false} />
+                <XAxis dataKey="label" stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                <Bar dataKey="users" name="Users" fill="#129eaf" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="sessions" name="Sessions" fill="#1a73e8" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="events" name="Events" fill="#a142f4" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -2152,33 +2146,39 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
               <AreaChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
                 <defs>
                   <linearGradient id="kaiProdRequests" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#12b5cb" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="#12b5cb" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#129eaf" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#129eaf" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="kaiProdErrors" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
                     <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#ececf0" vertical={false} />
-                <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                <CartesianGrid stroke="#e8eaed" vertical={false} />
+                <XAxis dataKey="label" stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
                 <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="requests" name="Requests" stroke="#12b5cb" strokeWidth={2.5} fill="url(#kaiProdRequests)" />
-                <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#kaiProdErrors)" />
+                <Area type="monotone" dataKey="requests" name="Requests" stroke="#129eaf" strokeWidth={2} fill="url(#kaiProdRequests)" />
+                <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2} fill="url(#kaiProdErrors)" />
               </AreaChart>
             </ResponsiveContainer>
           )}
         </ChartShell>
+        <MetricListCard
+          title="Production Range Summary"
+          subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
+          items={kaiProductionDailySummaryMetrics}
+          onItemClick={(item) => openKaiProductionDetail(`Kai Production · ${item.label}`, item)}
+        />
         <MetricListCard
           title="Production Readiness"
           subtitle="Production feed and GA4 export only; UAT is tracked in its own matrix."
           items={kaiProductionReadinessMetrics}
           onItemClick={(item) => openKaiProductionDetail(`Kai Production Readiness · ${item.label}`, item)}
         />
-        <div className="xl:col-span-2">
-          <KaiDailyStatusTable rows={kaiProductionDailyStatus} />
-        </div>
+      </div>
+      <div className="mt-4">
+        <KaiDailyStatusTable rows={kaiProductionDailyStatus} />
       </div>
     </section>
     </>
@@ -2214,13 +2214,7 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
         />
       </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
-        <MetricListCard
-          title="UAT Range Summary"
-          subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
-          items={kaiUatDailySummaryMetrics}
-          onItemClick={(item) => openKaiUatDetail(`Kai UAT · ${item.label}`, item)}
-        />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <ChartShell
           title="UAT Users, Sessions, Events"
           subtitle="uat.kai.hushh.ai GA4 export"
@@ -2231,13 +2225,13 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid stroke="#ececf0" vertical={false} />
-                <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                <Bar dataKey="ga4Users" name="GA4 Users" fill="#12b5cb" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="ga4Sessions" name="GA4 Sessions" fill="#007aff" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="ga4Events" name="GA4 Events" fill="#af52de" radius={[6, 6, 0, 0]} />
+                <CartesianGrid stroke="#e8eaed" vertical={false} />
+                <XAxis dataKey="label" stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                <Bar dataKey="ga4Users" name="GA4 Users" fill="#129eaf" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="ga4Sessions" name="GA4 Sessions" fill="#1a73e8" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="ga4Events" name="GA4 Events" fill="#a142f4" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -2252,20 +2246,26 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid stroke="#ececf0" vertical={false} />
-                <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                <Bar dataKey="feedDau" name="DB DAU" fill="#34c759" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="feedSessions" name="DB Sessions" fill="#ff9500" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="feedEvents" name="DB Events" fill="#5856d6" radius={[6, 6, 0, 0]} />
+                <CartesianGrid stroke="#e8eaed" vertical={false} />
+                <XAxis dataKey="label" stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                <Bar dataKey="feedDau" name="DB DAU" fill="#1e8e3e" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="feedSessions" name="DB Sessions" fill="#ff9500" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="feedEvents" name="DB Events" fill="#5856d6" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
         </ChartShell>
-        <div className="xl:col-span-2">
-          <KaiUatDailyStatusTable rows={kaiUatDailyStatus} />
-        </div>
+        <MetricListCard
+          title="UAT Range Summary"
+          subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
+          items={kaiUatDailySummaryMetrics}
+          onItemClick={(item) => openKaiUatDetail(`Kai UAT · ${item.label}`, item)}
+        />
+      </div>
+      <div className="mt-4">
+        <KaiUatDailyStatusTable rows={kaiUatDailyStatus} />
       </div>
     </section>
     </>
@@ -2301,12 +2301,7 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
             onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
           />
         </div>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
-          <MetricListCard
-            title="Range Summary"
-            subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
-            items={hushhAiDailySummaryMetrics}
-          />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, 5xx responses, and latency context">
             {hushhAiDailyStatus.length === 0 ? (
               <EmptyState>No Hushh AI traffic rows available yet.</EmptyState>
@@ -2315,24 +2310,29 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
                 <AreaChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
                   <defs>
                     <linearGradient id="hushhAiRequests" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#007aff" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#007aff" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#1a73e8" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#1a73e8" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="hushhAiErrors" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
                       <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid stroke="#ececf0" vertical={false} />
-                  <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                  <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                  <CartesianGrid stroke="#e8eaed" vertical={false} />
+                  <XAxis dataKey="label" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="requests" name="Requests" stroke="#007aff" strokeWidth={2.5} fill="url(#hushhAiRequests)" />
+                  <Area type="monotone" dataKey="requests" name="Requests" stroke="#1a73e8" strokeWidth={2.5} fill="url(#hushhAiRequests)" />
                   <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiErrors)" />
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </ChartShell>
+          <MetricListCard
+            title="Range Summary"
+            subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
+            items={hushhAiDailySummaryMetrics}
+          />
         </div>
         <div className="mt-4">
           <ActivityDots
@@ -2341,7 +2341,7 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
             subtitle="Daily aggregate activity scored from events, active users, sessions, and requests"
           />
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <MetricListCard
             title="GA4 Engagement"
             subtitle="Users, sessions, events, and engaged-session quality"
@@ -2360,25 +2360,27 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
             onItemClick={handleHushhAiMetricListClick('product')}
           />
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           <MetricListCard title="Where Sessions Came From" subtitle="GA4 session channel groups" items={hushhAiAcquisitionMetrics} onItemClick={handleHushhAiMetricListClick('acquisition')} />
           <MetricListCard title="Source / Medium" subtitle="GA4 session source attribution" items={hushhAiSourceMediumMetrics} onItemClick={handleHushhAiMetricListClick('source')} />
           <MetricListCard title="Landing Pages" subtitle="First page in each GA4 session" items={hushhAiLandingPageMetrics} onItemClick={handleHushhAiMetricListClick('landing')} />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <MetricListCard title="Geo + Device" subtitle="Aggregate country and device mix" items={hushhAiGeoDeviceMetrics} onItemClick={handleHushhAiMetricListClick('geo')} />
           <MetricListCard title="Session Timing" subtitle="Top session hours in GA4 property timezone" items={hushhAiSessionTimingMetrics} onItemClick={handleHushhAiMetricListClick('timing')} />
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <ChartShell title="Top Pages / Screens" subtitle="GA4 aggregate page views for hushh.ai" action={<DetailActionButton label="Details" onClick={() => openHushhAiGa4Detail('pages')} />}>
             {hushhAiTopPageMetrics.length === 0 ? (
               <EmptyState>Waiting for GA4 page and screen aggregates.</EmptyState>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hushhAiTopPageMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                  <CartesianGrid stroke="#ececf0" horizontal={false} />
-                  <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
-                  <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                  <Bar dataKey="value" name="Page views" fill="#007aff" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('pages')} cursor="pointer" />
+                  <CartesianGrid stroke="#e8eaed" horizontal={false} />
+                  <XAxis type="number" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                  <YAxis type="category" dataKey="label" width={118} stroke="#5f6368" fontSize={11} fontWeight={400} tickLine={false} axisLine={false} />
+                  <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                  <Bar dataKey="value" name="Page views" fill="#1a73e8" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('pages')} cursor="pointer" />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -2389,11 +2391,11 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hushhAiTopEventMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                  <CartesianGrid stroke="#ececf0" horizontal={false} />
-                  <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
-                  <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                  <Bar dataKey="value" name="Events" fill="#34c759" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('events')} cursor="pointer" />
+                  <CartesianGrid stroke="#e8eaed" horizontal={false} />
+                  <XAxis type="number" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                  <YAxis type="category" dataKey="label" width={118} stroke="#5f6368" fontSize={11} fontWeight={400} tickLine={false} axisLine={false} />
+                  <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                  <Bar dataKey="value" name="Events" fill="#1e8e3e" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('events')} cursor="pointer" />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -2433,13 +2435,7 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
             onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
           />
         </div>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
-          <MetricListCard
-            title="UAT Range Summary"
-            subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
-            items={hushhAiUatDailySummaryMetrics}
-            onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT · ${item.label}`, item)}
-          />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <ChartShell
             title="UAT Traffic + Reliability"
             subtitle="uat.hushh.ai Cloud Run requests, 5xx responses, and latency context"
@@ -2460,9 +2456,9 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
                       <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid stroke="#ececf0" vertical={false} />
-                  <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                  <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                  <CartesianGrid stroke="#e8eaed" vertical={false} />
+                  <XAxis dataKey="label" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
                   <Tooltip content={<CustomTooltip />} />
                   <Area type="monotone" dataKey="requests" name="Requests" stroke="#ff9500" strokeWidth={2.5} fill="url(#hushhAiUatRequests)" />
                   <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiUatErrors)" />
@@ -2470,6 +2466,12 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
               </ResponsiveContainer>
             )}
           </ChartShell>
+          <MetricListCard
+            title="UAT Range Summary"
+            subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
+            items={hushhAiUatDailySummaryMetrics}
+            onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT · ${item.label}`, item)}
+          />
         </div>
         <div className="mt-4">
           <ActivityDots
@@ -2478,7 +2480,7 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
             subtitle="Daily UAT aggregate activity scored from events, active users, sessions, and requests"
           />
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           {hushhAiUatGa4Available && (
             <MetricListCard
               title="UAT GA4 Engagement"
@@ -2496,24 +2498,24 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
         </div>
         {hushhAiUatGa4Available && (
           <>
-            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               <MetricListCard title="UAT Session Channels" subtitle="GA4 session channel groups" items={hushhAiUatAcquisitionMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Acquisition · ${item.label}`, item)} />
               <MetricListCard title="UAT Source / Medium" subtitle="GA4 session source attribution" items={hushhAiUatSourceMediumMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Source · ${item.label}`, item)} />
               <MetricListCard title="UAT Landing Pages" subtitle="First page in each GA4 session" items={hushhAiUatLandingPageMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Landing · ${item.label}`, item)} />
               <MetricListCard title="UAT Geo + Device" subtitle="Aggregate country and device mix" items={hushhAiUatGeoDeviceMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Geo · ${item.label}`, item)} />
               <MetricListCard title="UAT Session Timing" subtitle="Top session hours in GA4 property timezone" items={hushhAiUatSessionTimingMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Timing · ${item.label}`, item)} />
             </div>
-            <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
               <ChartShell title="UAT Top Pages / Screens" subtitle="GA4 aggregate page views for uat.hushh.ai" action={<DetailActionButton label="Details" onClick={() => openHushhAiUatDetail('Hushh AI UAT Pages / Screens')} />}>
                 {hushhAiUatTopPageMetrics.length === 0 ? (
                   <EmptyState>Waiting for UAT GA4 page and screen aggregates.</EmptyState>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={hushhAiUatTopPageMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                      <CartesianGrid stroke="#ececf0" horizontal={false} />
-                      <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
-                      <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
-                      <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
+                      <CartesianGrid stroke="#e8eaed" horizontal={false} />
+                      <XAxis type="number" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                      <YAxis type="category" dataKey="label" width={118} stroke="#5f6368" fontSize={11} fontWeight={400} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
                       <Bar dataKey="value" name="Page views" fill="#ff9500" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT Pages / Screens')} cursor="pointer" />
                     </BarChart>
                   </ResponsiveContainer>
@@ -2525,11 +2527,11 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={hushhAiUatTopEventMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                      <CartesianGrid stroke="#ececf0" horizontal={false} />
-                      <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
-                      <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
-                      <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                      <Bar dataKey="value" name="Events" fill="#af52de" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT GA4 Events')} cursor="pointer" />
+                      <CartesianGrid stroke="#e8eaed" horizontal={false} />
+                      <XAxis type="number" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                      <YAxis type="category" dataKey="label" width={118} stroke="#5f6368" fontSize={11} fontWeight={400} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                      <Bar dataKey="value" name="Events" fill="#a142f4" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT GA4 Events')} cursor="pointer" />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -2548,14 +2550,14 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
       )}
       <section className={dashboardBand}>
         <SectionHeader kicker="hushhtech.com" title="Complete report" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <MetricListCard title="Total Report" subtitle="Users, funnel, search, infra, and stored aggregates" items={hushhTechReportTotals} onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)} />
           <MetricListCard title="Last 7 Days" subtitle="DAU, WAU, MAU, sessions, views, events, and engagement" items={hushhTechSevenDayMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech 7D · ${item.label}`, item)} />
         </div>
       </section>
       <section className={dashboardBand}>
         <SectionHeader kicker="hushhtech.com Supabase" title="Database truth metrics" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <MetricListCard title="Top 10 Database Metrics" subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts" items={hushhTechDatabaseMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)} />
           <MetricListCard title="Database Range Summary" subtitle={hushhTechRangeLabel} items={hushhTechDailySummaryMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Database Range · ${item.label}`, item)} />
         </div>
@@ -2563,11 +2565,11 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           <DailyStatusTable rows={hushhTechDailyStatus} />
         </div>
       </section>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
         <MetricListCard title="hushhtech.com Funnel" subtitle="Supabase business funnel aggregates" items={hushhTechBusinessMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel · ${item.label}`, item)} />
         <MetricListCard title="hushhtech.com Activity" subtitle="Pages, routes, and event aggregates" items={hushhTechActivityMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Activity · ${item.label}`, item)} />
       </section>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
         <MetricListCard title="hushhtech.com Funnel Detail" subtitle="Signup, onboarding, KYC, profile, and chat steps" items={hushhTechFunnelMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel Detail · ${item.label}`, item)} />
         <MetricListCard title="Data Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)} />
       </section>
@@ -2576,12 +2578,12 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
 
   const renderTrafficSection = () => (
     <>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_0.95fr]')}>
-        <div className={cn(appleCard, 'px-6 py-5')}>
-          <SectionHeader kicker="Traffic" title="Ecosystem activity" />
-          <div className="mb-4 flex flex-wrap items-center gap-2.5">
+      <section className={dashboardBand}>
+        <SectionHeader kicker="Traffic" title="Ecosystem activity" />
+        <div className={cn(gCard, 'p-5')}>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             {platforms.map((platform) => (
-              <span key={platform.name} className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[#f5f5f7] px-3 text-[11px] font-semibold text-[#6e6e73]">
+              <span key={platform.name} className="inline-flex h-7 items-center gap-1.5 rounded border border-[#dadce0] px-2.5 text-xs text-[#5f6368]">
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: platform.color }} />
                 {platform.name}
               </span>
@@ -2595,41 +2597,41 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
                 <AreaChart data={trafficData} margin={{ top: 16, right: 8, left: -18, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorAi" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#007aff" stopOpacity={0.18} />
-                      <stop offset="95%" stopColor="#007aff" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#1a73e8" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#1a73e8" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="colorAiUat" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#ff9500" stopOpacity={0.18} />
                       <stop offset="95%" stopColor="#ff9500" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="colorKai" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#34c759" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#1e8e3e" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#1e8e3e" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="colorKaiProd" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#12b5cb" stopOpacity={0.18} />
-                      <stop offset="95%" stopColor="#12b5cb" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#129eaf" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#129eaf" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="colorTech" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#af52de" stopOpacity={0.18} />
-                      <stop offset="95%" stopColor="#af52de" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#a142f4" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#a142f4" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid stroke="#ececf0" vertical={false} />
-                  <XAxis dataKey="time" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                  <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} dx={-10} />
+                  <CartesianGrid stroke="#e8eaed" vertical={false} />
+                  <XAxis dataKey="time" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} dx={-10} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="ai" name="hushh.ai" stroke="#007aff" strokeWidth={2.5} fill="url(#colorAi)" />
+                  <Area type="monotone" dataKey="ai" name="hushh.ai" stroke="#1a73e8" strokeWidth={2.5} fill="url(#colorAi)" />
                   <Area type="monotone" dataKey="aiUat" name="uat.hushh.ai" stroke="#ff9500" strokeWidth={2.5} fill="url(#colorAiUat)" />
-                  <Area type="monotone" dataKey="kaiProd" name="kai.hushh.ai prod events" stroke="#12b5cb" strokeWidth={2.5} fill="url(#colorKaiProd)" />
-                  <Area type="monotone" dataKey="kaiUat" name="uat.kai.hushh.ai events" stroke="#34c759" strokeWidth={2.5} fill="url(#colorKai)" />
-                  <Area type="monotone" dataKey="tech" name="hushhtech.com" stroke="#af52de" strokeWidth={2.5} fill="url(#colorTech)" />
+                  <Area type="monotone" dataKey="kaiProd" name="kai.hushh.ai prod events" stroke="#129eaf" strokeWidth={2.5} fill="url(#colorKaiProd)" />
+                  <Area type="monotone" dataKey="kaiUat" name="uat.kai.hushh.ai events" stroke="#1e8e3e" strokeWidth={2.5} fill="url(#colorKai)" />
+                  <Area type="monotone" dataKey="tech" name="hushhtech.com" stroke="#a142f4" strokeWidth={2.5} fill="url(#colorTech)" />
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-4">
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
           <MetricListCard title="hushh.ai Search" subtitle="Search Console export metrics" items={hushhAiSearchMetrics} />
           <MetricListCard title="uat.hushh.ai GCP" subtitle="Hushh AI UAT Cloud Run metrics" items={hushhAiUatOpsMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT GCP · ${item.label}`, item)} />
@@ -2640,9 +2642,9 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
           <MetricListCard title="Search + Ops" subtitle="Search Console, GA4, and Cloud Run" items={hushhTechOpsMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Search + Ops · ${item.label}`, item)} />
         </div>
       </section>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
-        <div className={cn(appleCard, 'px-6 py-5')}>
-          <h3 className="mb-4 text-[15px] font-bold text-[#1d1d1f]">Search Surfaces</h3>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3')}>
+        <div className={cn(gCard, 'p-5')}>
+          <h3 className="mb-4 text-sm font-medium text-[#202124]">Search Surfaces</h3>
           {acquisitionChannels.length === 0 ? (
             <EmptyState>Waiting on first-party search or Search Console dimensions.</EmptyState>
           ) : (
@@ -2657,26 +2659,26 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-2xl font-bold text-[#1d1d1f]">100%</span>
-                  <span className="text-[11px] font-semibold text-[#86868b]">Total</span>
+                  <span className="text-2xl font-bold text-[#202124]">100%</span>
+                  <span className="text-[11px] font-semibold text-[#5f6368]">Total</span>
                 </div>
               </div>
               <div className="space-y-3">
                 {acquisitionChannels.map((channel) => (
                   <div key={channel.name} className="flex items-center justify-between gap-3">
-                    <span className="flex min-w-0 items-center gap-2 text-[14px] font-medium text-[#1d1d1f]">
+                    <span className="flex min-w-0 items-center gap-2 text-[14px] font-medium text-[#202124]">
                       <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: channel.color }} />
                       <span className="truncate">{channel.name}</span>
                     </span>
-                    <span className="text-[14px] font-bold tabular-nums text-[#6e6e73]">{channel.value}%</span>
+                    <span className="text-[14px] font-bold tabular-nums text-[#80868b]">{channel.value}%</span>
                   </div>
                 ))}
               </div>
             </>
           )}
         </div>
-        <div className={cn(appleCard, 'px-6 py-5')}>
-          <h3 className="mb-4 text-[15px] font-bold text-[#1d1d1f]">Top Regions</h3>
+        <div className={cn(gCard, 'p-5')}>
+          <h3 className="mb-4 text-sm font-medium text-[#202124]">Top Regions</h3>
           {topCountries.length === 0 ? (
             <EmptyState>No public-safe country or state rows yet.</EmptyState>
           ) : (
@@ -2684,31 +2686,31 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
               {topCountries.map((country) => (
                 <div key={country.name}>
                   <div className="mb-2 flex items-end justify-between gap-3">
-                    <span className="text-[14px] font-medium text-[#1d1d1f]">{country.name}</span>
-                    <span className="text-[14px] font-bold tabular-nums text-[#6e6e73]">{country.visitors}</span>
+                    <span className="text-[14px] font-medium text-[#202124]">{country.name}</span>
+                    <span className="text-[14px] font-bold tabular-nums text-[#80868b]">{country.visitors}</span>
                   </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-[#f0f0f2]">
-                    <div className="h-full rounded-full bg-[#007aff]" style={{ width: `${country.percentage}%` }} />
+                  <div className="h-1.5 overflow-hidden rounded-full bg-[#e8eaed]">
+                    <div className="h-full rounded-full bg-[#1a73e8]" style={{ width: `${country.percentage}%` }} />
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
-        <div className={cn(appleCard, 'px-6 py-5')}>
-          <h3 className="text-[15px] font-bold text-[#1d1d1f]">Kai UAT Active Users</h3>
-          <p className="mt-0.5 text-xs font-medium text-[#86868b]">uat.kai.hushh.ai public feed, past 7 days</p>
+        <div className={cn(gCard, 'p-5')}>
+          <h3 className="text-sm font-medium text-[#202124]">Kai UAT Active Users</h3>
+          <p className="mt-0.5 text-xs font-medium text-[#5f6368]">uat.kai.hushh.ai public feed, past 7 days</p>
           <div className="mt-5 h-[250px]">
             {dailyActiveUsers.length === 0 ? (
               <EmptyState>No Kai daily active user rows available yet.</EmptyState>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={dailyActiveUsers} margin={{ top: 12, right: 6, left: -22, bottom: 0 }}>
-                  <CartesianGrid stroke="#ececf0" vertical={false} />
-                  <XAxis dataKey="day" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                  <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                  <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                  <Bar dataKey="users" name="Users" fill="#34c759" radius={[6, 6, 0, 0]} barSize={24} />
+                  <CartesianGrid stroke="#e8eaed" vertical={false} />
+                  <XAxis dataKey="day" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                  <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                  <Bar dataKey="users" name="Users" fill="#1e8e3e" radius={[6, 6, 0, 0]} barSize={24} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -2722,23 +2724,23 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
     <>
       <section className={dashboardBand}>
         <SectionHeader kicker="Platforms" title="Source health" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {platforms.map((platform) => (
             <div key={platform.name}><PlatformCard platform={platform} /></div>
           ))}
         </div>
       </section>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3')}>
         <MetricListCard title="Kai UAT GA4 Events" subtitle="uat.kai.hushh.ai GA4 export, top events" items={kaiEventMetrics} onItemClick={(item) => openKaiUatDetail(`Kai UAT GA4 Event · ${item.label}`, item)} />
         <MetricListCard title="Kai UAT Geo + Device" subtitle="UAT country, device, and platform mix" items={kaiGeoMetrics} onItemClick={(item) => openKaiUatDetail(`Kai UAT Geo + Device · ${item.label}`, item)} />
         <MetricListCard title="Kai UAT Usage Snapshot" subtitle="Latest UAT public feed usage rows" items={kaiUsageMetrics} onItemClick={(item) => openKaiUatDetail(`Kai UAT Usage · ${item.label}`, item)} />
       </section>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3')}>
         <MetricListCard title="Activation Rates" subtitle="Investor and RIA activation" items={kaiActivationMetrics} onItemClick={(item) => openKaiUatDetail(`Kai UAT Activation · ${item.label}`, item)} />
         <MetricListCard title="Platform Mix" subtitle="Users by platform, latest feed day" items={platformMix} onItemClick={(item) => openKaiUatDetail(`Kai UAT Platform Mix · ${item.label}`, item)} />
         <MetricListCard title="Feature Engagement" subtitle="Governed feature events" items={featureEngagement} onItemClick={(item) => openKaiUatDetail(`Kai UAT Feature Engagement · ${item.label}`, item)} />
       </section>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3')}>
         <MetricListCard title="Instrumentation Health" subtitle="Governed event schema coverage" items={instrumentationHealth} onItemClick={(item) => openKaiUatDetail(`Kai UAT Instrumentation · ${item.label}`, item)} />
         <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
         <MetricListCard title="uat.hushh.ai GCP" subtitle="Hushh AI UAT Cloud Run service metrics" items={hushhAiUatOpsMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT GCP · ${item.label}`, item)} />
@@ -2751,15 +2753,15 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
 
   const renderFunnelsContent = () => (
     <>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
         <FunnelCard title="Investor Funnel" steps={investorFunnel} />
         <FunnelCard title="RIA Funnel" steps={riaFunnel} />
       </section>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
         <MetricListCard title="hushhtech.com Funnel" subtitle="Supabase business funnel aggregates" items={hushhTechBusinessMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel · ${item.label}`, item)} />
         <MetricListCard title="hushhtech.com Activity" subtitle="Pages, routes, and event aggregates" items={hushhTechActivityMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Activity · ${item.label}`, item)} />
       </section>
-      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
         <MetricListCard title="hushhtech.com Funnel Detail" subtitle="Signup, onboarding, KYC, profile, and chat steps" items={hushhTechFunnelMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel Detail · ${item.label}`, item)} />
         <MetricListCard title="Data Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)} />
       </section>
@@ -2809,19 +2811,19 @@ export default function Dashboard({ selectedProject, activeView }: DashboardProp
   };
 
   return (
-    <div className="min-h-screen bg-white text-[#1d1d1f] selection:bg-[#cce4ff] selection:text-[#003b76]">
+    <div className="min-h-screen bg-[#f8f9fa] text-[#202124] selection:bg-[#d2e3fc] selection:text-[#174ea6]">
       {loading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-xl">
-          <div className={cn(appleCard, 'flex items-center gap-3 px-5 py-3')}>
-            <Loader2 className="h-5 w-5 animate-spin text-[#007aff]" />
-            <p className="text-sm font-bold text-[#1d1d1f]">Loading live metrics</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#f8f9fa]/90">
+          <div className={cn(gCard, 'flex items-center gap-3 px-5 py-3 shadow-md')}>
+            <Loader2 className="h-5 w-5 animate-spin text-[#1a73e8]" />
+            <p className="text-sm text-[#202124]">Loading live metrics</p>
           </div>
         </div>
       )}
 
       {renderContentHeader()}
 
-      <div className="px-4 pb-10 pt-4 sm:px-8 sm:pb-12 sm:pt-6 lg:px-10">
+      <div className="px-4 pb-8 pt-4 sm:px-6 sm:pb-10 sm:pt-6 lg:px-8">
         <main className="space-y-2">
           {renderContent()}
         </main>
