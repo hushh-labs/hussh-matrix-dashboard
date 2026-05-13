@@ -2,7 +2,7 @@
 import { resolve4, resolveCname } from 'node:dns/promises';
 
 const DEFAULT_BASE_URL = 'https://metrics.hushh.ai';
-const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_TIMEOUT_MS = 60_000;
 const HOST_ALIASES = new Map([
   ['matrix.hush.ai', 'metrics.hushh.ai'],
   ['matrix.hushh.ai', 'metrics.hushh.ai'],
@@ -21,10 +21,15 @@ function parseArgs(argv) {
     if (arg === '--base-url' && argv[index + 1]) {
       options.baseUrl = argv[index + 1];
       index += 1;
+    } else if (arg.startsWith('--base-url=')) {
+      options.baseUrl = arg.slice('--base-url='.length);
     } else if (arg === '--timeout-ms' && argv[index + 1]) {
       const parsed = Number(argv[index + 1]);
       if (Number.isFinite(parsed) && parsed > 0) options.timeoutMs = parsed;
       index += 1;
+    } else if (arg.startsWith('--timeout-ms=')) {
+      const parsed = Number(arg.slice('--timeout-ms='.length));
+      if (Number.isFinite(parsed) && parsed > 0) options.timeoutMs = parsed;
     }
   }
 
@@ -81,7 +86,7 @@ function assert(condition, message, details = undefined) {
 
 function assertPublicSafePayload(body, label) {
   const text = JSON.stringify(body);
-  const unsafePattern = /sourceDataset|sourceProjectId|sourceProjectRef|sourceTable|analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda|ibsisfnjxeowvdtvgzff/i;
+  const unsafePattern = /sourceDataset|sourceProjectId|sourceProjectRef|sourceTable|analytics_\d+|searchconsole_|hushh_search_console|_search_console_api|hushh-ai-(?:prod|uat)|hushh-pda|ibsisfnjxeowvdtvgzff/i;
   assert(!unsafePattern.test(text), `${label} exposes unsafe source identifiers`);
 }
 
@@ -181,22 +186,47 @@ async function main() {
   const ga4Card = hushhAi.body?.data?.sourceCards?.find((card) => card.key === 'ga4');
   assertSourceSections(ga4Card, 'Hushh AI GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
   const events = hushhAi.body?.data?.productEvents;
-  assert(events?.status === 'not_configured', 'Hushh AI DB product-events should be not_configured');
-  const expectedEvents = events?.expectedEvents ?? [];
-  assert(Array.isArray(expectedEvents), 'Hushh AI future product event placeholders missing');
-  for (const eventName of ['signup_started', 'signup_completed', 'login', 'cta_clicked', 'demo_requested', 'contact_submitted', 'product_page_viewed']) {
-    const placeholder = expectedEvents.find((event) => event?.eventName === eventName);
-    assert(placeholder?.status === 'not_configured', `Hushh AI future product event ${eventName} should be not_configured`);
-  }
+  assert(events, 'Hushh AI product-events block missing');
+  assert(events.available === true, 'Hushh AI product-events should be available');
+  assert(events.status === 'live', 'Hushh AI product-events should be live');
+  assert(Number.isFinite(Number(events.rangeTotals?.totalEvents)), 'Hushh AI product-events totalEvents not numeric');
+  assert(Number.isFinite(Number(events.rangeTotals?.dau)), 'Hushh AI product-events DAU not numeric');
+  assert(Array.isArray(events.daily), 'Hushh AI product-events daily timeline missing');
+  const eventsCard = hushhAi.body?.data?.sourceCards?.find((card) => card.key === 'product_events');
+  assertSourceSections(eventsCard, 'Hushh AI product-events', ['last_24_hours', 'last_7_days', 'selected_total']);
   results.push({
     check: 'hushh-ai-analytics',
     status: 'ok',
     detail: `freshness=${hushhAi.body.data.freshness.sources.map((source) => `${source.key}:${source.state}`).join(',')}`,
   });
 
+  const hushhAiUat = await checkJsonEndpoint(target.url, '/api/analytics/hushhai/uat?window_days=7', options.timeoutMs);
+  const uatCacheControl = hushhAiUat.response.headers.get('cache-control') || '';
+  assert(uatCacheControl.includes('no-store'), 'Hushh AI UAT analytics endpoint is cacheable', uatCacheControl);
+  assert(hushhAiUat.body?.platform === 'uat.hushh.ai', 'Hushh AI UAT analytics platform mismatch');
+  assert(Array.isArray(hushhAiUat.body?.data?.freshness?.sources), 'Hushh AI UAT freshness sources missing');
+  assertPublicSafePayload(hushhAiUat.body, 'Hushh AI UAT analytics');
+  const uatEvents = hushhAiUat.body?.data?.productEvents;
+  assert(uatEvents, 'Hushh AI UAT product-events block missing');
+  assert(uatEvents.available === true, 'Hushh AI UAT product-events should be available');
+  assert(uatEvents.status === 'live', 'Hushh AI UAT product-events should be live');
+  assert(Number.isFinite(Number(uatEvents.rangeTotals?.totalEvents)), 'Hushh AI UAT product-events totalEvents not numeric');
+  assert(Number.isFinite(Number(uatEvents.rangeTotals?.dau)), 'Hushh AI UAT product-events DAU not numeric');
+  assert(Array.isArray(uatEvents.daily), 'Hushh AI UAT product-events daily timeline missing');
+  const uatEventsCard = hushhAiUat.body?.data?.sourceCards?.find((card) => card.key === 'product_events');
+  assertSourceSections(uatEventsCard, 'Hushh AI UAT product-events', ['last_24_hours', 'last_7_days', 'selected_total']);
+  results.push({
+    check: 'hushh-ai-uat-analytics',
+    status: 'ok',
+    detail: `freshness=${hushhAiUat.body.data.freshness.sources.map((source) => `${source.key}:${source.state}`).join(',')}`,
+  });
+
   const all = await checkJsonEndpoint(target.url, '/api/analytics/all?window_days=7', options.timeoutMs);
   assert(all.body?.hushhAi?.data?.freshness, 'aggregate analytics missing Hushh AI freshness block');
-  results.push({ check: 'aggregate-analytics', status: 'ok', detail: 'contains Hushh AI freshness' });
+  assert(all.body?.hushhAiUat?.data?.freshness, 'aggregate analytics missing Hushh AI UAT freshness block');
+  assertPublicSafePayload(all.body?.hushhAi, 'aggregate Hushh AI analytics');
+  assertPublicSafePayload(all.body?.hushhAiUat, 'aggregate Hushh AI UAT analytics');
+  results.push({ check: 'aggregate-analytics', status: 'ok', detail: 'contains Hushh AI and Hushh AI UAT freshness' });
 
   console.log(JSON.stringify({
     ok: true,

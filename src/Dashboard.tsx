@@ -1,4 +1,5 @@
-import HusshInsightsAgent from './components/HusshInsightsAgent';
+import HusshInsightsAgent, { type MatrixAgentContext } from './components/HusshInsightsAgent';
+import { type ProjectKey, type ViewKey, getProjectLabel, getProjectMeta, mapViewToAgentView } from './lib/navigation';
 import { motion } from 'motion/react';
 import {
   Activity,
@@ -71,11 +72,10 @@ const iconMap: Record<string, typeof Activity> = {
   Users,
 };
 
-const appleCard =
-  'rounded-lg border border-black/[0.06] bg-white/88 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_18px_40px_rgba(0,0,0,0.045)] backdrop-blur-xl';
-const applePanel = 'rounded-lg border border-black/[0.04] bg-[#f6f6f8]';
-const appleLabel = 'text-xs font-bold uppercase text-[#86868b]';
-const dashboardBand = 'border-t border-black/[0.06] pt-8';
+const gCard = 'rounded-lg border border-[#dadce0] bg-white';
+const gPanel = 'rounded-lg bg-[#f1f3f4]';
+const gLabel = 'text-xs font-normal text-[#5f6368]';
+const dashboardBand = 'mt-6';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
@@ -116,6 +116,9 @@ interface SourceMetricClickPayload {
   metric: ProductSourceCardMetric;
 }
 
+type MatrixAgentFocus = Omit<MatrixAgentContext, 'activeView' | 'selectedRange'>;
+type MatrixAgentSelectedRange = NonNullable<MatrixAgentContext['selectedRange']>;
+
 function toDateInputValue(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -141,6 +144,36 @@ function normalizeCustomRange(range: HushhAiDateRangeState): HushhAiDateRangeSta
     startDate: toDateInputValue(limitedStart),
     endDate: toDateInputValue(orderedEnd),
   };
+}
+
+function toAgentRange(range: HushhAiDateRangeState): MatrixAgentSelectedRange {
+  return {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    preset: range.preset === 'custom' ? 'custom' : `${range.preset}D` as MatrixAgentSelectedRange['preset'],
+  };
+}
+
+function agentSourceFromText(text: string, fallback: MatrixAgentContext['focusedSource']): MatrixAgentContext['focusedSource'] {
+  if (/cloud|request|5xx|error|latency|p95|reliability/i.test(text)) return 'cloud_run';
+  if (/ga4|audience|session|page view|traffic|engaged/i.test(text)) return 'ga4';
+  if (/search|click|impression|ctr|position/i.test(text)) return 'search_console';
+  if (/supabase|database|auth|profile|account/i.test(text)) return 'supabase';
+  if (/funnel|signup|persisted|onboarding|conversion/i.test(text)) return 'business_funnel';
+  if (/db|product event|dau|wau|mau|event/i.test(text)) return 'product_events';
+  return fallback;
+}
+
+function agentProductFromGroupKey(productKey: string): MatrixAgentContext['focusedProduct'] {
+  if (productKey === 'kai_production') return 'kai.hushh.ai';
+  if (productKey === 'kai_uat') return 'uat.kai.hushh.ai';
+  if (productKey === 'hushh_ai_uat') return 'uat.hushh.ai';
+  if (productKey === 'hushhtech') return 'hushhtech.com';
+  return 'hushh.ai';
+}
+
+function agentEnvironmentForProduct(product?: MatrixAgentContext['focusedProduct']): MatrixAgentContext['focusedEnvironment'] {
+  return product === 'uat.kai.hushh.ai' || product === 'uat.hushh.ai' ? 'uat' : 'production';
 }
 
 function formatDurationFromMinutes(minutes: number | null | undefined): string {
@@ -181,11 +214,11 @@ function freshnessLabel(source: HushhAiFreshnessSource): string {
 }
 
 function freshnessClass(source: HushhAiFreshnessSource): string {
-  if (source.state === 'live') return 'border border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]';
+  if (source.state === 'live') return 'border border-[#137333]/15 bg-[#ecfdf3]/80 text-[#137333]';
   if (source.state === 'near_live') return 'border border-[#005eb8]/15 bg-[#e8f2ff]/80 text-[#005eb8]';
-  if (source.state === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f4edff]/80 text-[#6d38a8]';
+  if (source.state === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f3e8fd]/80 text-[#6d38a8]';
   if (source.state === 'delayed' || source.state === 'waiting') return 'border border-[#9a5b00]/15 bg-[#fff7e6]/80 text-[#9a5b00]';
-  return 'border border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]';
+  return 'border border-black/[0.06] bg-[#f1f3f4] text-[#80868b]';
 }
 
 function sourceStatusLabel(status: string, sourceKey?: string): string {
@@ -200,11 +233,11 @@ function sourceStatusLabel(status: string, sourceKey?: string): string {
 }
 
 function sourceStatusClass(status: string): string {
-  if (status === 'live' || status === 'near_live') return 'border border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]';
+  if (status === 'live' || status === 'near_live') return 'border border-[#137333]/15 bg-[#ecfdf3]/80 text-[#137333]';
   if (status === 'delayed') return 'border border-[#005eb8]/15 bg-[#e8f2ff]/80 text-[#005eb8]';
-  if (status === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f4edff]/80 text-[#6d38a8]';
+  if (status === 'collecting_not_ingested') return 'border border-[#6d38a8]/15 bg-[#f3e8fd]/80 text-[#6d38a8]';
   if (status === 'waiting' || status === 'not_configured') return 'border border-[#9a5b00]/15 bg-[#fff7e6]/80 text-[#9a5b00]';
-  return 'border border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]';
+  return 'border border-black/[0.06] bg-[#f1f3f4] text-[#80868b]';
 }
 
 function formatOptionalNumber(value: number | null | undefined, fallback = '—'): string {
@@ -307,6 +340,15 @@ function hushhTechDailyRows(rows: HushhAiDailyStatusPoint[]): DetailRow[] {
   ));
 }
 
+function hushhAiDailyRows(rows: HushhAiDailyStatusPoint[]): DetailRow[] {
+  return rows.map((row) => detailRow(
+    row.date,
+    `${formatNumber(row.requests)} requests`,
+    `${formatNumber(row.errors)} 5xx · ${row.errorRate == null ? '—' : `${(row.errorRate * 100).toFixed(3)}%`} error rate · ${row.p95LatencyMs == null ? '—' : `${Math.round(row.p95LatencyMs)}ms`} p95`,
+    `Users/sessions/events: ${formatNumber(row.activeUsers)} / ${formatNumber(row.sessionsStarted)} / ${formatNumber(row.analyticsEvents)}`,
+  ));
+}
+
 function sourceCardRows(card: ProductSourceCard): DetailRow[] {
   const topRows = card.metrics.map((metricItem) => detailRow(
     metricItem.label,
@@ -337,9 +379,11 @@ function sourceCardDetail(payload: SourceMetricClickPayload): MetricDetailState 
     ? 'Kai Production'
     : productKey === 'kai_uat'
       ? 'Kai UAT'
-      : productKey === 'hushhtech'
-        ? 'HushhTech'
-        : 'Hushh AI';
+      : productKey === 'hushh_ai_uat'
+        ? 'Hushh AI UAT'
+        : productKey === 'hushhtech'
+          ? 'HushhTech'
+          : 'Hushh AI';
   const metricStatus = section?.status ?? card.status;
   return {
     title: `${productLabel} · ${section?.label ?? card.label} · ${metric.label}`,
@@ -370,7 +414,7 @@ function DetailActionButton({ label = 'Details', onClick }: { label?: string; on
     <button
       type="button"
       onClick={onClick}
-      className="rounded-full bg-[#f5f5f7] px-3 py-1.5 text-xs font-bold text-[#007aff] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+      className="rounded-full bg-[#f1f3f4] px-3 py-1.5 text-xs font-bold text-[#1a73e8] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35"
     >
       {label}
     </button>
@@ -382,15 +426,15 @@ function CustomTooltip({ active, payload, label }: any) {
 
   return (
     <div className="rounded-lg border border-black/10 bg-white/95 p-3 text-sm shadow-xl backdrop-blur-xl">
-      {label && <p className="mb-2 font-semibold text-[#6e6e73]">{label}</p>}
+      {label && <p className="mb-2 font-semibold text-[#80868b]">{label}</p>}
       <div className="space-y-1.5">
         {payload.map((entry: any, index: number) => {
           const color = entry.color || entry.payload.fill || entry.stroke;
           return (
             <div key={`${entry.name}-${index}`} className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
-              <span className="font-medium text-[#6e6e73]">{entry.name}</span>
-              <span className="ml-auto font-semibold text-[#1d1d1f]">{formatOptionalNumber(entry.value)}</span>
+              <span className="font-medium text-[#80868b]">{entry.name}</span>
+              <span className="ml-auto font-semibold text-[#202124]">{formatOptionalNumber(entry.value)}</span>
             </div>
           );
         })}
@@ -401,7 +445,7 @@ function CustomTooltip({ active, payload, label }: any) {
 
 function EmptyState({ children }: { children: string }) {
   return (
-    <div className="flex min-h-[160px] items-center justify-center rounded-lg border border-dashed border-black/[0.08] bg-[#f6f6f8] px-4 text-center text-sm font-semibold text-[#86868b]">
+    <div className="flex min-h-[160px] items-center justify-center rounded-lg border border-dashed border-black/[0.08] bg-[#f6f6f8] px-4 text-center text-sm font-semibold text-[#5f6368]">
       {children}
     </div>
   );
@@ -417,10 +461,10 @@ function SectionHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p className={appleLabel}>{kicker}</p>
-        <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">{title}</h2>
+        <h2 className="text-xl font-normal text-[#202124]">{title}</h2>
+        <p className="mt-0.5 text-sm text-[#5f6368]">{kicker}</p>
       </div>
       {action}
     </div>
@@ -428,32 +472,20 @@ function SectionHeader({
 }
 
 function MetricCard({ stat, index }: { stat: KpiStat; index: number }) {
-  const Icon = iconMap[stat.icon] ?? Activity;
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04 }}
-      className={cn(appleCard, 'min-h-[154px] p-5')}
+      className={cn(gCard, 'p-5')}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#f5f5f7] text-[#007aff]">
-          <Icon className="h-5 w-5" strokeWidth={2.4} />
-        </div>
+      <p className="text-xs text-[#5f6368]">{stat.label}</p>
+      <div className="mt-2 flex items-baseline gap-2">
+        <p className="text-[28px] font-normal leading-tight text-[#202124] sm:text-4xl">{stat.value}</p>
+        {stat.suffix && <span className="text-sm text-[#5f6368]">{stat.suffix}</span>}
         {stat.change && (
-          <span className="inline-flex min-h-7 items-center rounded-full bg-[#eaf8ef] px-2.5 text-xs font-bold text-[#248a3d]">
-            <ArrowUpRight className="mr-1 h-3.5 w-3.5" strokeWidth={2.8} />
-            {stat.change}
-          </span>
+          <span className="text-sm font-medium text-[#1e8e3e]">{stat.change}</span>
         )}
-      </div>
-      <div className="mt-6">
-        <p className="text-sm font-semibold text-[#6e6e73]">{stat.label}</p>
-        <div className="mt-1 flex flex-wrap items-end gap-1.5">
-          <p className="text-4xl font-semibold text-[#1d1d1f]">{stat.value}</p>
-          {stat.suffix && <span className="pb-1 text-sm font-bold text-[#86868b]">{stat.suffix}</span>}
-        </div>
       </div>
     </motion.div>
   );
@@ -471,31 +503,36 @@ function MetricListCard({
   onItemClick?: (item: BreakdownMetric) => void;
 }) {
   return (
-    <div className={cn(appleCard, 'p-5')}>
-      <div className="mb-5">
-        <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">{subtitle}</p>
+    <div className={cn(gCard, 'p-5')}>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium text-[#202124]">{title}</h3>
+          <p className="mt-0.5 text-xs text-[#5f6368]">{subtitle}</p>
+        </div>
+        {onItemClick && (
+          <span className="shrink-0 text-xs font-medium text-[#1a73e8]">See All</span>
+        )}
       </div>
       {items.length === 0 ? (
         <EmptyState>No aggregate rows available yet.</EmptyState>
       ) : (
-        <div className="divide-y divide-black/5">
+        <div className="divide-y divide-black/[0.04]">
           {items.map((item) => {
             const isMissingMetric = item.label.startsWith('Missing');
-            const valueColor = isMissingMetric && item.value > 0 ? 'text-[#b25000]' : 'text-[#1d1d1f]';
-            const rowClass = 'flex min-h-14 w-full items-center justify-between gap-4 py-3 text-left';
+            const valueColor = isMissingMetric && item.value > 0 ? 'text-[#e37400]' : 'text-[#202124]';
+            const rowClass = 'flex min-h-12 w-full items-center justify-between gap-4 py-2.5 text-left';
             const rowContent = (
               <>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    {item.color && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />}
-                    <p className="truncate text-sm font-semibold text-[#1d1d1f]">{item.label}</p>
+                    {item.color && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />}
+                    <p className="truncate text-[14px] font-medium text-[#202124]">{item.label}</p>
                   </div>
-                  {item.detail && <p className="mt-1 truncate text-xs font-medium text-[#86868b]">{item.detail}</p>}
+                  {item.detail && <p className="mt-0.5 truncate text-xs font-medium text-[#5f6368]">{item.detail}</p>}
                 </div>
                 <div className="shrink-0 text-right">
-                  <p className={cn('text-sm font-bold', valueColor)}>{item.displayValue ?? formatNumber(item.value)}</p>
-                  {item.percentage != null && <p className="text-xs font-medium text-[#86868b]">{item.percentage}%</p>}
+                  <p className={cn('text-[14px] font-bold tabular-nums', valueColor)}>{item.displayValue ?? formatNumber(item.value)}</p>
+                  {item.percentage != null && <p className="text-[11px] font-medium text-[#5f6368]">{item.percentage}%</p>}
                 </div>
               </>
             );
@@ -505,7 +542,7 @@ function MetricListCard({
                   key={`${item.label}-${item.detail ?? ''}`}
                   type="button"
                   onClick={() => onItemClick(item)}
-                  className={cn(rowClass, 'rounded-md px-2 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+                  className={cn(rowClass, 'rounded-lg px-1.5 transition hover:bg-[#f1f3f4] focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35')}
                   aria-label={`Show details for ${item.label}`}
                 >
                   {rowContent}
@@ -537,13 +574,13 @@ function SourceCard({
   const renderMetricTile = (metricItem: ProductSourceCardMetric, section?: ProductSourceCardSection) => {
     const metricContent = (
       <>
-        <p className="truncate text-[10px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
-        <p className="mt-1 truncate text-base font-semibold text-[#1d1d1f]">
+        <p className="truncate text-[10px] font-bold uppercase text-[#5f6368]">{metricItem.label}</p>
+        <p className="mt-1 truncate text-base font-semibold text-[#202124]">
           {formatSourceMetricValue(section?.status ?? card.status, metricItem.value, metricItem.displayValue)}
         </p>
       </>
     );
-    const className = 'min-h-[54px] rounded-md border border-black/[0.03] bg-white/80 p-2 text-left';
+    const className = 'min-h-[54px] rounded-lg bg-white p-2.5 text-left';
     if (!onMetricClick) {
       return (
         <div key={`${section?.key ?? 'card'}-${metricItem.key}`} className={className}>
@@ -556,7 +593,7 @@ function SourceCard({
         key={`${section?.key ?? 'card'}-${metricItem.key}`}
         type="button"
         onClick={() => onMetricClick({ productKey, card, section, metric: metricItem })}
-        className={cn(className, 'transition hover:border-[#007aff]/20 hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+        className={cn(className, 'transition hover:border-[#1a73e8]/20 hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35')}
         aria-label={`Show details for ${card.label} ${section?.label ? `${section.label} ` : ''}${metricItem.label}`}
       >
         {metricContent}
@@ -565,11 +602,11 @@ function SourceCard({
   };
 
   return (
-    <div className={cn(appleCard, 'min-h-[214px] p-5')}>
+    <div className={cn(gCard, 'min-h-[214px] px-6 py-5')}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-base font-semibold text-[#1d1d1f]">{card.label}</p>
-          <p className="mt-1 truncate text-xs font-bold text-[#86868b]">{card.source}</p>
+          <p className="truncate text-sm font-medium text-[#202124]">{card.label}</p>
+          <p className="mt-0.5 truncate text-xs font-medium text-[#5f6368]">{card.source}</p>
         </div>
         <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-bold', sourceStatusClass(card.status))}>
           {sourceStatusLabel(card.status, card.key)}
@@ -584,9 +621,9 @@ function SourceCard({
               section.freshness?.generatedAt ? `refreshed ${formatAge(section.freshness.generatedAt)}` : null,
             ].filter(Boolean).join(' · ');
             return (
-              <div key={section.key} className={cn(applePanel, 'p-3')}>
+              <div key={section.key} className={cn(gPanel, 'p-3')}>
                 <div className="flex items-center justify-between gap-2">
-                  <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{section.label}</p>
+                  <p className="truncate text-[11px] font-bold uppercase text-[#5f6368]">{section.label}</p>
                   {section.status ? (
                     <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', sourceStatusClass(section.status))}>
                       {sourceStatusLabel(section.status, card.key)}
@@ -597,10 +634,10 @@ function SourceCard({
                   {section.metrics.slice(0, 4).map((metricItem) => renderMetricTile(metricItem, section))}
                 </div>
                 {sectionMeta ? (
-                  <p className="mt-2 text-[11px] font-semibold leading-5 text-[#86868b]">{sectionMeta}</p>
+                  <p className="mt-2 text-[11px] font-semibold leading-5 text-[#5f6368]">{sectionMeta}</p>
                 ) : null}
                 {section.blocker ? (
-                  <p className="mt-2 text-xs font-medium leading-5 text-[#6e6e73]">{section.blocker}</p>
+                  <p className="mt-2 text-xs font-medium leading-5 text-[#80868b]">{section.blocker}</p>
                 ) : null}
               </div>
             );
@@ -609,22 +646,22 @@ function SourceCard({
       ) : (
         <div className="mt-5 grid grid-cols-2 gap-2">
           {metricItems.length === 0 ? (
-            <div className={cn(applePanel, 'col-span-2 flex min-h-[84px] items-center px-3 text-sm font-semibold text-[#86868b]')}>
+            <div className={cn(gPanel, 'col-span-2 flex min-h-[84px] items-center px-3 text-sm font-semibold text-[#5f6368]')}>
               Waiting for aggregate event rows.
             </div>
           ) : (
             metricItems.map((metricItem) => {
               const content = (
                 <>
-                  <p className="truncate text-[11px] font-bold uppercase text-[#86868b]">{metricItem.label}</p>
-                  <p className="mt-2 truncate text-lg font-semibold text-[#1d1d1f]">
+                  <p className="truncate text-[11px] font-bold uppercase text-[#5f6368]">{metricItem.label}</p>
+                  <p className="mt-2 truncate text-lg font-semibold text-[#202124]">
                     {formatSourceMetricValue(card.status, metricItem.value, metricItem.displayValue)}
                   </p>
                 </>
               );
               if (!onMetricClick) {
                 return (
-                  <div key={metricItem.key} className={cn(applePanel, 'min-h-[72px] p-3')}>
+                  <div key={metricItem.key} className={cn(gPanel, 'min-h-[72px] p-3')}>
                     {content}
                   </div>
                 );
@@ -634,7 +671,7 @@ function SourceCard({
                   key={metricItem.key}
                   type="button"
                   onClick={() => onMetricClick({ productKey, card, metric: metricItem })}
-                  className={cn(applePanel, 'min-h-[72px] p-3 text-left transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/35')}
+                  className={cn(gPanel, 'min-h-[72px] p-3 text-left transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35')}
                   aria-label={`Show details for ${card.label} ${metricItem.label}`}
                 >
                   {content}
@@ -645,7 +682,7 @@ function SourceCard({
         </div>
       )}
 
-      <div className="mt-4 min-h-[40px] text-xs font-medium leading-5 text-[#6e6e73]">
+      <div className="mt-4 min-h-[40px] text-xs font-medium leading-5 text-[#80868b]">
         {card.blocker ? card.blocker : `Freshness: ${formatAge(card.freshness.generatedAt)}`}
       </div>
     </div>
@@ -672,11 +709,11 @@ function SourceMatrix({
             <div key={group.productKey} className="space-y-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <h3 className="text-xl font-semibold text-[#1d1d1f]">{group.productName}</h3>
-                  <p className="text-sm font-bold text-[#86868b]">{group.domain} · primary: {group.primaryEnvironment.toUpperCase()}</p>
+                  <h3 className="text-base font-medium text-[#202124]">{group.productName}</h3>
+                  <p className="text-sm text-[#5f6368]">{group.domain} · primary: {group.primaryEnvironment.toUpperCase()}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {cards.map((card) => (
                   <div key={`${group.productKey}-${card.key}`}>
                     <SourceCard productKey={group.productKey} card={card} onMetricClick={onMetricClick} />
@@ -706,40 +743,40 @@ function DateRangeControl({
   const presets: DatePreset[] = [7, 14, 30, 90];
 
   return (
-    <div className="flex w-full flex-col gap-2 rounded-lg border border-black/[0.06] bg-white/88 p-2 shadow-sm backdrop-blur-xl md:w-auto">
-      <div className="inline-flex rounded-lg bg-[#f5f5f7] p-1">
+    <div className="flex w-full flex-col gap-2 rounded-lg border border-[#dadce0] bg-white p-1.5 md:w-auto">
+      <div className="inline-flex rounded p-0.5">
         {presets.map((days) => (
           <button
             key={days}
             onClick={() => onPreset(days)}
             className={cn(
-              'min-h-9 flex-1 rounded-full px-3 text-xs font-bold transition md:flex-none',
-              range.preset === days ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+              'h-8 flex-1 rounded px-3 text-xs font-medium transition md:flex-none',
+              range.preset === days ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'text-[#5f6368] hover:bg-[#f1f3f4] hover:text-[#202124]',
             )}
           >
             {days}D
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <label className="flex min-h-10 items-center gap-2 rounded-lg bg-[#f5f5f7] px-2 text-xs font-bold text-[#6e6e73]">
-          <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+      <div className="grid grid-cols-2 gap-1.5">
+        <label className="flex h-8 items-center gap-1.5 rounded border border-[#dadce0] px-2 text-xs text-[#5f6368]">
+          <CalendarDays className="h-3 w-3 shrink-0" />
           <input
             type="date"
             value={range.startDate}
             max={today}
             onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', startDate: event.target.value }))}
-            className="min-w-0 flex-1 bg-transparent text-xs font-bold text-[#1d1d1f] outline-none"
+            className="min-w-0 flex-1 bg-transparent text-xs text-[#202124] outline-none"
             aria-label={`${ariaLabelPrefix} start date`}
           />
         </label>
-        <label className="flex min-h-10 items-center rounded-lg bg-[#f5f5f7] px-2 text-xs font-bold text-[#6e6e73]">
+        <label className="flex h-8 items-center rounded border border-[#dadce0] px-2 text-xs text-[#5f6368]">
           <input
             type="date"
             value={range.endDate}
             max={today}
             onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', endDate: event.target.value }))}
-            className="min-w-0 flex-1 bg-transparent text-xs font-bold text-[#1d1d1f] outline-none"
+            className="min-w-0 flex-1 bg-transparent text-xs text-[#202124] outline-none"
             aria-label={`${ariaLabelPrefix} end date`}
           />
         </label>
@@ -760,15 +797,15 @@ function ChartShell({
   children: ReactNode;
 }) {
   return (
-    <div className={cn(appleCard, 'p-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5 flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
-          <p className="mt-1 text-sm font-medium text-[#86868b]">{subtitle}</p>
+          <h3 className="text-sm font-medium text-[#202124]">{title}</h3>
+          <p className="mt-0.5 text-xs text-[#5f6368]">{subtitle}</p>
         </div>
         {action}
       </div>
-      <div className="h-[300px] w-full">{children}</div>
+      <div className="h-[220px] w-full sm:h-[300px]">{children}</div>
     </div>
   );
 }
@@ -794,36 +831,36 @@ function MetricDetailDialog({
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/28 p-3 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="metric-detail-title">
       <button type="button" className="absolute inset-0 cursor-default" aria-label="Close metric details" onClick={onClose} />
-      <div className={cn(appleCard, 'relative max-h-[88vh] w-full max-w-5xl overflow-hidden bg-white shadow-[0_24px_80px_rgba(0,0,0,0.18)]')}>
-        <div className="flex items-start justify-between gap-4 border-b border-black/[0.06] p-5 sm:p-6">
+      <div className={cn(gCard, 'relative max-h-[92vh] w-full max-w-5xl overflow-hidden bg-white shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:max-h-[88vh]')}>
+        <div className="flex items-start justify-between gap-3 border-b border-black/[0.06] p-4 sm:gap-4 sm:p-6">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 id="metric-detail-title" className="text-2xl font-semibold text-[#1d1d1f]">{detail.title}</h2>
+              <h2 id="metric-detail-title" className="text-lg font-semibold text-[#202124] sm:text-2xl">{detail.title}</h2>
               {detail.badge ? (
-                <span className="rounded-full border border-[#007aff]/15 bg-[#e8f2ff]/80 px-2.5 py-1 text-xs font-bold text-[#005eb8]">
+                <span className="rounded-full border border-[#1a73e8]/15 bg-[#e8f2ff]/80 px-2.5 py-1 text-xs font-bold text-[#005eb8]">
                   {detail.badge}
                 </span>
               ) : null}
             </div>
-            <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-[#6e6e73]">{detail.subtitle}</p>
+            <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-[#80868b]">{detail.subtitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f5f5f7] text-[#6e6e73] transition hover:bg-[#e8e8ed] hover:text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f1f3f4] text-[#80868b] transition hover:bg-[#dadce0] hover:text-[#202124] focus:outline-none focus:ring-2 focus:ring-[#1a73e8]/35"
             aria-label="Close metric details"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="max-h-[calc(88vh-112px)] overflow-y-auto p-5 sm:p-6">
+        <div className="max-h-[calc(92vh-100px)] overflow-y-auto p-4 sm:max-h-[calc(88vh-112px)] sm:p-6">
           {detail.summary && detail.summary.length > 0 ? (
             <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {detail.summary.map((row) => (
-                <div key={`${row.label}-${row.value}`} className={cn(applePanel, 'p-3')}>
-                  <p className="text-[11px] font-bold uppercase text-[#86868b]">{row.label}</p>
-                  <p className="mt-2 text-xl font-semibold text-[#1d1d1f]">{row.value}</p>
-                  {row.detail ? <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">{row.detail}</p> : null}
+                <div key={`${row.label}-${row.value}`} className={cn(gPanel, 'p-3')}>
+                  <p className="text-[11px] font-bold uppercase text-[#5f6368]">{row.label}</p>
+                  <p className="mt-2 text-xl font-semibold text-[#202124]">{row.value}</p>
+                  {row.detail ? <p className="mt-1 text-xs font-medium leading-5 text-[#5f6368]">{row.detail}</p> : null}
                 </div>
               ))}
             </div>
@@ -831,10 +868,10 @@ function MetricDetailDialog({
 
           <div className="space-y-5">
             {detail.sections.map((section) => (
-              <section key={section.title} className={cn(applePanel, 'p-4')}>
+              <section key={section.title} className={cn(gPanel, 'p-4')}>
                 <div className="mb-3">
-                  <h3 className="text-base font-semibold text-[#1d1d1f]">{section.title}</h3>
-                  {section.subtitle ? <p className="mt-1 text-xs font-semibold leading-5 text-[#86868b]">{section.subtitle}</p> : null}
+                  <h3 className="text-base font-semibold text-[#202124]">{section.title}</h3>
+                  {section.subtitle ? <p className="mt-1 text-xs font-semibold leading-5 text-[#5f6368]">{section.subtitle}</p> : null}
                 </div>
                 {section.rows.length === 0 ? (
                   <EmptyState>No aggregate detail rows available for this metric yet.</EmptyState>
@@ -843,11 +880,11 @@ function MetricDetailDialog({
                     {section.rows.map((row) => (
                       <div key={`${section.title}-${row.label}-${row.value}-${row.meta ?? ''}`} className="grid gap-2 p-3 sm:grid-cols-[1.2fr_0.6fr_1.4fr] sm:items-center">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-[#1d1d1f]">{row.label}</p>
-                          {row.meta ? <p className="mt-1 truncate text-xs font-medium text-[#86868b]">{row.meta}</p> : null}
+                          <p className="truncate text-sm font-semibold text-[#202124]">{row.label}</p>
+                          {row.meta ? <p className="mt-1 truncate text-xs font-medium text-[#5f6368]">{row.meta}</p> : null}
                         </div>
-                        <p className="text-sm font-bold text-[#1d1d1f] sm:text-right">{row.value}</p>
-                        {row.detail ? <p className="text-xs font-medium leading-5 text-[#6e6e73]">{row.detail}</p> : <span />}
+                        <p className="text-sm font-bold text-[#202124] sm:text-right">{row.value}</p>
+                        {row.detail ? <p className="text-xs font-medium leading-5 text-[#80868b]">{row.detail}</p> : <span />}
                       </div>
                     ))}
                   </div>
@@ -895,12 +932,12 @@ function ProductLivePanel({
   const refreshSeconds = freshness?.refreshIntervalSeconds ?? 30;
 
   return (
-    <div className={cn(appleCard, 'p-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className={appleLabel}>{kicker}</p>
-          <h3 className="mt-1 text-xl font-semibold text-[#1d1d1f]">{title} · auto-updating every {refreshSeconds}s</h3>
-          <p className="mt-2 text-sm font-medium leading-6 text-[#6e6e73]">
+          <p className={gLabel}>{kicker}</p>
+          <h3 className="mt-1 text-sm font-medium text-[#202124]">{title} · auto-updating every {refreshSeconds}s</h3>
+          <p className="mt-2 text-sm font-medium leading-6 text-[#80868b]">
             Last dashboard pull: {formatTimestamp(lastUpdated)} · {formatAge(lastUpdated)}
           </p>
         </div>
@@ -909,8 +946,8 @@ function ProductLivePanel({
           className={cn(
             'inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold transition',
             autoRefresh
-              ? 'bg-[#1d1d1f] text-white hover:bg-[#323236]'
-              : 'bg-[#f5f5f7] text-[#1d1d1f] hover:bg-[#e8e8ed]',
+              ? 'bg-[#202124] text-white hover:bg-[#323236]'
+              : 'bg-[#f1f3f4] text-[#202124] hover:bg-[#dadce0]',
           )}
         >
           {autoRefresh ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -920,17 +957,17 @@ function ProductLivePanel({
 
       <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         {sources.map((source) => (
-          <div key={source.key} className={cn(applePanel, 'p-4')}>
+          <div key={source.key} className={cn(gPanel, 'p-4')}>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-bold text-[#1d1d1f]">{source.label}</p>
-                <p className="mt-1 text-xs font-semibold text-[#86868b]">{formatAge(source.generatedAt)}</p>
+                <p className="text-sm font-bold text-[#202124]">{source.label}</p>
+                <p className="mt-1 text-xs font-semibold text-[#5f6368]">{formatAge(source.generatedAt)}</p>
               </div>
               <span className={cn('rounded-full px-2.5 py-1 text-xs font-bold', freshnessClass(source))}>
                 {freshnessLabel(source)}
               </span>
             </div>
-            <p className="mt-3 text-xs font-medium leading-5 text-[#6e6e73]">{source.detail}</p>
+            <p className="mt-3 text-xs font-medium leading-5 text-[#80868b]">{source.detail}</p>
           </div>
         ))}
       </div>
@@ -945,12 +982,85 @@ function ProductLivePanel({
   );
 }
 
+const activityScale = ['#ebedf0', '#9be9a8', '#40c463', '#30a14e', '#216e39'];
+
+function dailyActivityValue(row: HushhAiDailyStatusPoint): number {
+  return Math.max(
+    row.analyticsEvents,
+    row.activeUsers,
+    row.sessionsStarted,
+    row.requests,
+  );
+}
+
+function activityLevel(value: number, max: number): number {
+  if (value <= 0 || max <= 0) return 0;
+  const ratio = value / max;
+  if (ratio >= 0.75) return 4;
+  if (ratio >= 0.45) return 3;
+  if (ratio >= 0.2) return 2;
+  return 1;
+}
+
+function ActivityDots({
+  rows,
+  title,
+  subtitle,
+}: {
+  rows: HushhAiDailyStatusPoint[];
+  title: string;
+  subtitle: string;
+}) {
+  const maxValue = rows.reduce((max, row) => Math.max(max, dailyActivityValue(row)), 0);
+
+  return (
+    <div className={cn(gCard, 'p-5')}>
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-[#202124]">{title}</h3>
+          <p className="mt-0.5 text-xs font-medium text-[#5f6368]">{subtitle}</p>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#5f6368]">
+          <span>Less</span>
+          {activityScale.map((color) => (
+            <span
+              key={color}
+              className="h-3 w-3 rounded-[3px] ring-1 ring-black/[0.04]"
+              style={{ backgroundColor: color }}
+            />
+          ))}
+          <span>More</span>
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState>No daily activity rows available yet.</EmptyState>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(12px,1fr))] gap-1.5">
+          {rows.map((row) => {
+            const value = dailyActivityValue(row);
+            const level = activityLevel(value, maxValue);
+            return (
+              <span
+                key={row.date}
+                aria-label={`${row.date}: ${formatNumber(value)} activity`}
+                title={`${row.date} · ${formatNumber(value)} activity`}
+                className="h-3.5 min-w-3 rounded-[3px] ring-1 ring-black/[0.04]"
+                style={{ backgroundColor: activityScale[level] }}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
   return (
-    <div className={cn(appleCard, 'p-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold text-[#1d1d1f]">Daily Status</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">Supabase users, sessions, and exits by date</p>
+        <h3 className="text-sm font-medium text-[#202124]">Daily Status</h3>
+        <p className="mt-0.5 text-xs font-medium text-[#5f6368]">Supabase users, sessions, and exits by date</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No Hushh AI daily rows available yet.</EmptyState>
@@ -958,7 +1068,7 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
         <div className="overflow-x-auto">
           <table className="min-w-[920px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr className="text-xs font-bold uppercase text-[#86868b]">
+              <tr className="text-xs font-bold uppercase text-[#5f6368]">
                 <th className="border-b border-black/5 py-3 pr-4">Date</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Total</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">New</th>
@@ -970,8 +1080,8 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                <tr key={row.date} className="font-semibold text-[#202124]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#80868b]">{row.date}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.totalUsers)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.newUsers)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatNumber(row.activeUsers)}</td>
@@ -990,10 +1100,10 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
 
 function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
   return (
-    <div className={cn(appleCard, 'p-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai Production Reliability Status</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">Production GA4 stays Waiting until verified; request and reliability columns come from Cloud Run.</p>
+        <h3 className="text-sm font-medium text-[#202124]">Kai Production Reliability Status</h3>
+        <p className="mt-0.5 text-xs font-medium text-[#5f6368]">Production GA4 stays Waiting until verified; request and reliability columns come from Cloud Run.</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No Kai production daily rows available yet.</EmptyState>
@@ -1001,7 +1111,7 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
         <div className="overflow-x-auto">
           <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr className="text-xs font-bold uppercase text-[#86868b]">
+              <tr className="text-xs font-bold uppercase text-[#5f6368]">
                 <th className="border-b border-black/5 py-3 pr-4">Date</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Users</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">Sessions</th>
@@ -1014,8 +1124,8 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                <tr key={row.date} className="font-semibold text-[#202124]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#80868b]">{row.date}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.users, 'Waiting')}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.sessions, 'Waiting')}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.events, 'Waiting')}</td>
@@ -1035,10 +1145,10 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
 
 function KaiUatDailyStatusTable({ rows }: { rows: KaiUatDailyStatusPoint[] }) {
   return (
-    <div className={cn(appleCard, 'p-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai UAT Daily Status</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">uat.kai.hushh.ai GA4 and UAT DB aggregate events by date.</p>
+        <h3 className="text-sm font-medium text-[#202124]">Kai UAT Daily Status</h3>
+        <p className="mt-0.5 text-xs font-medium text-[#5f6368]">uat.kai.hushh.ai GA4 and UAT DB aggregate events by date.</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No Kai UAT daily rows available yet.</EmptyState>
@@ -1046,7 +1156,7 @@ function KaiUatDailyStatusTable({ rows }: { rows: KaiUatDailyStatusPoint[] }) {
         <div className="overflow-x-auto">
           <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead>
-              <tr className="text-xs font-bold uppercase text-[#86868b]">
+              <tr className="text-xs font-bold uppercase text-[#5f6368]">
                 <th className="border-b border-black/5 py-3 pr-4">Date</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Users</th>
                 <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Sessions</th>
@@ -1058,8 +1168,8 @@ function KaiUatDailyStatusTable({ rows }: { rows: KaiUatDailyStatusPoint[] }) {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
+                <tr key={row.date} className="font-semibold text-[#202124]">
+                  <td className="border-b border-black/5 py-3 pr-4 text-[#80868b]">{row.date}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Users)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Sessions)}</td>
                   <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Events)}</td>
@@ -1080,10 +1190,10 @@ function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
   const maxUsers = Math.max(...steps.map((step) => step.users), 1);
 
   return (
-    <div className={cn(appleCard, 'p-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">Latest feed day</p>
+        <h3 className="text-sm font-medium text-[#202124]">{title}</h3>
+        <p className="mt-0.5 text-xs font-medium text-[#5f6368]">Latest feed day</p>
       </div>
       {steps.length === 0 ? (
         <EmptyState>No funnel rows available yet.</EmptyState>
@@ -1094,11 +1204,11 @@ function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
             return (
               <div key={step.step}>
                 <div className="mb-2 flex items-center justify-between gap-4">
-                  <span className="text-sm font-semibold text-[#1d1d1f]">{step.step}</span>
-                  <span className="text-sm font-bold text-[#6e6e73]">{formatNumber(step.users)}</span>
+                  <span className="text-sm font-semibold text-[#202124]">{step.step}</span>
+                  <span className="text-sm font-bold text-[#80868b]">{formatNumber(step.users)}</span>
                 </div>
-                <div className="h-2.5 overflow-hidden rounded-full bg-[#f5f5f7]">
-                  <div className="h-full rounded-full bg-[#007aff] transition-all duration-700" style={{ width: `${width}%` }} />
+                <div className="h-2.5 overflow-hidden rounded-full bg-[#f1f3f4]">
+                  <div className="h-full rounded-full bg-[#1a73e8] transition-all duration-700" style={{ width: `${width}%` }} />
                 </div>
               </div>
             );
@@ -1111,22 +1221,22 @@ function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
 
 function PlatformCard({ platform }: { platform: PlatformStatus }) {
   return (
-    <div className={cn(appleCard, 'p-5')}>
+    <div className={cn(gCard, 'p-5')}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: platform.color }} />
           <div className="min-w-0">
-            <h3 className="truncate text-lg font-semibold text-[#1d1d1f]">{platform.name}</h3>
+            <h3 className="truncate text-sm font-medium text-[#202124]">{platform.name}</h3>
             <div className="mt-1 flex items-center gap-1.5 text-xs font-bold">
               {platform.available ? (
                 <>
-                  <CheckCircle2 className="h-3.5 w-3.5 text-[#248a3d]" />
-                  <span className="text-[#248a3d]">Live aggregate data</span>
+                  <CheckCircle2 className="h-3.5 w-3.5 text-[#137333]" />
+                  <span className="text-[#137333]">Live aggregate data</span>
                 </>
               ) : (
                 <>
-                  <Clock className="h-3.5 w-3.5 text-[#86868b]" />
-                  <span className="text-[#86868b]">Syncing metrics</span>
+                  <Clock className="h-3.5 w-3.5 text-[#5f6368]" />
+                  <span className="text-[#5f6368]">Syncing metrics</span>
                 </>
               )}
             </div>
@@ -1136,29 +1246,29 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
           href={`https://${platform.url}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#f5f5f7] text-[#6e6e73] transition hover:bg-[#e8e8ed] hover:text-[#1d1d1f]"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#f1f3f4] text-[#80868b] transition hover:bg-[#dadce0] hover:text-[#202124]"
           aria-label={`Open ${platform.name}`}
         >
           <ExternalLink className="h-4 w-4" />
         </a>
       </div>
 
-      <div className="mt-7 grid grid-cols-2 gap-3">
-        <div className={cn(applePanel, 'p-4')}>
-          <p className="text-xs font-bold uppercase text-[#86868b]">Primary Metric</p>
-          <p className="mt-2 text-3xl font-semibold text-[#1d1d1f]">{platform.visitors}</p>
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <div className={cn(gPanel, 'p-3')}>
+          <p className="text-xs text-[#5f6368]">Primary Metric</p>
+          <p className="mt-1 text-xl font-normal text-[#202124] sm:text-2xl">{platform.visitors}</p>
         </div>
-        <div className={cn(applePanel, 'p-4')}>
-          <p className="text-xs font-bold uppercase text-[#86868b]">Change</p>
-          <p className="mt-2 text-base font-bold text-[#248a3d]">{platform.change}</p>
+        <div className={cn(gPanel, 'p-3')}>
+          <p className="text-xs text-[#5f6368]">Change</p>
+          <p className="mt-1 text-base font-medium text-[#1e8e3e]">{platform.change}</p>
         </div>
-        <div className={cn(applePanel, 'p-4')}>
-          <p className="text-xs font-bold uppercase text-[#86868b]">Sessions</p>
-          <p className="mt-2 text-base font-bold text-[#1d1d1f]">{platform.avgSession}</p>
+        <div className={cn(gPanel, 'p-3')}>
+          <p className="text-xs text-[#5f6368]">Sessions</p>
+          <p className="mt-1 text-base font-normal text-[#202124]">{platform.avgSession}</p>
         </div>
-        <div className={cn(applePanel, 'p-4')}>
-          <p className="text-xs font-bold uppercase text-[#86868b]">Health</p>
-          <p className="mt-2 text-base font-bold text-[#1d1d1f]">{platform.bounceRate}</p>
+        <div className={cn(gPanel, 'p-3')}>
+          <p className="text-xs text-[#5f6368]">Health</p>
+          <p className="mt-1 text-base font-normal text-[#202124]">{platform.bounceRate}</p>
         </div>
       </div>
 
@@ -1166,8 +1276,12 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
   );
 }
 
-export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'platforms'>('overview');
+interface DashboardProps {
+  selectedProject: ProjectKey;
+  activeView: ViewKey;
+}
+
+export default function Dashboard({ selectedProject, activeView }: DashboardProps) {
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [data, setData] = useState<DashboardData | null>(null);
@@ -1176,6 +1290,7 @@ export default function Dashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [usingMock, setUsingMock] = useState(false);
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
+  const [agentFocus, setAgentFocus] = useState<MatrixAgentFocus | null>(null);
 
   const loadData = useCallback(async (options: { background?: boolean } = {}) => {
     if (options.background) {
@@ -1188,6 +1303,8 @@ export default function Dashboard() {
       kaiEndDate: kaiRange.endDate,
       hushhAiStartDate: hushhAiRange.startDate,
       hushhAiEndDate: hushhAiRange.endDate,
+      hushhAiUatStartDate: hushhAiRange.startDate,
+      hushhAiUatEndDate: hushhAiRange.endDate,
     });
     setUsingMock(Boolean(result.error));
     setData(result);
@@ -1202,6 +1319,7 @@ export default function Dashboard() {
   const liveRefreshSeconds = Math.min(
     data?.kaiProduction?.freshness?.refreshIntervalSeconds ?? 30,
     data?.hushhAi?.freshness?.refreshIntervalSeconds ?? 30,
+    data?.hushhAiUat?.freshness?.refreshIntervalSeconds ?? 30,
   );
 
   useEffect(() => {
@@ -1250,6 +1368,24 @@ export default function Dashboard() {
   const hushhAiDailyStatus = data?.hushhAiDailyStatus ?? [];
   const hushhAiDailySummaryMetrics = data?.hushhAiDailySummaryMetrics ?? [];
   const hushhAiFreshness = data?.hushhAi?.freshness;
+  const hushhAiUatOpsMetrics = data?.hushhAiUatOpsMetrics ?? [];
+  const hushhAiUatSearchAvailable = Boolean(data?.hushhAiUat?.searchConsole?.available);
+  const hushhAiUatGa4Available = Boolean(data?.hushhAiUat?.ga4?.available);
+  const hushhAiUatSearchMetrics = hushhAiUatSearchAvailable ? data?.hushhAiUatSearchMetrics ?? [] : [];
+  const hushhAiUatEngagementMetrics = hushhAiUatGa4Available ? data?.hushhAiUatEngagementMetrics ?? [] : [];
+  const hushhAiUatTopPageMetrics = hushhAiUatGa4Available ? data?.hushhAiUatTopPageMetrics ?? [] : [];
+  const hushhAiUatTopEventMetrics = hushhAiUatGa4Available ? data?.hushhAiUatTopEventMetrics ?? [] : [];
+  const hushhAiUatProductEventMetrics = data?.hushhAiUatProductEventMetrics ?? [];
+  const hushhAiUatAcquisitionMetrics = hushhAiUatGa4Available ? data?.hushhAiUatAcquisitionMetrics ?? [] : [];
+  const hushhAiUatSourceMediumMetrics = hushhAiUatGa4Available ? data?.hushhAiUatSourceMediumMetrics ?? [] : [];
+  const hushhAiUatLandingPageMetrics = hushhAiUatGa4Available ? data?.hushhAiUatLandingPageMetrics ?? [] : [];
+  const hushhAiUatGeoDeviceMetrics = hushhAiUatGa4Available ? data?.hushhAiUatGeoDeviceMetrics ?? [] : [];
+  const hushhAiUatSessionTimingMetrics = hushhAiUatGa4Available ? data?.hushhAiUatSessionTimingMetrics ?? [] : [];
+  const hushhAiUatDailyStatus = data?.hushhAiUatDailyStatus ?? [];
+  const hushhAiUatDailySummaryMetrics = (data?.hushhAiUatDailySummaryMetrics ?? []).filter((item) => (
+    hushhAiUatGa4Available || !item.label.startsWith('GA4 ')
+  ));
+  const hushhAiUatFreshness = data?.hushhAiUat?.freshness;
   const hushhTechAudienceMetrics = data?.hushhTechAudienceMetrics ?? [];
   const hushhTechBusinessMetrics = data?.hushhTechBusinessMetrics ?? [];
   const hushhTechOpsMetrics = data?.hushhTechOpsMetrics ?? [];
@@ -1264,7 +1400,23 @@ export default function Dashboard() {
   const hushhTechRangeLabel = data?.hushhTech?.window
     ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
     : 'Selected range';
-  const statusText = usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
+  const agentSelectedRange = (product?: MatrixAgentContext['focusedProduct']): MatrixAgentSelectedRange => {
+    if (product === 'hushh.ai' || product === 'uat.hushh.ai') return toAgentRange(hushhAiRange);
+    if (product === 'kai.hushh.ai' || product === 'uat.kai.hushh.ai') return toAgentRange(kaiRange);
+    if (product === 'hushhtech.com' && data?.hushhTech?.window) {
+      return {
+        startDate: data.hushhTech.window.startDate,
+        endDate: data.hushhTech.window.endDate,
+        preset: 'custom',
+      };
+    }
+    return toAgentRange(activeView === 'platforms' || activeView === 'funnels' || activeView === 'kai_production' || activeView === 'kai_uat' ? kaiRange : hushhAiRange);
+  };
+  const agentContext: MatrixAgentContext = {
+    activeView: mapViewToAgentView(activeView),
+    ...(agentFocus ?? {}),
+    selectedRange: agentSelectedRange(agentFocus?.focusedProduct),
+  };
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
 
   const ga4SummaryRows = () => {
@@ -1407,17 +1559,6 @@ export default function Dashboard() {
   };
 
   const openHushhAiGa4Detail = (focus: 'users' | 'sessions' | 'events' | 'engagement' | 'pages' | 'acquisition' | 'source' | 'landing' | 'geo' | 'timing' | 'all', label?: string) => {
-    const ga4 = data?.hushhAi?.ga4;
-    if (!ga4) {
-      setMetricDetail({
-        title: label ?? 'Hushh AI GA4',
-        subtitle: 'GA4 aggregate data is not available for hushh.ai yet.',
-        badge: 'Waiting',
-        sections: [],
-        caveats: ['No GA4 Data API aggregate rows are currently available.'],
-      });
-      return;
-    }
     const focusTitle: Record<typeof focus, string> = {
       users: 'Hushh AI Users',
       sessions: 'Hushh AI Sessions',
@@ -1431,6 +1572,38 @@ export default function Dashboard() {
       timing: 'Hushh AI Session Timing',
       all: 'Hushh AI GA4 Details',
     };
+    const metricKeyByFocus: Record<typeof focus, string> = {
+      users: 'ga4.users',
+      sessions: 'ga4.sessions',
+      events: 'ga4.events',
+      engagement: 'ga4.engaged_sessions',
+      pages: 'ga4.top_pages',
+      acquisition: 'ga4.acquisition',
+      source: 'ga4.source_medium',
+      landing: 'ga4.landing_pages',
+      geo: 'ga4.geo_device',
+      timing: 'ga4.session_timing',
+      all: 'ga4.users',
+    };
+    setAgentFocus({
+      focusedProduct: 'hushh.ai',
+      focusedEnvironment: 'production',
+      focusedSource: 'ga4',
+      focusedMetricKey: metricKeyByFocus[focus],
+      focusedMetricLabel: label ?? focusTitle[focus],
+      panelTitle: focusTitle[focus],
+    });
+    const ga4 = data?.hushhAi?.ga4;
+    if (!ga4) {
+      setMetricDetail({
+        title: label ?? 'Hushh AI GA4',
+        subtitle: 'GA4 aggregate data is not available for hushh.ai yet.',
+        badge: 'Waiting',
+        sections: [],
+        caveats: ['No GA4 Data API aggregate rows are currently available.'],
+      });
+      return;
+    }
     const selectedRange = ga4.range
       ? `${ga4.range.startDate} to ${ga4.range.endDate}`
       : `${hushhAiRange.startDate} to ${hushhAiRange.endDate}`;
@@ -1446,39 +1619,84 @@ export default function Dashboard() {
   };
 
   const openHushhAiProductEventsDetail = (label?: string) => {
+    setAgentFocus({
+      focusedProduct: 'hushh.ai',
+      focusedEnvironment: 'production',
+      focusedSource: 'product_events',
+      focusedMetricKey: 'product_events.expected',
+      focusedMetricLabel: label ?? 'Hushh AI Product Events',
+      panelTitle: 'Hushh AI Product Events',
+    });
     const productEvents = data?.hushhAi?.productEvents as {
       expectedEvents?: Array<{ eventName?: string; label?: string; status?: string; count?: number | null; note?: string }>;
+      metrics?: Array<{ key?: string; label?: string; value?: number | null; displayValue?: string; detail?: string }>;
+      topEvents?: Array<{ eventName?: string; events?: number | null; actors?: number | null; sessions?: number | null }>;
+      topRequestTypes?: Array<{ requestType?: string; events?: number | null; actors?: number | null; sessions?: number | null }>;
+      latestEventAt?: string | null;
       note?: string;
       status?: string;
     } | null | undefined;
+    const topProductEvents = productEvents?.topEvents ?? [];
+    const topRequestTypes = productEvents?.topRequestTypes ?? [];
     setMetricDetail({
       title: label ?? 'Hushh AI Product Events',
-      subtitle: 'These are the product/custom events we expect to track once a real hushh.ai aggregate source exists.',
-      badge: productEvents?.status === 'not_configured' ? 'Not configured' : 'Waiting',
-      summary: [
-        detailRow('Source', 'DB / Product Events', 'No real hushh.ai aggregate event source is configured yet.'),
-        detailRow('Status', productEvents?.status === 'not_configured' ? 'Not configured' : 'Waiting'),
-      ],
+      subtitle: `Live aggregate product-event details for ${hushhAiRange.startDate} to ${hushhAiRange.endDate}.`,
+      badge: productEvents?.status === 'live' ? 'Live' : 'Waiting',
+      summary: metricRows(hushhAiProductEventMetrics, 6),
       sections: [
         {
-          title: 'Expected Product Events',
-          subtitle: 'No numeric value is shown here until a first-party aggregate source exists.',
+          title: 'Aggregate Metrics',
+          subtitle: 'DB aggregate counts from product and chat event tables.',
+          rows: metricRows(hushhAiProductEventMetrics, 12),
+        },
+        {
+          title: 'Top Product Events',
+          subtitle: 'Most frequent aggregate product event names in the selected range.',
+          rows: topProductEvents.map((event) => detailRow(
+            readableMetricLabel(event.eventName ?? 'Product Event'),
+            formatOptionalNumber(event.events),
+            `${formatOptionalNumber(event.actors)} actors · ${formatOptionalNumber(event.sessions)} sessions`,
+            event.eventName,
+          )),
+        },
+        {
+          title: 'Top Chat Request Types',
+          subtitle: 'Aggregate chat request types from the selected range.',
+          rows: topRequestTypes.map((request) => detailRow(
+            readableMetricLabel(request.requestType ?? 'Request Type'),
+            formatOptionalNumber(request.events),
+            `${formatOptionalNumber(request.actors)} actors · ${formatOptionalNumber(request.sessions)} sessions`,
+            request.requestType,
+          )),
+        },
+        {
+          title: 'Expected Funnel Events',
+          subtitle: 'Tracked funnel event names; zero means the live source returned no events for that name.',
           rows: (productEvents?.expectedEvents ?? []).map((event) => detailRow(
             event.label ?? readableMetricLabel(event.eventName ?? 'Product Event'),
-            event.count == null ? 'Not configured' : formatNumber(event.count),
-            event.note ?? 'Waiting for a real hushh.ai product-event aggregate source.',
+            event.count == null ? '—' : formatNumber(event.count),
+            event.note ?? 'Live aggregate source returned this count.',
             event.eventName,
           )),
         },
       ],
       caveats: [
-        productEvents?.note ?? 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
-        'Until this source exists, GA4 can show traffic/events but cannot verify signup, login, CTA, demo, or contact funnel truth.',
+        productEvents?.note ?? 'Hushh AI product event aggregates are available.',
+        productEvents?.latestEventAt ? `Latest event timestamp: ${productEvents.latestEventAt}.` : 'Latest event timestamp is not available.',
+        'Aggregate counts only; raw query text, answers, users, anonymous IDs, sessions, and metadata are not shown.',
       ],
     });
   };
 
   const openHushhAiSearchDetail = (label?: string) => {
+    setAgentFocus({
+      focusedProduct: 'hushh.ai',
+      focusedEnvironment: 'production',
+      focusedSource: 'search_console',
+      focusedMetricKey: agentSourceFromText(label ?? 'search clicks', 'search_console') === 'search_console' ? 'search_console.clicks' : undefined,
+      focusedMetricLabel: label ?? 'Hushh AI Search Console',
+      panelTitle: 'Hushh AI Search Console',
+    });
     const search = data?.hushhAi?.searchConsole;
     setMetricDetail({
       title: label ?? 'Hushh AI Search Console',
@@ -1520,7 +1738,84 @@ export default function Dashboard() {
     });
   };
 
+  const openHushhAiUatDetail = (label = 'Hushh AI UAT Details', focus?: BreakdownMetric) => {
+    const source = agentSourceFromText(`${label} ${focus?.label ?? ''}`, 'ga4');
+    setAgentFocus({
+      focusedProduct: 'uat.hushh.ai',
+      focusedEnvironment: 'uat',
+      focusedSource: source,
+      focusedMetricKey: source === 'cloud_run'
+        ? 'cloud_run.request_count'
+        : source === 'search_console'
+          ? 'search_console.clicks'
+          : source === 'product_events'
+            ? 'product_events.total_events'
+            : 'ga4.events',
+      focusedMetricLabel: focus?.label ?? label,
+      panelTitle: label,
+    });
+    const ga4Warnings = data?.hushhAiUat?.ga4?.warnings ?? [];
+    setMetricDetail({
+      title: label,
+      subtitle: `uat.hushh.ai UAT aggregate details for ${hushhAiRange.startDate} to ${hushhAiRange.endDate}.`,
+      badge: 'UAT',
+      summary: focusMetricSummary(hushhAiUatDailySummaryMetrics, focus),
+      sections: [
+        {
+          title: 'UAT Range Summary',
+          subtitle: 'Cloud Run, GA4, and product-event aggregate values for the selected range.',
+          rows: metricRows(hushhAiUatDailySummaryMetrics),
+        },
+        {
+          title: 'UAT Daily Status',
+          subtitle: 'Daily reliability plus aggregate audience/event columns when source rows exist.',
+          rows: hushhAiDailyRows(hushhAiUatDailyStatus),
+        },
+        {
+          title: 'UAT GA4 Engagement',
+          subtitle: 'Users, sessions, events, and engaged-session quality.',
+          rows: metricRows(hushhAiUatEngagementMetrics),
+        },
+        {
+          title: 'UAT Product Events',
+          subtitle: 'First-party product-event aggregates when configured.',
+          rows: metricRows(hushhAiUatProductEventMetrics),
+        },
+        {
+          title: 'UAT Top Pages / Screens',
+          subtitle: 'Aggregate GA4 page/screen rows. Query strings are intentionally not exposed.',
+          rows: metricRows(hushhAiUatTopPageMetrics),
+        },
+        {
+          title: 'UAT Top GA4 Events',
+          subtitle: 'Aggregate event names and counts from the UAT source.',
+          rows: metricRows(hushhAiUatTopEventMetrics),
+        },
+        {
+          title: 'UAT Search',
+          subtitle: 'Search Console aggregate rows when available for uat.hushh.ai.',
+          rows: metricRows(hushhAiUatSearchMetrics),
+        },
+        ...sourceCardSections(data?.hushhAiUat?.sourceCards, 'Hushh AI UAT Source'),
+      ],
+      caveats: [
+        'Hushh AI UAT is validation traffic for uat.hushh.ai; it is not production truth.',
+        'Only aggregate source metrics are shown; raw users, queries, identifiers, and provider payloads are not exposed.',
+        ...ga4Warnings,
+      ],
+    });
+  };
+
   const openKaiProductionDetail = (label = 'Kai Production Details', focus?: BreakdownMetric) => {
+    const source = agentSourceFromText(`${label} ${focus?.label ?? ''}`, 'cloud_run');
+    setAgentFocus({
+      focusedProduct: 'kai.hushh.ai',
+      focusedEnvironment: 'production',
+      focusedSource: source,
+      focusedMetricKey: source === 'cloud_run' ? 'cloud_run.request_count' : source === 'ga4' ? 'ga4.users' : 'product_events.total_events',
+      focusedMetricLabel: focus?.label ?? label,
+      panelTitle: label,
+    });
     const ga4Warnings = data?.kaiProduction?.productionGa4?.warnings ?? [];
     setMetricDetail({
       title: label,
@@ -1555,6 +1850,15 @@ export default function Dashboard() {
   };
 
   const openKaiUatDetail = (label = 'Kai UAT Details', focus?: BreakdownMetric) => {
+    const source = agentSourceFromText(`${label} ${focus?.label ?? ''}`, 'ga4');
+    setAgentFocus({
+      focusedProduct: 'uat.kai.hushh.ai',
+      focusedEnvironment: 'uat',
+      focusedSource: source,
+      focusedMetricKey: source === 'product_events' ? 'product_events.total_events' : source === 'search_console' ? 'search_console.clicks' : 'ga4.events',
+      focusedMetricLabel: focus?.label ?? label,
+      panelTitle: label,
+    });
     const ga4Warnings = data?.kaiGa4?.warnings ?? [];
     setMetricDetail({
       title: label,
@@ -1599,6 +1903,23 @@ export default function Dashboard() {
   };
 
   const openHushhTechDetail = (label = 'HushhTech Details', focus?: BreakdownMetric) => {
+    const source = agentSourceFromText(`${label} ${focus?.label ?? ''}`, 'supabase');
+    setAgentFocus({
+      focusedProduct: 'hushhtech.com',
+      focusedEnvironment: 'production',
+      focusedSource: source,
+      focusedMetricKey: source === 'business_funnel'
+        ? 'funnel.signups'
+        : source === 'cloud_run'
+          ? 'cloud_run.request_count'
+          : source === 'ga4'
+            ? 'traffic.sessions'
+            : source === 'search_console'
+              ? 'search_console.clicks'
+              : 'supabase.total_users',
+      focusedMetricLabel: focus?.label ?? label,
+      panelTitle: label,
+    });
     const qualityWarnings = data?.hushhTech?.dataQualityWarnings ?? [];
     setMetricDetail({
       title: label,
@@ -1673,6 +1994,16 @@ export default function Dashboard() {
   };
 
   const handleSourceMetricClick = (payload: SourceMetricClickPayload) => {
+    const focusedProduct = agentProductFromGroupKey(payload.productKey);
+    const focusedSource = agentSourceFromText(`${payload.card.key} ${payload.card.label} ${payload.section?.label ?? ''} ${payload.metric.label}`, 'ga4');
+    setAgentFocus({
+      focusedProduct,
+      focusedEnvironment: agentEnvironmentForProduct(focusedProduct),
+      focusedSource,
+      focusedMetricKey: `${focusedSource}.${payload.metric.key}`,
+      focusedMetricLabel: payload.metric.label,
+      panelTitle: `${payload.card.label}${payload.section?.label ? ` · ${payload.section.label}` : ''}`,
+    });
     if (payload.productKey === 'hushh_ai' && payload.card.key === 'ga4') {
       if (/user/i.test(payload.metric.label)) openHushhAiGa4Detail('users', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
       else if (/session/i.test(payload.metric.label) && !/engaged/i.test(payload.metric.label)) openHushhAiGa4Detail('sessions', `${payload.section?.label ?? payload.card.label} · ${payload.metric.label}`);
@@ -1692,730 +2023,814 @@ export default function Dashboard() {
     else openHushhAiGa4Detail(kind, item.label);
   };
 
+  const showKaiProd = selectedProject === 'all' || selectedProject === 'kai_production';
+  const showKaiUat = selectedProject === 'all' || selectedProject === 'kai_uat';
+  const showHushhAi = selectedProject === 'all' || selectedProject === 'hushh_ai';
+  const showHushhAiUat = selectedProject === 'all' || selectedProject === 'hushh_ai_uat';
+  const showHushhTech = selectedProject === 'all' || selectedProject === 'hushhtech';
+
+  const projectMeta = getProjectMeta(selectedProject);
+  const projectLabel = selectedProject === 'all' ? 'Hussh Matrix' : getProjectLabel(selectedProject);
+
+  const filteredSourceGroups = selectedProject === 'all'
+    ? sourceGroups
+    : sourceGroups.filter((g) => {
+        if (selectedProject === 'kai_production') return g.productKey === 'kai_production';
+        if (selectedProject === 'kai_uat') return g.productKey === 'kai_uat';
+        if (selectedProject === 'hushh_ai') return g.productKey === 'hushh_ai';
+        if (selectedProject === 'hushh_ai_uat') return g.productKey === 'hushh_ai_uat';
+        if (selectedProject === 'hushhtech') return g.productKey === 'hushhtech';
+        return true;
+      });
+
+  const renderContentHeader = () => (
+    <div className="sticky top-0 z-20 border-b border-[#dadce0] bg-white px-4 py-3 sm:px-6 lg:px-8">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+          <div className="h-10 w-10 shrink-0 lg:hidden" />
+          <h1 className="truncate text-lg font-normal text-[#202124]">{projectLabel}</h1>
+          {projectMeta && (
+            <span className="hidden text-sm text-[#5f6368] sm:inline">{projectMeta.domain}</span>
+          )}
+          {projectMeta && (
+            <span className={cn(
+              'hidden shrink-0 rounded px-1.5 py-0.5 text-xs font-medium sm:inline-flex',
+              projectMeta.environment === 'production'
+                ? 'bg-[#e6f4ea] text-[#137333]'
+                : 'bg-[#f3e8fd] text-[#a142f4]',
+            )}>
+              {projectMeta.environment === 'production' ? 'Production' : 'UAT'}
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          {!usingMock && (
+            <span className="hidden items-center gap-1.5 text-xs text-[#1e8e3e] sm:inline-flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#1e8e3e]" />
+              Live
+            </span>
+          )}
+          <button
+            onClick={() => loadData()}
+            className="inline-flex h-9 items-center gap-1.5 rounded border border-[#dadce0] bg-white px-3 text-sm font-medium text-[#1a73e8] transition hover:bg-[#f1f3f4]"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderKaiProductionSection = () => (
+    <>
+    {activeView === 'kai_production' && (
+      <SourceMatrix groups={sourceGroups.filter((g) => g.productKey === 'kai_production')} onMetricClick={handleSourceMetricClick} />
+    )}
+    <section className={dashboardBand}>
+      <SectionHeader
+        kicker="kai.hushh.ai · production"
+        title="Production traffic + readiness"
+        action={(
+          <DateRangeControl
+            range={kaiRange}
+            onPreset={(days) => setKaiRange(rangeForPreset(days))}
+            onCustomRange={setKaiRange}
+            ariaLabelPrefix="Kai production"
+          />
+        )}
+      />
+      <div className="mb-4">
+        <ProductLivePanel
+          kicker="Kai production live mode"
+          title="Production sources"
+          refreshingLabel="Refreshing Kai production sources"
+          freshness={kaiProductionFreshness}
+          lastUpdated={data?.lastUpdated}
+          autoRefresh={autoRefresh}
+          isRefreshing={isRefreshing}
+          onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <ChartShell
+          title="Users, Sessions, Events"
+          subtitle="Production GA4 export; shows waiting until analytics_526603671 materializes"
+          action={<DetailActionButton onClick={() => openKaiProductionDetail('Kai Production GA4 Details')} />}
+        >
+          {!kaiProductionGa4Available ? (
+            <EmptyState>Production GA4 export is not ready yet. Cloud Run production traffic is shown below.</EmptyState>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid stroke="#e8eaed" vertical={false} />
+                <XAxis dataKey="label" stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                <Bar dataKey="users" name="Users" fill="#129eaf" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="sessions" name="Sessions" fill="#1a73e8" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="events" name="Events" fill="#a142f4" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartShell>
+        <ChartShell
+          title="Production Traffic + Reliability"
+          subtitle="Cloud Run requests, 5xx responses, and latency context"
+          action={<DetailActionButton onClick={() => openKaiProductionDetail('Kai Production Reliability Details')} />}
+        >
+          {kaiProductionDailyStatus.length === 0 ? (
+            <EmptyState>No Kai production traffic rows available yet.</EmptyState>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="kaiProdRequests" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#129eaf" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#129eaf" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="kaiProdErrors" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
+                    <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="#e8eaed" vertical={false} />
+                <XAxis dataKey="label" stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                <Tooltip content={<CustomTooltip />} />
+                <Area type="monotone" dataKey="requests" name="Requests" stroke="#129eaf" strokeWidth={2} fill="url(#kaiProdRequests)" />
+                <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2} fill="url(#kaiProdErrors)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </ChartShell>
+        <MetricListCard
+          title="Production Range Summary"
+          subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
+          items={kaiProductionDailySummaryMetrics}
+          onItemClick={(item) => openKaiProductionDetail(`Kai Production · ${item.label}`, item)}
+        />
+        <MetricListCard
+          title="Production Readiness"
+          subtitle="Production feed and GA4 export only; UAT is tracked in its own matrix."
+          items={kaiProductionReadinessMetrics}
+          onItemClick={(item) => openKaiProductionDetail(`Kai Production Readiness · ${item.label}`, item)}
+        />
+      </div>
+      <div className="mt-4">
+        <KaiDailyStatusTable rows={kaiProductionDailyStatus} />
+      </div>
+    </section>
+    </>
+  );
+
+  const renderKaiUatSection = () => (
+    <>
+    {activeView === 'kai_uat' && (
+      <SourceMatrix groups={sourceGroups.filter((g) => g.productKey === 'kai_uat')} onMetricClick={handleSourceMetricClick} />
+    )}
+    <section className={dashboardBand}>
+      <SectionHeader
+        kicker="uat.kai.hushh.ai · UAT"
+        title="UAT status matrix"
+        action={(
+          <DateRangeControl
+            range={kaiRange}
+            onPreset={(days) => setKaiRange(rangeForPreset(days))}
+            onCustomRange={setKaiRange}
+            ariaLabelPrefix="Kai UAT"
+          />
+        )}
+      />
+      <div className="mb-4">
+        <ProductLivePanel
+          kicker="Kai UAT live mode"
+          title="UAT sources"
+          refreshingLabel="Refreshing Kai UAT sources"
+          freshness={kaiUatFreshness}
+          lastUpdated={data?.lastUpdated}
+          autoRefresh={autoRefresh}
+          isRefreshing={isRefreshing}
+          onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <ChartShell
+          title="UAT Users, Sessions, Events"
+          subtitle="uat.kai.hushh.ai GA4 export"
+          action={<DetailActionButton onClick={() => openKaiUatDetail('Kai UAT GA4 Details')} />}
+        >
+          {kaiUatDailyStatus.length === 0 ? (
+            <EmptyState>No Kai UAT GA4 daily rows available yet.</EmptyState>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid stroke="#e8eaed" vertical={false} />
+                <XAxis dataKey="label" stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                <Bar dataKey="ga4Users" name="GA4 Users" fill="#129eaf" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="ga4Sessions" name="GA4 Sessions" fill="#1a73e8" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="ga4Events" name="GA4 Events" fill="#a142f4" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartShell>
+        <ChartShell
+          title="UAT DB Events"
+          subtitle="UAT public feed DAU, sessions, and total events"
+          action={<DetailActionButton onClick={() => openKaiUatDetail('Kai UAT DB Event Details')} />}
+        >
+          {kaiUatDailyStatus.length === 0 ? (
+            <EmptyState>No Kai UAT DB daily rows available yet.</EmptyState>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid stroke="#e8eaed" vertical={false} />
+                <XAxis dataKey="label" stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} dy={10} />
+                <YAxis stroke="#5f6368" fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                <Bar dataKey="feedDau" name="DB DAU" fill="#1e8e3e" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="feedSessions" name="DB Sessions" fill="#ff9500" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="feedEvents" name="DB Events" fill="#5856d6" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartShell>
+        <MetricListCard
+          title="UAT Range Summary"
+          subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
+          items={kaiUatDailySummaryMetrics}
+          onItemClick={(item) => openKaiUatDetail(`Kai UAT · ${item.label}`, item)}
+        />
+      </div>
+      <div className="mt-4">
+        <KaiUatDailyStatusTable rows={kaiUatDailyStatus} />
+      </div>
+    </section>
+    </>
+  );
+
+  const renderHushhAiSection = () => (
+    <>
+      {activeView === 'hushh_ai' && (
+        <SourceMatrix groups={sourceGroups.filter((g) => g.productKey === 'hushh_ai')} onMetricClick={handleSourceMetricClick} />
+      )}
+      <section className={dashboardBand}>
+        <SectionHeader
+          kicker="hushh.ai"
+          title="Analytics status matrix"
+          action={(
+            <DateRangeControl
+              range={hushhAiRange}
+              onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
+              onCustomRange={setHushhAiRange}
+              ariaLabelPrefix="Hushh AI"
+            />
+          )}
+        />
+        <div className="mb-4">
+          <ProductLivePanel
+            kicker="Hushh AI live mode"
+            title="Fresh on refresh"
+            refreshingLabel="Refreshing Hushh AI sources"
+            freshness={hushhAiFreshness}
+            lastUpdated={data?.lastUpdated}
+            autoRefresh={autoRefresh}
+            isRefreshing={isRefreshing}
+            onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
+          />
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, 5xx responses, and latency context">
+            {hushhAiDailyStatus.length === 0 ? (
+              <EmptyState>No Hushh AI traffic rows available yet.</EmptyState>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="hushhAiRequests" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#1a73e8" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#1a73e8" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="hushhAiErrors" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
+                      <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#e8eaed" vertical={false} />
+                  <XAxis dataKey="label" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="requests" name="Requests" stroke="#1a73e8" strokeWidth={2.5} fill="url(#hushhAiRequests)" />
+                  <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiErrors)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </ChartShell>
+          <MetricListCard
+            title="Range Summary"
+            subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
+            items={hushhAiDailySummaryMetrics}
+          />
+        </div>
+        <div className="mt-4">
+          <ActivityDots
+            rows={hushhAiDailyStatus}
+            title="Activity Intensity"
+            subtitle="Daily aggregate activity scored from events, active users, sessions, and requests"
+          />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <MetricListCard
+            title="GA4 Engagement"
+            subtitle="Users, sessions, events, and engaged-session quality"
+            items={hushhAiEngagementMetrics}
+            onItemClick={(item) => {
+              if (/user/i.test(item.label)) openHushhAiGa4Detail('users', item.label);
+              else if (/session/i.test(item.label) && !/engaged/i.test(item.label)) openHushhAiGa4Detail('sessions', item.label);
+              else if (/event/i.test(item.label)) openHushhAiGa4Detail('events', item.label);
+              else openHushhAiGa4Detail('engagement', item.label);
+            }}
+          />
+          <MetricListCard
+            title="Product Events"
+            subtitle="Live DB aggregate events, actors, sessions, search, and chat signals"
+            items={hushhAiProductEventMetrics}
+            onItemClick={handleHushhAiMetricListClick('product')}
+          />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <MetricListCard title="Where Sessions Came From" subtitle="GA4 session channel groups" items={hushhAiAcquisitionMetrics} onItemClick={handleHushhAiMetricListClick('acquisition')} />
+          <MetricListCard title="Source / Medium" subtitle="GA4 session source attribution" items={hushhAiSourceMediumMetrics} onItemClick={handleHushhAiMetricListClick('source')} />
+          <MetricListCard title="Landing Pages" subtitle="First page in each GA4 session" items={hushhAiLandingPageMetrics} onItemClick={handleHushhAiMetricListClick('landing')} />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <MetricListCard title="Geo + Device" subtitle="Aggregate country and device mix" items={hushhAiGeoDeviceMetrics} onItemClick={handleHushhAiMetricListClick('geo')} />
+          <MetricListCard title="Session Timing" subtitle="Top session hours in GA4 property timezone" items={hushhAiSessionTimingMetrics} onItemClick={handleHushhAiMetricListClick('timing')} />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <ChartShell title="Top Pages / Screens" subtitle="GA4 aggregate page views for hushh.ai" action={<DetailActionButton label="Details" onClick={() => openHushhAiGa4Detail('pages')} />}>
+            {hushhAiTopPageMetrics.length === 0 ? (
+              <EmptyState>Waiting for GA4 page and screen aggregates.</EmptyState>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hushhAiTopPageMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                  <CartesianGrid stroke="#e8eaed" horizontal={false} />
+                  <XAxis type="number" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                  <YAxis type="category" dataKey="label" width={118} stroke="#5f6368" fontSize={11} fontWeight={400} tickLine={false} axisLine={false} />
+                  <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                  <Bar dataKey="value" name="Page views" fill="#1a73e8" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('pages')} cursor="pointer" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartShell>
+          <ChartShell title="Top GA4 Events" subtitle="GA4 automatic, page, engagement, and web-vitals events" action={<DetailActionButton label="Details" onClick={() => openHushhAiGa4Detail('events')} />}>
+            {hushhAiTopEventMetrics.length === 0 ? (
+              <EmptyState>Waiting for GA4 event aggregates.</EmptyState>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hushhAiTopEventMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                  <CartesianGrid stroke="#e8eaed" horizontal={false} />
+                  <XAxis type="number" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                  <YAxis type="category" dataKey="label" width={118} stroke="#5f6368" fontSize={11} fontWeight={400} tickLine={false} axisLine={false} />
+                  <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                  <Bar dataKey="value" name="Events" fill="#1e8e3e" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('events')} cursor="pointer" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartShell>
+        </div>
+      </section>
+    </>
+  );
+
+  const renderHushhAiUatSection = () => (
+    <>
+      {activeView === 'hushh_ai_uat' && (
+        <SourceMatrix groups={sourceGroups.filter((g) => g.productKey === 'hushh_ai_uat')} onMetricClick={handleSourceMetricClick} />
+      )}
+      <section className={dashboardBand}>
+        <SectionHeader
+          kicker="uat.hushh.ai · UAT"
+          title="UAT analytics status matrix"
+          action={(
+            <DateRangeControl
+              range={hushhAiRange}
+              onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
+              onCustomRange={setHushhAiRange}
+              ariaLabelPrefix="Hushh AI UAT"
+            />
+          )}
+        />
+        <div className="mb-4">
+          <ProductLivePanel
+            kicker="Hushh AI UAT live mode"
+            title="UAT sources"
+            refreshingLabel="Refreshing Hushh AI UAT sources"
+            freshness={hushhAiUatFreshness}
+            lastUpdated={data?.lastUpdated}
+            autoRefresh={autoRefresh}
+            isRefreshing={isRefreshing}
+            onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
+          />
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <ChartShell
+            title="UAT Traffic + Reliability"
+            subtitle="uat.hushh.ai Cloud Run requests, 5xx responses, and latency context"
+            action={<DetailActionButton onClick={() => openHushhAiUatDetail('Hushh AI UAT Reliability Details')} />}
+          >
+            {hushhAiUatDailyStatus.length === 0 ? (
+              <EmptyState>No Hushh AI UAT traffic rows available yet.</EmptyState>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={hushhAiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="hushhAiUatRequests" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ff9500" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#ff9500" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="hushhAiUatErrors" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
+                      <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#e8eaed" vertical={false} />
+                  <XAxis dataKey="label" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="requests" name="Requests" stroke="#ff9500" strokeWidth={2.5} fill="url(#hushhAiUatRequests)" />
+                  <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiUatErrors)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </ChartShell>
+          <MetricListCard
+            title="UAT Range Summary"
+            subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
+            items={hushhAiUatDailySummaryMetrics}
+            onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT · ${item.label}`, item)}
+          />
+        </div>
+        <div className="mt-4">
+          <ActivityDots
+            rows={hushhAiUatDailyStatus}
+            title="UAT Activity Intensity"
+            subtitle="Daily UAT aggregate activity scored from events, active users, sessions, and requests"
+          />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {hushhAiUatGa4Available && (
+            <MetricListCard
+              title="UAT GA4 Engagement"
+              subtitle="Users, sessions, events, and engaged-session quality"
+              items={hushhAiUatEngagementMetrics}
+              onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT GA4 · ${item.label}`, item)}
+            />
+          )}
+          <MetricListCard
+            title="UAT Product Events"
+            subtitle="Live aggregate events, actors, sessions, search, and chat signals"
+            items={hushhAiUatProductEventMetrics}
+            onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Product Events · ${item.label}`, item)}
+          />
+        </div>
+        {hushhAiUatGa4Available && (
+          <>
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <MetricListCard title="UAT Session Channels" subtitle="GA4 session channel groups" items={hushhAiUatAcquisitionMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Acquisition · ${item.label}`, item)} />
+              <MetricListCard title="UAT Source / Medium" subtitle="GA4 session source attribution" items={hushhAiUatSourceMediumMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Source · ${item.label}`, item)} />
+              <MetricListCard title="UAT Landing Pages" subtitle="First page in each GA4 session" items={hushhAiUatLandingPageMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Landing · ${item.label}`, item)} />
+              <MetricListCard title="UAT Geo + Device" subtitle="Aggregate country and device mix" items={hushhAiUatGeoDeviceMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Geo · ${item.label}`, item)} />
+              <MetricListCard title="UAT Session Timing" subtitle="Top session hours in GA4 property timezone" items={hushhAiUatSessionTimingMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Timing · ${item.label}`, item)} />
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <ChartShell title="UAT Top Pages / Screens" subtitle="GA4 aggregate page views for uat.hushh.ai" action={<DetailActionButton label="Details" onClick={() => openHushhAiUatDetail('Hushh AI UAT Pages / Screens')} />}>
+                {hushhAiUatTopPageMetrics.length === 0 ? (
+                  <EmptyState>Waiting for UAT GA4 page and screen aggregates.</EmptyState>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hushhAiUatTopPageMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                      <CartesianGrid stroke="#e8eaed" horizontal={false} />
+                      <XAxis type="number" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                      <YAxis type="category" dataKey="label" width={118} stroke="#5f6368" fontSize={11} fontWeight={400} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                      <Bar dataKey="value" name="Page views" fill="#ff9500" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT Pages / Screens')} cursor="pointer" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </ChartShell>
+              <ChartShell title="UAT Top GA4 Events" subtitle="Aggregate UAT events that show validation behavior" action={<DetailActionButton label="Details" onClick={() => openHushhAiUatDetail('Hushh AI UAT GA4 Events')} />}>
+                {hushhAiUatTopEventMetrics.length === 0 ? (
+                  <EmptyState>Waiting for UAT GA4 event aggregates.</EmptyState>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hushhAiUatTopEventMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                      <CartesianGrid stroke="#e8eaed" horizontal={false} />
+                      <XAxis type="number" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
+                      <YAxis type="category" dataKey="label" width={118} stroke="#5f6368" fontSize={11} fontWeight={400} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                      <Bar dataKey="value" name="Events" fill="#a142f4" radius={[0, 6, 6, 0]} onClick={() => openHushhAiUatDetail('Hushh AI UAT GA4 Events')} cursor="pointer" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </ChartShell>
+            </div>
+          </>
+        )}
+      </section>
+    </>
+  );
+
+  const renderHushhTechSection = () => (
+    <>
+      {activeView === 'hushhtech' && (
+        <SourceMatrix groups={sourceGroups.filter((g) => g.productKey === 'hushhtech')} onMetricClick={handleSourceMetricClick} />
+      )}
+      <section className={dashboardBand}>
+        <SectionHeader kicker="hushhtech.com" title="Complete report" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <MetricListCard title="Total Report" subtitle="Users, funnel, search, infra, and stored aggregates" items={hushhTechReportTotals} onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)} />
+          <MetricListCard title="Last 7 Days" subtitle="DAU, WAU, MAU, sessions, views, events, and engagement" items={hushhTechSevenDayMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech 7D · ${item.label}`, item)} />
+        </div>
+      </section>
+      <section className={dashboardBand}>
+        <SectionHeader kicker="hushhtech.com Supabase" title="Database truth metrics" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <MetricListCard title="Top 10 Database Metrics" subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts" items={hushhTechDatabaseMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)} />
+          <MetricListCard title="Database Range Summary" subtitle={hushhTechRangeLabel} items={hushhTechDailySummaryMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Database Range · ${item.label}`, item)} />
+        </div>
+        <div className="mt-4">
+          <DailyStatusTable rows={hushhTechDailyStatus} />
+        </div>
+      </section>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
+        <MetricListCard title="hushhtech.com Funnel" subtitle="Supabase business funnel aggregates" items={hushhTechBusinessMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel · ${item.label}`, item)} />
+        <MetricListCard title="hushhtech.com Activity" subtitle="Pages, routes, and event aggregates" items={hushhTechActivityMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Activity · ${item.label}`, item)} />
+      </section>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
+        <MetricListCard title="hushhtech.com Funnel Detail" subtitle="Signup, onboarding, KYC, profile, and chat steps" items={hushhTechFunnelMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel Detail · ${item.label}`, item)} />
+        <MetricListCard title="Data Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)} />
+      </section>
+    </>
+  );
+
+  const renderTrafficSection = () => (
+    <>
+      <section className={dashboardBand}>
+        <SectionHeader kicker="Traffic" title="Ecosystem activity" />
+        <div className={cn(gCard, 'p-5')}>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {platforms.map((platform) => (
+              <span key={platform.name} className="inline-flex h-7 items-center gap-1.5 rounded border border-[#dadce0] px-2.5 text-xs text-[#5f6368]">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: platform.color }} />
+                {platform.name}
+              </span>
+            ))}
+          </div>
+          <div className="h-[240px] w-full sm:h-[340px]">
+            {trafficData.length === 0 ? (
+              <EmptyState>No time-series aggregate rows available yet.</EmptyState>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trafficData} margin={{ top: 16, right: 8, left: -18, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorAi" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#1a73e8" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#1a73e8" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorAiUat" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ff9500" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#ff9500" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorKai" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#1e8e3e" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#1e8e3e" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorKaiProd" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#129eaf" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#129eaf" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorTech" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#a142f4" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="#a142f4" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#e8eaed" vertical={false} />
+                  <XAxis dataKey="time" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} dx={-10} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="ai" name="hushh.ai" stroke="#1a73e8" strokeWidth={2.5} fill="url(#colorAi)" />
+                  <Area type="monotone" dataKey="aiUat" name="uat.hushh.ai" stroke="#ff9500" strokeWidth={2.5} fill="url(#colorAiUat)" />
+                  <Area type="monotone" dataKey="kaiProd" name="kai.hushh.ai prod events" stroke="#129eaf" strokeWidth={2.5} fill="url(#colorKaiProd)" />
+                  <Area type="monotone" dataKey="kaiUat" name="uat.kai.hushh.ai events" stroke="#1e8e3e" strokeWidth={2.5} fill="url(#colorKai)" />
+                  <Area type="monotone" dataKey="tech" name="hushhtech.com" stroke="#a142f4" strokeWidth={2.5} fill="url(#colorTech)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
+          <MetricListCard title="hushh.ai Search" subtitle="Search Console export metrics" items={hushhAiSearchMetrics} />
+          <MetricListCard title="uat.hushh.ai GCP" subtitle="Hushh AI UAT Cloud Run metrics" items={hushhAiUatOpsMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT GCP · ${item.label}`, item)} />
+          {hushhAiUatSearchAvailable && (
+            <MetricListCard title="uat.hushh.ai Search" subtitle="Hushh AI UAT Search Console metrics" items={hushhAiUatSearchMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Search · ${item.label}`, item)} />
+          )}
+          <MetricListCard title="hushhtech.com Audience" subtitle="Public endpoint audience and traffic" items={hushhTechAudienceMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Audience · ${item.label}`, item)} />
+          <MetricListCard title="Search + Ops" subtitle="Search Console, GA4, and Cloud Run" items={hushhTechOpsMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Search + Ops · ${item.label}`, item)} />
+        </div>
+      </section>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3')}>
+        <div className={cn(gCard, 'p-5')}>
+          <h3 className="mb-4 text-sm font-medium text-[#202124]">Search Surfaces</h3>
+          {acquisitionChannels.length === 0 ? (
+            <EmptyState>Waiting on first-party search or Search Console dimensions.</EmptyState>
+          ) : (
+            <>
+              <div className="relative mb-4 h-[180px] sm:h-[210px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={acquisitionChannels} innerRadius={62} outerRadius={88} paddingAngle={2} dataKey="value" stroke="none">
+                      {acquisitionChannels.map((entry) => (<Cell key={entry.name} fill={entry.color} />))}
+                    </Pie>
+                    <Tooltip content={<CustomTooltip />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-2xl font-bold text-[#202124]">100%</span>
+                  <span className="text-[11px] font-semibold text-[#5f6368]">Total</span>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {acquisitionChannels.map((channel) => (
+                  <div key={channel.name} className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2 text-[14px] font-medium text-[#202124]">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: channel.color }} />
+                      <span className="truncate">{channel.name}</span>
+                    </span>
+                    <span className="text-[14px] font-bold tabular-nums text-[#80868b]">{channel.value}%</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+        <div className={cn(gCard, 'p-5')}>
+          <h3 className="mb-4 text-sm font-medium text-[#202124]">Top Regions</h3>
+          {topCountries.length === 0 ? (
+            <EmptyState>No public-safe country or state rows yet.</EmptyState>
+          ) : (
+            <div className="space-y-5">
+              {topCountries.map((country) => (
+                <div key={country.name}>
+                  <div className="mb-2 flex items-end justify-between gap-3">
+                    <span className="text-[14px] font-medium text-[#202124]">{country.name}</span>
+                    <span className="text-[14px] font-bold tabular-nums text-[#80868b]">{country.visitors}</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-[#e8eaed]">
+                    <div className="h-full rounded-full bg-[#1a73e8]" style={{ width: `${country.percentage}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className={cn(gCard, 'p-5')}>
+          <h3 className="text-sm font-medium text-[#202124]">Kai UAT Active Users</h3>
+          <p className="mt-0.5 text-xs font-medium text-[#5f6368]">uat.kai.hushh.ai public feed, past 7 days</p>
+          <div className="mt-5 h-[250px]">
+            {dailyActiveUsers.length === 0 ? (
+              <EmptyState>No Kai daily active user rows available yet.</EmptyState>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyActiveUsers} margin={{ top: 12, right: 6, left: -22, bottom: 0 }}>
+                  <CartesianGrid stroke="#e8eaed" vertical={false} />
+                  <XAxis dataKey="day" stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke="#5f6368" fontSize={12} fontWeight={400} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
+                  <Tooltip cursor={{ fill: '#f1f3f4' }} content={<CustomTooltip />} />
+                  <Bar dataKey="users" name="Users" fill="#1e8e3e" radius={[6, 6, 0, 0]} barSize={24} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+      </section>
+    </>
+  );
+
+  const renderPlatformsContent = () => (
+    <>
+      <section className={dashboardBand}>
+        <SectionHeader kicker="Platforms" title="Source health" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {platforms.map((platform) => (
+            <div key={platform.name}><PlatformCard platform={platform} /></div>
+          ))}
+        </div>
+      </section>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3')}>
+        <MetricListCard title="Kai UAT GA4 Events" subtitle="uat.kai.hushh.ai GA4 export, top events" items={kaiEventMetrics} onItemClick={(item) => openKaiUatDetail(`Kai UAT GA4 Event · ${item.label}`, item)} />
+        <MetricListCard title="Kai UAT Geo + Device" subtitle="UAT country, device, and platform mix" items={kaiGeoMetrics} onItemClick={(item) => openKaiUatDetail(`Kai UAT Geo + Device · ${item.label}`, item)} />
+        <MetricListCard title="Kai UAT Usage Snapshot" subtitle="Latest UAT public feed usage rows" items={kaiUsageMetrics} onItemClick={(item) => openKaiUatDetail(`Kai UAT Usage · ${item.label}`, item)} />
+      </section>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3')}>
+        <MetricListCard title="Activation Rates" subtitle="Investor and RIA activation" items={kaiActivationMetrics} onItemClick={(item) => openKaiUatDetail(`Kai UAT Activation · ${item.label}`, item)} />
+        <MetricListCard title="Platform Mix" subtitle="Users by platform, latest feed day" items={platformMix} onItemClick={(item) => openKaiUatDetail(`Kai UAT Platform Mix · ${item.label}`, item)} />
+        <MetricListCard title="Feature Engagement" subtitle="Governed feature events" items={featureEngagement} onItemClick={(item) => openKaiUatDetail(`Kai UAT Feature Engagement · ${item.label}`, item)} />
+      </section>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3')}>
+        <MetricListCard title="Instrumentation Health" subtitle="Governed event schema coverage" items={instrumentationHealth} onItemClick={(item) => openKaiUatDetail(`Kai UAT Instrumentation · ${item.label}`, item)} />
+        <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
+        <MetricListCard title="uat.hushh.ai GCP" subtitle="Hushh AI UAT Cloud Run service metrics" items={hushhAiUatOpsMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT GCP · ${item.label}`, item)} />
+        <MetricListCard title="uat.hushh.ai Product Events" subtitle="Hushh AI UAT aggregate product events" items={hushhAiUatProductEventMetrics} onItemClick={(item) => openHushhAiUatDetail(`Hushh AI UAT Product Events · ${item.label}`, item)} />
+        <MetricListCard title="hushhtech.com Database" subtitle="Top Supabase aggregate counts" items={hushhTechDatabaseMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)} />
+        <MetricListCard title="hushhtech.com Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)} />
+      </section>
+    </>
+  );
+
+  const renderFunnelsContent = () => (
+    <>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
+        <FunnelCard title="Investor Funnel" steps={investorFunnel} />
+        <FunnelCard title="RIA Funnel" steps={riaFunnel} />
+      </section>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
+        <MetricListCard title="hushhtech.com Funnel" subtitle="Supabase business funnel aggregates" items={hushhTechBusinessMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel · ${item.label}`, item)} />
+        <MetricListCard title="hushhtech.com Activity" subtitle="Pages, routes, and event aggregates" items={hushhTechActivityMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Activity · ${item.label}`, item)} />
+      </section>
+      <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 md:grid-cols-2')}>
+        <MetricListCard title="hushhtech.com Funnel Detail" subtitle="Signup, onboarding, KYC, profile, and chat steps" items={hushhTechFunnelMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel Detail · ${item.label}`, item)} />
+        <MetricListCard title="Data Coverage" subtitle="Connected provider coverage" items={hushhTechCoverageMetrics} onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)} />
+      </section>
+    </>
+  );
+
+  const renderContent = () => {
+    switch (activeView) {
+      case 'sources':
+        return <SourceMatrix groups={filteredSourceGroups} onMetricClick={handleSourceMetricClick} />;
+      case 'kai_production':
+        return renderKaiProductionSection();
+      case 'kai_uat':
+        return renderKaiUatSection();
+      case 'hushh_ai':
+        return renderHushhAiSection();
+      case 'hushh_ai_uat':
+        return renderHushhAiUatSection();
+      case 'hushhtech':
+        return renderHushhTechSection();
+      case 'platforms':
+        return renderPlatformsContent();
+      case 'funnels':
+        return renderFunnelsContent();
+      case 'overview':
+      default:
+        return (
+          <>
+            <SourceMatrix groups={filteredSourceGroups} onMetricClick={handleSourceMetricClick} />
+            <section className={dashboardBand}>
+              <SectionHeader kicker="Current selected ranges" title="Key metrics" />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {kpiStats.map((stat, index) => (
+                  <div key={stat.label}><MetricCard stat={stat} index={index} /></div>
+                ))}
+              </div>
+            </section>
+            {showKaiProd && renderKaiProductionSection()}
+            {showKaiUat && renderKaiUatSection()}
+            {showHushhAi && renderHushhAiSection()}
+            {showHushhAiUat && renderHushhAiUatSection()}
+            {showHushhTech && renderHushhTechSection()}
+            {renderTrafficSection()}
+          </>
+        );
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#cce4ff] selection:text-[#003b76]">
+    <div className="min-h-screen bg-[#f8f9fa] text-[#202124] selection:bg-[#d2e3fc] selection:text-[#174ea6]">
       {loading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#f5f5f7]/80 backdrop-blur-xl">
-          <div className={cn(appleCard, 'flex items-center gap-3 px-5 py-3')}>
-            <Loader2 className="h-5 w-5 animate-spin text-[#007aff]" />
-            <p className="text-sm font-bold text-[#1d1d1f]">Loading live metrics</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#f8f9fa]/90">
+          <div className={cn(gCard, 'flex items-center gap-3 px-5 py-3 shadow-md')}>
+            <Loader2 className="h-5 w-5 animate-spin text-[#1a73e8]" />
+            <p className="text-sm text-[#202124]">Loading live metrics</p>
           </div>
         </div>
       )}
 
-      <div className="mx-auto max-w-[1320px] px-4 pb-10 pt-4 sm:px-6 sm:pb-12 sm:pt-6 lg:px-8">
-        <div className="sticky top-3 z-30 mb-8 rounded-lg border border-white/70 bg-white/76 p-2 shadow-[0_8px_24px_rgba(0,0,0,0.07)] backdrop-blur-2xl">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <div className={cn(
-              'flex min-h-10 min-w-0 items-center gap-2 rounded-lg border px-3 text-sm font-bold',
-              usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
-            )}>
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              <span className="min-w-0">{statusText}</span>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="inline-flex min-w-0 flex-1 rounded-lg bg-[#f5f5f7] p-1 sm:flex-none" role="tablist" aria-label="Dashboard sections">
-                {(['overview', 'platforms'] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={cn(
-                      'min-h-9 flex-1 rounded-md px-4 text-sm font-bold capitalize transition sm:flex-none',
-                      activeTab === tab
-                        ? 'bg-white text-[#1d1d1f] shadow-sm'
-                        : 'text-[#6e6e73] hover:text-[#1d1d1f]',
-                    )}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={() => loadData()}
-                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] sm:px-4"
-              >
-                <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-                Refresh
-              </button>
-            </div>
-          </div>
-        </div>
+      {renderContentHeader()}
 
-        <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-          <div>
-            <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-lg border border-black/[0.06] bg-white/90 shadow-sm">
-              <span className="text-3xl" aria-label="Hussh logo">🤫</span>
-            </div>
-            <p className="text-sm font-bold uppercase text-[#86868b]">Hussh Matrix</p>
-            <h1 className="mt-2 max-w-3xl text-4xl font-semibold text-[#1d1d1f] sm:text-5xl lg:text-6xl">
-              Analytics control center
-            </h1>
-            <p className="mt-4 max-w-2xl text-base font-medium leading-7 text-[#6e6e73] sm:text-lg">
-              Live aggregate metrics for kai.hushh.ai, hushhtech.com, and hushh.ai with provider health surfaced inline.
-            </p>
-          </div>
-        </header>
-
-        {activeTab === 'overview' ? (
-          <main className="space-y-10">
-            <SourceMatrix groups={sourceGroups} onMetricClick={handleSourceMetricClick} />
-
-            <section className={dashboardBand}>
-              <SectionHeader kicker="Current selected ranges" title="Key metrics" />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {kpiStats.map((stat, index) => (
-                  <div key={stat.label}>
-                    <MetricCard stat={stat} index={index} />
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className={dashboardBand}>
-              <SectionHeader
-                kicker="kai.hushh.ai · production"
-                title="Production traffic + readiness"
-                action={(
-                  <DateRangeControl
-                    range={kaiRange}
-                    onPreset={(days) => setKaiRange(rangeForPreset(days))}
-                    onCustomRange={setKaiRange}
-                    ariaLabelPrefix="Kai production"
-                  />
-                )}
-              />
-              <div className="mb-4">
-                <ProductLivePanel
-                  kicker="Kai production live mode"
-                  title="Production sources"
-                  refreshingLabel="Refreshing Kai production sources"
-                  freshness={kaiProductionFreshness}
-                  lastUpdated={data?.lastUpdated}
-                  autoRefresh={autoRefresh}
-                  isRefreshing={isRefreshing}
-                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
-                />
-              </div>
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
-                <MetricListCard
-                  title="Production Range Summary"
-                  subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
-                  items={kaiProductionDailySummaryMetrics}
-                  onItemClick={(item) => openKaiProductionDetail(`Kai Production · ${item.label}`, item)}
-                />
-                <ChartShell
-                  title="Users, Sessions, Events"
-                  subtitle="Production GA4 export; shows waiting until analytics_526603671 materializes"
-                  action={<DetailActionButton onClick={() => openKaiProductionDetail('Kai Production GA4 Details')} />}
-                >
-                  {!kaiProductionGa4Available ? (
-                    <EmptyState>Production GA4 export is not ready yet. Cloud Run production traffic is shown below.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="users" name="Users" fill="#12b5cb" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="sessions" name="Sessions" fill="#007aff" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="events" name="Events" fill="#af52de" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-                <ChartShell
-                  title="Production Traffic + Reliability"
-                  subtitle="Cloud Run requests, 5xx responses, and latency context"
-                  action={<DetailActionButton onClick={() => openKaiProductionDetail('Kai Production Reliability Details')} />}
-                >
-                  {kaiProductionDailyStatus.length === 0 ? (
-                    <EmptyState>No Kai production traffic rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="kaiProdRequests" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#12b5cb" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#12b5cb" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="kaiProdErrors" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
-                            <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Area type="monotone" dataKey="requests" name="Requests" stroke="#12b5cb" strokeWidth={2.5} fill="url(#kaiProdRequests)" />
-                        <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#kaiProdErrors)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-                <MetricListCard
-                  title="Production Readiness"
-                  subtitle="Production feed and GA4 export only; UAT is tracked in its own matrix."
-                  items={kaiProductionReadinessMetrics}
-                  onItemClick={(item) => openKaiProductionDetail(`Kai Production Readiness · ${item.label}`, item)}
-                />
-                <div className="xl:col-span-2">
-                  <KaiDailyStatusTable rows={kaiProductionDailyStatus} />
-                </div>
-              </div>
-            </section>
-
-            <section className={dashboardBand}>
-              <SectionHeader
-                kicker="uat.kai.hushh.ai · UAT"
-                title="UAT status matrix"
-                action={(
-                  <DateRangeControl
-                    range={kaiRange}
-                    onPreset={(days) => setKaiRange(rangeForPreset(days))}
-                    onCustomRange={setKaiRange}
-                    ariaLabelPrefix="Kai UAT"
-                  />
-                )}
-              />
-              <div className="mb-4">
-                <ProductLivePanel
-                  kicker="Kai UAT live mode"
-                  title="UAT sources"
-                  refreshingLabel="Refreshing Kai UAT sources"
-                  freshness={kaiUatFreshness}
-                  lastUpdated={data?.lastUpdated}
-                  autoRefresh={autoRefresh}
-                  isRefreshing={isRefreshing}
-                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
-                />
-              </div>
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
-                <MetricListCard
-                  title="UAT Range Summary"
-                  subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
-                  items={kaiUatDailySummaryMetrics}
-                  onItemClick={(item) => openKaiUatDetail(`Kai UAT · ${item.label}`, item)}
-                />
-                <ChartShell
-                  title="UAT Users, Sessions, Events"
-                  subtitle="uat.kai.hushh.ai GA4 export"
-                  action={<DetailActionButton onClick={() => openKaiUatDetail('Kai UAT GA4 Details')} />}
-                >
-                  {kaiUatDailyStatus.length === 0 ? (
-                    <EmptyState>No Kai UAT GA4 daily rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="ga4Users" name="GA4 Users" fill="#12b5cb" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="ga4Sessions" name="GA4 Sessions" fill="#007aff" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="ga4Events" name="GA4 Events" fill="#af52de" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-                <ChartShell
-                  title="UAT DB Events"
-                  subtitle="UAT public feed DAU, sessions, and total events"
-                  action={<DetailActionButton onClick={() => openKaiUatDetail('Kai UAT DB Event Details')} />}
-                >
-                  {kaiUatDailyStatus.length === 0 ? (
-                    <EmptyState>No Kai UAT DB daily rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="feedDau" name="DB DAU" fill="#34c759" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="feedSessions" name="DB Sessions" fill="#ff9500" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="feedEvents" name="DB Events" fill="#5856d6" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-                <div className="xl:col-span-2">
-                  <KaiUatDailyStatusTable rows={kaiUatDailyStatus} />
-                </div>
-              </div>
-            </section>
-
-            <section className={dashboardBand}>
-              <SectionHeader
-                kicker="hushh.ai"
-                title="Analytics status matrix"
-                action={(
-                  <DateRangeControl
-                    range={hushhAiRange}
-                    onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
-                    onCustomRange={setHushhAiRange}
-                    ariaLabelPrefix="Hushh AI"
-                  />
-                )}
-              />
-              <div className="mb-4">
-                <ProductLivePanel
-                  kicker="Hushh AI live mode"
-                  title="Fresh on refresh"
-                  refreshingLabel="Refreshing Hushh AI sources"
-                  freshness={hushhAiFreshness}
-                  lastUpdated={data?.lastUpdated}
-                  autoRefresh={autoRefresh}
-                  isRefreshing={isRefreshing}
-                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
-                />
-              </div>
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
-                <MetricListCard
-                  title="Range Summary"
-                  subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
-                  items={hushhAiDailySummaryMetrics}
-                />
-                <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, 5xx responses, and latency context">
-                  {hushhAiDailyStatus.length === 0 ? (
-                    <EmptyState>No Hushh AI traffic rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="hushhAiRequests" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#007aff" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#007aff" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="hushhAiErrors" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#ff3b30" stopOpacity={0.16} />
-                            <stop offset="95%" stopColor="#ff3b30" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Area type="monotone" dataKey="requests" name="Requests" stroke="#007aff" strokeWidth={2.5} fill="url(#hushhAiRequests)" />
-                        <Area type="monotone" dataKey="errors" name="5xx" stroke="#ff3b30" strokeWidth={2.5} fill="url(#hushhAiErrors)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <MetricListCard
-                  title="GA4 Engagement"
-                  subtitle="Users, sessions, events, and engaged-session quality"
-                  items={hushhAiEngagementMetrics}
-                  onItemClick={(item) => {
-                    if (/user/i.test(item.label)) openHushhAiGa4Detail('users', item.label);
-                    else if (/session/i.test(item.label) && !/engaged/i.test(item.label)) openHushhAiGa4Detail('sessions', item.label);
-                    else if (/event/i.test(item.label)) openHushhAiGa4Detail('events', item.label);
-                    else openHushhAiGa4Detail('engagement', item.label);
-                  }}
-                />
-                <MetricListCard
-                  title="Future Product Events"
-                  subtitle="Custom hushh.ai funnel events waiting for a real aggregate source"
-                  items={hushhAiProductEventMetrics}
-                  onItemClick={handleHushhAiMetricListClick('product')}
-                />
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-                <MetricListCard
-                  title="Where Sessions Came From"
-                  subtitle="GA4 session channel groups"
-                  items={hushhAiAcquisitionMetrics}
-                  onItemClick={handleHushhAiMetricListClick('acquisition')}
-                />
-                <MetricListCard
-                  title="Source / Medium"
-                  subtitle="GA4 session source attribution"
-                  items={hushhAiSourceMediumMetrics}
-                  onItemClick={handleHushhAiMetricListClick('source')}
-                />
-                <MetricListCard
-                  title="Landing Pages"
-                  subtitle="First page in each GA4 session"
-                  items={hushhAiLandingPageMetrics}
-                  onItemClick={handleHushhAiMetricListClick('landing')}
-                />
-                <MetricListCard
-                  title="Geo + Device"
-                  subtitle="Aggregate country and device mix"
-                  items={hushhAiGeoDeviceMetrics}
-                  onItemClick={handleHushhAiMetricListClick('geo')}
-                />
-                <MetricListCard
-                  title="Session Timing"
-                  subtitle="Top session hours in GA4 property timezone"
-                  items={hushhAiSessionTimingMetrics}
-                  onItemClick={handleHushhAiMetricListClick('timing')}
-                />
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <ChartShell
-                  title="Top Pages / Screens"
-                  subtitle="GA4 aggregate page views for hushh.ai"
-                  action={(
-                    <button
-                      type="button"
-                      onClick={() => openHushhAiGa4Detail('pages')}
-                      className="rounded-full bg-[#f5f5f7] px-3 py-1.5 text-xs font-bold text-[#007aff] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
-                    >
-                      Details
-                    </button>
-                  )}
-                >
-                  {hushhAiTopPageMetrics.length === 0 ? (
-                    <EmptyState>Waiting for GA4 page and screen aggregates.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={hushhAiTopPageMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" horizontal={false} />
-                        <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
-                        <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="value" name="Page views" fill="#007aff" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('pages')} cursor="pointer" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-                <ChartShell
-                  title="Top GA4 Events"
-                  subtitle="Aggregate events that show what visitors are doing"
-                  action={(
-                    <button
-                      type="button"
-                      onClick={() => openHushhAiGa4Detail('events')}
-                      className="rounded-full bg-[#f5f5f7] px-3 py-1.5 text-xs font-bold text-[#007aff] transition hover:bg-[#e8f2ff] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
-                    >
-                      Details
-                    </button>
-                  )}
-                >
-                  {hushhAiTopEventMetrics.length === 0 ? (
-                    <EmptyState>Waiting for GA4 event aggregates.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={hushhAiTopEventMetrics} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" horizontal={false} />
-                        <XAxis type="number" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} />
-                        <YAxis type="category" dataKey="label" width={118} stroke="#86868b" fontSize={11} fontWeight={700} tickLine={false} axisLine={false} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="value" name="Events" fill="#34c759" radius={[0, 6, 6, 0]} onClick={() => openHushhAiGa4Detail('events')} cursor="pointer" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-              </div>
-            </section>
-
-            <section className={dashboardBand}>
-              <SectionHeader kicker="hushhtech.com" title="Complete report" />
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <MetricListCard
-                  title="Total Report"
-                  subtitle="Users, funnel, search, infra, and stored aggregates"
-                  items={hushhTechReportTotals}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)}
-                />
-                <MetricListCard
-                  title="Last 7 Days"
-                  subtitle="DAU, WAU, MAU, sessions, views, events, and engagement"
-                  items={hushhTechSevenDayMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech 7D · ${item.label}`, item)}
-                />
-              </div>
-            </section>
-
-            <section className={dashboardBand}>
-              <SectionHeader kicker="hushhtech.com Supabase" title="Database truth metrics" />
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <MetricListCard
-                  title="Top 10 Database Metrics"
-                  subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts"
-                  items={hushhTechDatabaseMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)}
-                />
-                <MetricListCard
-                  title="Database Range Summary"
-                  subtitle={hushhTechRangeLabel}
-                  items={hushhTechDailySummaryMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Database Range · ${item.label}`, item)}
-                />
-              </div>
-              <div className="mt-4">
-                <DailyStatusTable rows={hushhTechDailyStatus} />
-              </div>
-            </section>
-
-            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_0.95fr]')}>
-              <div className={cn(appleCard, 'p-5')}>
-                <SectionHeader kicker="Traffic" title="Ecosystem activity" />
-                <div className="mb-4 flex flex-wrap items-center gap-3">
-                  {platforms.map((platform) => (
-                    <span key={platform.name} className="inline-flex min-h-8 items-center gap-2 rounded-full bg-[#f5f5f7] px-3 text-xs font-bold text-[#6e6e73]">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: platform.color }} />
-                      {platform.name}
-                    </span>
-                  ))}
-                </div>
-                <div className="h-[340px] w-full">
-                  {trafficData.length === 0 ? (
-                    <EmptyState>No time-series aggregate rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={trafficData} margin={{ top: 16, right: 8, left: -18, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="colorAi" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#007aff" stopOpacity={0.18} />
-                            <stop offset="95%" stopColor="#007aff" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="colorKai" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#34c759" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#34c759" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="colorKaiProd" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#12b5cb" stopOpacity={0.18} />
-                            <stop offset="95%" stopColor="#12b5cb" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="colorTech" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#af52de" stopOpacity={0.18} />
-                            <stop offset="95%" stopColor="#af52de" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="time" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} dx={-10} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Area type="monotone" dataKey="ai" name="hushh.ai" stroke="#007aff" strokeWidth={2.5} fill="url(#colorAi)" />
-                        <Area type="monotone" dataKey="kaiProd" name="kai.hushh.ai prod events" stroke="#12b5cb" strokeWidth={2.5} fill="url(#colorKaiProd)" />
-                        <Area type="monotone" dataKey="kaiUat" name="uat.kai.hushh.ai events" stroke="#34c759" strokeWidth={2.5} fill="url(#colorKai)" />
-                        <Area type="monotone" dataKey="tech" name="hushhtech.com" stroke="#af52de" strokeWidth={2.5} fill="url(#colorTech)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4">
-                <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
-                <MetricListCard title="hushh.ai Search" subtitle="Search Console export metrics" items={hushhAiSearchMetrics} />
-                <MetricListCard
-                  title="hushhtech.com Audience"
-                  subtitle="Public endpoint audience and traffic"
-                  items={hushhTechAudienceMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Audience · ${item.label}`, item)}
-                />
-                <MetricListCard
-                  title="Search + Ops"
-                  subtitle="Search Console, GA4, and Cloud Run"
-                  items={hushhTechOpsMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Search + Ops · ${item.label}`, item)}
-                />
-              </div>
-            </section>
-
-            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
-              <div className={cn(appleCard, 'p-5')}>
-                <h3 className="mb-4 text-lg font-semibold text-[#1d1d1f]">Search Surfaces</h3>
-                {acquisitionChannels.length === 0 ? (
-                  <EmptyState>Waiting on first-party search or Search Console dimensions.</EmptyState>
-                ) : (
-                  <>
-                    <div className="relative mb-4 h-[210px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie data={acquisitionChannels} innerRadius={62} outerRadius={88} paddingAngle={2} dataKey="value" stroke="none">
-                            {acquisitionChannels.map((entry) => (
-                              <Cell key={entry.name} fill={entry.color} />
-                            ))}
-                          </Pie>
-                          <Tooltip content={<CustomTooltip />} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-2xl font-semibold text-[#1d1d1f]">100%</span>
-                        <span className="text-xs font-bold text-[#86868b]">Total</span>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      {acquisitionChannels.map((channel) => (
-                        <div key={channel.name} className="flex items-center justify-between gap-3">
-                          <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[#1d1d1f]">
-                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: channel.color }} />
-                            <span className="truncate">{channel.name}</span>
-                          </span>
-                          <span className="text-sm font-bold text-[#6e6e73]">{channel.value}%</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className={cn(appleCard, 'p-5')}>
-                <h3 className="mb-4 text-lg font-semibold text-[#1d1d1f]">Top Regions</h3>
-                {topCountries.length === 0 ? (
-                  <EmptyState>No public-safe country or state rows yet.</EmptyState>
-                ) : (
-                  <div className="space-y-5">
-                    {topCountries.map((country) => (
-                      <div key={country.name}>
-                        <div className="mb-2 flex items-end justify-between gap-3">
-                          <span className="text-sm font-semibold text-[#1d1d1f]">{country.name}</span>
-                          <span className="text-sm font-bold text-[#6e6e73]">{country.visitors}</span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-[#f5f5f7]">
-                          <div className="h-full rounded-full bg-[#007aff]" style={{ width: `${country.percentage}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className={cn(appleCard, 'p-5')}>
-                <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai UAT Active Users</h3>
-                <p className="mt-1 text-sm font-medium text-[#86868b]">uat.kai.hushh.ai public feed, past 7 days</p>
-                <div className="mt-5 h-[250px]">
-                  {dailyActiveUsers.length === 0 ? (
-                    <EmptyState>No Kai daily active user rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={dailyActiveUsers} margin={{ top: 12, right: 6, left: -22, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="day" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="users" name="Users" fill="#34c759" radius={[6, 6, 0, 0]} barSize={24} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
-              <MetricListCard
-                title="Kai UAT GA4 Events"
-                subtitle="uat.kai.hushh.ai GA4 export, top events"
-                items={kaiEventMetrics}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT GA4 Event · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="Kai UAT Geo + Device"
-                subtitle="UAT country, device, and platform mix"
-                items={kaiGeoMetrics}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Geo + Device · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="Kai UAT Usage Snapshot"
-                subtitle="Latest UAT public feed usage rows"
-                items={kaiUsageMetrics}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Usage · ${item.label}`, item)}
-              />
-            </section>
-
-            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
-              <MetricListCard
-                title="hushhtech.com Funnel"
-                subtitle="Supabase business funnel aggregates"
-                items={hushhTechBusinessMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="hushhtech.com Activity"
-                subtitle="Pages, routes, and event aggregates"
-                items={hushhTechActivityMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Activity · ${item.label}`, item)}
-              />
-            </section>
-
-            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
-              <MetricListCard
-                title="hushhtech.com Funnel Detail"
-                subtitle="Signup, onboarding, KYC, profile, and chat steps"
-                items={hushhTechFunnelMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel Detail · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="Data Coverage"
-                subtitle="Connected provider coverage"
-                items={hushhTechCoverageMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)}
-              />
-            </section>
-          </main>
-        ) : (
-          <main className="space-y-10">
-            <section className={dashboardBand}>
-              <SectionHeader kicker="Platforms" title="Source health" />
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                {platforms.map((platform) => (
-                  <div key={platform.name}>
-                    <PlatformCard platform={platform} />
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
-              <FunnelCard title="Investor Funnel" steps={investorFunnel} />
-              <FunnelCard title="RIA Funnel" steps={riaFunnel} />
-            </section>
-
-            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
-              <MetricListCard
-                title="Activation Rates"
-                subtitle="Investor and RIA activation"
-                items={kaiActivationMetrics}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Activation · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="Platform Mix"
-                subtitle="Users by platform, latest feed day"
-                items={platformMix}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Platform Mix · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="Feature Engagement"
-                subtitle="Governed feature events"
-                items={featureEngagement}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Feature Engagement · ${item.label}`, item)}
-              />
-            </section>
-
-            <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
-              <MetricListCard
-                title="Instrumentation Health"
-                subtitle="Governed event schema coverage"
-                items={instrumentationHealth}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Instrumentation · ${item.label}`, item)}
-              />
-              <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
-              <MetricListCard
-                title="hushhtech.com Database"
-                subtitle="Top Supabase aggregate counts"
-                items={hushhTechDatabaseMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="hushhtech.com Coverage"
-                subtitle="Connected provider coverage"
-                items={hushhTechCoverageMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)}
-              />
-            </section>
-          </main>
-        )}
+      <div className="px-4 pb-8 pt-4 sm:px-6 sm:pb-10 sm:pt-6 lg:px-8">
+        <main className="space-y-2">
+          {renderContent()}
+        </main>
       </div>
 
       <MetricDetailDialog detail={metricDetail} onClose={closeMetricDetail} />
-      <HusshInsightsAgent />
+      <HusshInsightsAgent context={agentContext} />
     </div>
   );
 }

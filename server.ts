@@ -68,6 +68,21 @@ const KAI_PROD_METRICS_WINDOW_DAYS = parseInt(process.env.KAI_PROD_METRICS_WINDO
 const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod';
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
+const HUSHH_AI_PRODUCT_EVENTS_PROJECT =
+  process.env.HUSHH_AI_PRODUCT_EVENTS_PROJECT || 'hushh-ai-prod';
+const HUSHH_AI_PRODUCT_EVENTS_DATASET =
+  process.env.HUSHH_AI_PRODUCT_EVENTS_DATASET || 'hushh_search_console';
+const HUSHH_AI_UAT_GCP_PROJECT = process.env.HUSHH_AI_UAT_GCP_PROJECT || 'hushh-ai-uat';
+const HUSHH_AI_UAT_CLOUD_RUN_SERVICE =
+  process.env.HUSHH_AI_UAT_CLOUD_RUN_SERVICE || 'hushh-ai-website';
+const HUSHH_AI_UAT_METRICS_WINDOW_DAYS = parseInt(
+  process.env.HUSHH_AI_UAT_METRICS_WINDOW_DAYS || String(HUSHH_AI_METRICS_WINDOW_DAYS),
+  10,
+);
+const HUSHH_AI_UAT_PRODUCT_EVENTS_PROJECT =
+  process.env.HUSHH_AI_UAT_PRODUCT_EVENTS_PROJECT || 'hushh-ai-uat';
+const HUSHH_AI_UAT_PRODUCT_EVENTS_DATASET =
+  process.env.HUSHH_AI_UAT_PRODUCT_EVENTS_DATASET || 'hushh_search_console';
 const HUSHH_AI_SEARCH_PROJECT = process.env.HUSHH_AI_SEARCH_PROJECT || BQ_PROD_PROJECT;
 const HUSHH_AI_SEARCH_DATASET =
   process.env.HUSHH_AI_SEARCH_DATASET || 'searchconsole_searchconsole_hushh_ai';
@@ -143,7 +158,7 @@ const PUBLIC_OMIT_KEYS = new Set([
   'sourceTable',
   'pageFilterRegex',
 ]);
-const PUBLIC_UNSAFE_VALUE_PATTERN = /analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda(?:-uat)?|ibsisfnjxeowvdtvgzff/i;
+const PUBLIC_UNSAFE_VALUE_PATTERN = /analytics_\d+|searchconsole_|hushh_search_console|_search_console_api|hushh-ai-(?:prod|uat)|hushh-pda(?:-uat)?|ibsisfnjxeowvdtvgzff/i;
 
 function sanitizePublicPayload(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => sanitizePublicPayload(item));
@@ -244,6 +259,10 @@ function parseProductDateRange(
 
 function parseHushhAiDateRange(query: Record<string, unknown>): HushhAiDateRange {
   return parseProductDateRange(query, 'hushh_ai', HUSHH_AI_METRICS_WINDOW_DAYS);
+}
+
+function parseHushhAiUatDateRange(query: Record<string, unknown>): HushhAiDateRange {
+  return parseProductDateRange(query, 'hushh_ai_uat', HUSHH_AI_UAT_METRICS_WINDOW_DAYS);
 }
 
 function parseKaiDateRange(query: Record<string, unknown>): HushhAiDateRange {
@@ -1909,14 +1928,13 @@ async function fetchGa4DataApiSummary(
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const dateRanges = [{ startDate: range.startDate, endDate: range.endDate }];
-  const last7DateRanges = [{ startDate: '7daysAgo', endDate: 'today' }];
+  const last7DateRanges = [{ startDate: '6daysAgo', endDate: 'today' }];
   const last24DateRanges = [{ startDate: 'yesterday', endDate: 'today' }];
   const ga4Warnings = [
     'GA4 aggregate data only; no user-level/session-level rows.',
     'Users are non-additive across days and dimensions.',
     'Hourly timestamps are in the GA4 property timezone.',
     'Last-day/today data is processed GA4 reporting data and may change.',
-    'DB/Product Events are not configured, so conversion/signup/product behavior is unavailable.',
   ];
   const coreMetrics = [
     { name: 'activeUsers' },
@@ -2415,6 +2433,10 @@ async function fetchHushhAiCloudRun(range: HushhAiDateRange): Promise<DataResult
   return fetchCloudRunSummary(HUSHH_AI_GCP_PROJECT, HUSHH_AI_CLOUD_RUN_SERVICE, range, 'Hushh AI');
 }
 
+async function fetchHushhAiUatCloudRun(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  return fetchCloudRunSummary(HUSHH_AI_UAT_GCP_PROJECT, HUSHH_AI_UAT_CLOUD_RUN_SERVICE, range, 'Hushh AI UAT');
+}
+
 async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   return fetchProductSearchConsole({
     productLabel: 'Hushh AI',
@@ -2428,6 +2450,58 @@ async function fetchHushhAiSearchConsole(range: HushhAiDateRange): Promise<DataR
     rowLimit: HUSHH_AI_SEARCH_CONSOLE_ROW_LIMIT,
     pageFilterRegex: HUSHH_AI_SEARCH_CONSOLE_PAGE_FILTER_REGEX,
   }, range);
+}
+
+function waitingHushhAiUatSearchConsole(range: HushhAiDateRange): Record<string, unknown> {
+  const note = 'Hushh AI UAT Search Console source is not configured in metrics.hushh.ai yet.';
+  return {
+    ...unavailableProductSearchConsole({
+      productLabel: 'Hushh AI UAT',
+      sourceProjectId: '',
+      sourceDataset: '',
+      fallbackProjectId: '',
+      fallbackDataset: '',
+      siteUrl: 'https://uat.hushh.ai',
+      searchType: 'web',
+      dataState: 'all',
+      rowLimit: 10,
+    }, range, note),
+    source: 'not_configured',
+    sourceLabel: 'Search Console not configured',
+    status: 'not_configured',
+    realtimeMode: 'not_configured',
+    expectedLagSeconds: null,
+    rangeTotals: {
+      clicks: null,
+      impressions: null,
+      ctr: null,
+      averagePosition: null,
+    },
+    clicks: null,
+    impressions: null,
+    daily: [],
+    note,
+  };
+}
+
+function waitingHushhAiUatGa4Summary(range: HushhAiDateRange): Record<string, unknown> {
+  const note = 'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.';
+  return {
+    ...waitingGa4Summary(
+      'Hushh AI UAT',
+      range,
+      '',
+      '',
+      note,
+    ),
+    sourceLabel: 'GA4 not configured',
+    status: 'not_configured',
+    realtimeMode: 'not_configured',
+    expectedLagSeconds: null,
+    sections: [],
+    daily: [],
+    note,
+  };
 }
 
 async function fetchKaiSearchConsoleFor(
@@ -2551,6 +2625,10 @@ function buildHushhAiFreshness(
   searchConsole: Record<string, unknown> | null,
   ga4: Record<string, unknown> | null = null,
   productEvents: Record<string, unknown> | null = null,
+  options: {
+    includeSearchConsole?: boolean;
+    includeGa4?: boolean;
+  } = {},
 ) {
   const searchAvailable = Boolean(searchConsole?.available);
   const ga4Available = Boolean(ga4?.available);
@@ -2558,50 +2636,55 @@ function buildHushhAiFreshness(
   const productEventsState = eventsAvailable
     ? 'live'
     : String(productEvents?.status ?? 'waiting');
+  const sources = [
+    {
+      key: 'gcp',
+      label: 'Cloud Run',
+      state: gcp ? 'near_live' : 'unavailable',
+      realtimeLevel: gcp ? 'monitoring_lag' : 'unavailable',
+      generatedAt: typeof gcp?.generatedAt === 'string' ? gcp.generatedAt : fetchedAt,
+      expectedLagSeconds: 300,
+      detail: gcp ? 'Google Cloud Monitoring can lag by a few minutes' : 'Cloud Run Monitoring unavailable',
+    },
+  ];
+  if (options.includeSearchConsole !== false) {
+    sources.push({
+      key: 'search_console',
+      label: 'Search Console',
+      state: searchAvailable ? 'delayed' : 'waiting',
+      realtimeLevel: 'delayed_export',
+      generatedAt: typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : fetchedAt,
+      expectedLagSeconds: 86_400,
+      detail: searchAvailable ? 'Search Console exports are delayed' : 'export tables/data not ready for this window',
+    });
+  }
+  if (options.includeGa4 !== false) {
+    sources.push({
+      key: 'ga4',
+      label: 'GA4',
+      state: ga4Available ? 'delayed' : 'waiting',
+      realtimeLevel: 'delayed_export',
+      generatedAt: typeof ga4?.generatedAt === 'string' ? ga4.generatedAt : fetchedAt,
+      expectedLagSeconds: 86_400,
+      detail: ga4Available ? 'GA4 export is available with daily export lag' : 'GA4 source is not configured or has not exported rows yet',
+    });
+  }
+  sources.push({
+    key: 'product_events',
+    label: 'DB / Product Events',
+    state: productEventsState,
+    realtimeLevel: eventsAvailable ? 'events_aggregate' : 'not_configured',
+    generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : fetchedAt,
+    expectedLagSeconds: eventsAvailable ? null : null,
+    detail: eventsAvailable
+      ? 'Product event aggregates are available'
+      : String(productEvents?.note ?? 'Hushh AI DB aggregate source is not configured yet'),
+  });
   return {
     mode: 'polling',
     refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
     fetchedAt,
-    sources: [
-      {
-        key: 'gcp',
-        label: 'Cloud Run',
-        state: gcp ? 'near_live' : 'unavailable',
-        realtimeLevel: gcp ? 'monitoring_lag' : 'unavailable',
-        generatedAt: typeof gcp?.generatedAt === 'string' ? gcp.generatedAt : fetchedAt,
-        expectedLagSeconds: 300,
-        detail: gcp ? 'Google Cloud Monitoring can lag by a few minutes' : 'Cloud Run Monitoring unavailable',
-      },
-      {
-        key: 'search_console',
-        label: 'Search Console',
-        state: searchAvailable ? 'delayed' : 'waiting',
-        realtimeLevel: 'delayed_export',
-        generatedAt: typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : fetchedAt,
-        expectedLagSeconds: 86_400,
-        detail: searchAvailable ? 'Search Console exports are delayed' : 'export tables/data not ready for this window',
-      },
-      {
-        key: 'ga4',
-        label: 'GA4',
-        state: ga4Available ? 'delayed' : 'waiting',
-        realtimeLevel: 'delayed_export',
-        generatedAt: typeof ga4?.generatedAt === 'string' ? ga4.generatedAt : fetchedAt,
-        expectedLagSeconds: 86_400,
-        detail: ga4Available ? 'GA4 export is available with daily export lag' : 'GA4 source is not configured or has not exported rows yet',
-      },
-      {
-        key: 'product_events',
-        label: 'DB / Product Events',
-        state: productEventsState,
-        realtimeLevel: eventsAvailable ? 'events_aggregate' : 'not_configured',
-        generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : fetchedAt,
-        expectedLagSeconds: eventsAvailable ? null : null,
-        detail: eventsAvailable
-          ? 'Product event aggregates are available'
-          : String(productEvents?.note ?? 'Hushh AI DB aggregate source is not configured yet'),
-      },
-    ],
+    sources,
   };
 }
 
@@ -2945,71 +3028,562 @@ function hushhAiGa4SourceLabel(): string {
   return 'not_configured';
 }
 
-function buildHushhAiProductEvents(fetchedAt: string): Record<string, unknown> {
-  const expectedEvents = [
-    ['signup_started', 'Signup Started'],
-    ['signup_completed', 'Signup Completed'],
-    ['login', 'Login'],
-    ['cta_clicked', 'CTA Clicked'],
-    ['demo_requested', 'Demo Requested'],
-    ['contact_submitted', 'Contact Submitted'],
-    ['product_page_viewed', 'Product Page Viewed'],
-  ].map(([eventName, label]) => ({
+interface SearchConsoleAppAnalyticsConfig {
+  productLabel: string;
+  sourceProjectId: string;
+  sourceDataset: string;
+}
+
+const HUSHH_AI_EXPECTED_PRODUCT_EVENTS = [
+  ['signup_started', 'Signup Started'],
+  ['signup_completed', 'Signup Completed'],
+  ['login', 'Login'],
+  ['cta_clicked', 'CTA Clicked'],
+  ['demo_requested', 'Demo Requested'],
+  ['contact_submitted', 'Contact Submitted'],
+  ['product_page_viewed', 'Product Page Viewed'],
+];
+
+function emptyProductEventTotals(): Record<string, unknown> {
+  return {
+    totalEvents: null,
+    eventUsers: null,
+    actors: null,
+    sessions: null,
+    dau: null,
+    wau: null,
+    mau: null,
+    searchEvents: null,
+    followupEvents: null,
+    productEvents: null,
+    chatEvents: null,
+  };
+}
+
+function productEventMetrics(totals: Record<string, unknown>) {
+  return [
+    sourceMetric('total_events', 'Events', totals.totalEvents),
+    sourceMetric('actors', 'Actors', totals.actors ?? totals.eventUsers),
+    sourceMetric('sessions', 'Sessions', totals.sessions),
+    sourceMetric('dau', 'DAU', totals.dau),
+    sourceMetric('wau', 'WAU', totals.wau),
+    sourceMetric('mau', 'MAU', totals.mau),
+    sourceMetric('search_events', 'Search Events', totals.searchEvents),
+    sourceMetric('followup_events', 'Follow-ups', totals.followupEvents),
+    sourceMetric('product_events', 'Product Events', totals.productEvents),
+    sourceMetric('chat_events', 'Chat Events', totals.chatEvents),
+  ];
+}
+
+function emptyProductEventsDaily(range: HushhAiDateRange): Array<Record<string, unknown>> {
+  return dateSpine(range).map((date) => ({
+    date,
+    label: date.slice(5),
+    totalEvents: null,
+    eventUsers: null,
+    actors: null,
+    sessions: null,
+    dau: null,
+    searchEvents: null,
+    followupEvents: null,
+    productEvents: null,
+    chatEvents: null,
+  }));
+}
+
+function publicAggregateName(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  return /^[A-Za-z0-9_.:-]{1,80}$/.test(raw) ? raw : '(other)';
+}
+
+function productEventsDailySpine(
+  range: HushhAiDateRange,
+  rows: Record<string, unknown>[],
+): Array<Record<string, unknown>> {
+  const byDate = new Map(rows.map((row) => [String(row.date), row]));
+  return dateSpine(range).map((date) => {
+    const row = byDate.get(date);
+    const eventUsers = toNumber(row?.eventUsers);
+    return {
+      date,
+      label: date.slice(5),
+      totalEvents: toNumber(row?.totalEvents),
+      eventUsers,
+      actors: eventUsers,
+      sessions: toNumber(row?.sessions),
+      dau: eventUsers,
+      searchEvents: toNumber(row?.searchEvents),
+      followupEvents: toNumber(row?.followupEvents),
+      productEvents: toNumber(row?.productEvents),
+      chatEvents: toNumber(row?.chatEvents),
+      firstEventAt: timestampString(row?.firstEventAt),
+      latestEventAt: timestampString(row?.latestEventAt),
+    };
+  });
+}
+
+function sumProductEventDaily(
+  rows: Record<string, unknown>[],
+  actorTotal: unknown,
+): Record<string, unknown> {
+  return rows.reduce<Record<string, unknown>>((totals, row) => ({
+    totalEvents: toNumber(totals.totalEvents) + toNumber(row.totalEvents),
+    eventUsers: actorTotal,
+    actors: actorTotal,
+    sessions: toNumber(totals.sessions) + toNumber(row.sessions),
+    searchEvents: toNumber(totals.searchEvents) + toNumber(row.searchEvents),
+    followupEvents: toNumber(totals.followupEvents) + toNumber(row.followupEvents),
+    productEvents: toNumber(totals.productEvents) + toNumber(row.productEvents),
+    chatEvents: toNumber(totals.chatEvents) + toNumber(row.chatEvents),
+  }), {
+    totalEvents: 0,
+    eventUsers: actorTotal,
+    actors: actorTotal,
+    sessions: 0,
+    searchEvents: 0,
+    followupEvents: 0,
+    productEvents: 0,
+    chatEvents: 0,
+  });
+}
+
+function buildProductEventSections(
+  generatedAt: string,
+  available: boolean,
+  rangeTotals: Record<string, unknown>,
+  daily: Record<string, unknown>[],
+) {
+  const latestAvailableDaily = daily
+    .filter((row) => toNumber(row.totalEvents) > 0)
+    .at(-1) ?? daily.at(-1);
+  const lastSevenDailySum = sumProductEventDaily(daily.slice(-7), rangeTotals.wau);
+  const lastSevenTotals = {
+    totalEvents: rangeTotals.last7Events ?? lastSevenDailySum.totalEvents,
+    eventUsers: rangeTotals.wau,
+    actors: rangeTotals.wau,
+    sessions: rangeTotals.last7Sessions ?? lastSevenDailySum.sessions,
+    searchEvents: rangeTotals.last7SearchEvents ?? lastSevenDailySum.searchEvents,
+    followupEvents: rangeTotals.last7FollowupEvents ?? lastSevenDailySum.followupEvents,
+    productEvents: rangeTotals.last7ProductEvents ?? lastSevenDailySum.productEvents,
+    chatEvents: rangeTotals.last7ChatEvents ?? lastSevenDailySum.chatEvents,
+    dau: rangeTotals.dau,
+    wau: rangeTotals.wau,
+    mau: rangeTotals.mau,
+  };
+  const latestDayTotals = latestAvailableDaily
+    ? {
+        ...latestAvailableDaily,
+        eventUsers: latestAvailableDaily.actors ?? latestAvailableDaily.eventUsers,
+        dau: latestAvailableDaily.dau ?? latestAvailableDaily.eventUsers,
+        wau: rangeTotals.wau,
+        mau: rangeTotals.mau,
+      }
+    : emptyProductEventTotals();
+
+  const toSection = (
+    key: string,
+    label: string,
+    source: string,
+    totals: Record<string, unknown>,
+    blocker: string | null,
+  ) => ({
+    key,
+    label,
+    status: available ? 'live' : 'waiting',
+    stateClass: sourceStateClass(available ? 'live' : 'waiting'),
+    source,
+    freshness: {
+      generatedAt,
+      expectedLagSeconds: null,
+    },
+    metrics: productEventMetrics(available ? totals : emptyProductEventTotals()),
+    blocker: available ? null : blocker,
+  });
+
+  return [
+    toSection(
+      'last_24_hours',
+      'Latest Available Day',
+      latestAvailableDaily?.date ? `DB daily aggregate · ${latestAvailableDaily.date}` : 'DB daily aggregate',
+      latestDayTotals,
+      'Product event daily aggregates are waiting for data.',
+    ),
+    toSection(
+      'last_7_days',
+      'Last 7 Days',
+      'DB 7-day aggregate',
+      lastSevenTotals,
+      'Product event 7-day aggregates are waiting for data.',
+    ),
+    toSection(
+      'selected_total',
+      'Selected Total',
+      'DB selected range aggregate',
+      rangeTotals,
+      'Product event selected-range aggregates are waiting for data.',
+    ),
+  ];
+}
+
+function expectedHushhAiEvents(
+  eventCounts: Map<string, number>,
+  available: boolean,
+): Array<Record<string, unknown>> {
+  return HUSHH_AI_EXPECTED_PRODUCT_EVENTS.map(([eventName, label]) => ({
     eventName,
     label,
-    status: 'not_configured',
-    count: null,
-    note: 'Waiting for a real hushh.ai product-event aggregate source.',
+    status: available ? 'live' : 'waiting',
+    count: available ? eventCounts.get(eventName) ?? 0 : null,
+    note: available ? null : 'Waiting for product-event aggregate data.',
   }));
+}
+
+function unavailableSearchConsoleAppAnalytics(
+  config: SearchConsoleAppAnalyticsConfig,
+  range: HushhAiDateRange,
+  status: 'waiting' | 'unavailable',
+  note: string,
+): Record<string, unknown> {
+  const generatedAt = new Date().toISOString();
+  const rangeTotals = emptyProductEventTotals();
+  const daily = emptyProductEventsDaily(range);
+  return {
+    source: 'search-console-app-analytics-waiting',
+    sourceLabel: publicProductEventsSourceLabel(config.productLabel),
+    sourceProjectId: config.sourceProjectId,
+    sourceDataset: config.sourceDataset,
+    available: false,
+    status,
+    generatedAt,
+    realtimeMode: 'events_aggregate',
+    expectedLagSeconds: null,
+    range: {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      days: range.days,
+    },
+    rangeTotals,
+    metrics: [],
+    daily,
+    topEvents: [],
+    topRequestTypes: [],
+    expectedEvents: expectedHushhAiEvents(new Map(), false),
+    sections: buildProductEventSections(generatedAt, false, rangeTotals, daily),
+    note,
+  };
+}
+
+async function fetchSearchConsoleAppAnalytics(
+  config: SearchConsoleAppAnalyticsConfig,
+  range: HushhAiDateRange,
+): Promise<DataResult<Record<string, unknown>>> {
+  const queryProject = BQ_JOB_PROJECT || config.sourceProjectId;
+  const datasetRef = `\`${config.sourceProjectId}.${config.sourceDataset}\``;
+  const unavailableNote = `${config.productLabel} product event aggregates are waiting or unavailable.`;
+  const generatedAt = new Date().toISOString();
+  const endDate = parseUtcDate(range.endDate) as Date;
+  const activeWindowStartDate = formatUtcDate(addUtcDays(endDate, -29));
+  const scanStartDate = activeWindowStartDate < range.startDate ? activeWindowStartDate : range.startDate;
+  const productTable = `${datasetRef}.product_events`;
+  const chatTable = `${datasetRef}.chat_events`;
+  const startTimestamp = `TIMESTAMP(${sqlStringLiteral(`${scanStartDate}T00:00:00.000Z`)})`;
+  const endTimestamp = `TIMESTAMP(${sqlStringLiteral(range.endTime)})`;
+  const selectedStartDate = `DATE ${sqlStringLiteral(range.startDate)}`;
+  const selectedEndDate = `DATE ${sqlStringLiteral(range.endDate)}`;
+  const actorExpr = "COALESCE(user_id, CONCAT('anon:', anonymous_id))";
+  const searchPredicate = "event_source = 'chat' AND REGEXP_CONTAINS(LOWER(COALESCE(request_type, '')), r'(search|query)')";
+  const followupPredicate = "event_source = 'chat' AND REGEXP_CONTAINS(LOWER(COALESCE(request_type, '')), r'(follow_?up|refine|clarif)')";
+  const baseEventsCte = `
+    WITH all_events AS (
+      SELECT
+        DATE(event_ts) AS event_date,
+        event_ts,
+        'product' AS event_source,
+        event_name,
+        CAST(NULL AS STRING) AS request_type,
+        session_id,
+        ${actorExpr} AS actor_id
+      FROM ${productTable}
+      WHERE event_ts >= ${startTimestamp}
+        AND event_ts < ${endTimestamp}
+      UNION ALL
+      SELECT
+        DATE(event_ts) AS event_date,
+        event_ts,
+        'chat' AS event_source,
+        CAST(NULL AS STRING) AS event_name,
+        request_type,
+        session_id,
+        ${actorExpr} AS actor_id
+      FROM ${chatTable}
+      WHERE event_ts >= ${startTimestamp}
+        AND event_ts < ${endTimestamp}
+    ),
+    selected_events AS (
+      SELECT *
+      FROM all_events
+      WHERE event_date BETWEEN ${selectedStartDate} AND ${selectedEndDate}
+    )
+  `;
+  const analyticsQuery = `
+    ${baseEventsCte},
+    aggregate AS (
+      SELECT
+        (SELECT COUNT(*) FROM selected_events) AS totalEvents,
+        (SELECT COUNT(DISTINCT actor_id) FROM selected_events) AS eventUsers,
+        (SELECT COUNT(DISTINCT actor_id) FROM selected_events) AS actors,
+        (SELECT COUNT(DISTINCT session_id) FROM selected_events) AS sessions,
+        (SELECT COUNTIF(event_source = 'product') FROM selected_events) AS productEvents,
+        (SELECT COUNTIF(event_source = 'chat') FROM selected_events) AS chatEvents,
+        (SELECT COUNTIF(${searchPredicate}) FROM selected_events) AS searchEvents,
+        (SELECT COUNTIF(${followupPredicate}) FROM selected_events) AS followupEvents,
+        (SELECT COUNT(DISTINCT IF(event_date = ${selectedEndDate}, actor_id, NULL)) FROM all_events) AS dau,
+        (SELECT COUNT(DISTINCT IF(event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}, actor_id, NULL)) FROM all_events) AS wau,
+        (SELECT COUNT(DISTINCT IF(event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 29 DAY) AND ${selectedEndDate}, actor_id, NULL)) FROM all_events) AS mau,
+        (SELECT COUNTIF(event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7Events,
+        (SELECT COUNT(DISTINCT IF(event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}, session_id, NULL)) FROM all_events) AS last7Sessions,
+        (SELECT COUNTIF(event_source = 'product' AND event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7ProductEvents,
+        (SELECT COUNTIF(event_source = 'chat' AND event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7ChatEvents,
+        (SELECT COUNTIF(${searchPredicate} AND event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7SearchEvents,
+        (SELECT COUNTIF(${followupPredicate} AND event_date BETWEEN DATE_SUB(${selectedEndDate}, INTERVAL 6 DAY) AND ${selectedEndDate}) FROM all_events) AS last7FollowupEvents,
+        (SELECT FORMAT_TIMESTAMP('%FT%TZ', MIN(event_ts)) FROM selected_events) AS firstEventAt,
+        (SELECT FORMAT_TIMESTAMP('%FT%TZ', MAX(event_ts)) FROM selected_events) AS latestEventAt
+    ),
+    daily AS (
+      SELECT
+        CAST(event_date AS STRING) AS date,
+        COUNT(*) AS totalEvents,
+        COUNT(DISTINCT actor_id) AS eventUsers,
+        COUNT(DISTINCT actor_id) AS actors,
+        COUNT(DISTINCT session_id) AS sessions,
+        COUNTIF(event_source = 'product') AS productEvents,
+        COUNTIF(event_source = 'chat') AS chatEvents,
+        COUNTIF(${searchPredicate}) AS searchEvents,
+        COUNTIF(${followupPredicate}) AS followupEvents,
+        FORMAT_TIMESTAMP('%FT%TZ', MIN(event_ts)) AS firstEventAt,
+        FORMAT_TIMESTAMP('%FT%TZ', MAX(event_ts)) AS latestEventAt
+      FROM selected_events
+      GROUP BY date
+    ),
+    top_events AS (
+      SELECT
+        event_name AS eventName,
+        COUNT(*) AS events,
+        COUNT(DISTINCT ${actorExpr}) AS eventUsers,
+        COUNT(DISTINCT ${actorExpr}) AS actors,
+        COUNT(DISTINCT session_id) AS sessions
+      FROM ${productTable}
+      WHERE event_ts >= TIMESTAMP(${sqlStringLiteral(range.startTime)})
+        AND event_ts < ${endTimestamp}
+        AND event_name IS NOT NULL
+        AND REGEXP_CONTAINS(event_name, r'^[A-Za-z0-9_.:-]{1,80}$')
+      GROUP BY eventName
+    ),
+    top_request_types AS (
+      SELECT
+        request_type AS requestType,
+        COUNT(*) AS events,
+        COUNT(DISTINCT ${actorExpr}) AS eventUsers,
+        COUNT(DISTINCT ${actorExpr}) AS actors,
+        COUNT(DISTINCT session_id) AS sessions
+      FROM ${chatTable}
+      WHERE event_ts >= TIMESTAMP(${sqlStringLiteral(range.startTime)})
+        AND event_ts < ${endTimestamp}
+        AND request_type IS NOT NULL
+        AND REGEXP_CONTAINS(request_type, r'^[A-Za-z0-9_.:-]{1,80}$')
+      GROUP BY requestType
+    ),
+    expected_events AS (
+      SELECT event_name AS eventName, COUNT(*) AS events
+      FROM ${productTable}
+      WHERE event_ts >= TIMESTAMP(${sqlStringLiteral(range.startTime)})
+        AND event_ts < ${endTimestamp}
+        AND event_name IN (${HUSHH_AI_EXPECTED_PRODUCT_EVENTS.map(([eventName]) => sqlStringLiteral(eventName)).join(', ')})
+      GROUP BY eventName
+    )
+    SELECT
+      (SELECT AS STRUCT * FROM aggregate) AS aggregate,
+      ARRAY(SELECT AS STRUCT * FROM daily ORDER BY date) AS daily,
+      ARRAY(SELECT AS STRUCT * FROM top_events ORDER BY events DESC, eventName LIMIT 15) AS topEvents,
+      ARRAY(SELECT AS STRUCT * FROM top_request_types ORDER BY events DESC, requestType LIMIT 10) AS topRequestTypes,
+      ARRAY(SELECT AS STRUCT * FROM expected_events) AS expectedEvents
+  `;
+
+  const analytics = await queryBigQuerySql(queryProject, analyticsQuery);
+  const queryErrors = [analytics.error].filter(Boolean);
+  if (analytics.error || analytics.rows.length === 0) {
+    return {
+      data: unavailableSearchConsoleAppAnalytics(
+        config,
+        range,
+        'unavailable',
+        `${config.productLabel} product event aggregate query is unavailable for this window.`,
+      ),
+      error: null,
+    };
+  }
+
+  const analyticsRow = analytics.rows[0] ?? {};
+  const aggregateRow = asRecord(analyticsRow.aggregate) ?? {};
+  const dailyRows = recordArray(analyticsRow.daily);
+  const topEventsRows = recordArray(analyticsRow.topEvents);
+  const topRequestTypeRows = recordArray(analyticsRow.topRequestTypes);
+  const expectedEventRows = recordArray(analyticsRow.expectedEvents);
+  const rangeTotals = {
+    totalEvents: toNumber(aggregateRow.totalEvents),
+    eventUsers: toNumber(aggregateRow.eventUsers),
+    actors: toNumber(aggregateRow.actors),
+    sessions: toNumber(aggregateRow.sessions),
+    dau: toNumber(aggregateRow.dau),
+    wau: toNumber(aggregateRow.wau),
+    mau: toNumber(aggregateRow.mau),
+    searchEvents: toNumber(aggregateRow.searchEvents),
+    followupEvents: toNumber(aggregateRow.followupEvents),
+    productEvents: toNumber(aggregateRow.productEvents),
+    chatEvents: toNumber(aggregateRow.chatEvents),
+    last7Events: toNumber(aggregateRow.last7Events),
+    last7Sessions: toNumber(aggregateRow.last7Sessions),
+    last7ProductEvents: toNumber(aggregateRow.last7ProductEvents),
+    last7ChatEvents: toNumber(aggregateRow.last7ChatEvents),
+    last7SearchEvents: toNumber(aggregateRow.last7SearchEvents),
+    last7FollowupEvents: toNumber(aggregateRow.last7FollowupEvents),
+    firstEventAt: timestampString(aggregateRow.firstEventAt),
+    latestEventAt: timestampString(aggregateRow.latestEventAt),
+  };
+  const daily = productEventsDailySpine(range, dailyRows);
+  const latestDataDate = daily
+    .filter((row) => toNumber(row.totalEvents) > 0)
+    .map((row) => String(row.date))
+    .at(-1) ?? null;
+  const topEvents = topEventsRows.map((row) => ({
+    eventName: publicAggregateName(row.eventName),
+    events: toNumber(row.events),
+    eventUsers: toNumber(row.eventUsers),
+    actors: toNumber(row.actors),
+    sessions: toNumber(row.sessions),
+  }));
+  const topRequestTypes = topRequestTypeRows.map((row) => ({
+    requestType: publicAggregateName(row.requestType),
+    events: toNumber(row.events),
+    eventUsers: toNumber(row.eventUsers),
+    actors: toNumber(row.actors),
+    sessions: toNumber(row.sessions),
+  }));
+  const expectedEventCounts = new Map(
+    expectedEventRows.map((row) => [String(row.eventName), toNumber(row.events)]),
+  );
 
   return {
-    source: 'hushh-ai-db-status',
-    available: false,
-    status: 'not_configured',
-    generatedAt: fetchedAt,
-    metrics: [],
-    expectedEvents,
-    note: 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
+    data: {
+      source: 'search-console-app-analytics',
+      sourceLabel: publicProductEventsSourceLabel(config.productLabel),
+      sourceProjectId: config.sourceProjectId,
+      sourceDataset: config.sourceDataset,
+      available: true,
+      status: 'live',
+      generatedAt,
+      latestDataDate,
+      latestEventAt: rangeTotals.latestEventAt,
+      realtimeMode: 'events_aggregate',
+      expectedLagSeconds: null,
+      range: {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        days: range.days,
+      },
+      rangeTotals,
+      metrics: productEventMetrics(rangeTotals),
+      daily,
+      topEvents,
+      topRequestTypes,
+      expectedEvents: expectedHushhAiEvents(expectedEventCounts, true),
+      sections: buildProductEventSections(generatedAt, true, rangeTotals, daily),
+      warnings: [
+        'Aggregate product event counts only; raw query text, answers, users, anonymous IDs, sessions, and metadata are not returned.',
+        'DAU, WAU, and MAU are distinct actor aggregates ending on the selected range end date.',
+      ],
+      note: queryErrors.length > 0
+        ? `${config.productLabel} product event aggregates are partially available. Some optional aggregate slices are waiting.`
+        : `${config.productLabel} product event aggregates are available.`,
+    },
+    error: null,
   };
+}
+
+async function fetchHushhAiProductEvents(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  return fetchSearchConsoleAppAnalytics({
+    productLabel: 'Hushh AI',
+    sourceProjectId: HUSHH_AI_PRODUCT_EVENTS_PROJECT,
+    sourceDataset: HUSHH_AI_PRODUCT_EVENTS_DATASET,
+  }, range);
+}
+
+async function fetchHushhAiUatProductEvents(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  return fetchSearchConsoleAppAnalytics({
+    productLabel: 'Hushh AI UAT',
+    sourceProjectId: HUSHH_AI_UAT_PRODUCT_EVENTS_PROJECT,
+    sourceDataset: HUSHH_AI_UAT_PRODUCT_EVENTS_DATASET,
+  }, range);
 }
 
 function buildHushhAiSourceCards(
   searchConsole: Record<string, unknown> | null,
   ga4: Record<string, unknown> | null,
   productEvents: Record<string, unknown> | null,
+  options: {
+    productLabel?: string;
+    searchConsoleFallback?: string;
+    ga4Source?: string;
+    ga4Blocker?: string;
+    includeSearchConsole?: boolean;
+    includeGa4?: boolean;
+  } = {},
 ) {
+  const productLabel = options.productLabel ?? 'Hushh AI';
   const eventsAvailable = Boolean(productEvents?.available);
   const eventsStatus = eventsAvailable ? 'live' : String(productEvents?.status ?? 'waiting');
-  return [
-    buildSearchConsoleSourceCard(searchConsole, 'hushh.ai Search Console'),
-    buildGa4SourceCard(
+  const eventRangeTotals = asRecord(productEvents?.rangeTotals) ?? {};
+  const eventSections = Array.isArray(productEvents?.sections) ? productEvents.sections : [];
+  const eventMetrics = eventsAvailable
+    ? productEventMetrics(eventRangeTotals)
+    : (Array.isArray(productEvents?.expectedEvents) ? productEvents.expectedEvents : [])
+      .map((event) => {
+        const eventRecord = asRecord(event);
+        return sourceMetric(
+          String(eventRecord?.eventName ?? ''),
+          String(eventRecord?.label ?? 'Product Event'),
+          null,
+          'Waiting',
+        );
+      });
+  const cards = [];
+  if (options.includeSearchConsole !== false) {
+    cards.push(buildSearchConsoleSourceCard(searchConsole, options.searchConsoleFallback ?? 'hushh.ai Search Console'));
+  }
+  if (options.includeGa4 !== false) {
+    cards.push(buildGa4SourceCard(
       ga4,
-      hushhAiGa4SourceLabel(),
-      'Hushh AI GA4 source is not configured in metrics.hushh.ai yet.',
-    ),
+      options.ga4Source ?? hushhAiGa4SourceLabel(),
+      options.ga4Blocker ?? 'Hushh AI GA4 source is not configured in metrics.hushh.ai yet.',
+    ));
+  }
+  cards.push(
     {
       key: 'product_events',
       label: 'DB / Product Events',
       status: eventsStatus,
       stateClass: sourceStateClass(eventsStatus),
-      source: publicProductEventsSourceLabel('Hushh AI'),
+      source: String(productEvents?.sourceLabel ?? publicProductEventsSourceLabel(productLabel)),
       freshness: {
         generatedAt: typeof productEvents?.generatedAt === 'string' ? productEvents.generatedAt : new Date().toISOString(),
         expectedLagSeconds: null,
       },
-      metrics: (Array.isArray(productEvents?.expectedEvents) ? productEvents.expectedEvents : [])
-        .map((event) => {
-          const eventRecord = asRecord(event);
-          return sourceMetric(
-            String(eventRecord?.eventName ?? ''),
-            String(eventRecord?.label ?? 'Product Event'),
-            null,
-            'Not configured',
-          );
-        }),
+      metrics: eventMetrics,
+      sections: eventSections,
       blocker: eventsAvailable ? null : String(productEvents?.note ?? 'Hushh AI product events are not ingested into the dashboard yet.'),
     },
-  ];
+  );
+  return cards;
 }
 
 function kaiFeedMetricValue(rows: Record<string, unknown>[], group: string, name: string): number | null {
@@ -3409,23 +3983,58 @@ app.get('/api/analytics/kai', async (req, res) => {
 
 app.get('/api/analytics/hushhai', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
-  const [gcp, searchConsole, ga4] = await Promise.all([
+  const [gcp, searchConsole, ga4, productEvents] = await Promise.all([
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
     fetchHushhAiGa4Summary(hushhAiRange),
+    fetchHushhAiProductEvents(hushhAiRange),
   ]);
-  const error = [gcp.error, searchConsole.error, ga4.error].filter(Boolean).join('; ') || null;
+  const error = [gcp.error, searchConsole.error, ga4.error, productEvents.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
-  const productEvents = buildHushhAiProductEvents(fetchedAt);
-  res.status(error && !gcp.data && !searchConsole.data ? 502 : 200).json(sanitizePublicPayload({
+  res.status(error && !gcp.data && !searchConsole.data && !productEvents.data ? 502 : 200).json(sanitizePublicPayload({
     platform: 'hushh.ai',
     data: {
       gcp: gcp.data,
       searchConsole: searchConsole.data,
       ga4: ga4.data,
-      productEvents,
-      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data, ga4.data, productEvents),
-      sourceCards: buildHushhAiSourceCards(searchConsole.data, ga4.data, productEvents),
+      productEvents: productEvents.data,
+      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole.data, ga4.data, productEvents.data),
+      sourceCards: buildHushhAiSourceCards(searchConsole.data, ga4.data, productEvents.data),
+    },
+    error,
+    fetchedAt,
+  }));
+});
+
+app.get('/api/analytics/hushhai/uat', async (req, res) => {
+  const hushhAiUatRange = parseHushhAiUatDateRange(req.query as Record<string, unknown>);
+  const [gcp, productEvents] = await Promise.all([
+    fetchHushhAiUatCloudRun(hushhAiUatRange),
+    fetchHushhAiUatProductEvents(hushhAiUatRange),
+  ]);
+  const searchConsole = waitingHushhAiUatSearchConsole(hushhAiUatRange);
+  const ga4 = waitingHushhAiUatGa4Summary(hushhAiUatRange);
+  const error = [gcp.error, productEvents.error].filter(Boolean).join('; ') || null;
+  const fetchedAt = new Date().toISOString();
+  res.status(error && !gcp.data && !productEvents.data ? 502 : 200).json(sanitizePublicPayload({
+    platform: 'uat.hushh.ai',
+    data: {
+      gcp: gcp.data,
+      searchConsole,
+      ga4,
+      productEvents: productEvents.data,
+      freshness: buildHushhAiFreshness(fetchedAt, gcp.data, searchConsole, ga4, productEvents.data, {
+        includeSearchConsole: false,
+        includeGa4: false,
+      }),
+      sourceCards: buildHushhAiSourceCards(searchConsole, ga4, productEvents.data, {
+        productLabel: 'Hushh AI UAT',
+        searchConsoleFallback: 'Hushh AI UAT Search Console',
+        ga4Source: 'not_configured',
+        ga4Blocker: 'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.',
+        includeSearchConsole: false,
+        includeGa4: false,
+      }),
     },
     error,
     fetchedAt,
@@ -3434,6 +4043,7 @@ app.get('/api/analytics/hushhai', async (req, res) => {
 
 app.get('/api/analytics/all', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
+  const hushhAiUatRange = parseHushhAiUatDateRange(req.query as Record<string, unknown>);
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
   const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
   const [
@@ -3444,10 +4054,6 @@ app.get('/api/analytics/all', async (req, res) => {
     kaiProductionGcp,
     kaiProductionSearchConsole,
     kaiUatSearchConsole,
-    hushhAiGcp,
-    hushhAiSearchConsole,
-    hushhAiGa4,
-    hushhTech,
   ] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
@@ -3456,13 +4062,29 @@ app.get('/api/analytics/all', async (req, res) => {
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
     fetchKaiProductionSearchConsole(kaiRange),
     fetchKaiUatSearchConsole(kaiRange),
+  ]);
+  const [
+    hushhAiGcp,
+    hushhAiSearchConsole,
+    hushhAiGa4,
+    hushhAiProductEvents,
+  ] = await Promise.all([
     fetchHushhAiCloudRun(hushhAiRange),
     fetchHushhAiSearchConsole(hushhAiRange),
     fetchHushhAiGa4Summary(hushhAiRange),
-    fetchHushhTechAnalytics(hushhTechRange),
+    fetchHushhAiProductEvents(hushhAiRange),
   ]);
+  const [
+    hushhAiUatGcp,
+    hushhAiUatProductEvents,
+  ] = await Promise.all([
+    fetchHushhAiUatCloudRun(hushhAiUatRange),
+    fetchHushhAiUatProductEvents(hushhAiUatRange),
+  ]);
+  const hushhTech = await fetchHushhTechAnalytics(hushhTechRange);
   const fetchedAt = new Date().toISOString();
-  const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
+  const hushhAiUatSearchConsole = waitingHushhAiUatSearchConsole(hushhAiUatRange);
+  const hushhAiUatGa4 = waitingHushhAiUatGa4Summary(hushhAiUatRange);
   res.json(sanitizePublicPayload({
     kai: {
       uat: { environment: 'uat', rows: uat.rows, error: uat.error },
@@ -3506,11 +4128,40 @@ app.get('/api/analytics/all', async (req, res) => {
         gcp: hushhAiGcp.data,
         searchConsole: hushhAiSearchConsole.data,
         ga4: hushhAiGa4.data,
-        productEvents: hushhAiProductEvents,
-        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents),
-        sourceCards: buildHushhAiSourceCards(hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents),
+        productEvents: hushhAiProductEvents.data,
+        freshness: buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents.data),
+        sourceCards: buildHushhAiSourceCards(hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents.data),
       },
-      error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error].filter(Boolean).join('; ') || null,
+      error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error, hushhAiProductEvents.error].filter(Boolean).join('; ') || null,
+    },
+    hushhAiUat: {
+      platform: 'uat.hushh.ai',
+      data: {
+        gcp: hushhAiUatGcp.data,
+        searchConsole: hushhAiUatSearchConsole,
+        ga4: hushhAiUatGa4,
+        productEvents: hushhAiUatProductEvents.data,
+        freshness: buildHushhAiFreshness(
+          fetchedAt,
+          hushhAiUatGcp.data,
+          hushhAiUatSearchConsole,
+          hushhAiUatGa4,
+          hushhAiUatProductEvents.data,
+          {
+            includeSearchConsole: false,
+            includeGa4: false,
+          },
+        ),
+        sourceCards: buildHushhAiSourceCards(hushhAiUatSearchConsole, hushhAiUatGa4, hushhAiUatProductEvents.data, {
+          productLabel: 'Hushh AI UAT',
+          searchConsoleFallback: 'Hushh AI UAT Search Console',
+          ga4Source: 'not_configured',
+          ga4Blocker: 'Hushh AI UAT GA4 source is not configured in metrics.hushh.ai yet.',
+          includeSearchConsole: false,
+          includeGa4: false,
+        }),
+      },
+      error: [hushhAiUatGcp.error, hushhAiUatProductEvents.error].filter(Boolean).join('; ') || null,
     },
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
     fetchedAt,
@@ -3532,6 +4183,9 @@ app.get('/api/health', (_req, res) => {
       kaiSearchConsoleFallback: `${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`,
       kaiSearchConsoleSiteUrl: KAI_SEARCH_CONSOLE_SITE_URL,
       hushhAiCloudRun: `${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`,
+      hushhAiProductEvents: `${HUSHH_AI_PRODUCT_EVENTS_PROJECT}.${HUSHH_AI_PRODUCT_EVENTS_DATASET}`,
+      hushhAiUatCloudRun: `${HUSHH_AI_UAT_GCP_PROJECT}/${HUSHH_AI_UAT_CLOUD_RUN_SERVICE}`,
+      hushhAiUatProductEvents: `${HUSHH_AI_UAT_PRODUCT_EVENTS_PROJECT}.${HUSHH_AI_UAT_PRODUCT_EVENTS_DATASET}`,
       hushhAiSearchConsole: `${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}`,
       hushhAiSearchConsoleFallback: `${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`,
       hushhAiSearchConsoleSiteUrl: HUSHH_AI_SEARCH_CONSOLE_SITE_URL,
@@ -3555,6 +4209,11 @@ app.get('/api/health', (_req, res) => {
 type ProductKey = 'hushh.ai' | 'kai.hushh.ai' | 'uat.kai.hushh.ai' | 'hushhtech.com';
 type AgentConfidence = 'high' | 'medium' | 'low';
 type AgentWindow = 'calendar_days' | 'last_24_hours';
+type AgentActiveView = 'overview' | 'platforms';
+type AgentFocusedEnvironment = 'production' | 'uat';
+type AgentFocusedSource = 'cloud_run' | 'ga4' | 'search_console' | 'product_events' | 'supabase' | 'business_funnel';
+type AgentRangePreset = '7D' | '14D' | '30D' | '90D' | 'custom';
+type AgentKnowledgeCategory = 'metric_definition' | 'source_caveat' | 'runbook' | 'dashboard_context';
 
 interface AgentRange {
   startDate: string;
@@ -3582,6 +4241,19 @@ interface AgentSource {
   detail?: string | null;
 }
 
+interface AgentKnowledgeSource {
+  id: string;
+  title: string;
+  category: AgentKnowledgeCategory;
+}
+
+interface AgentKnowledgeChunk extends AgentKnowledgeSource {
+  products?: ProductKey[];
+  sources?: AgentFocusedSource[];
+  keywords: string[];
+  text: string;
+}
+
 interface AgentAnswer {
   reply: string;
   claims: MetricClaim[];
@@ -3589,6 +4261,7 @@ interface AgentAnswer {
   warnings: string[];
   confidence: AgentConfidence;
   suggestedQuestions?: string[];
+  knowledgeSources?: AgentKnowledgeSource[];
 }
 
 interface AgentToolResult {
@@ -3632,6 +4305,21 @@ interface MetricFieldCatalogEntry {
   synonyms: string[];
   caveat?: string;
   exampleQuestions: string[];
+}
+
+interface AgentSelectedRange extends AgentRange {
+  preset?: AgentRangePreset;
+}
+
+interface AgentRequestContext {
+  activeView?: AgentActiveView;
+  focusedProduct?: ProductKey;
+  focusedEnvironment?: AgentFocusedEnvironment;
+  focusedSource?: AgentFocusedSource;
+  focusedMetricKey?: string;
+  focusedMetricLabel?: string;
+  panelTitle?: string;
+  selectedRange?: AgentSelectedRange;
 }
 
 interface ChatHistoryMessage {
@@ -3800,6 +4488,99 @@ const METRIC_CATALOG = PRODUCT_KEYS.map((product) => {
   };
 }) satisfies Array<Record<string, unknown>>;
 
+const AGENT_KNOWLEDGE_BASE: AgentKnowledgeChunk[] = [
+  {
+    id: 'ga4-users-definition',
+    title: 'GA4 users are web audience users',
+    category: 'metric_definition',
+    products: ['hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'],
+    sources: ['ga4'],
+    keywords: ['ga4', 'users', 'active users', 'visitors', 'sessions', 'audience', 'browser', 'device'],
+    text: 'GA4 users are aggregate web audience users observed by GA4 for the selected period. They are not the same as product accounts, authenticated users, or a cross-product de-duplicated person count.',
+  },
+  {
+    id: 'cloud-run-requests-not-users',
+    title: 'Cloud Run requests are not users',
+    category: 'source_caveat',
+    products: ['hushh.ai', 'kai.hushh.ai', 'hushhtech.com'],
+    sources: ['cloud_run'],
+    keywords: ['cloud run', 'requests', 'traffic', 'users', 'people', 'accounts', 'reliability', '5xx'],
+    text: 'Cloud Run request count is infrastructure traffic. It is useful for reliability, load, 5xx, error rate, and latency analysis, but it must not be interpreted as users or accounts.',
+  },
+  {
+    id: 'kai-production-uat-separation',
+    title: 'Kai production and UAT stay separate',
+    category: 'source_caveat',
+    products: ['kai.hushh.ai', 'uat.kai.hushh.ai'],
+    sources: ['ga4', 'product_events', 'search_console'],
+    keywords: ['kai', 'production', 'prod', 'uat', 'validation', 'separate', 'truth'],
+    text: 'kai.hushh.ai is production. uat.kai.hushh.ai is UAT validation traffic. UAT values can explain testing behavior, but they must not be blended into production truth or used to fill production GA4 gaps.',
+  },
+  {
+    id: 'kai-production-ga4-waiting',
+    title: 'Kai production GA4 waiting rule',
+    category: 'runbook',
+    products: ['kai.hushh.ai'],
+    sources: ['ga4'],
+    keywords: ['kai production', 'ga4', 'waiting', 'unavailable', 'export', 'users', 'sessions', 'events'],
+    text: 'Kai production GA4 users, sessions, and events should remain Waiting until the production aggregate export is verified. Cloud Run can still report production reliability while GA4 remains unavailable.',
+  },
+  {
+    id: 'hushh-ai-product-events-not-configured',
+    title: 'Hushh AI product events are not configured',
+    category: 'source_caveat',
+    products: ['hushh.ai'],
+    sources: ['product_events'],
+    keywords: ['hushh ai', 'product events', 'signup', 'login', 'cta', 'demo', 'contact', 'not configured'],
+    text: 'hushh.ai has GA4 traffic/event aggregates, but no first-party DB/Product Events aggregate source is configured yet. Signup started, signup completed, login, CTA clicked, demo requested, contact submitted, and product page viewed should stay not_configured until a real aggregate source exists.',
+  },
+  {
+    id: 'hushhtech-supabase-account-truth',
+    title: 'HushhTech Supabase is account truth',
+    category: 'metric_definition',
+    products: ['hushhtech.com'],
+    sources: ['supabase', 'business_funnel'],
+    keywords: ['hushhtech', 'supabase', 'users', 'accounts', 'signups', 'persisted', 'funnel'],
+    text: 'hushhtech.com Supabase aggregates are the product-account truth for HushhTech. They can report account totals, new users, active users, sessions, signups, persisted users, and funnel steps without exposing raw auth rows.',
+  },
+  {
+    id: 'hushhtech-ga4-suspicious-traffic',
+    title: 'HushhTech GA4 traffic caveat',
+    category: 'source_caveat',
+    products: ['hushhtech.com'],
+    sources: ['ga4'],
+    keywords: ['hushhtech', 'ga4', 'traffic', 'sessions', 'page views', 'zero', 'suspicious', 'waiting'],
+    text: 'HushhTech processed GA4 traffic can be suspicious or zero even when Supabase account data is valid. Preserve the GA4 caveat instead of treating zero processed traffic as product truth.',
+  },
+  {
+    id: 'search-console-daily-delay',
+    title: 'Search Console is daily and delayed',
+    category: 'source_caveat',
+    products: ['hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'],
+    sources: ['search_console'],
+    keywords: ['search console', 'daily', 'delayed', 'clicks', 'impressions', 'ctr', 'position', 'organic'],
+    text: 'Search Console is daily search visibility data. Clicks, impressions, CTR, and average position explain organic Google Search performance, not authenticated product usage.',
+  },
+  {
+    id: 'last-24-hour-window-semantics',
+    title: 'Last-24-hour windows are source-specific',
+    category: 'runbook',
+    products: ['hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'],
+    sources: ['cloud_run', 'ga4', 'search_console', 'product_events'],
+    keywords: ['last 24 hours', 'last day', 'rolling', 'window', 'daily', 'freshness', 'lag'],
+    text: 'Last-24-hour operational reports use rolling Cloud Run reliability where available. GA4, Search Console, and product-event sources may be source-specific, daily, delayed, or waiting, so the answer must label the source window explicitly.',
+  },
+  {
+    id: 'dashboard-context-followups',
+    title: 'Visible dashboard context resolves follow-ups',
+    category: 'dashboard_context',
+    products: ['hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'],
+    sources: ['cloud_run', 'ga4', 'search_console', 'product_events', 'supabase', 'business_funnel'],
+    keywords: ['explain this', 'what about this', 'why waiting', 'selected range', 'focused metric', 'context'],
+    text: 'Short follow-ups such as "explain this", "what about users", or "why is this waiting" should inherit the visible product, environment, source, metric label, panel, and selected date range unless the user explicitly says another product or time window.',
+  },
+];
+
 const METRICS_TOOL_DECLARATIONS = [
   {
     name: 'get_metric_catalog',
@@ -3868,6 +4649,37 @@ const METRICS_TOOL_DECLARATIONS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'search_metric_knowledge',
+    description: 'Retrieves curated public-safe definitions, caveats, dashboard context rules, and runbook summaries. It never creates numeric truth.',
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The metric, source, caveat, or dashboard follow-up to explain.',
+        },
+        product: {
+          type: 'string',
+          enum: ['all', 'hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'],
+          description: 'Optional product context for retrieval.',
+        },
+        source: {
+          type: 'string',
+          enum: ['cloud_run', 'ga4', 'search_console', 'product_events', 'supabase', 'business_funnel'],
+          description: 'Optional source context for retrieval.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 6,
+          description: 'Maximum curated chunks to return.',
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const AGENT_ANSWER_SCHEMA = {
@@ -3924,6 +4736,24 @@ const AGENT_ANSWER_SCHEMA = {
     suggestedQuestions: {
       type: 'array',
       items: { type: 'string' },
+      minItems: 0,
+      maxItems: 6,
+    },
+    knowledgeSources: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'title', 'category'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          category: {
+            type: 'string',
+            enum: ['metric_definition', 'source_caveat', 'runbook', 'dashboard_context'],
+          },
+        },
+      },
       minItems: 0,
       maxItems: 6,
     },
@@ -3990,6 +4820,109 @@ function productFromValue(value: unknown): ProductKey | 'all' {
   if (raw.includes('kai')) return 'kai.hushh.ai';
   if (raw.includes('hushh.ai') || raw.includes('hushhai') || raw.includes('hushh ai')) return 'hushh.ai';
   return 'all';
+}
+
+function normalizeFocusedSource(value: unknown): AgentFocusedSource | undefined {
+  const raw = String(value ?? '').toLowerCase().trim().replaceAll('-', '_').replaceAll(' ', '_');
+  const aliases: Record<string, AgentFocusedSource> = {
+    gcp: 'cloud_run',
+    cloudrun: 'cloud_run',
+    cloud_run: 'cloud_run',
+    ga4: 'ga4',
+    google_analytics: 'ga4',
+    search: 'search_console',
+    search_console: 'search_console',
+    product: 'product_events',
+    events: 'product_events',
+    product_events: 'product_events',
+    db: 'product_events',
+    supabase: 'supabase',
+    funnel: 'business_funnel',
+    business_funnel: 'business_funnel',
+  };
+  return aliases[raw];
+}
+
+function compactAgentText(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = sanitizeAgentText(value.replace(/\s+/g, ' ').trim()).slice(0, maxLength);
+  return text.length > 0 ? text : undefined;
+}
+
+function normalizeContextRange(value: unknown): AgentSelectedRange | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const start = parseUtcDate(record.startDate);
+  const end = parseUtcDate(record.endDate);
+  if (!start || !end) return undefined;
+  const orderedStart = start <= end ? start : end;
+  const orderedEnd = start <= end ? end : start;
+  const days = Math.floor((orderedEnd.getTime() - orderedStart.getTime()) / 86_400_000) + 1;
+  if (days < 1 || days > MAX_HUSHH_AI_RANGE_DAYS) return undefined;
+  const preset = ['7D', '14D', '30D', '90D', 'custom'].includes(String(record.preset))
+    ? String(record.preset) as AgentRangePreset
+    : undefined;
+  return {
+    startDate: formatUtcDate(orderedStart),
+    endDate: formatUtcDate(orderedEnd),
+    days,
+    ...(preset ? { preset } : {}),
+  };
+}
+
+function normalizeAgentContext(value: unknown): AgentRequestContext | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const focusedProduct = productFromValue(record.focusedProduct);
+  const activeView = record.activeView === 'overview' || record.activeView === 'platforms'
+    ? record.activeView
+    : undefined;
+  const focusedEnvironment = record.focusedEnvironment === 'production' || record.focusedEnvironment === 'uat'
+    ? record.focusedEnvironment
+    : undefined;
+  const focusedSource = normalizeFocusedSource(record.focusedSource);
+  const selectedRange = normalizeContextRange(record.selectedRange);
+  const context: AgentRequestContext = {
+    ...(activeView ? { activeView } : {}),
+    ...(focusedProduct !== 'all' ? { focusedProduct } : {}),
+    ...(focusedEnvironment ? { focusedEnvironment } : {}),
+    ...(focusedSource ? { focusedSource } : {}),
+    ...(compactAgentText(record.focusedMetricKey, 80) ? { focusedMetricKey: compactAgentText(record.focusedMetricKey, 80) } : {}),
+    ...(compactAgentText(record.focusedMetricLabel, 120) ? { focusedMetricLabel: compactAgentText(record.focusedMetricLabel, 120) } : {}),
+    ...(compactAgentText(record.panelTitle, 120) ? { panelTitle: compactAgentText(record.panelTitle, 120) } : {}),
+    ...(selectedRange ? { selectedRange } : {}),
+  };
+  return Object.keys(context).length > 0 ? context : null;
+}
+
+function contextDateRange(context?: AgentRequestContext | null): HushhAiDateRange | null {
+  const selectedRange = context?.selectedRange;
+  if (!selectedRange) return null;
+  const start = parseUtcDate(selectedRange.startDate);
+  const end = parseUtcDate(selectedRange.endDate);
+  if (!start || !end) return null;
+  const endExclusive = addUtcDays(end, 1);
+  return {
+    startDate: selectedRange.startDate,
+    endDate: selectedRange.endDate,
+    days: selectedRange.days,
+    startTime: start.toISOString(),
+    endTime: endExclusive.toISOString(),
+    windowSeconds: Math.max(selectedRange.days * 86_400, 60),
+  };
+}
+
+function explicitProductFromQuestion(text: string): ProductKey | 'all' {
+  const lower = text.toLowerCase();
+  if (lower.includes('uat.kai') || lower.includes('kai uat') || (lower.includes('kai') && lower.includes('uat'))) return 'uat.kai.hushh.ai';
+  if (lower.includes('hushhtech')) return 'hushhtech.com';
+  if (lower.includes('kai.hushh.ai') || lower.includes('kai production') || lower.includes('kai prod') || lower.includes('kai')) return 'kai.hushh.ai';
+  if (lower.includes('hushh.ai') || lower.includes('hushh ai')) return 'hushh.ai';
+  return 'all';
+}
+
+function contextProduct(context?: AgentRequestContext | null): ProductKey | 'all' {
+  return context?.focusedProduct ?? 'all';
 }
 
 function productsFor(product: ProductKey | 'all'): ProductKey[] {
@@ -4245,6 +5178,78 @@ function warningList(...values: unknown[]): string[] {
     .slice(0, 8);
 }
 
+function knowledgeSourceFromChunk(chunk: AgentKnowledgeChunk): AgentKnowledgeSource {
+  return {
+    id: chunk.id,
+    title: chunk.title,
+    category: chunk.category,
+  };
+}
+
+function knowledgeTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9.]+/g)
+    .filter((token) => token.length >= 2);
+}
+
+function retrieveMetricKnowledge(
+  query: string,
+  context?: AgentRequestContext | null,
+  limitInput: unknown = 5,
+): Array<AgentKnowledgeSource & { text: string }> {
+  const limit = Math.max(1, Math.min(Number(limitInput) || 5, 6));
+  const queryText = [
+    query,
+    context?.focusedProduct,
+    context?.focusedEnvironment,
+    context?.focusedSource,
+    context?.focusedMetricKey,
+    context?.focusedMetricLabel,
+    context?.panelTitle,
+  ].filter(Boolean).join(' ');
+  const tokens = new Set(knowledgeTokens(queryText));
+  const focusedProduct = context?.focusedProduct;
+  const focusedSource = context?.focusedSource;
+
+  return AGENT_KNOWLEDGE_BASE
+    .map((chunk) => {
+      let score = 0;
+      for (const keyword of chunk.keywords) {
+        const keywordTokens = knowledgeTokens(keyword);
+        if (keywordTokens.some((token) => tokens.has(token))) score += 3;
+        if (queryText.toLowerCase().includes(keyword.toLowerCase())) score += 4;
+      }
+      for (const token of tokens) {
+        if (chunk.text.toLowerCase().includes(token)) score += 1;
+      }
+      if (focusedProduct && chunk.products?.includes(focusedProduct)) score += 6;
+      if (focusedSource && chunk.sources?.includes(focusedSource)) score += 5;
+      if (!focusedProduct && chunk.products?.length === PRODUCT_KEYS.length) score += 1;
+      return { chunk, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.chunk.title.localeCompare(b.chunk.title))
+    .slice(0, limit)
+    .map(({ chunk }) => ({
+      ...knowledgeSourceFromChunk(chunk),
+      text: sanitizeAgentText(chunk.text),
+    }));
+}
+
+function mergeKnowledgeSources(...lists: Array<AgentKnowledgeSource[] | undefined>): AgentKnowledgeSource[] {
+  const seen = new Set<string>();
+  const merged: AgentKnowledgeSource[] = [];
+  for (const list of lists) {
+    for (const source of list ?? []) {
+      if (!source?.id || seen.has(source.id)) continue;
+      seen.add(source.id);
+      merged.push(source);
+    }
+  }
+  return merged.slice(0, 6);
+}
+
 async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, window: AgentWindow = 'calendar_days'): Promise<MetricsSnapshot> {
   const range = typeof rangeInput === 'number' ? defaultUtcRange(rangeInput) : rangeInput;
   const compactRange = agentRange(range);
@@ -4259,6 +5264,7 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
     hushhAiGcp,
     hushhAiSearchConsole,
     hushhAiGa4,
+    hushhAiProductEvents,
     hushhTech,
   ] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
@@ -4271,15 +5277,16 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
     fetchHushhAiCloudRun(range),
     fetchHushhAiSearchConsole(range),
     fetchHushhAiGa4Summary(range),
+    fetchHushhAiProductEvents(range),
     fetchHushhTechAnalytics(range),
   ]);
   const fetchedAt = new Date().toISOString();
-  const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
+  const hushhAiProductEventsData = hushhAiProductEvents.data;
   const hushhTechData = hushhTech.data;
   const hushhTechSourceCards = recordArray(hushhTechData?.sourceCards);
 
   const hushhAiSources = recordArray(
-    buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEvents).sources,
+    buildHushhAiFreshness(fetchedAt, hushhAiGcp.data, hushhAiSearchConsole.data, hushhAiGa4.data, hushhAiProductEventsData).sources,
   ).map((source) => sourceFromFreshness('hushh.ai', source));
   const kaiSources = recordArray(
     buildKaiFreshness(fetchedAt, production.rows, kaiProductionGcp.data, kaiProductionGa4.data).sources,
@@ -4320,9 +5327,9 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
         cloudRun: compactCloudRun(hushhAiGcp.data, compactRange),
         ga4: compactGa4(hushhAiGa4.data, compactRange),
         searchConsole: compactSearchConsole(hushhAiSearchConsole.data, compactRange),
-        productEvents: compactProductEvents(hushhAiProductEvents, compactRange),
+        productEvents: compactProductEvents(hushhAiProductEventsData, compactRange),
         sourceStatuses: hushhAiSources,
-        warnings: warningList(hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error, hushhAiProductEvents.note),
+        warnings: warningList(hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error, hushhAiProductEvents.error, hushhAiProductEventsData?.note),
       },
       'kai.hushh.ai': {
         product: 'kai.hushh.ai',
@@ -4373,6 +5380,21 @@ async function getMetricsSnapshot(rangeDays: number): Promise<MetricsSnapshot> {
   return promise;
 }
 
+async function getMetricsSnapshotForRange(range: HushhAiDateRange): Promise<MetricsSnapshot> {
+  const key = `calendar:${range.startDate}:${range.endDate}`;
+  const now = Date.now();
+  if (metricsSnapshotCache?.key === key && metricsSnapshotCache.expiresAt > now) {
+    return metricsSnapshotCache.promise;
+  }
+  const promise = buildMetricsSnapshot(range, 'calendar_days');
+  metricsSnapshotCache = {
+    key,
+    expiresAt: now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000,
+    promise,
+  };
+  return promise;
+}
+
 async function getLast24MetricsSnapshot(): Promise<MetricsSnapshot> {
   const key = 'last_24_hours';
   const now = Date.now();
@@ -4388,35 +5410,63 @@ async function getLast24MetricsSnapshot(): Promise<MetricsSnapshot> {
   return promise;
 }
 
+async function getSnapshotForAgentContext(
+  context: AgentRequestContext | null | undefined,
+  rangeDays: number,
+  window: AgentWindow,
+): Promise<MetricsSnapshot> {
+  if (window === 'last_24_hours') return getLast24MetricsSnapshot();
+  const range = contextDateRange(context);
+  return range ? getMetricsSnapshotForRange(range) : getMetricsSnapshot(rangeDays);
+}
+
 function selectSnapshotProducts(snapshot: MetricsSnapshot, product: ProductKey | 'all'): MetricsSnapshot | ProductMetrics {
   if (product !== 'all') return snapshot.products[product];
   return snapshot;
 }
 
-async function executeAgentTool(name: string | undefined, args: Record<string, unknown> | undefined): Promise<AgentToolResult> {
+async function executeAgentTool(
+  name: string | undefined,
+  args: Record<string, unknown> | undefined,
+  context?: AgentRequestContext | null,
+): Promise<AgentToolResult> {
   const safeName = name ?? 'unknown';
   const safeArgs = args ?? {};
-  const product = productFromValue(safeArgs.product);
+  const product = productFromValue(safeArgs.product ?? contextProduct(context));
   const rangeDays = clampChatRangeDays(safeArgs.rangeDays);
   const window = safeArgs.window === 'last_24_hours' ? 'last_24_hours' : 'calendar_days';
   if (safeName === 'get_metric_catalog') {
     return { tool: safeName, args: safeArgs, ok: true, data: { products: METRIC_CATALOG } };
   }
   if (safeName === 'get_product_metrics') {
-    const snapshot = window === 'last_24_hours'
-      ? await getLast24MetricsSnapshot()
-      : await getMetricsSnapshot(rangeDays);
+    const snapshot = await getSnapshotForAgentContext(context, rangeDays, window);
     return { tool: safeName, args: safeArgs, ok: true, data: selectSnapshotProducts(snapshot, product) };
   }
   if (safeName === 'get_source_status') {
-    const snapshot = window === 'last_24_hours'
-      ? await getLast24MetricsSnapshot()
-      : await getMetricsSnapshot(rangeDays);
-    const sourceFilter = typeof safeArgs.source === 'string' ? safeArgs.source.toLowerCase() : '';
+    const snapshot = await getSnapshotForAgentContext(context, rangeDays, window);
+    const sourceFilter = typeof safeArgs.source === 'string'
+      ? safeArgs.source.toLowerCase()
+      : context?.focusedSource ?? '';
     const sources = productsFor(product)
       .flatMap((key) => snapshot.products[key].sourceStatuses)
       .filter((source) => !sourceFilter || source.source.toLowerCase().includes(sourceFilter));
     return { tool: safeName, args: safeArgs, ok: true, data: { generatedAt: snapshot.generatedAt, range: snapshot.range, sources } };
+  }
+  if (safeName === 'search_metric_knowledge') {
+    const source = normalizeFocusedSource(safeArgs.source ?? context?.focusedSource);
+    const toolContext: AgentRequestContext = {
+      ...(context ?? {}),
+      ...(product !== 'all' ? { focusedProduct: product } : {}),
+      ...(source ? { focusedSource: source } : {}),
+    };
+    return {
+      tool: safeName,
+      args: safeArgs,
+      ok: true,
+      data: {
+        chunks: retrieveMetricKnowledge(String(safeArgs.query ?? ''), toolContext, safeArgs.limit),
+      },
+    };
   }
   return {
     tool: safeName,
@@ -4449,15 +5499,18 @@ function historyToGeminiContents(history: ChatHistoryMessage[]) {
 
 const HUSSH_ANALYST_TOOL_PROMPT = `You are Hussh Insights AI, an analyst agent for metrics.hushh.ai.
 Use tools before answering any metrics question. Only request aggregate metrics. Never request or expose raw users, emails, prompts, tokens, project ids, dataset ids, stack traces, or provider diagnostics.
-Prefer get_product_metrics for numeric questions and get_source_status for availability/freshness questions. Use get_metric_catalog if the requested metric name is ambiguous.
+Prefer get_product_metrics for numeric questions and get_source_status for availability/freshness questions. Use search_metric_knowledge for definitions, source caveats, runbook meaning, and short dashboard follow-ups such as "explain this". Use get_metric_catalog if the requested metric name is ambiguous.
 For "last day", "past day", "last 24 hours", "24-hour report", or "what happened in the last day" requests, call get_product_metrics with window="last_24_hours" and rangeDays=1.
-Treat the metric catalog as the semantic field model: use field labels, descriptions, synonyms, caveats, and example questions to map business language to the right aggregate metric.`;
+Treat the metric catalog as the semantic field model: use field labels, descriptions, synonyms, caveats, and example questions to map business language to the right aggregate metric.
+If visible dashboard context is provided and the user message omits product/source/range, inherit that context. If the user explicitly names a product, source, or "last 24 hours", the user message wins.`;
 
 const HUSSH_ANALYST_SYNTHESIS_PROMPT = `You are Hussh Insights AI, a detailed analyst for metrics.hushh.ai.
 Answer only from the provided aggregate tool results. Do not invent data.
 Return JSON matching the schema exactly.
 Every numeric claim in reply must appear in claims with a canonical metric id from the catalog when possible.
+Knowledge chunks can explain definitions and caveats, but they cannot create numeric claims. Include knowledgeSources for any chunk used to explain the answer.
 Use product names exactly: hushh.ai, kai.hushh.ai, uat.kai.hushh.ai, hushhtech.com.
+If visible dashboard context is provided and the user message is a short follow-up, use the focused product, environment, source, metric, panel, and selected range from that context. If the user explicitly names another product or asks for last 24 hours, follow the user message.
 When tool results have window="last_24_hours", call Cloud Run reliability rolling 24-hour data. For GA4 or traffic sections, use the section label/source/note exactly; if a section says it is date-based or not exact rolling, state that caveat instead of calling it exact rolling 24-hour users.
 Never blend kai.hushh.ai production with uat.kai.hushh.ai. If the user says "Kai UAT", use uat.kai.hushh.ai; if they say "Kai production" or "kai.hushh.ai", use kai.hushh.ai.
 Use complete sentences. Never end mid-sentence, after a comma, after an open parenthesis, or after words such as "of", "for", "with", "and", "DAU", or "DA".
@@ -4466,11 +5519,17 @@ Mention missing or delayed sources in warnings instead of treating unavailable d
 Return 3-5 suggestedQuestions that are useful next steps for this exact answer.
 Detailed analyst style is preferred: exact number, date range, source, interpretation, then action.`;
 
-async function collectAgentToolResults(ai: any, message: string, history: ChatHistoryMessage[]): Promise<AgentToolResult[]> {
+async function collectAgentToolResults(
+  ai: any,
+  message: string,
+  history: ChatHistoryMessage[],
+  context?: AgentRequestContext | null,
+): Promise<AgentToolResult[]> {
   const inferredWindow = inferAgentWindow(message, history);
+  const contextText = context ? `Visible dashboard context: ${JSON.stringify(context)}` : '';
   const contents: any[] = [
     ...historyToGeminiContents(history),
-    { role: 'user' as const, parts: [{ text: message }] },
+    { role: 'user' as const, parts: [{ text: [contextText, message].filter(Boolean).join('\n') }] },
   ];
   const toolResults: AgentToolResult[] = [];
 
@@ -4485,7 +5544,7 @@ async function collectAgentToolResults(ai: any, message: string, history: ChatHi
           functionCallingConfig: round === 0
             ? {
               mode: 'ANY',
-              allowedFunctionNames: ['get_metric_catalog', 'get_product_metrics', 'get_source_status'],
+              allowedFunctionNames: ['get_metric_catalog', 'get_product_metrics', 'get_source_status', 'search_metric_knowledge'],
             }
             : { mode: 'AUTO' },
         },
@@ -4503,7 +5562,7 @@ async function collectAgentToolResults(ai: any, message: string, history: ChatHi
 
     const responseParts = [];
     for (const call of calls) {
-      const result = await executeAgentTool(call.name, call.args);
+      const result = await executeAgentTool(call.name, call.args, context);
       toolResults.push(result);
       responseParts.push({
         functionResponse: {
@@ -4520,9 +5579,21 @@ async function collectAgentToolResults(ai: any, message: string, history: ChatHi
     toolResults.push(await executeAgentTool(
       'get_product_metrics',
       inferredWindow === 'last_24_hours'
-        ? { product: 'all', rangeDays: 1, window: 'last_24_hours' }
-        : { product: 'all', rangeDays: 7 },
+        ? { product: contextProduct(context), rangeDays: 1, window: 'last_24_hours' }
+        : { product: contextProduct(context), rangeDays: context?.selectedRange?.days ?? 7 },
+      context,
     ));
+  }
+  if (!toolResults.some((result) => result.tool === 'search_metric_knowledge')) {
+    const chunks = retrieveMetricKnowledge(message, context, 4);
+    if (chunks.length > 0) {
+      toolResults.push({
+        tool: 'search_metric_knowledge',
+        args: { query: message, product: contextProduct(context) },
+        ok: true,
+        data: { chunks },
+      });
+    }
   }
   return toolResults;
 }
@@ -4641,8 +5712,20 @@ function isCompleteReply(reply: string): boolean {
 }
 
 function normalizeAgentAnswer(answer: AgentAnswer): AgentAnswer {
+  const knowledgeSources = Array.isArray(answer.knowledgeSources)
+    ? answer.knowledgeSources
+      .map((source) => ({
+        id: compactAgentText(source.id, 80) ?? '',
+        title: compactAgentText(source.title, 120) ?? '',
+        category: ['metric_definition', 'source_caveat', 'runbook', 'dashboard_context'].includes(source.category)
+          ? source.category
+          : 'source_caveat' as AgentKnowledgeCategory,
+      }))
+      .filter((source) => source.id && source.title)
+      .slice(0, 6)
+    : [];
   return {
-    reply: String(answer.reply ?? '').trim(),
+    reply: sanitizeAgentText(String(answer.reply ?? '').trim()),
     confidence: ['high', 'medium', 'low'].includes(answer.confidence) ? answer.confidence : 'medium',
     claims: Array.isArray(answer.claims) ? answer.claims.map((claim) => ({
       product: productFromValue(claim.product) === 'all' ? 'hushh.ai' : productFromValue(claim.product) as ProductKey,
@@ -4673,6 +5756,7 @@ function normalizeAgentAnswer(answer: AgentAnswer): AgentAnswer {
         .map((question) => sanitizeAgentText(question.trim()).slice(0, 180))
         .slice(0, 6)
       : [],
+    knowledgeSources: mergeKnowledgeSources(knowledgeSources),
   };
 }
 
@@ -4729,12 +5813,10 @@ function deterministicClaim(
   return { product, metric, label, value, unit, source, range: snapshot.range };
 }
 
-function inferProductFromQuestion(text: string): ProductKey | 'all' {
-  const lower = text.toLowerCase();
-  if (lower.includes('hushhtech')) return 'hushhtech.com';
-  if (lower.includes('kai')) return 'kai.hushh.ai';
-  if (lower.includes('hushh.ai') || lower.includes('hushh ai')) return 'hushh.ai';
-  return 'all';
+function inferProductFromQuestion(text: string, context?: AgentRequestContext | null): ProductKey | 'all' {
+  const explicitProduct = explicitProductFromQuestion(text);
+  if (explicitProduct !== 'all') return explicitProduct;
+  return context?.focusedProduct ?? 'all';
 }
 
 function isCrossProductUserQuestion(text: string): boolean {
@@ -5029,7 +6111,181 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
   };
 }
 
-function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMessage[], snapshot: MetricsSnapshot): AgentAnswer {
+function contextMetricId(context?: AgentRequestContext | null): string | null {
+  if (!context?.focusedMetricKey && !context?.focusedMetricLabel) return null;
+  const rawKey = normalizeMetricId(String(context.focusedMetricKey ?? ''));
+  if (rawKey.includes('.')) return rawKey;
+  const text = `${rawKey} ${context.focusedMetricLabel ?? ''}`.toLowerCase();
+  if (context.focusedSource === 'cloud_run') {
+    if (/5xx|error count|errors/.test(text)) return 'cloud_run.error_count';
+    if (/error rate/.test(text)) return 'cloud_run.error_rate';
+    if (/p95|latency/.test(text)) return 'cloud_run.p95_latency_ms';
+    if (/instance/.test(text)) return 'cloud_run.instance_count';
+    return 'cloud_run.request_count';
+  }
+  if (context.focusedSource === 'ga4') {
+    if (/session/.test(text)) return 'ga4.sessions';
+    if (/event/.test(text)) return 'ga4.events';
+    if (/user|visitor|active/.test(text)) return 'ga4.users';
+  }
+  if (context.focusedSource === 'search_console') {
+    if (/impression/.test(text)) return 'search_console.impressions';
+    if (/ctr/.test(text)) return 'search_console.ctr';
+    if (/position/.test(text)) return 'search_console.average_position';
+    return 'search_console.clicks';
+  }
+  if (context.focusedSource === 'product_events') {
+    if (/dau|daily active|active user/.test(text)) return 'product_events.dau';
+    if (/wau|weekly active/.test(text)) return 'product_events.wau';
+    if (/mau|monthly active/.test(text)) return 'product_events.mau';
+    if (/session/.test(text)) return 'product_events.sessions';
+    return 'product_events.total_events';
+  }
+  if (context.focusedSource === 'supabase') {
+    if (/new/.test(text)) return 'supabase.new_users';
+    if (/active/.test(text)) return 'supabase.active_users';
+    if (/session/.test(text)) return 'supabase.sessions_started';
+    return 'supabase.total_users';
+  }
+  if (context.focusedSource === 'business_funnel') {
+    if (/persist|conversion|rate/.test(text)) return 'funnel.signup_to_persisted_rate';
+    return 'funnel.signups';
+  }
+  return rawKey || null;
+}
+
+function metricCatalogEntry(product: ProductKey, metric: string): MetricFieldCatalogEntry | undefined {
+  const canonical = normalizeMetricId(metric);
+  return METRIC_FIELD_CATALOG.find((entry) => entry.product === product && normalizeMetricId(entry.id) === canonical);
+}
+
+function metricUnitFor(metric: string, entry?: MetricFieldCatalogEntry): string {
+  if (entry?.unit) return entry.unit;
+  const canonical = normalizeMetricId(metric);
+  if (canonical.includes('rate') || canonical.endsWith('.ctr')) return '%';
+  if (canonical.includes('latency')) return 'ms';
+  if (canonical.includes('session')) return 'sessions';
+  if (canonical.includes('event')) return 'events';
+  if (canonical.includes('request')) return 'requests';
+  if (canonical.includes('click')) return 'clicks';
+  if (canonical.includes('impression')) return 'impressions';
+  return 'count';
+}
+
+function isContextFollowUp(message: string, context?: AgentRequestContext | null): boolean {
+  if (!context?.focusedProduct && !context?.focusedSource && !context?.focusedMetricLabel) return false;
+  const lower = message.toLowerCase().trim();
+  return (
+    lower.length <= 120
+    && /^(explain this|explain|what is this|what does this mean|why is this waiting|why waiting|why unavailable|what about (this|users|sessions|events|it)|tell me more|details?|show details|is this correct)/i.test(lower)
+  );
+}
+
+function isKnowledgeOnlyQuestion(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    /(what does|define|meaning of).*(ga4|users|sessions|events|requests|search console)/i.test(lower)
+    || /(are|is).*(cloud run )?requests?.*(users?|people|accounts?)/i.test(lower)
+    || /(cloud run )?requests?.*(users?|people|accounts?)/i.test(lower)
+    || /why.*(waiting|not configured|unavailable|delayed)/i.test(lower)
+  );
+}
+
+function buildKnowledgeOnlyAnswer(message: string, snapshot: MetricsSnapshot, context?: AgentRequestContext | null): AgentAnswer {
+  const chunks = retrieveMetricKnowledge(message, context, 4);
+  const knowledgeSources = chunks.map(({ id, title, category }) => ({ id, title, category }));
+  const lower = message.toLowerCase();
+  let reply: string;
+
+  if (/(cloud run )?requests?.*(users?|people|accounts?)/i.test(lower) || /(are|is).*(cloud run )?requests?.*(users?|people|accounts?)/i.test(lower)) {
+    reply = 'No. Cloud Run requests are not users, people, or accounts. They are infrastructure traffic events used for reliability, load, 5xx, error-rate, and latency analysis. For users, use GA4 audience users when you need web traffic behavior, or product-account aggregates such as HushhTech Supabase when you need account truth.';
+  } else if (/ga4.*users|users.*ga4/i.test(lower)) {
+    reply = 'GA4 users means aggregate web audience users observed by Google Analytics for the selected period. It can explain website reach and engagement, but it is not a product-account table, not authenticated identity, and not a cross-product de-duplicated user count.';
+  } else if (/waiting|not configured|unavailable|delayed/i.test(lower) && context?.focusedProduct) {
+    const product = context.focusedProduct;
+    const source = context.focusedSource ? ` ${context.focusedSource.replaceAll('_', ' ')}` : '';
+    reply = `${product}${source} is shown with its source status because the dashboard only exposes verified aggregate data. Waiting means the aggregate source exists conceptually but is not ready for trusted values in this window; not configured means no real aggregate source is wired yet; delayed means the source is valid but has ingestion lag.`;
+  } else {
+    reply = chunks.length > 0
+      ? chunks.map((chunk) => chunk.text).join(' ')
+      : 'I can explain metric definitions and source caveats from the curated metrics knowledge base, but I do not have a matching public-safe definition for that exact phrasing yet.';
+  }
+
+  return {
+    reply,
+    claims: [],
+    sources: context?.focusedProduct ? sourceSubset(snapshot, [context.focusedProduct]) : sourceSubset(snapshot, [...PRODUCT_KEYS]),
+    warnings: [],
+    confidence: chunks.length > 0 ? 'high' : 'medium',
+    suggestedQuestions: [
+      'Show the exact metric source behind this.',
+      'Which numbers are account truth versus web audience?',
+      'Explain the source caveats for this panel.',
+    ],
+    knowledgeSources,
+  };
+}
+
+function buildContextFocusedAnswer(message: string, snapshot: MetricsSnapshot, context: AgentRequestContext): AgentAnswer {
+  const explicitProduct = explicitProductFromQuestion(message);
+  const product = explicitProduct === 'all' ? context.focusedProduct ?? 'hushh.ai' : explicitProduct;
+  const metric = contextMetricId(context);
+  const metricValue = metric ? metricValueFromSnapshot(snapshot, product, metric) : null;
+  const entry = metric ? metricCatalogEntry(product, metric) : undefined;
+  const sourceName = context.focusedSource?.replaceAll('_', ' ') ?? entry?.source?.replaceAll('_', ' ') ?? 'selected source';
+  const label = context.focusedMetricLabel ?? entry?.label ?? context.panelTitle ?? 'selected metric';
+  const chunks = retrieveMetricKnowledge([message, product, sourceName, label].join(' '), context, 4);
+  const sourceStatus = snapshot.products[product].sourceStatuses.find((source) => (
+    context.focusedSource ? source.source.toLowerCase().includes(context.focusedSource) : true
+  ));
+  const claim = metric && metricValue != null
+    ? deterministicClaim(snapshot, product, metric, entry?.label ?? label, metricValue, metricUnitFor(metric, entry), entry?.source ?? sourceName)
+    : null;
+  const valueDisplay = metric && metricValue != null
+    ? isRateMetric(metric)
+      ? formatPercent(metricValue)
+      : metricUnitFor(metric, entry) === 'ms'
+        ? `${Math.round(metricValue)}ms`
+        : formatInteger(metricValue)
+    : null;
+  const statusLine = sourceStatus
+    ? `${sourceName} status is ${sourceStatus.status}${sourceStatus.detail ? `: ${sourceStatus.detail}` : ''}.`
+    : `${sourceName} status is not exposed as a separate source row for this metric.`;
+  const valueUnitSuffix = claim && claim.unit !== '%' && claim.unit !== 'ms' ? ` ${claim.unit}` : '';
+  const valueLine = claim
+    ? `${label} for ${product} is ${valueDisplay}${valueUnitSuffix} for ${snapshot.range.startDate} to ${snapshot.range.endDate}.`
+    : `${label} for ${product} does not have a verified numeric aggregate in ${snapshot.range.startDate} to ${snapshot.range.endDate}; I am not treating missing data as zero.`;
+  const knowledgeLine = chunks.length > 0 ? chunks.map((chunk) => chunk.text).slice(0, 2).join(' ') : '';
+
+  return {
+    reply: [
+      `You are asking about ${context.panelTitle ?? label} on ${product}${context.focusedEnvironment ? ` (${context.focusedEnvironment})` : ''}.`,
+      valueLine,
+      statusLine,
+      knowledgeLine,
+    ].filter(Boolean).join('\n'),
+    claims: claim ? [claim] : [],
+    sources: sourceSubset(snapshot, [product]),
+    warnings: warningList(
+      claim ? null : `${label} is unavailable or waiting in the selected aggregate source.`,
+      snapshot.products[product].warnings,
+    ),
+    confidence: claim ? 'high' : 'medium',
+    suggestedQuestions: [
+      `Show ${product} source caveats.`,
+      `Explain ${label} in plain English.`,
+      `Show exact source status for ${sourceName}.`,
+    ],
+    knowledgeSources: chunks.map(({ id, title, category }) => ({ id, title, category })),
+  };
+}
+
+function buildDeterministicAgentAnswer(
+  message: string,
+  history: ChatHistoryMessage[],
+  snapshot: MetricsSnapshot,
+  context?: AgentRequestContext | null,
+): AgentAnswer {
   const contextText = `${history.map((item) => item.content).join('\n')}\n${message}`.toLowerCase();
   if (/^(ping|hello|hi|say hello)$/i.test(message.trim())) {
     return {
@@ -5044,6 +6300,14 @@ function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMess
         'What are the top 3 issues today?',
       ],
     };
+  }
+
+  if (isContextFollowUp(message, context) && context) {
+    return buildContextFocusedAnswer(message, snapshot, context);
+  }
+
+  if (isKnowledgeOnlyQuestion(message)) {
+    return buildKnowledgeOnlyAnswer(message, snapshot, context);
   }
 
   if (isLast24ReportQuestion(contextText)) {
@@ -5147,7 +6411,7 @@ function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMess
   }
 
   if (/search quer|top quer/.test(contextText)) {
-    const product = inferProductFromQuestion(contextText);
+    const product = inferProductFromQuestion(contextText, context);
     const selectedProduct = product === 'all' ? 'hushhtech.com' : product;
     const search = asRecord(snapshot.products[selectedProduct].searchConsole);
     const topQueries = recordArray(search?.topQueries).slice(0, 5);
@@ -5171,7 +6435,7 @@ function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMess
     };
   }
 
-  const inferredProduct = inferProductFromQuestion(contextText);
+  const inferredProduct = inferProductFromQuestion(contextText, context);
   const product = inferredProduct === 'all' ? 'hushh.ai' : inferredProduct;
   const cloudRun = asRecord(snapshot.products[product].cloudRun);
   return {
@@ -5196,10 +6460,12 @@ function isClearlyUnsupportedMetricQuestion(message: string): boolean {
   return /mars|colony/i.test(message);
 }
 
-function shouldUseDeterministicFastPath(message: string): boolean {
+function shouldUseDeterministicFastPath(message: string, context?: AgentRequestContext | null): boolean {
   const lower = message.toLowerCase();
   return (
     /^(ping|hello|hi|say hello)$/i.test(message.trim())
+    || isContextFollowUp(message, context)
+    || isKnowledgeOnlyQuestion(message)
     || isClearlyUnsupportedMetricQuestion(message)
     || isCrossProductUserQuestion(message)
     || isLast24ReportQuestion(message)
@@ -5216,6 +6482,7 @@ async function generateStructuredAgentAnswer(
   message: string,
   history: ChatHistoryMessage[],
   toolResults: AgentToolResult[],
+  context?: AgentRequestContext | null,
   validationNote = '',
 ): Promise<{ answer: AgentAnswer | null; usage: Record<string, number> | null; finishReason: string | null }> {
   const response = await ai.models.generateContent({
@@ -5226,6 +6493,7 @@ async function generateStructuredAgentAnswer(
         text: JSON.stringify({
           userMessage: message,
           recentHistory: history,
+          visibleDashboardContext: context,
           toolResults,
           validationNote,
         }),
@@ -5253,14 +6521,12 @@ async function generateStructuredAgentAnswer(
   };
 }
 
-async function runHusshInsightsAgent(message: string, history: ChatHistoryMessage[]) {
+async function runHusshInsightsAgent(message: string, history: ChatHistoryMessage[], context?: AgentRequestContext | null) {
   const inferredWindow = inferAgentWindow(message, history);
-  if (shouldUseDeterministicFastPath(message)) {
-    const snapshot = inferredWindow === 'last_24_hours'
-      ? await getLast24MetricsSnapshot()
-      : await getMetricsSnapshot(7);
+  if (shouldUseDeterministicFastPath(message, context)) {
+    const snapshot = await getSnapshotForAgentContext(context, context?.selectedRange?.days ?? 7, inferredWindow);
     return {
-      answer: buildDeterministicAgentAnswer(message, history, snapshot),
+      answer: buildDeterministicAgentAnswer(message, history, snapshot, context),
       usage: null,
     };
   }
@@ -5273,20 +6539,19 @@ async function runHusshInsightsAgent(message: string, history: ChatHistoryMessag
   const modelWarnings: string[] = [];
   let toolResults: AgentToolResult[] = [];
   try {
-    toolResults = await collectAgentToolResults(ai, message, history);
+    toolResults = await collectAgentToolResults(ai, message, history, context);
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     modelWarnings.push(`AI tool loop fallback: ${messageText}`);
     toolResults = [await executeAgentTool(
       'get_product_metrics',
       inferredWindow === 'last_24_hours'
-        ? { product: 'all', rangeDays: 1, window: 'last_24_hours' }
-        : { product: 'all', rangeDays: 7 },
+        ? { product: contextProduct(context), rangeDays: 1, window: 'last_24_hours' }
+        : { product: contextProduct(context), rangeDays: context?.selectedRange?.days ?? 7 },
+      context,
     )];
   }
-  const snapshot = inferredWindow === 'last_24_hours'
-    ? await getLast24MetricsSnapshot()
-    : await getMetricsSnapshot(7);
+  const snapshot = await getSnapshotForAgentContext(context, context?.selectedRange?.days ?? 7, inferredWindow);
 
   let generated: { answer: AgentAnswer | null; usage: Record<string, number> | null; finishReason: string | null } = {
     answer: null,
@@ -5296,7 +6561,7 @@ async function runHusshInsightsAgent(message: string, history: ChatHistoryMessag
   let answer: AgentAnswer | null = null;
   let errors: string[] = [];
   try {
-    generated = await generateStructuredAgentAnswer(ai, message, history, toolResults);
+    generated = await generateStructuredAgentAnswer(ai, message, history, toolResults, context);
     answer = generated.answer ? normalizeAgentAnswer(generated.answer) : null;
     errors = answer ? validateAgentAnswer(answer, snapshot) : ['response was not valid JSON'];
     if (generated.finishReason && generated.finishReason !== 'STOP') {
@@ -5309,6 +6574,7 @@ async function runHusshInsightsAgent(message: string, history: ChatHistoryMessag
         message,
         history,
         toolResults,
+        context,
         `Previous answer failed validation: ${errors.join('; ')}. Regenerate a complete, schema-valid answer with only supported numeric claims.`,
       );
       answer = generated.answer ? normalizeAgentAnswer(generated.answer) : null;
@@ -5323,7 +6589,7 @@ async function runHusshInsightsAgent(message: string, history: ChatHistoryMessag
   }
 
   if (!answer || errors.length > 0) {
-    answer = buildDeterministicAgentAnswer(message, history, snapshot);
+    answer = buildDeterministicAgentAnswer(message, history, snapshot, context);
     answer.warnings = warningList(answer.warnings);
   } else if (modelWarnings.length > 0) {
     answer.warnings = warningList(answer.warnings);
@@ -5335,9 +6601,10 @@ async function runHusshInsightsAgent(message: string, history: ChatHistoryMessag
 app.use(express.json({ limit: '64kb' }));
 
 app.post('/api/chat', async (req, res) => {
-  const body = req.body as { message?: unknown; history?: unknown };
+  const body = req.body as { message?: unknown; history?: unknown; context?: unknown };
   const message = typeof body.message === 'string' ? body.message.trim() : '';
   const history = normalizeHistory(body.history);
+  const context = normalizeAgentContext(body.context);
 
   if (!message) {
     res.status(400).json({ error: 'Message is required.' });
@@ -5361,7 +6628,7 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
-    const { answer, usage } = await runHusshInsightsAgent(message, history);
+    const { answer, usage } = await runHusshInsightsAgent(message, history, context);
     res.json({
       reply: answer.reply,
       usage,
@@ -5371,6 +6638,7 @@ app.post('/api/chat', async (req, res) => {
       warnings: answer.warnings,
       confidence: answer.confidence,
       suggestedQuestions: answer.suggestedQuestions ?? [],
+      knowledgeSources: answer.knowledgeSources ?? [],
     });
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);

@@ -113,6 +113,7 @@ function assertAnalystShape(body, label) {
   assert(Array.isArray(body?.sources), `${label} response missing sources array`);
   assert(Array.isArray(body?.warnings), `${label} response missing warnings array`);
   assert(Array.isArray(body?.suggestedQuestions), `${label} response missing suggestedQuestions array`);
+  if (body?.knowledgeSources !== undefined) assert(Array.isArray(body.knowledgeSources), `${label} response knowledgeSources is not an array`);
   assert(['high', 'medium', 'low'].includes(body?.confidence), `${label} response confidence invalid`);
 }
 
@@ -338,7 +339,205 @@ async function main() {
     });
 
     // -----------------------------------------------------------------------
-    // 13. Cross-product query
+    // 13. Regression — dashboard context resolves short follow-ups
+    // -----------------------------------------------------------------------
+    const contextFollowUp = await fetchJson(`${base}/api/chat`, {
+      method: 'POST',
+      body: {
+        message: 'Explain this.',
+        context: {
+          activeView: 'overview',
+          focusedProduct: 'uat.kai.hushh.ai',
+          focusedEnvironment: 'uat',
+          focusedSource: 'ga4',
+          focusedMetricKey: 'ga4.events',
+          focusedMetricLabel: 'GA4 Events',
+          panelTitle: 'Kai UAT GA4 Events',
+          selectedRange: { startDate: '2026-04-25', endDate: '2026-05-01', preset: 'custom' },
+        },
+      },
+      timeoutMs: CHAT_TIMEOUT_MS,
+    });
+    assert(contextFollowUp.response.ok, `context follow-up returned HTTP ${contextFollowUp.response.status}`);
+    assertAnalystShape(contextFollowUp.body, 'context follow-up');
+    assert(/uat\.kai\.hushh\.ai|uat/i.test(contextFollowUp.body.reply), 'context follow-up should use UAT context', contextFollowUp.body.reply);
+    assert(!/kai\.hushh\.ai production/i.test(contextFollowUp.body.reply), 'context follow-up should not pivot to Kai production', contextFollowUp.body.reply);
+    assert(contextFollowUp.body.knowledgeSources.some((source) => source.category === 'dashboard_context' || source.category === 'source_caveat'),
+      'context follow-up should include contextual knowledge sources');
+    results.push({
+      check: 'chat-context-followup-uses-uat',
+      status: 'ok',
+      detail: `knowledge_sources=${contextFollowUp.body.knowledgeSources.length}`,
+    });
+
+    // -----------------------------------------------------------------------
+    // 14. Regression — selected context date range is preserved
+    // -----------------------------------------------------------------------
+    const contextRange = await fetchJson(`${base}/api/chat`, {
+      method: 'POST',
+      body: {
+        message: 'What about users?',
+        context: {
+          activeView: 'overview',
+          focusedProduct: 'hushh.ai',
+          focusedEnvironment: 'production',
+          focusedSource: 'ga4',
+          focusedMetricKey: 'ga4.users',
+          focusedMetricLabel: 'Users',
+          panelTitle: 'Hushh AI GA4',
+          selectedRange: { startDate: '2026-04-25', endDate: '2026-05-01', preset: 'custom' },
+        },
+      },
+      timeoutMs: CHAT_TIMEOUT_MS,
+    });
+    assert(contextRange.response.ok, `context range returned HTTP ${contextRange.response.status}`);
+    assertAnalystShape(contextRange.body, 'context range');
+    for (const claim of contextRange.body.claims) {
+      assert(claim.range?.startDate === '2026-04-25' && claim.range?.endDate === '2026-05-01',
+        'context range answer should preserve selected range',
+        JSON.stringify(claim.range));
+    }
+    results.push({
+      check: 'chat-context-date-range-preserved',
+      status: 'ok',
+      detail: `claims=${contextRange.body.claims.length}`,
+    });
+
+    // -----------------------------------------------------------------------
+    // 15. Regression — GA4 definition comes from RAG, not numeric invention
+    // -----------------------------------------------------------------------
+    const ga4Definition = await fetchJson(`${base}/api/chat`, {
+      method: 'POST',
+      body: {
+        message: 'What does GA4 users mean?',
+      },
+      timeoutMs: CHAT_TIMEOUT_MS,
+    });
+    assert(ga4Definition.response.ok, `GA4 definition returned HTTP ${ga4Definition.response.status}`);
+    assertAnalystShape(ga4Definition.body, 'GA4 definition');
+    assert(/web audience|browser|device|GA4|analytics/i.test(ga4Definition.body.reply), 'GA4 definition should explain audience semantics', ga4Definition.body.reply);
+    assert(Array.isArray(ga4Definition.body.claims) && ga4Definition.body.claims.length === 0, 'GA4 definition should not return numeric claims');
+    assert(ga4Definition.body.knowledgeSources.some((source) => source.id === 'ga4-users-definition'), 'GA4 definition should cite curated knowledge source');
+    results.push({
+      check: 'chat-rag-ga4-users-definition',
+      status: 'ok',
+      detail: `knowledge_sources=${ga4Definition.body.knowledgeSources.length}`,
+    });
+
+    // -----------------------------------------------------------------------
+    // 16. Regression — Cloud Run requests are never users
+    // -----------------------------------------------------------------------
+    const cloudRunGuardrail = await fetchJson(`${base}/api/chat`, {
+      method: 'POST',
+      body: {
+        message: 'Are Cloud Run requests users?',
+      },
+      timeoutMs: CHAT_TIMEOUT_MS,
+    });
+    assert(cloudRunGuardrail.response.ok, `Cloud Run guardrail returned HTTP ${cloudRunGuardrail.response.status}`);
+    assertAnalystShape(cloudRunGuardrail.body, 'Cloud Run guardrail');
+    assert(/not users|not people|not accounts|No\./i.test(cloudRunGuardrail.body.reply), 'Cloud Run guardrail should reject request-as-user interpretation', cloudRunGuardrail.body.reply);
+    assert(cloudRunGuardrail.body.claims.length === 0, 'Cloud Run guardrail should not return numeric claims');
+    assert(cloudRunGuardrail.body.knowledgeSources.some((source) => source.id === 'cloud-run-requests-not-users'), 'Cloud Run guardrail should cite curated knowledge source');
+    results.push({
+      check: 'chat-cloud-run-requests-not-users',
+      status: 'ok',
+      detail: 'requests are treated as infra traffic',
+    });
+
+    // -----------------------------------------------------------------------
+    // 17. Regression — invalid/oversized context is ignored safely
+    // -----------------------------------------------------------------------
+    const invalidContext = await fetchJson(`${base}/api/chat`, {
+      method: 'POST',
+      body: {
+        message: 'What does GA4 users mean?',
+        context: {
+          activeView: 'bad-view',
+          focusedProduct: 'mars',
+          focusedSource: 'stack_traces',
+          focusedMetricLabel: 'x'.repeat(5000),
+          selectedRange: { startDate: 'bad', endDate: 'bad', preset: 'bad' },
+        },
+      },
+      timeoutMs: CHAT_TIMEOUT_MS,
+    });
+    assert(invalidContext.response.ok, `invalid context returned HTTP ${invalidContext.response.status}`);
+    assertAnalystShape(invalidContext.body, 'invalid context');
+    assert(
+      !/hushh-pda-uat|hushh-pda(?!\.)|hushh-ai-prod|analytics_\d+|searchconsole_|AIza[A-Za-z0-9_-]{30,}/i.test(invalidContext.text),
+      'invalid context response leaks internal identifiers',
+    );
+    results.push({
+      check: 'chat-invalid-context-safe',
+      status: 'ok',
+      detail: 'oversized/invalid context ignored',
+    });
+
+    // -----------------------------------------------------------------------
+    // 18. Regression — HushhTech suspicious GA4 traffic remains caveated
+    // -----------------------------------------------------------------------
+    const hushhTechGa4Caveat = await fetchJson(`${base}/api/chat`, {
+      method: 'POST',
+      body: {
+        message: 'Explain this.',
+        context: {
+          activeView: 'overview',
+          focusedProduct: 'hushhtech.com',
+          focusedEnvironment: 'production',
+          focusedSource: 'ga4',
+          focusedMetricKey: 'traffic.sessions',
+          focusedMetricLabel: 'Sessions',
+          panelTitle: 'hushhtech.com Audience',
+          selectedRange: { startDate: '2026-04-25', endDate: '2026-05-01', preset: 'custom' },
+        },
+      },
+      timeoutMs: CHAT_TIMEOUT_MS,
+    });
+    assert(hushhTechGa4Caveat.response.ok, `HushhTech GA4 caveat returned HTTP ${hushhTechGa4Caveat.response.status}`);
+    assertAnalystShape(hushhTechGa4Caveat.body, 'HushhTech GA4 caveat');
+    assert(/suspicious|caveat|zero|waiting|verify|verified/i.test(`${hushhTechGa4Caveat.body.reply}\n${hushhTechGa4Caveat.body.warnings.join('\n')}`),
+      'HushhTech GA4 answer should preserve suspicious traffic caveat',
+      hushhTechGa4Caveat.body.reply);
+    results.push({
+      check: 'chat-hushhtech-ga4-caveated',
+      status: 'ok',
+      detail: `warnings=${hushhTechGa4Caveat.body.warnings.length}`,
+    });
+
+    // -----------------------------------------------------------------------
+    // 19. Regression — Hushh AI product events remain not_configured
+    // -----------------------------------------------------------------------
+    const hushhAiProductEvents = await fetchJson(`${base}/api/chat`, {
+      method: 'POST',
+      body: {
+        message: 'Explain this.',
+        context: {
+          activeView: 'overview',
+          focusedProduct: 'hushh.ai',
+          focusedEnvironment: 'production',
+          focusedSource: 'product_events',
+          focusedMetricKey: 'product_events.expected',
+          focusedMetricLabel: 'Signup Started',
+          panelTitle: 'Hushh AI Product Events',
+          selectedRange: { startDate: '2026-04-25', endDate: '2026-05-01', preset: 'custom' },
+        },
+      },
+      timeoutMs: CHAT_TIMEOUT_MS,
+    });
+    assert(hushhAiProductEvents.response.ok, `Hushh AI product events returned HTTP ${hushhAiProductEvents.response.status}`);
+    assertAnalystShape(hushhAiProductEvents.body, 'Hushh AI product events');
+    assert(/not configured|not_configured|no first-party|no real/i.test(`${hushhAiProductEvents.body.reply}\n${hushhAiProductEvents.body.warnings.join('\n')}`),
+      'Hushh AI product events should remain not configured',
+      hushhAiProductEvents.body.reply);
+    results.push({
+      check: 'chat-hushh-ai-product-events-not-configured',
+      status: 'ok',
+      detail: `warnings=${hushhAiProductEvents.body.warnings.length}`,
+    });
+
+    // -----------------------------------------------------------------------
+    // 20. Cross-product query
     // -----------------------------------------------------------------------
     const crossProduct = await fetchJson(`${base}/api/chat`, {
       method: 'POST',

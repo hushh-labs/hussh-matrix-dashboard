@@ -12,7 +12,7 @@ Unified engagement dashboard for **kai.hushh.ai**, **hushhtech.com**, and **hush
 React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
                                      →  hushhtech.com summary endpoint + GCP provider APIs
                                      →  Supabase Management API (aggregate counts)
-                                     →  Gemini API (AI insights)
+                                     →  Gemini API (Matrix Agent One insights)
 ```
 
 - **Frontend**: Vite + React 19 + TypeScript + Tailwind CSS v4 + Recharts + Motion
@@ -91,13 +91,25 @@ npm run test:prod:kai
 The probes verify DNS, product roots, the dashboard health endpoint, product analytics endpoints, `/api/analytics/all`, no-store API cache headers, and product freshness payloads. If a dictated alias such as `matrix.hush.ai` or `kai.hush.ai` is provided, the checks report the literal DNS status and verify the canonical deployment.
 The HushhTech flow probe additionally verifies that `hushhtech.com` GA4 summary data, GCP Search Console fallback tables, the Cloud Run ingestion job, the Scheduler trigger, and `metrics.hushh.ai` are connected end to end.
 
+## Matrix Agent One
+
+`/api/chat` is a deterministic-first Gemini analyst. Numeric claims must come
+from aggregate metric tools; curated in-process knowledge is used only for
+definitions, source caveats, dashboard context, and runbook explanations. The
+dashboard sends the visible active view, focused product/environment/source,
+focused metric, panel title, and selected date range with each chat request so
+follow-ups like "explain this" stay on the clicked product and range. The
+response remains backward-compatible with `reply`, `model`, and `usage`, and can
+also include `claims`, `sources`, `warnings`, `confidence`, `suggestedQuestions`,
+and `knowledgeSources`.
+
 ## Data Flow
 
 The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai UAT feed**: DAU, WAU, MAU, sessions, events, investor/RIA funnels, platform mix
 - **Kai raw GA4 export**: top events, users, sessions, country, device, and platform aggregates from `analytics_533362555`
 - **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
-- **Kai Production Cloud Run**: `kai.hushh.ai` requests, non-2xx, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp`
+- **Kai Production Cloud Run**: `kai.hushh.ai` requests, 5xx, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp`
 - **hushh.ai**: Cloud Run request, latency, instance, and Search Console export-table status. No Supabase database is attached to this product.
 - **hushhtech.com**: Supabase database aggregates, public-safe summary from `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic, plus direct Cloud Run Monitoring and GCP-backed Search Console metrics fetched by `metrics.hushh.ai`. Search Console clicks, impressions, CTR, queries, pages, countries, and devices must not come from Supabase.
 

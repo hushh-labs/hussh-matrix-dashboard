@@ -73,6 +73,7 @@ export interface TrafficPoint {
   kaiUat: number;
   tech: number;
   ai: number;
+  aiUat: number;
 }
 
 export interface AcquisitionChannel {
@@ -165,7 +166,7 @@ export interface ProductSourceCard {
 }
 
 export interface ProductSourceGroup {
-  productKey: 'hushh_ai' | 'kai' | 'hushhtech' | string;
+  productKey: 'hushh_ai' | 'hushh_ai_uat' | 'kai_production' | 'kai_uat' | 'hushhtech' | string;
   productName: string;
   domain: string;
   primaryEnvironment: 'production' | 'uat' | string;
@@ -732,6 +733,20 @@ export interface DashboardData {
   hushhAiSessionTimingMetrics: BreakdownMetric[];
   hushhAiDailyStatus: HushhAiDailyStatusPoint[];
   hushhAiDailySummaryMetrics: BreakdownMetric[];
+  hushhAiUat: HushhAiSummary | null;
+  hushhAiUatOpsMetrics: BreakdownMetric[];
+  hushhAiUatSearchMetrics: BreakdownMetric[];
+  hushhAiUatEngagementMetrics: BreakdownMetric[];
+  hushhAiUatTopPageMetrics: BreakdownMetric[];
+  hushhAiUatTopEventMetrics: BreakdownMetric[];
+  hushhAiUatProductEventMetrics: BreakdownMetric[];
+  hushhAiUatAcquisitionMetrics: BreakdownMetric[];
+  hushhAiUatSourceMediumMetrics: BreakdownMetric[];
+  hushhAiUatLandingPageMetrics: BreakdownMetric[];
+  hushhAiUatGeoDeviceMetrics: BreakdownMetric[];
+  hushhAiUatSessionTimingMetrics: BreakdownMetric[];
+  hushhAiUatDailyStatus: HushhAiDailyStatusPoint[];
+  hushhAiUatDailySummaryMetrics: BreakdownMetric[];
   dataQualityWarnings: string[];
   feedWarnings: string[];
   sourceGroups: ProductSourceGroup[];

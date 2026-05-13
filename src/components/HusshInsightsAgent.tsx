@@ -32,6 +32,27 @@ interface AgentSource {
   available: boolean;
 }
 
+interface AgentKnowledgeSource {
+  id: string;
+  title: string;
+  category: 'metric_definition' | 'source_caveat' | 'runbook' | 'dashboard_context';
+}
+
+export interface MatrixAgentContext {
+  activeView?: 'overview' | 'platforms';
+  focusedProduct?: 'hushh.ai' | 'uat.hushh.ai' | 'kai.hushh.ai' | 'uat.kai.hushh.ai' | 'hushhtech.com';
+  focusedEnvironment?: 'production' | 'uat';
+  focusedSource?: 'cloud_run' | 'ga4' | 'search_console' | 'product_events' | 'supabase' | 'business_funnel';
+  focusedMetricKey?: string;
+  focusedMetricLabel?: string;
+  panelTitle?: string;
+  selectedRange?: {
+    startDate: string;
+    endDate: string;
+    preset?: '7D' | '14D' | '30D' | '90D' | 'custom';
+  };
+}
+
 interface ChatResponse {
   reply: string;
   claims?: AgentClaim[];
@@ -39,6 +60,7 @@ interface ChatResponse {
   warnings?: string[];
   confidence?: 'high' | 'medium' | 'low';
   suggestedQuestions?: string[];
+  knowledgeSources?: AgentKnowledgeSource[];
 }
 
 interface ChatMessage {
@@ -51,6 +73,7 @@ interface ChatMessage {
   warnings?: string[];
   confidence?: 'high' | 'medium' | 'low';
   suggestedQuestions?: string[];
+  knowledgeSources?: AgentKnowledgeSource[];
   isError?: boolean;
 }
 
@@ -84,7 +107,7 @@ const STARTER_PROMPTS: PromptOption[] = [
   },
   {
     label: 'Growth summary',
-    prompt: 'Give me a growth summary for hushh.ai, hushhtech.com, kai production, and Kai UAT for the selected range.',
+    prompt: 'Give me a growth summary for hushh.ai, uat.hushh.ai, hushhtech.com, kai production, and Kai UAT for the selected range.',
   },
 ];
 
@@ -168,10 +191,17 @@ function statusClass(status: string, available: boolean) {
   return 'border-[#9a5b00]/15 bg-[#fff7e6] text-[#9a5b00]';
 }
 
+function knowledgeCategoryLabel(category: AgentKnowledgeSource['category']) {
+  if (category === 'metric_definition') return 'Metric';
+  if (category === 'source_caveat') return 'Caveat';
+  if (category === 'dashboard_context') return 'Context';
+  return 'Runbook';
+}
+
 function promptOptionClass(tone: PromptOption['tone'] = 'default') {
-  if (tone === 'priority') return 'border-[#007aff]/20 bg-[#eef6ff]/95 text-[#005eb8] hover:border-[#007aff]/40 hover:bg-[#e3f1ff]';
+  if (tone === 'priority') return 'border-[#1a73e8]/20 bg-[#eef6ff]/95 text-[#005eb8] hover:border-[#1a73e8]/40 hover:bg-[#e3f1ff]';
   if (tone === 'warning') return 'border-[#9a5b00]/20 bg-[#fff7e6]/95 text-[#7a4b00] hover:border-[#9a5b00]/40 hover:bg-[#fff1d2]';
-  return 'border-black/[0.07] bg-white/[0.82] text-[#1d1d1f] hover:border-[#007aff]/25 hover:bg-[#f4faff] hover:text-[#005eb8]';
+  return 'border-black/[0.07] bg-white/[0.82] text-[#202124] hover:border-[#1a73e8]/25 hover:bg-[#f4faff] hover:text-[#005eb8]';
 }
 
 function buildContextualPrompts(message: ChatMessage | undefined): PromptOption[] {
@@ -227,7 +257,7 @@ function PromptOptionTray({
 }) {
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#86868b]">
+      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#5f6368]">
         <Lightbulb className="h-3 w-3" />
         {title}
       </div>
@@ -249,7 +279,7 @@ function PromptOptionTray({
   );
 }
 
-export default function HusshInsightsAgent() {
+export default function HusshInsightsAgent({ context }: { context?: MatrixAgentContext }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -301,7 +331,7 @@ export default function HusshInsightsAgent() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, history }),
+        body: JSON.stringify({ message: trimmed, history, context }),
       });
 
       if (!response.ok) {
@@ -321,6 +351,7 @@ export default function HusshInsightsAgent() {
         warnings: data.warnings ?? [],
         confidence: data.confidence,
         suggestedQuestions: data.suggestedQuestions ?? [],
+        knowledgeSources: data.knowledgeSources ?? [],
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -337,7 +368,7 @@ export default function HusshInsightsAgent() {
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, messages]);
+  }, [context, isLoading, messages]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -366,7 +397,7 @@ export default function HusshInsightsAgent() {
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 24 }}
             onClick={() => setIsOpen(true)}
-            className="fixed bottom-[calc(1.25rem+env(safe-area-inset-bottom))] right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.14),0_18px_46px_rgba(0,0,0,0.24)] transition-shadow duration-200 hover:shadow-[0_4px_14px_rgba(0,0,0,0.18),0_22px_56px_rgba(0,0,0,0.28)] active:scale-95 sm:bottom-6 sm:right-6 sm:h-16 sm:w-16"
+            className="fixed bottom-[calc(1.25rem+env(safe-area-inset-bottom))] right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-[#202124] shadow-[0_2px_10px_rgba(0,0,0,0.14),0_18px_46px_rgba(0,0,0,0.24)] transition-shadow duration-200 hover:shadow-[0_4px_14px_rgba(0,0,0,0.18),0_22px_56px_rgba(0,0,0,0.28)] active:scale-95 sm:bottom-6 sm:right-6 sm:h-16 sm:w-16"
             aria-label={`Open ${AGENT_NAME}`}
           >
             <Sparkles className="h-6 w-6 text-white sm:h-7 sm:w-7" />
@@ -387,13 +418,13 @@ export default function HusshInsightsAgent() {
             {/* Header */}
             <div className="flex items-center justify-between border-b border-black/[0.06] bg-white/[0.72] px-4 py-3.5 backdrop-blur-xl sm:bg-white/[0.62] sm:px-6 sm:py-4">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[18px] bg-[#1d1d1f] shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_10px_24px_rgba(0,0,0,0.16)] sm:h-11 sm:w-11 sm:rounded-2xl">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[18px] bg-[#202124] shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_10px_24px_rgba(0,0,0,0.16)] sm:h-11 sm:w-11 sm:rounded-2xl">
                   <Sparkles className="h-[18px] w-[18px] text-white sm:h-5 sm:w-5" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-[17px] font-semibold leading-tight text-[#1d1d1f] sm:text-[18px]">{AGENT_NAME}</h2>
+                  <h2 className="truncate text-[17px] font-semibold leading-tight text-[#202124] sm:text-[18px]">{AGENT_NAME}</h2>
                   <div className="mt-1 flex items-center gap-2">
-                    <p className="hidden text-[13px] font-medium leading-tight text-[#86868b] sm:block">{AGENT_SUBTITLE}</p>
+                    <p className="hidden text-[13px] font-medium leading-tight text-[#5f6368] sm:block">{AGENT_SUBTITLE}</p>
                     <span className="inline-flex items-center gap-1 rounded-full border border-[#1f7a36]/15 bg-[#ecfdf3] px-2 py-0.5 text-[10px] font-bold uppercase text-[#1f7a36]">
                       <Activity className="h-3 w-3" />
                       Live
@@ -406,7 +437,7 @@ export default function HusshInsightsAgent() {
                 {messages.length > 0 && (
                   <button
                     onClick={clearChat}
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-[#86868b] transition-colors hover:bg-black/[0.06] hover:text-[#1d1d1f] sm:h-9 sm:w-9"
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-[#5f6368] transition-colors hover:bg-black/[0.06] hover:text-[#202124] sm:h-9 sm:w-9"
                     aria-label="Clear conversation"
                     title="Clear conversation"
                   >
@@ -415,7 +446,7 @@ export default function HusshInsightsAgent() {
                 )}
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#86868b] transition-colors hover:bg-black/[0.06] hover:text-[#1d1d1f] sm:h-9 sm:w-9"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#5f6368] transition-colors hover:bg-black/[0.06] hover:text-[#202124] sm:h-9 sm:w-9"
                   aria-label={`Close ${AGENT_NAME}`}
                   title="Close"
                 >
@@ -429,10 +460,10 @@ export default function HusshInsightsAgent() {
               {messages.length === 0 ? (
                 <div className="flex min-h-full flex-col items-center justify-start py-3 sm:justify-center sm:py-6">
                   <div className="mb-4 hidden h-16 w-16 items-center justify-center rounded-[24px] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_18px_40px_rgba(0,0,0,0.08)] sm:flex">
-                    <Sparkles className="h-7 w-7 text-[#007aff]" />
+                    <Sparkles className="h-7 w-7 text-[#1a73e8]" />
                   </div>
-                  <p className="hidden text-[22px] font-semibold text-[#1d1d1f] sm:block">{AGENT_NAME}</p>
-                  <p className="mb-3 text-center text-[13px] font-medium leading-relaxed text-[#86868b] sm:mb-6 sm:mt-1 sm:text-[14px]">
+                  <p className="hidden text-[22px] font-semibold text-[#202124] sm:block">{AGENT_NAME}</p>
+                  <p className="mb-3 text-center text-[13px] font-medium leading-relaxed text-[#5f6368] sm:mb-6 sm:mt-1 sm:text-[14px]">
                     Analyst prompts for the Hushh Matrix
                   </p>
                   <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-2.5">
@@ -464,10 +495,10 @@ export default function HusshInsightsAgent() {
                       <div
                         className={`max-w-[94%] rounded-[20px] px-3.5 py-2.5 text-[14px] leading-relaxed sm:max-w-[88%] sm:rounded-[22px] sm:px-4 sm:py-3 ${
                           msg.role === 'user'
-                            ? 'bg-[#007aff] text-white shadow-[0_8px_20px_rgba(0,122,255,0.22)]'
+                            ? 'bg-[#1a73e8] text-white shadow-[0_8px_20px_rgba(0,122,255,0.22)]'
                             : msg.isError || (hasError && msg === messages[messages.length - 1])
-                              ? 'border border-red-200/70 bg-red-50/[0.88] text-[#1d1d1f]'
-                              : 'border border-white/75 bg-white/[0.76] text-[#1d1d1f] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.06)] backdrop-blur-xl'
+                              ? 'border border-red-200/70 bg-red-50/[0.88] text-[#202124]'
+                              : 'border border-white/75 bg-white/[0.76] text-[#202124] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.06)] backdrop-blur-xl'
                         }`}
                       >
                         {msg.role === 'assistant' ? (
@@ -491,6 +522,19 @@ export default function HusshInsightsAgent() {
                                     </span>
                                   ))}
                                 </div>
+                                {(msg.knowledgeSources ?? []).length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {(msg.knowledgeSources ?? []).slice(0, 3).map((source) => (
+                                      <span
+                                        key={`${msg.id}-knowledge-${source.id}`}
+                                        className="rounded-full border border-black/[0.06] bg-[#f1f3f4]/85 px-2.5 py-1 text-[10px] font-bold text-[#80868b]"
+                                        title={source.title}
+                                      >
+                                        {knowledgeCategoryLabel(source.category)} · {source.title}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                                 {(msg.warnings ?? []).length > 0 && (
                                   <div className="rounded-xl border border-[#9a5b00]/15 bg-[#fff7e6]/80 px-3 py-2 text-[12px] font-medium leading-snug text-[#7a4b00]">
                                     {msg.warnings?.slice(0, 2).join(' ')}
@@ -513,8 +557,8 @@ export default function HusshInsightsAgent() {
                       className="flex justify-start"
                     >
                       <div className="flex items-center gap-2 rounded-[22px] border border-white/75 bg-white/[0.76] px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_rgba(0,0,0,0.06)] backdrop-blur-xl">
-                        <Loader2 className="h-4 w-4 animate-spin text-[#007aff]" />
-                        <span className="text-[13px] font-medium text-[#86868b]">Analyzing metrics...</span>
+                        <Loader2 className="h-4 w-4 animate-spin text-[#1a73e8]" />
+                        <span className="text-[13px] font-medium text-[#5f6368]">Analyzing metrics...</span>
                       </div>
                     </motion.div>
                   )}
@@ -534,7 +578,7 @@ export default function HusshInsightsAgent() {
                   onSelect={handleSuggestion}
                 />
               </div>
-              <div className="flex items-end gap-2 rounded-[18px] border border-[#007aff]/20 bg-white px-3 py-2.5 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_0_0_4px_rgba(0,122,255,0.06)] transition-shadow focus-within:border-[#007aff]/40 focus-within:shadow-[0_1px_4px_rgba(0,0,0,0.06),0_0_0_5px_rgba(0,122,255,0.12)] sm:rounded-2xl sm:px-3.5 sm:py-3">
+              <div className="flex items-end gap-2 rounded-[18px] border border-[#1a73e8]/20 bg-white px-3 py-2.5 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_0_0_4px_rgba(0,122,255,0.06)] transition-shadow focus-within:border-[#1a73e8]/40 focus-within:shadow-[0_1px_4px_rgba(0,0,0,0.06),0_0_0_5px_rgba(0,122,255,0.12)] sm:rounded-2xl sm:px-3.5 sm:py-3">
                 <textarea
                   ref={inputRef}
                   value={input}
@@ -543,19 +587,19 @@ export default function HusshInsightsAgent() {
                   placeholder={`Message ${AGENT_NAME}...`}
                   rows={1}
                   disabled={isLoading}
-                  className="max-h-[112px] min-h-[28px] flex-1 resize-none bg-transparent text-[16px] text-[#1d1d1f] placeholder-[#86868b]/70 outline-none disabled:opacity-50 sm:max-h-[140px] sm:min-h-[30px] sm:text-[15px]"
+                  className="max-h-[112px] min-h-[28px] flex-1 resize-none bg-transparent text-[16px] text-[#202124] placeholder-[#5f6368]/70 outline-none disabled:opacity-50 sm:max-h-[140px] sm:min-h-[30px] sm:text-[15px]"
                   style={{ lineHeight: '1.5' }}
                 />
                 <button
                   onClick={() => sendMessage(input)}
                   disabled={!input.trim() || isLoading}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007aff] text-white shadow-[0_8px_20px_rgba(0,122,255,0.22)] transition-all duration-150 hover:bg-[#0066d6] disabled:bg-[#d1d1d6] disabled:text-white disabled:shadow-none active:scale-90"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1a73e8] text-white shadow-[0_8px_20px_rgba(0,122,255,0.22)] transition-all duration-150 hover:bg-[#0066d6] disabled:bg-[#d1d1d6] disabled:text-white disabled:shadow-none active:scale-90"
                   aria-label="Send message"
                 >
                   <ArrowUp className="h-5 w-5" strokeWidth={2.5} />
                 </button>
               </div>
-              <p className="mt-2 text-center text-[11px] font-medium text-[#86868b]/70">
+              <p className="mt-2 text-center text-[11px] font-medium text-[#5f6368]/70">
                 Aggregate metrics only
               </p>
             </div>
