@@ -584,7 +584,9 @@ Acceptance checks:
 - HushhTech processed GA4 traffic is treated as unverified when the GA4 Data
   API is reachable but every processed traffic metric is zero for the selected
   window; do not present those zeros as confirmed traffic truth.
-- `/api/analytics/all` returns a normalized three-source matrix for Hushh AI,
-  Kai, and HushhTech with `search_console`, `ga4`, and `product_events` cards.
+- `/api/analytics/all` returns a normalized source matrix for configured
+  sources. Production Hushh AI, Kai, and HushhTech expose `search_console`,
+  `ga4`, and `product_events`; Hushh AI UAT exposes `product_events` only until
+  its GA4 and Search Console integrations are configured.
 - OTP rows, emails, raw diagnostics, and tokens are not visible.
 - Cloud Run revision logs show no auth or IAM failures.

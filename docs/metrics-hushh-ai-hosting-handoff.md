@@ -43,8 +43,8 @@ required for this subdomain.
 | Service | `hushh-matrix-dashboard` |
 | Runtime identity | `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com` |
 | Image repo | `us-central1-docker.pkg.dev/hushh-ai-prod/website-images` |
-| Current deployed revision | `hushh-matrix-dashboard-00016-q9f` |
-| Current deployed image tag | `hushh-matrix-dashboard:99d4ae0-three-source-20260429170102` |
+| Current deployed revision | `hushh-matrix-dashboard-00070-9hg` |
+| Current deployed image tag | `hushh-matrix-dashboard:01267fc` |
 | Runtime config | Secret Manager-backed env vars only |
 | Public access | Enabled, aggregate-only |
 
@@ -76,12 +76,17 @@ Current platform sources:
 | HushhTech | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.hushhtech_search_console_api`; populated by Cloud Run Job `hushhtech-search-console-ingest` while the official export is waiting |
 | Matrix Agent One | Gemini API | Server-only runtime key from Secret Manager secret `hushh-gemini-api-key`; deterministic-first hybrid RAG analyst that uses aggregate metric tools for numeric truth, curated public-safe knowledge for definitions/caveats, visible dashboard context for follow-ups, and returns structured claims, sources, warnings, confidence, suggested questions, and knowledge sources |
 
-All product responses and `/api/analytics/all` expose a normalized
-`sourceCards` matrix with exactly three cards per product:
+Production product responses and `/api/analytics/all` expose a normalized
+`sourceCards` matrix for configured sources:
 
 - `search_console`
 - `ga4`
 - `product_events`
+
+`uat.hushh.ai` currently has no configured GA4 or Search Console source in
+`metrics.hushh.ai`, so Hushh AI UAT exposes only the live `product_events`
+source card. Its freshness block shows Cloud Run and DB/Product Events only
+until those integrations are wired.
 
 ## DNS Record
 
@@ -250,16 +255,17 @@ This probe checks the public HushhTech summary endpoint, the
 Cloud Run Job readiness, the latest completed ingestion execution, the
 Scheduler target, and the OAuth secret version without printing secret values.
 
-Run the unified three-source probe after changing Hushh AI, Kai, HushhTech,
-Search Console ingestion, source cards, or dashboard wiring:
+Run the unified source probe after changing Hushh AI, Kai, HushhTech, Search
+Console ingestion, source cards, or dashboard wiring:
 
 ```bash
 npm run test:prod:metrics-flow
 ```
 
-This probe checks that Hushh AI, Kai, and HushhTech each expose
-`search_console`, `ga4`, and `product_events`, that Kai is driven primarily by
-UAT, and that Hushh AI does not expose Supabase data.
+This probe checks that configured production products expose `search_console`,
+`ga4`, and `product_events`, that Hushh AI UAT exposes configured
+`product_events` only, that Kai is driven primarily by UAT, and that Hushh AI
+does not expose Supabase data.
 
 Check that runtime config is still Secret Manager-backed:
 
