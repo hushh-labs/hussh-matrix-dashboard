@@ -30,6 +30,7 @@ import type {
   ProductFreshness,
   ProductSourceCard,
   ProductSourceGroup,
+  OneAppSummary,
 } from './types';
 
 const API_BASE = '/api';
@@ -43,6 +44,11 @@ interface AllAnalyticsResponse {
   };
   hushhAi?: { platform: string; data: HushhAiSummary | null; error?: string | null };
   hushhTech: { platform: string; data: HushhTechMetricsSummary | null; error?: string | null };
+  one?: {
+    platform: string;
+    data: { production: OneAppSummary | null; uat: OneAppSummary | null } | null;
+    error?: string | null;
+  };
   fetchedAt: string;
 }
 
@@ -236,6 +242,13 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhAiSessionTimingMetrics: [],
     hushhAiDailyStatus: [],
     hushhAiDailySummaryMetrics: [],
+    one: null,
+    oneUat: null,
+    oneAgentMetrics: [],
+    oneLocationFeatureMetrics: [],
+    onePlatformMetrics: [],
+    oneAcquisitionMetrics: [],
+    oneHeadlineMetrics: [],
     dataQualityWarnings: [],
     feedWarnings: [],
     sourceGroups: [],
@@ -245,6 +258,132 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     acquisitionChannels: [],
     topCountries: [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// one.hushh.ai builders
+// ---------------------------------------------------------------------------
+
+/**
+ * Human labels for the raw One Location event names. The dashboard is read by
+ * the founder, not only by the engineers who named these events, so
+ * `one_location_share_confirmed` has no place on the screen.
+ */
+const ONE_LOCATION_EVENT_LABELS: Record<string, string> = {
+  one_location_share_confirmed: 'Shared their location',
+  one_location_share_review_opened: 'Opened share review',
+  one_location_request_sent: "Asked for someone's location",
+  one_location_public_link_created: 'Created a public link',
+  one_location_circle_invite_created: 'Invited people to a Circle',
+  one_location_contact_signal_synced: 'Synced contacts',
+  one_location_recommendation_selected: 'Picked a suggested person',
+  one_location_onboarding_completed: 'Finished onboarding',
+  one_location_activation_completed: 'Activated',
+  one_location_foreground_retry: 'Location fix retried (reliability)',
+};
+
+function oneLocationEventLabel(eventName: string): string {
+  return (
+    ONE_LOCATION_EVENT_LABELS[eventName] ??
+    eventName.replace(/^one_location_/, '').replaceAll('_', ' ')
+  );
+}
+
+function buildOneAgentMetrics(one: OneAppSummary | null): BreakdownMetric[] {
+  if (!one) return [];
+  const total = one.agents.reduce((sum, agent) => sum + agent.users, 0);
+  return one.agents.map((agent) => ({
+    label: agent.agent,
+    value: agent.users,
+    displayValue: `${formatNumber(agent.users)} users`,
+    detail: `${formatNumber(agent.events)} events`,
+    // Share of agent-attributed users, not of all users: one person can use
+    // several agents, so these deliberately do not sum to 100%.
+    percentage: total > 0 ? (agent.users / total) * 100 : undefined,
+  }));
+}
+
+function buildOneLocationFeatureMetrics(one: OneAppSummary | null): BreakdownMetric[] {
+  if (!one) return [];
+  return one.locationFeatures.map((feature) => ({
+    label: oneLocationEventLabel(feature.eventName),
+    value: feature.users,
+    displayValue: `${formatNumber(feature.users)} users`,
+    detail: `${formatNumber(feature.events)} events`,
+  }));
+}
+
+function buildOnePlatformMetrics(one: OneAppSummary | null): BreakdownMetric[] {
+  if (!one) return [];
+  const total = one.platforms.reduce((sum, row) => sum + row.users, 0);
+  const label: Record<string, string> = {
+    WEB: 'Web',
+    IOS: 'iPhone (App Store)',
+    ANDROID: 'Android (Play Store)',
+  };
+  return one.platforms.map((row) => ({
+    label: label[row.platform] ?? row.platform,
+    value: row.users,
+    displayValue: `${formatNumber(row.users)} users`,
+    percentage: total > 0 ? (row.users / total) * 100 : undefined,
+  }));
+}
+
+function buildOneAcquisitionMetrics(one: OneAppSummary | null): BreakdownMetric[] {
+  if (!one) return [];
+  return one.acquisition.map((row) => ({
+    label: row.source === '(direct)' ? 'Direct / untagged' : row.source,
+    value: row.users,
+    displayValue: `${formatNumber(row.users)} users`,
+    detail: row.medium,
+  }));
+}
+
+/**
+ * The four numbers the founder should be able to read in one glance, in the
+ * order the question is actually asked: how many people, how many reached the
+ * product, how many did the thing, and are we on track.
+ */
+function buildOneHeadlineMetrics(one: OneAppSummary | null): BreakdownMetric[] {
+  if (!one) return [];
+  const locationUsers =
+    one.agents.find((agent) => agent.agent === 'One Location')?.users ?? 0;
+  const activated = one.activation.activatedUsers || one.activation.sharingUsers;
+  const target = one.activation.targetUsers;
+
+  return [
+    {
+      label: 'People using the One app',
+      value: one.rangeTotals.users,
+      displayValue: formatNumber(one.rangeTotals.users),
+      detail: `over ${one.windowDays} days`,
+    },
+    {
+      label: 'People who opened One Location',
+      value: locationUsers,
+      displayValue: formatNumber(locationUsers),
+      detail:
+        one.rangeTotals.users > 0
+          ? `${formatPercent(locationUsers / one.rangeTotals.users)} of all users`
+          : undefined,
+    },
+    {
+      label: 'People who actually shared a location',
+      value: activated,
+      displayValue: formatNumber(activated),
+      detail:
+        locationUsers > 0
+          ? `${formatPercent(activated / locationUsers)} of those who opened it`
+          : undefined,
+    },
+    {
+      label: `Progress to ${formatNumber(target)}`,
+      value: activated,
+      displayValue: `${formatNumber(activated)} / ${formatNumber(target)}`,
+      percentage: target > 0 ? (activated / target) * 100 : undefined,
+      detail: `${formatNumber(Math.max(target - activated, 0))} to go`,
+    },
+  ];
 }
 
 function parseStatus(rows: FeedRow[]): FeedStatus | null {
@@ -1331,6 +1470,8 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
   const kaiProduction = result.kai.productionProduct?.data ?? null;
   const hushhAi = result.hushhAi?.data ?? null;
   const hushhTech = result.hushhTech.data;
+  const one = result.one?.data?.production ?? null;
+  const oneUat = result.one?.data?.uat ?? null;
   const feedWarnings = [
     result.kai.uat.error,
     result.kai.production.error,
@@ -1338,6 +1479,7 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     result.kai.productionProduct?.error,
     result.hushhAi?.error,
     result.hushhTech.error,
+    result.one?.error,
   ].filter((value): value is string => Boolean(value));
 
   if (activeRows.length === 0 && !hushhTech) {
@@ -1408,6 +1550,13 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     hushhAiSessionTimingMetrics: buildHushhAiSessionTimingMetrics(hushhAi),
     hushhAiDailyStatus: buildHushhAiDailyStatus(hushhAi),
     hushhAiDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAi),
+    one,
+    oneUat,
+    oneAgentMetrics: buildOneAgentMetrics(one),
+    oneLocationFeatureMetrics: buildOneLocationFeatureMetrics(one),
+    onePlatformMetrics: buildOnePlatformMetrics(one),
+    oneAcquisitionMetrics: buildOneAcquisitionMetrics(one),
+    oneHeadlineMetrics: buildOneHeadlineMetrics(one),
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
     feedWarnings,
     sourceGroups: buildSourceGroups(kaiProduction, hushhAi, hushhTech),
