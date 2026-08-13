@@ -270,17 +270,39 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
  * `one_location_share_confirmed` has no place on the screen.
  */
 const ONE_LOCATION_EVENT_LABELS: Record<string, string> = {
-  one_location_share_confirmed: 'Shared their location',
-  one_location_share_review_opened: 'Opened share review',
+  one_location_share_confirmed: 'Shared their live location',
+  one_location_check_in_completed: 'Checked in somewhere',
+  one_location_sos_triggered: 'Sent an emergency SMS',
   one_location_request_sent: "Asked for someone's location",
-  one_location_public_link_created: 'Created a public link',
+  one_location_circle_created: 'Created a Circle',
   one_location_circle_invite_created: 'Invited people to a Circle',
+  one_location_public_link_created: 'Created a public link',
+  one_location_share_review_opened: 'Opened share review',
   one_location_contact_signal_synced: 'Synced contacts',
   one_location_recommendation_selected: 'Picked a suggested person',
   one_location_onboarding_completed: 'Finished onboarding',
+  one_location_setup_completed: 'Finished full setup',
   one_location_activation_completed: 'Activated',
   one_location_foreground_retry: 'Location fix retried (reliability)',
 };
+
+/**
+ * Events that describe something a person chose to do, in the order we care
+ * about them. `foreground_retry` is deliberately absent — it is a reliability
+ * signal that fires hundreds of times per person and would dominate a list
+ * meant to answer "which features do people use".
+ */
+const ONE_LOCATION_FEATURE_ORDER = [
+  'one_location_share_confirmed',
+  'one_location_check_in_completed',
+  'one_location_sos_triggered',
+  'one_location_request_sent',
+  'one_location_circle_created',
+  'one_location_circle_invite_created',
+  'one_location_public_link_created',
+  'one_location_setup_completed',
+  'one_location_onboarding_completed',
+];
 
 function oneLocationEventLabel(eventName: string): string {
   return (
@@ -303,14 +325,39 @@ function buildOneAgentMetrics(one: OneAppSummary | null): BreakdownMetric[] {
   }));
 }
 
+/**
+ * Feature usage as "how many distinct people did this", listed in a fixed order
+ * so a feature nobody has used yet still appears as a zero rather than silently
+ * vanishing. A missing row and a zero row answer different questions, and the
+ * question here is "is anyone using Check-In / SMS / Request Location?".
+ */
 function buildOneLocationFeatureMetrics(one: OneAppSummary | null): BreakdownMetric[] {
   if (!one) return [];
-  return one.locationFeatures.map((feature) => ({
-    label: oneLocationEventLabel(feature.eventName),
-    value: feature.users,
-    displayValue: `${formatNumber(feature.users)} users`,
-    detail: `${formatNumber(feature.events)} events`,
-  }));
+  const byEvent = new Map(one.locationFeatures.map((f) => [f.eventName, f]));
+
+  const ordered = ONE_LOCATION_FEATURE_ORDER.map((eventName) => {
+    const feature = byEvent.get(eventName);
+    byEvent.delete(eventName);
+    return {
+      label: oneLocationEventLabel(eventName),
+      value: feature?.users ?? 0,
+      displayValue: feature ? `${formatNumber(feature.users)} people` : 'nobody yet',
+      detail: feature ? `${formatNumber(feature.events)} times` : undefined,
+    };
+  });
+
+  // Anything instrumented later that this list has not been taught about still
+  // shows up, rather than being dropped on the floor.
+  const remaining = Array.from(byEvent.values())
+    .filter((feature) => feature.eventName !== 'one_location_foreground_retry')
+    .map((feature) => ({
+      label: oneLocationEventLabel(feature.eventName),
+      value: feature.users,
+      displayValue: `${formatNumber(feature.users)} people`,
+      detail: `${formatNumber(feature.events)} times`,
+    }));
+
+  return [...ordered, ...remaining];
 }
 
 function buildOnePlatformMetrics(one: OneAppSummary | null): BreakdownMetric[] {
