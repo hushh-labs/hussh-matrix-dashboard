@@ -675,6 +675,89 @@ export interface KaiUatDailyStatusPoint {
 }
 
 // ---------------------------------------------------------------------------
+// one.hushh.ai — the One app
+// ---------------------------------------------------------------------------
+
+/**
+ * One step of the One Location activation funnel. Unlike the bare `FunnelStep`
+ * used by the older investor/RIA funnels, this carries its own drop-off so the
+ * UI never has to recompute it from a list that may be missing steps.
+ */
+export interface OneLocationFunnelStep {
+  step: string;
+  label: string;
+  users: number;
+  /** Against the previous step that had users; null when there is no basis. */
+  conversionFromPrevious: number | null;
+  dropoffFromPrevious: number | null;
+}
+
+export interface OneAgentUsage {
+  agent: string;
+  users: number;
+  events: number;
+}
+
+export interface OneLocationFeatureUsage {
+  eventName: string;
+  users: number;
+  events: number;
+}
+
+export interface OnePlatformUsage {
+  platform: string;
+  users: number;
+  events: number;
+}
+
+export interface OneAcquisitionRow {
+  source: string;
+  medium: string;
+  users: number;
+}
+
+export interface OneDailyPoint {
+  eventDate: string;
+  users: number;
+  locationUsers: number;
+  events: number;
+}
+
+export interface OneAppSummary {
+  sourceLabel?: string;
+  generatedAt?: string;
+  realtimeMode?: string;
+  expectedLagSeconds?: number | null;
+  available: boolean;
+  windowDays: number;
+  range?: { startDate: string; endDate: string; days: number };
+  rangeTotals: { users: number; sessions: number; events: number };
+  last24Hours?: {
+    users: number;
+    sessions: number;
+    events: number;
+    available: boolean;
+  };
+  activation: {
+    activatedUsers: number;
+    sharingUsers: number;
+    targetUsers: number;
+  };
+  funnel: OneLocationFunnelStep[];
+  agents: OneAgentUsage[];
+  locationFeatures: OneLocationFeatureUsage[];
+  platforms: OnePlatformUsage[];
+  acquisition: OneAcquisitionRow[];
+  daily: OneDailyPoint[];
+  reliability: {
+    locationRetries: number;
+    locationRetryUsers: number;
+    /** High values mean the geolocation fix is failing repeatedly per person. */
+    retriesPerAffectedUser: number | null;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Aggregated dashboard state
 // ---------------------------------------------------------------------------
 
@@ -732,6 +815,15 @@ export interface DashboardData {
   hushhAiSessionTimingMetrics: BreakdownMetric[];
   hushhAiDailyStatus: HushhAiDailyStatusPoint[];
   hushhAiDailySummaryMetrics: BreakdownMetric[];
+  // one.hushh.ai — the One app (all agents + the One Location growth funnel)
+  one: OneAppSummary | null;
+  oneUat: OneAppSummary | null;
+  oneAgentMetrics: BreakdownMetric[];
+  oneLocationFeatureMetrics: BreakdownMetric[];
+  onePlatformMetrics: BreakdownMetric[];
+  oneAcquisitionMetrics: BreakdownMetric[];
+  oneHeadlineMetrics: BreakdownMetric[];
+
   dataQualityWarnings: string[];
   feedWarnings: string[];
   sourceGroups: ProductSourceGroup[];

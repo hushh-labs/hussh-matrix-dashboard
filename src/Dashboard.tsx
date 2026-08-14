@@ -71,11 +71,8 @@ const iconMap: Record<string, typeof Activity> = {
   Users,
 };
 
-const appleCard =
-  'rounded-lg border border-black/[0.06] bg-white/88 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_18px_40px_rgba(0,0,0,0.045)] backdrop-blur-xl';
-const applePanel = 'rounded-lg border border-black/[0.04] bg-[#f6f6f8]';
-const appleLabel = 'text-xs font-bold uppercase text-[#86868b]';
-const dashboardBand = 'border-t border-black/[0.06] pt-8';
+import { appleCard, applePanel, appleLabel, dashboardBand } from './lib/theme';
+import { OneAppPanel } from './components/OneAppPanel';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
@@ -1167,7 +1164,9 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 }
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'platforms'>('overview');
+  // 'one' leads because the One app is the active growth focus; the founder
+  // should land on the scoreboard, not on the source matrix.
+  const [activeTab, setActiveTab] = useState<'one' | 'overview' | 'platforms'>('one');
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [data, setData] = useState<DashboardData | null>(null);
@@ -1715,7 +1714,7 @@ export default function Dashboard() {
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="inline-flex min-w-0 flex-1 rounded-lg bg-[#f5f5f7] p-1 sm:flex-none" role="tablist" aria-label="Dashboard sections">
-                {(['overview', 'platforms'] as const).map((tab) => (
+                {(['one', 'overview', 'platforms'] as const).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -1726,7 +1725,7 @@ export default function Dashboard() {
                         : 'text-[#6e6e73] hover:text-[#1d1d1f]',
                     )}
                   >
-                    {tab}
+                    {tab === 'one' ? 'One app' : tab}
                   </button>
                 ))}
               </div>
@@ -1756,7 +1755,16 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {activeTab === 'overview' ? (
+        {activeTab === 'one' ? (
+          <OneAppPanel
+            one={data.one}
+            headlineMetrics={data.oneHeadlineMetrics}
+            agentMetrics={data.oneAgentMetrics}
+            locationFeatureMetrics={data.oneLocationFeatureMetrics}
+            platformMetrics={data.onePlatformMetrics}
+            acquisitionMetrics={data.oneAcquisitionMetrics}
+          />
+        ) : activeTab === 'overview' ? (
           <main className="space-y-10">
             <SourceMatrix groups={sourceGroups} onMetricClick={handleSourceMetricClick} />
 

@@ -65,6 +65,20 @@ const KAI_PROD_GA4_DATASET = process.env.KAI_PROD_GA4_DATASET || 'analytics_5266
 const KAI_PROD_GCP_PROJECT = process.env.KAI_PROD_GCP_PROJECT || BQ_PROD_PROJECT;
 const KAI_PROD_CLOUD_RUN_SERVICE = process.env.KAI_PROD_CLOUD_RUN_SERVICE || 'hushh-webapp';
 const KAI_PROD_METRICS_WINDOW_DAYS = parseInt(process.env.KAI_PROD_METRICS_WINDOW_DAYS || '7', 10);
+// one.hushh.ai reports into the same GA4 property as the rest of the webapp, so
+// it defaults to the Kai production export rather than introducing a second
+// dataset. Overridable purely so a One-specific property can be split out later
+// without a code change.
+const ONE_APP_GA4_PROJECT = process.env.ONE_APP_GA4_PROJECT || KAI_PROD_GA4_PROJECT;
+const ONE_APP_GA4_DATASET = process.env.ONE_APP_GA4_DATASET || KAI_PROD_GA4_DATASET;
+const ONE_APP_GA4_WINDOW_DAYS = parseInt(process.env.ONE_APP_GA4_WINDOW_DAYS || '30', 10);
+const ONE_APP_UAT_GA4_PROJECT = process.env.ONE_APP_UAT_GA4_PROJECT || KAI_GA4_PROJECT;
+const ONE_APP_UAT_GA4_DATASET = process.env.ONE_APP_UAT_GA4_DATASET || KAI_GA4_DATASET;
+/** The current growth target, shown on the scoreboard as the denominator. */
+const ONE_LOCATION_ACTIVATION_TARGET = Math.max(
+  1,
+  parseInt(process.env.ONE_LOCATION_ACTIVATION_TARGET || '1000', 10) || 1000,
+);
 const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod';
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
@@ -252,6 +266,10 @@ function parseKaiDateRange(query: Record<string, unknown>): HushhAiDateRange {
 
 function parseHushhTechDateRange(query: Record<string, unknown>): HushhAiDateRange {
   return parseProductDateRange(query, 'hushhtech', HUSHHTECH_METRICS_WINDOW_DAYS);
+}
+
+function parseOneAppDateRange(query: Record<string, unknown>): HushhAiDateRange {
+  return parseProductDateRange(query, 'one', ONE_APP_GA4_WINDOW_DAYS);
 }
 
 function dateSpine(range: HushhAiDateRange): string[] {
@@ -1667,6 +1685,322 @@ async function fetchKaiGa4ExportSummary(
         events: toNumber(row.events),
         users: toNumber(row.users),
       })),
+    },
+    error: errors.length > 0 ? errors.join('; ') : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// one.hushh.ai — the One app: per-agent user behaviour + the One Location funnel
+//
+// This product is a different lens on the SAME GA4 property as kai.hushh.ai
+// (the whole webapp reports into one property), not a new data source. So there
+// is no new dataset, no new export, and no new grant beyond what Kai already
+// uses — what is new is the segmentation: which agent a person actually used,
+// and how far they got in One Location.
+// ---------------------------------------------------------------------------
+
+/**
+ * The One Location funnel in the order a real person walks it. Rendering is
+ * driven by this list rather than by whatever GA4 happens to return, because a
+ * funnel sorted by volume is not a funnel — and the existing investor funnel
+ * already demonstrates the failure mode, reporting more users at `vault_ready`
+ * than at `entered` because that step is emitted app-wide rather than scoped to
+ * the journey. Steps absent from the data render as zero instead of collapsing
+ * the sequence.
+ */
+const ONE_LOCATION_FUNNEL_STEPS: Array<{ key: string; label: string }> = [
+  { key: 'entered', label: 'Opened One Location' },
+  { key: 'auth_started', label: 'Sent to sign-in' },
+  { key: 'auth_completed', label: 'Signed in' },
+  { key: 'phone_verified', label: 'Phone verified' },
+  { key: 'vault_unlocked', label: 'Vault unlocked' },
+  { key: 'onboarding_started', label: 'Started onboarding' },
+  { key: 'onboarding_completed', label: 'Finished onboarding' },
+  { key: 'circle_created', label: 'Created a Circle' },
+  { key: 'invite_shared', label: 'Shared an invite' },
+  { key: 'first_share_sent', label: 'Sent first location' },
+  { key: 'activated', label: 'Activated' },
+];
+
+/**
+ * Event-name prefixes to the agent a person was actually using. Kept in SQL as
+ * a CASE rather than post-processed in TypeScript so the distinct-user counts
+ * are computed by BigQuery — counting distinct users per agent cannot be done
+ * correctly by summing rows after the fact.
+ */
+const ONE_AGENT_CASE_SQL = `
+      CASE
+        WHEN event_name LIKE 'one_location%' THEN 'One Location'
+        WHEN event_name LIKE 'ria_%' THEN 'RIA'
+        WHEN event_name LIKE 'kai_%'
+          OR event_name IN ('market_insights_loaded', 'portfolio_viewed', 'recommendation_viewed', 'analysis_stream_started')
+          THEN 'Kai'
+        WHEN event_name LIKE 'consent_%' THEN 'Nav / Consent'
+        WHEN event_name LIKE 'gmail_%' OR event_name LIKE 'hushh_mail_%' THEN 'Email'
+        WHEN event_name LIKE 'agent_%' THEN 'Agent chat'
+        WHEN event_name LIKE 'pkm_%' OR event_name LIKE 'vault_%' THEN 'Vault / World model'
+        WHEN event_name LIKE 'auth_%'
+          OR event_name LIKE 'phone_verification%'
+          OR event_name LIKE 'onboarding%'
+          OR event_name LIKE 'google_sign_in%'
+          THEN 'Sign-up & onboarding'
+        ELSE NULL
+      END AS agent`;
+
+interface OneAppFunnelStepRow {
+  step: string;
+  label: string;
+  users: number;
+  conversionFromPrevious: number | null;
+  dropoffFromPrevious: number | null;
+}
+
+/**
+ * Builds the ordered One Location funnel with drop-off between adjacent steps.
+ *
+ * Conversion is computed against the previous *non-zero* step so that a step
+ * which has not shipped instrumentation yet (all of them, until the webapp
+ * release lands) reads as a gap rather than as a 100% collapse that would make
+ * the next step look like a catastrophic drop.
+ */
+function buildOneLocationFunnel(usersByStep: Map<string, number>): OneAppFunnelStepRow[] {
+  let previousUsers: number | null = null;
+  return ONE_LOCATION_FUNNEL_STEPS.map(({ key, label }) => {
+    const users = usersByStep.get(key) ?? 0;
+    const conversionFromPrevious =
+      previousUsers && previousUsers > 0 ? users / previousUsers : null;
+    const row: OneAppFunnelStepRow = {
+      step: key,
+      label,
+      users,
+      conversionFromPrevious,
+      dropoffFromPrevious:
+        conversionFromPrevious === null ? null : 1 - conversionFromPrevious,
+    };
+    if (users > 0) previousUsers = users;
+    return row;
+  });
+}
+
+async function fetchOneAppSummary(
+  projectId: string,
+  dataset: string,
+  range: HushhAiDateRange,
+  tolerateMissingDataset: boolean,
+): Promise<DataResult<Record<string, unknown>>> {
+  const generatedAt = new Date().toISOString();
+  const table = `\`${projectId}.${dataset}.events_*\``;
+  const dateFilter = ga4ExportSuffixFilter(range.startDate, range.endDate);
+  const last24Range = defaultUtcRange(2);
+  // Intraday tables are what make the last-24h tile meaningful during a launch;
+  // the finalized daily table lands a day late.
+  const last24Filter = `${ga4ExportSuffixFilter(last24Range.startDate, last24Range.endDate, true)}
+    AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`;
+
+  const funnelQuery = `
+    SELECT step, COUNT(DISTINCT user_pseudo_id) AS users
+    FROM (
+      SELECT
+        user_pseudo_id,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'step') AS step
+      FROM ${table}
+      WHERE ${dateFilter}
+        AND event_name = 'growth_funnel_step_completed'
+        AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'journey') = 'location'
+      UNION ALL
+      SELECT user_pseudo_id, 'activated' AS step
+      FROM ${table}
+      WHERE ${dateFilter} AND event_name = 'one_location_activation_completed'
+    )
+    WHERE step IS NOT NULL
+    GROUP BY step
+  `;
+
+  const agentQuery = `
+    SELECT agent, COUNT(DISTINCT user_pseudo_id) AS users, COUNT(*) AS events
+    FROM (
+      SELECT user_pseudo_id, ${ONE_AGENT_CASE_SQL}
+      FROM ${table}
+      WHERE ${dateFilter}
+    )
+    WHERE agent IS NOT NULL
+    GROUP BY agent
+    ORDER BY users DESC
+  `;
+
+  const locationFeatureQuery = `
+    SELECT event_name AS eventName, COUNT(DISTINCT user_pseudo_id) AS users, COUNT(*) AS events
+    FROM ${table}
+    WHERE ${dateFilter} AND event_name LIKE 'one_location%'
+    GROUP BY eventName
+    ORDER BY users DESC
+    LIMIT 20
+  `;
+
+  const platformQuery = `
+    SELECT
+      COALESCE(platform, 'unknown') AS platform,
+      COUNT(DISTINCT user_pseudo_id) AS users,
+      COUNT(*) AS events
+    FROM ${table}
+    WHERE ${dateFilter}
+    GROUP BY platform
+    ORDER BY users DESC
+  `;
+
+  const acquisitionQuery = `
+    SELECT
+      COALESCE(NULLIF(traffic_source.source, ''), '(direct)') AS source,
+      COALESCE(NULLIF(traffic_source.medium, ''), '(none)') AS medium,
+      COUNT(DISTINCT user_pseudo_id) AS users
+    FROM ${table}
+    WHERE ${dateFilter}
+    GROUP BY source, medium
+    ORDER BY users DESC
+    LIMIT 12
+  `;
+
+  const dailyQuery = `
+    SELECT
+      CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
+      COUNT(DISTINCT user_pseudo_id) AS users,
+      COUNT(DISTINCT IF(event_name LIKE 'one_location%', user_pseudo_id, NULL)) AS locationUsers,
+      COUNT(*) AS events
+    FROM ${table}
+    WHERE ${dateFilter}
+    GROUP BY eventDate
+    ORDER BY eventDate
+  `;
+
+  // Retries per affected user is a standing geolocation-reliability signal: a
+  // high ratio means the fix is failing repeatedly for the few people trying.
+  const reliabilityQuery = `
+    SELECT
+      COUNTIF(event_name = 'one_location_foreground_retry') AS locationRetries,
+      COUNT(DISTINCT IF(event_name = 'one_location_foreground_retry', user_pseudo_id, NULL)) AS locationRetryUsers,
+      COUNT(DISTINCT IF(event_name = 'one_location_share_confirmed', user_pseudo_id, NULL)) AS sharingUsers
+    FROM ${table}
+    WHERE ${dateFilter}
+  `;
+
+  const last24Query = ga4ExportTotalsSql(table, last24Filter);
+  const totalsQuery = ga4ExportTotalsSql(table, dateFilter);
+
+  const queryProject = BQ_JOB_PROJECT || projectId;
+  const [funnel, agents, locationFeatures, platforms, acquisition, daily, reliability, totals, last24] =
+    await Promise.all([
+      queryBigQuerySql(queryProject, funnelQuery),
+      queryBigQuerySql(queryProject, agentQuery),
+      queryBigQuerySql(queryProject, locationFeatureQuery),
+      queryBigQuerySql(queryProject, platformQuery),
+      queryBigQuerySql(queryProject, acquisitionQuery),
+      queryBigQuerySql(queryProject, dailyQuery),
+      queryBigQuerySql(queryProject, reliabilityQuery),
+      queryBigQuerySql(queryProject, totalsQuery),
+      queryBigQuerySql(queryProject, last24Query),
+    ]);
+
+  const errors = [
+    funnel.error,
+    agents.error,
+    locationFeatures.error,
+    platforms.error,
+    acquisition.error,
+    daily.error,
+    reliability.error,
+    totals.error,
+    last24.error,
+  ].filter(Boolean);
+
+  const hasAnyRows =
+    daily.rows.length > 0 || agents.rows.length > 0 || locationFeatures.rows.length > 0;
+
+  if (!hasAnyRows && errors.length > 0 && !tolerateMissingDataset) {
+    return { data: null, error: errors.join('; ') };
+  }
+
+  const usersByStep = new Map<string, number>(
+    funnel.rows.map((row) => [String(row.step), toNumber(row.users)]),
+  );
+  const dailyByDate = new Map(daily.rows.map((row) => [String(row.eventDate), row]));
+  const totalsRow = totals.rows[0] ?? {};
+  const last24Row = last24.rows[0] ?? {};
+  const reliabilityRow = reliability.rows[0] ?? {};
+
+  const activatedUsers = usersByStep.get('activated') ?? 0;
+  const locationRetries = toNumber(reliabilityRow.locationRetries);
+  const locationRetryUsers = toNumber(reliabilityRow.locationRetryUsers);
+
+  return {
+    data: {
+      sourceProjectId: projectId,
+      sourceDataset: dataset,
+      sourceLabel: 'GA4 export',
+      generatedAt,
+      realtimeMode: 'delayed_export',
+      expectedLagSeconds: 86_400,
+      available: hasAnyRows,
+      windowDays: range.days,
+      range: {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        days: range.days,
+      },
+      rangeTotals: {
+        users: toNumber(totalsRow.users),
+        sessions: toNumber(totalsRow.sessions),
+        events: toNumber(totalsRow.events),
+      },
+      last24Hours: {
+        users: toNumber(last24Row.users),
+        sessions: toNumber(last24Row.sessions),
+        events: toNumber(last24Row.events),
+        available: !last24.error,
+      },
+      activation: {
+        activatedUsers,
+        sharingUsers: toNumber(reliabilityRow.sharingUsers),
+        // Named as a target rather than a computed goal so the scoreboard can
+        // show progress without the server inventing a denominator.
+        targetUsers: ONE_LOCATION_ACTIVATION_TARGET,
+      },
+      funnel: buildOneLocationFunnel(usersByStep),
+      agents: agents.rows.map((row) => ({
+        agent: String(row.agent),
+        users: toNumber(row.users),
+        events: toNumber(row.events),
+      })),
+      locationFeatures: locationFeatures.rows.map((row) => ({
+        eventName: String(row.eventName),
+        users: toNumber(row.users),
+        events: toNumber(row.events),
+      })),
+      platforms: platforms.rows.map((row) => ({
+        platform: String(row.platform),
+        users: toNumber(row.users),
+        events: toNumber(row.events),
+      })),
+      acquisition: acquisition.rows.map((row) => ({
+        source: String(row.source),
+        medium: String(row.medium),
+        users: toNumber(row.users),
+      })),
+      daily: dateSpine(range).map((date) => {
+        const row = dailyByDate.get(date) ?? {};
+        return {
+          eventDate: date,
+          users: toNumber(row.users),
+          locationUsers: toNumber(row.locationUsers),
+          events: toNumber(row.events),
+        };
+      }),
+      reliability: {
+        locationRetries,
+        locationRetryUsers,
+        retriesPerAffectedUser:
+          locationRetryUsers > 0 ? locationRetries / locationRetryUsers : null,
+      },
     },
     error: errors.length > 0 ? errors.join('; ') : null,
   };
@@ -3432,10 +3766,27 @@ app.get('/api/analytics/hushhai', async (req, res) => {
   }));
 });
 
+app.get('/api/analytics/one', async (req, res) => {
+  const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
+  const [production, uat] = await Promise.all([
+    fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
+    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true),
+  ]);
+  const error = [production.error, uat.error].filter(Boolean).join('; ') || null;
+  const fetchedAt = new Date().toISOString();
+  res.status(error && !production.data && !uat.data ? 502 : 200).json(sanitizePublicPayload({
+    platform: 'one.hushh.ai',
+    data: { production: production.data, uat: uat.data },
+    error,
+    fetchedAt,
+  }));
+});
+
 app.get('/api/analytics/all', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
   const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
+  const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
   const [
     uat,
     production,
@@ -3448,6 +3799,8 @@ app.get('/api/analytics/all', async (req, res) => {
     hushhAiSearchConsole,
     hushhAiGa4,
     hushhTech,
+    oneAppProduction,
+    oneAppUat,
   ] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
@@ -3460,6 +3813,8 @@ app.get('/api/analytics/all', async (req, res) => {
     fetchHushhAiSearchConsole(hushhAiRange),
     fetchHushhAiGa4Summary(hushhAiRange),
     fetchHushhTechAnalytics(hushhTechRange),
+    fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
+    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true),
   ]);
   const fetchedAt = new Date().toISOString();
   const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
@@ -3513,6 +3868,11 @@ app.get('/api/analytics/all', async (req, res) => {
       error: [hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error].filter(Boolean).join('; ') || null,
     },
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
+    one: {
+      platform: 'one.hushh.ai',
+      data: { production: oneAppProduction.data, uat: oneAppUat.data },
+      error: [oneAppProduction.error, oneAppUat.error].filter(Boolean).join('; ') || null,
+    },
     fetchedAt,
   }));
 });
