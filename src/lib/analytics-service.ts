@@ -57,6 +57,8 @@ interface FetchAllAnalyticsOptions {
   hushhAiEndDate?: string;
   kaiStartDate?: string;
   kaiEndDate?: string;
+  oneStartDate?: string;
+  oneEndDate?: string;
 }
 
 function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
@@ -65,6 +67,8 @@ function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
   if (options?.hushhAiEndDate) params.set('hushh_ai_end_date', options.hushhAiEndDate);
   if (options?.kaiStartDate) params.set('kai_start_date', options.kaiStartDate);
   if (options?.kaiEndDate) params.set('kai_end_date', options.kaiEndDate);
+  if (options?.oneStartDate) params.set('one_start_date', options.oneStartDate);
+  if (options?.oneEndDate) params.set('one_end_date', options.oneEndDate);
   const query = params.toString();
   return `${API_BASE}/analytics/all${query ? `?${query}` : ''}`;
 }
