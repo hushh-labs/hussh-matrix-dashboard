@@ -1168,6 +1168,9 @@ export default function Dashboard() {
   // should land on the scoreboard, not on the source matrix.
   const [activeTab, setActiveTab] = useState<'one' | 'overview' | 'platforms'>('one');
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
+  // 30 days by default: the One app's agent volumes are small enough that a
+  // 7-day window reads as noise rather than a trend.
+  const [oneRange, setOneRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(30));
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1185,6 +1188,8 @@ export default function Dashboard() {
     const result = await fetchAllAnalytics({
       kaiStartDate: kaiRange.startDate,
       kaiEndDate: kaiRange.endDate,
+      oneStartDate: oneRange.startDate,
+      oneEndDate: oneRange.endDate,
       hushhAiStartDate: hushhAiRange.startDate,
       hushhAiEndDate: hushhAiRange.endDate,
     });
@@ -1192,7 +1197,7 @@ export default function Dashboard() {
     setData(result);
     setLoading(false);
     setIsRefreshing(false);
-  }, [hushhAiRange.endDate, hushhAiRange.startDate, kaiRange.endDate, kaiRange.startDate]);
+  }, [hushhAiRange.endDate, hushhAiRange.startDate, kaiRange.endDate, kaiRange.startDate, oneRange.endDate, oneRange.startDate]);
 
   useEffect(() => {
     loadData();
@@ -1763,6 +1768,15 @@ export default function Dashboard() {
             locationFeatureMetrics={data.oneLocationFeatureMetrics}
             platformMetrics={data.onePlatformMetrics}
             acquisitionMetrics={data.oneAcquisitionMetrics}
+            rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
+            dateControl={(
+              <DateRangeControl
+                range={oneRange}
+                onPreset={(days) => setOneRange(rangeForPreset(days))}
+                onCustomRange={setOneRange}
+                ariaLabelPrefix="One app"
+              />
+            )}
           />
         ) : activeTab === 'overview' ? (
           <main className="space-y-10">

@@ -1748,6 +1748,30 @@ const ONE_AGENT_CASE_SQL = `
         ELSE NULL
       END AS agent`;
 
+/**
+ * Restricts every One-app query to surfaces that are actually the One app.
+ *
+ * The production GA4 property carries one web stream, and that stream also
+ * receives hushh.ai marketing traffic -- careers pages, PCHP research,
+ * subscriptions. Over 30 days that was 471 people, against 195 real web-app
+ * users. Counting them as One app users inflated the denominator by more than
+ * double and made every conversion rate on this page wrong in the flattering
+ * direction, which is the worst way for a number to be wrong.
+ *
+ * Native platforms are unambiguous. Web is admitted only from the app's own
+ * host, which also keeps UAT web, localhost and the Firebase auth redirect
+ * domain out of the production picture.
+ */
+const ONE_APP_HOST = process.env.ONE_APP_WEB_HOST || 'one.hushh.ai';
+const ONE_APP_UAT_HOST = process.env.ONE_APP_UAT_WEB_HOST || 'uat.hushh.ai';
+
+function oneAppSurfaceFilter(webHost: string): string {
+  return `(
+      platform IN ('IOS', 'ANDROID')
+      OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) = ${sqlStringLiteral(webHost)}
+    )`;
+}
+
 interface OneAppFunnelStepRow {
   step: string;
   label: string;
@@ -1788,15 +1812,18 @@ async function fetchOneAppSummary(
   dataset: string,
   range: HushhAiDateRange,
   tolerateMissingDataset: boolean,
+  webHost: string = ONE_APP_HOST,
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
-  const dateFilter = ga4ExportSuffixFilter(range.startDate, range.endDate);
+  const surfaceFilter = oneAppSurfaceFilter(webHost);
+  const dateFilter = `${ga4ExportSuffixFilter(range.startDate, range.endDate)} AND ${surfaceFilter}`;
   const last24Range = defaultUtcRange(2);
   // Intraday tables are what make the last-24h tile meaningful during a launch;
   // the finalized daily table lands a day late.
   const last24Filter = `${ga4ExportSuffixFilter(last24Range.startDate, last24Range.endDate, true)}
-    AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`;
+    AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+    AND ${surfaceFilter}`;
 
   const funnelQuery = `
     SELECT step, COUNT(DISTINCT user_pseudo_id) AS users
@@ -1849,6 +1876,54 @@ async function fetchOneAppSummary(
     ORDER BY users DESC
   `;
 
+  // Per-agent, per-day distinct users. Drives the trend chart on each agent
+  // card: a total alone cannot tell you whether an agent is growing or dying.
+  const agentDailyQuery = `
+    SELECT eventDate, agent, COUNT(DISTINCT user_pseudo_id) AS users
+    FROM (
+      SELECT
+        CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
+        user_pseudo_id,
+        ${ONE_AGENT_CASE_SQL}
+      FROM ${table}
+      WHERE ${dateFilter}
+    )
+    WHERE agent IS NOT NULL
+    GROUP BY eventDate, agent
+    ORDER BY eventDate
+  `;
+
+  // Deliberately NOT surface-filtered: this is the audit trail for the filter
+  // itself, so the dashboard can show what it left out instead of quietly
+  // dropping it.
+  const surfaceQuery = `
+    SELECT
+      CASE
+        WHEN platform IN ('IOS', 'ANDROID') THEN CONCAT('App - ', platform)
+        WHEN NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) = ${sqlStringLiteral(webHost)}
+          THEN 'Web app'
+        ELSE 'Other site or environment'
+      END AS surface,
+      CASE
+        WHEN platform IN ('IOS', 'ANDROID') THEN 'Native app'
+        WHEN NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) = ${sqlStringLiteral(webHost)}
+          THEN ${sqlStringLiteral(webHost)}
+        WHEN NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) LIKE '%hushh.ai'
+          THEN NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location'))
+        -- Anything else is a sign-in redirect or a developer machine. Named
+        -- rather than passed through, because the public payload sanitizer
+        -- rewrites any string carrying an internal project id and the row would
+        -- otherwise read as an unhelpful "Internal aggregate source".
+        ELSE 'Sign-in redirect or local'
+      END AS host,
+      COUNT(DISTINCT user_pseudo_id) AS users
+    FROM ${table}
+    WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate)}
+    GROUP BY surface, host
+    ORDER BY users DESC
+    LIMIT 15
+  `;
+
   const acquisitionQuery = `
     SELECT
       COALESCE(NULLIF(traffic_source.source, ''), '(direct)') AS source,
@@ -1888,22 +1963,37 @@ async function fetchOneAppSummary(
   const totalsQuery = ga4ExportTotalsSql(table, dateFilter);
 
   const queryProject = BQ_JOB_PROJECT || projectId;
-  const [funnel, agents, locationFeatures, platforms, acquisition, daily, reliability, totals, last24] =
-    await Promise.all([
-      queryBigQuerySql(queryProject, funnelQuery),
-      queryBigQuerySql(queryProject, agentQuery),
-      queryBigQuerySql(queryProject, locationFeatureQuery),
-      queryBigQuerySql(queryProject, platformQuery),
-      queryBigQuerySql(queryProject, acquisitionQuery),
-      queryBigQuerySql(queryProject, dailyQuery),
-      queryBigQuerySql(queryProject, reliabilityQuery),
-      queryBigQuerySql(queryProject, totalsQuery),
-      queryBigQuerySql(queryProject, last24Query),
-    ]);
+  const [
+    funnel,
+    agents,
+    agentDaily,
+    surfaces,
+    locationFeatures,
+    platforms,
+    acquisition,
+    daily,
+    reliability,
+    totals,
+    last24,
+  ] = await Promise.all([
+    queryBigQuerySql(queryProject, funnelQuery),
+    queryBigQuerySql(queryProject, agentQuery),
+    queryBigQuerySql(queryProject, agentDailyQuery),
+    queryBigQuerySql(queryProject, surfaceQuery),
+    queryBigQuerySql(queryProject, locationFeatureQuery),
+    queryBigQuerySql(queryProject, platformQuery),
+    queryBigQuerySql(queryProject, acquisitionQuery),
+    queryBigQuerySql(queryProject, dailyQuery),
+    queryBigQuerySql(queryProject, reliabilityQuery),
+    queryBigQuerySql(queryProject, totalsQuery),
+    queryBigQuerySql(queryProject, last24Query),
+  ]);
 
   const errors = [
     funnel.error,
     agents.error,
+    agentDaily.error,
+    surfaces.error,
     locationFeatures.error,
     platforms.error,
     acquisition.error,
@@ -1966,10 +2056,29 @@ async function fetchOneAppSummary(
         targetUsers: ONE_LOCATION_ACTIVATION_TARGET,
       },
       funnel: buildOneLocationFunnel(usersByStep),
-      agents: agents.rows.map((row) => ({
-        agent: String(row.agent),
+      agents: agents.rows.map((row) => {
+        const agent = String(row.agent);
+        const byDate = new Map(
+          agentDaily.rows
+            .filter((point) => String(point.agent) === agent)
+            .map((point) => [String(point.eventDate), toNumber(point.users)]),
+        );
+        return {
+          agent,
+          users: toNumber(row.users),
+          events: toNumber(row.events),
+          // Spined so every agent's chart shares one x-axis and days with no
+          // activity read as zero rather than being skipped.
+          daily: dateSpine(range).map((date) => ({
+            eventDate: date,
+            users: byDate.get(date) ?? 0,
+          })),
+        };
+      }),
+      surfaces: surfaces.rows.map((row) => ({
+        surface: String(row.surface),
+        host: String(row.host),
         users: toNumber(row.users),
-        events: toNumber(row.events),
       })),
       locationFeatures: locationFeatures.rows.map((row) => ({
         eventName: String(row.eventName),
@@ -3770,7 +3879,7 @@ app.get('/api/analytics/one', async (req, res) => {
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
   const [production, uat] = await Promise.all([
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
-    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true),
+    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST),
   ]);
   const error = [production.error, uat.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
@@ -3814,7 +3923,7 @@ app.get('/api/analytics/all', async (req, res) => {
     fetchHushhAiGa4Summary(hushhAiRange),
     fetchHushhTechAnalytics(hushhTechRange),
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
-    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true),
+    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST),
   ]);
   const fetchedAt = new Date().toISOString();
   const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);

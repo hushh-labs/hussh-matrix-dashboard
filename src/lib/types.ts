@@ -692,10 +692,29 @@ export interface OneLocationFunnelStep {
   dropoffFromPrevious: number | null;
 }
 
+export interface OneAgentDailyPoint {
+  eventDate: string;
+  users: number;
+}
+
 export interface OneAgentUsage {
   agent: string;
   users: number;
   events: number;
+  /** Date-spined, so every agent chart shares one x-axis. */
+  daily: OneAgentDailyPoint[];
+}
+
+/**
+ * What the surface filter counted and what it left out. Shown rather than
+ * hidden: this dashboard's headline number was once inflated by marketing-site
+ * traffic, and the cheapest guard against that recurring is to keep the
+ * exclusions visible on the page.
+ */
+export interface OneSurfaceRow {
+  surface: string;
+  host: string;
+  users: number;
 }
 
 export interface OneLocationFeatureUsage {
@@ -745,6 +764,7 @@ export interface OneAppSummary {
   };
   funnel: OneLocationFunnelStep[];
   agents: OneAgentUsage[];
+  surfaces: OneSurfaceRow[];
   locationFeatures: OneLocationFeatureUsage[];
   platforms: OnePlatformUsage[];
   acquisition: OneAcquisitionRow[];
