@@ -1,11 +1,27 @@
+import type { ReactNode } from 'react';
 import { AlertTriangle, MapPin, Smartphone, Users } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
 import { cn } from '../lib/utils';
 import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
 import { formatNumber } from '../lib/analytics-service';
-import type { BreakdownMetric, OneAppSummary } from '../lib/types';
+import type {
+  BreakdownMetric,
+  OneAgentUsage,
+  OneAppSummary,
+  OneSurfaceRow,
+} from '../lib/types';
 
 /**
  * one.hushh.ai — the One app.
@@ -167,6 +183,161 @@ function ActivationFunnel({ one }: { one: OneAppSummary }) {
   );
 }
 
+/**
+ * One agent, with its own trend.
+ *
+ * A ranked list answers "which agent is biggest"; it cannot answer "which
+ * agent is dying", and for a product deciding where to put its next month of
+ * work the second question is the more useful one. Hence a card per agent with
+ * its own 30-day shape rather than one more leaderboard.
+ */
+function AgentCard({
+  agent,
+  totalUsers,
+  index,
+}: {
+  agent: OneAgentUsage;
+  totalUsers: number;
+  index: number;
+}) {
+  const share = totalUsers > 0 ? agent.users / totalUsers : 0;
+  const data = agent.daily.map((point) => ({
+    label: point.eventDate.slice(5),
+    People: point.users,
+  }));
+  const recent = agent.daily.slice(-7).reduce((sum, p) => sum + p.users, 0);
+  const prior = agent.daily.slice(-14, -7).reduce((sum, p) => sum + p.users, 0);
+  const delta = prior > 0 ? (recent - prior) / prior : null;
+  const gradientId = `one-agent-grad-${index}`;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.04 }}
+      className={cn(appleCard, 'flex flex-col p-5')}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-base font-semibold text-[#1d1d1f]">{agent.agent}</p>
+          <p className="mt-0.5 text-xs font-semibold text-[#86868b]">
+            {percentText(share)} of app users
+          </p>
+        </div>
+        {delta !== null && Math.abs(delta) >= 0.01 && (
+          <span
+            className={cn(
+              'shrink-0 rounded-full px-2 py-0.5 text-xs font-bold',
+              delta >= 0 ? 'bg-[#eaf8ef] text-[#248a3d]' : 'bg-[#fdecec] text-[#c1121f]',
+            )}
+          >
+            {delta >= 0 ? '+' : ''}
+            {percentText(delta)} 7d
+          </span>
+        )}
+      </div>
+
+      <div className="mt-3 flex items-end gap-2">
+        <p className="text-4xl font-semibold leading-none text-[#1d1d1f]">
+          {formatNumber(agent.users)}
+        </p>
+        <p className="pb-1 text-xs font-semibold text-[#86868b]">
+          people · {formatNumber(agent.events)} actions
+        </p>
+      </div>
+
+      <div className="mt-4 h-[72px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#007aff" stopOpacity={0.28} />
+                <stop offset="100%" stopColor="#007aff" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Tooltip
+              cursor={{ stroke: 'rgba(0,0,0,0.12)' }}
+              contentStyle={{
+                borderRadius: 10,
+                border: '1px solid rgba(0,0,0,0.06)',
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            />
+            <Area
+              type="monotone"
+              dataKey="People"
+              stroke="#007aff"
+              strokeWidth={2}
+              fill={`url(#${gradientId})`}
+              dot={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </motion.div>
+  );
+}
+
+/**
+ * The audit trail for the surface filter.
+ *
+ * The production property carries one web stream shared with the hushh.ai
+ * marketing site, so an unfiltered count reads more than double the truth.
+ * Showing the exclusions keeps that mistake from silently returning.
+ */
+function SurfaceAudit({ surfaces }: { surfaces: OneSurfaceRow[] }) {
+  if (!surfaces.length) return null;
+  const counted = surfaces.filter((row) => row.surface !== 'Other site or environment');
+  const excluded = surfaces.filter((row) => row.surface === 'Other site or environment');
+  const countedUsers = counted.reduce((sum, row) => sum + row.users, 0);
+  const excludedUsers = excluded.reduce((sum, row) => sum + row.users, 0);
+
+  return (
+    <div className={cn(applePanel, 'p-5')}>
+      <p className="text-sm font-bold text-[#1d1d1f]">What is counted on this page</p>
+      <p className="mt-1 text-sm font-medium leading-6 text-[#6e6e73]">
+        The One app only — the native apps and the web app. This GA4 property shares a
+        web stream with the hushh.ai marketing site, so{' '}
+        <span className="font-bold text-[#1d1d1f]">
+          {formatNumber(excludedUsers)} people
+        </span>{' '}
+        browsing other hushh.ai pages are deliberately excluded. Counting them would
+        more than double the headline and make every rate on this page look better
+        than it is.
+      </p>
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <p className={appleLabel}>Counted · {formatNumber(countedUsers)}</p>
+          <div className="mt-2 space-y-1">
+            {counted.map((row) => (
+              <div key={`${row.surface}-${row.host}`} className="flex justify-between text-sm">
+                <span className="font-semibold text-[#1d1d1f]">{row.host}</span>
+                <span className="font-bold tabular-nums text-[#1d1d1f]">
+                  {formatNumber(row.users)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className={appleLabel}>Excluded · {formatNumber(excludedUsers)}</p>
+          <div className="mt-2 space-y-1">
+            {excluded.map((row) => (
+              <div key={`${row.surface}-${row.host}`} className="flex justify-between text-sm">
+                <span className="font-semibold text-[#86868b]">{row.host}</span>
+                <span className="font-bold tabular-nums text-[#86868b]">
+                  {formatNumber(row.users)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RankedList({
   title,
   subtitle,
@@ -320,6 +491,8 @@ export function OneAppPanel({
   locationFeatureMetrics,
   platformMetrics,
   acquisitionMetrics,
+  rangeLabel,
+  dateControl,
 }: {
   one: OneAppSummary | null;
   headlineMetrics: BreakdownMetric[];
@@ -327,10 +500,17 @@ export function OneAppPanel({
   locationFeatureMetrics: BreakdownMetric[];
   platformMetrics: BreakdownMetric[];
   acquisitionMetrics: BreakdownMetric[];
+  rangeLabel: string;
+  /**
+   * Owned by Dashboard so the range state lives with every other product's,
+   * and rendered here so it sits with the numbers it governs.
+   */
+  dateControl: ReactNode;
 }) {
   if (!one || !one.available) {
     return (
       <main className="space-y-10">
+        <div className="flex justify-end">{dateControl}</div>
         <div className={cn(applePanel, 'p-8 text-center')}>
           <p className="text-base font-semibold text-[#1d1d1f]">
             No One app data for this window yet.
@@ -347,13 +527,20 @@ export function OneAppPanel({
   return (
     <main className="space-y-10">
       <section>
-        <div className="mb-4">
-          <p className={appleLabel}>one.hushh.ai · production</p>
-          <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
-            Are we winning?
-          </h2>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className={appleLabel}>one.hushh.ai · production · {rangeLabel}</p>
+            <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
+              Are we winning?
+            </h2>
+          </div>
+          {dateControl}
         </div>
         <Scoreboard one={one} />
+      </section>
+
+      <section className={dashboardBand}>
+        <SurfaceAudit surfaces={one.surfaces} />
       </section>
 
       <section className={dashboardBand}>
@@ -386,19 +573,51 @@ export function OneAppPanel({
           <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
             What people actually use
           </h2>
+          <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
+            People per agent over the selected window, each with its own trend. One
+            person can use several agents, so these do not add up to 100%.
+          </p>
+        </div>
+        {one.agents.length === 0 ? (
+          <div className={cn(applePanel, 'p-6 text-center')}>
+            <p className="text-sm font-semibold text-[#86868b]">
+              No agent activity in this window.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {one.agents.map((agent, index) => (
+              <div key={agent.agent}>
+                <AgentCard
+                  agent={agent}
+                  totalUsers={one.rangeTotals.users}
+                  index={index}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className={dashboardBand}>
+        <div className="mb-4">
+          <p className={appleLabel}>One Location · actions</p>
+          <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
+            Which features get used
+          </h2>
         </div>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <RankedList
-            title="Agents by people who used them"
-            subtitle="One person can use several, so these do not add up to 100%"
-            items={agentMetrics}
-            emptyText="No agent activity in this window."
-          />
-          <RankedList
             title="What people do inside One Location"
-            subtitle="Counted as distinct people, not raw events"
+            subtitle="Distinct people, not raw events. Zero means nobody has used it yet."
             items={locationFeatureMetrics}
             emptyText="No One Location activity in this window."
+          />
+          <RankedList
+            title="Agents by reach"
+            subtitle="The same figures as the cards above, ranked"
+            items={agentMetrics}
+            emptyText="No agent activity in this window."
           />
         </div>
       </section>
