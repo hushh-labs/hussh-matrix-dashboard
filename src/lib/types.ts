@@ -760,7 +760,6 @@ export interface OneAppSummary {
   activation: {
     activatedUsers: number;
     sharingUsers: number;
-    targetUsers: number;
   };
   funnel: OneLocationFunnelStep[];
   agents: OneAgentUsage[];

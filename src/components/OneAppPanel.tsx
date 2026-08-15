@@ -38,11 +38,21 @@ function percentText(value: number | null | undefined, decimals = 0): string {
   return `${(value * 100).toFixed(decimals)}%`;
 }
 
+/**
+ * Deliberately no goal, no denominator, no progress bar.
+ *
+ * A headline number divided by a target reports the target, not the product:
+ * every reading becomes "we are 1.4% of the way there", which says the same
+ * discouraging thing whether the week was good or bad, and says nothing at all
+ * about whether the thing is working. The ratio below is measured instead of
+ * chosen -- of the people who opened One Location, this many went on to share
+ * one -- so it moves when the product moves, and it is the number that tells
+ * you whether to fix the funnel or go find more people.
+ */
 function Scoreboard({ one }: { one: OneAppSummary }) {
   const activated = one.activation.activatedUsers || one.activation.sharingUsers;
-  const target = one.activation.targetUsers;
-  const progress = target > 0 ? Math.min(activated / target, 1) : 0;
-  const remaining = Math.max(target - activated, 0);
+  const opened = one.agents.find((agent) => agent.agent === 'One Location')?.users ?? 0;
+  const conversion = opened > 0 ? Math.min(activated / opened, 1) : 0;
 
   return (
     <div className={cn(appleCard, 'p-6 sm:p-8')}>
@@ -52,22 +62,31 @@ function Scoreboard({ one }: { one: OneAppSummary }) {
           {formatNumber(activated)}
         </p>
         <p className="pb-2 text-xl font-semibold text-[#86868b]">
-          of {formatNumber(target)} people sharing their location
+          {activated === 1 ? 'person shared their location' : 'people shared their location'}
         </p>
       </div>
 
-      <div className="mt-6 h-3 w-full overflow-hidden rounded-full bg-[#f0f0f2]">
-        <motion.div
-          className="h-full rounded-full bg-[#007aff]"
-          initial={{ width: 0 }}
-          animate={{ width: `${Math.max(progress * 100, progress > 0 ? 1.5 : 0)}%` }}
-          transition={{ duration: 0.7, ease: 'easeOut' }}
-        />
-      </div>
-      <p className="mt-3 text-sm font-semibold text-[#6e6e73]">
-        {percentText(progress, 1)} of the way there · {formatNumber(remaining)} to go ·
-        last {one.windowDays} days
-      </p>
+      {opened > 0 ? (
+        <>
+          <div className="mt-6 h-3 w-full overflow-hidden rounded-full bg-[#f0f0f2]">
+            <motion.div
+              className="h-full rounded-full bg-[#007aff]"
+              initial={{ width: 0 }}
+              animate={{ width: `${Math.max(conversion * 100, conversion > 0 ? 1.5 : 0)}%` }}
+              transition={{ duration: 0.7, ease: 'easeOut' }}
+            />
+          </div>
+          <p className="mt-3 text-sm font-semibold text-[#6e6e73]">
+            {percentText(conversion, 0)} of the {formatNumber(opened)}{' '}
+            {opened === 1 ? 'person who opened' : 'people who opened'} One Location ·
+            last {one.windowDays} days
+          </p>
+        </>
+      ) : (
+        <p className="mt-6 text-sm font-semibold text-[#6e6e73]">
+          Last {one.windowDays} days
+        </p>
+      )}
     </div>
   );
 }

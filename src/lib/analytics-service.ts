@@ -400,7 +400,6 @@ function buildOneHeadlineMetrics(one: OneAppSummary | null): BreakdownMetric[] {
   const locationUsers =
     one.agents.find((agent) => agent.agent === 'One Location')?.users ?? 0;
   const activated = one.activation.activatedUsers || one.activation.sharingUsers;
-  const target = one.activation.targetUsers;
 
   return [
     {
@@ -428,11 +427,15 @@ function buildOneHeadlineMetrics(one: OneAppSummary | null): BreakdownMetric[] {
           : undefined,
     },
     {
-      label: `Progress to ${formatNumber(target)}`,
-      value: activated,
-      displayValue: `${formatNumber(activated)} / ${formatNumber(target)}`,
-      percentage: target > 0 ? (activated / target) * 100 : undefined,
-      detail: `${formatNumber(Math.max(target - activated, 0))} to go`,
+      // Was "Progress to 1.0k". A fixed goal as a headline tile reports the
+      // goal on every render and the product on none of them; this answers "is
+      // it alive right now", which is the thing a stale dashboard hides.
+      label: 'People using it in the last 24 hours',
+      value: one.last24Hours.users,
+      displayValue: formatNumber(one.last24Hours.users),
+      detail: one.last24Hours.available
+        ? `${formatNumber(one.last24Hours.events)} events`
+        : 'no fresh export yet',
     },
   ];
 }

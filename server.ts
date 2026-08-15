@@ -74,11 +74,6 @@ const ONE_APP_GA4_DATASET = process.env.ONE_APP_GA4_DATASET || KAI_PROD_GA4_DATA
 const ONE_APP_GA4_WINDOW_DAYS = parseInt(process.env.ONE_APP_GA4_WINDOW_DAYS || '30', 10);
 const ONE_APP_UAT_GA4_PROJECT = process.env.ONE_APP_UAT_GA4_PROJECT || KAI_GA4_PROJECT;
 const ONE_APP_UAT_GA4_DATASET = process.env.ONE_APP_UAT_GA4_DATASET || KAI_GA4_DATASET;
-/** The current growth target, shown on the scoreboard as the denominator. */
-const ONE_LOCATION_ACTIVATION_TARGET = Math.max(
-  1,
-  parseInt(process.env.ONE_LOCATION_ACTIVATION_TARGET || '1000', 10) || 1000,
-);
 const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod';
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
@@ -2048,12 +2043,13 @@ async function fetchOneAppSummary(
         events: toNumber(last24Row.events),
         available: !last24.error,
       },
+      // Measured only. The scoreboard deliberately has no goal in it, so the
+      // server does not carry one either -- a target in the payload is a
+      // target someone re-adds to the UI later, and it would be visible to
+      // anyone reading the response besides.
       activation: {
         activatedUsers,
         sharingUsers: toNumber(reliabilityRow.sharingUsers),
-        // Named as a target rather than a computed goal so the scoreboard can
-        // show progress without the server inventing a denominator.
-        targetUsers: ONE_LOCATION_ACTIVATION_TARGET,
       },
       funnel: buildOneLocationFunnel(usersByStep),
       agents: agents.rows.map((row) => {
