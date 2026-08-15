@@ -1762,12 +1762,22 @@ export default function Dashboard() {
 
         {activeTab === 'one' ? (
           <OneAppPanel
-            one={data.one}
-            headlineMetrics={data.oneHeadlineMetrics}
-            agentMetrics={data.oneAgentMetrics}
-            locationFeatureMetrics={data.oneLocationFeatureMetrics}
-            platformMetrics={data.onePlatformMetrics}
-            acquisitionMetrics={data.oneAcquisitionMetrics}
+            // `data` is null for the whole of the first load, and that load
+            // takes ten seconds or more. The loading state here is an OVERLAY,
+            // not an early return, so this subtree renders underneath it with
+            // nothing in hand -- `data.one` threw on the very first paint and
+            // took the entire dashboard down to a white screen.
+            //
+            // The overview tab never showed this because it reads through
+            // `data?.sourceGroups ?? []`; this tab is only the default one
+            // since the One app became the growth focus, which is what made a
+            // pre-existing hazard the first thing every visitor hit.
+            one={data?.one ?? null}
+            headlineMetrics={data?.oneHeadlineMetrics ?? []}
+            agentMetrics={data?.oneAgentMetrics ?? []}
+            locationFeatureMetrics={data?.oneLocationFeatureMetrics ?? []}
+            platformMetrics={data?.onePlatformMetrics ?? []}
+            acquisitionMetrics={data?.oneAcquisitionMetrics ?? []}
             rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
             dateControl={(
               <DateRangeControl
