@@ -1719,44 +1719,188 @@ const ONE_LOCATION_FUNNEL_STEPS: Array<{ key: string; label: string }> = [
 ];
 
 /**
- * Event-name prefixes to the agent a person was actually using. Kept in SQL as
- * a CASE rather than post-processed in TypeScript so the distinct-user counts
- * are computed by BigQuery — counting distinct users per agent cannot be done
- * correctly by summing rows after the fact.
+ * The One capability catalogue: which events mean a person deliberately used a
+ * capability, and which merely mean the app was running.
+ *
+ * This replaces a CASE over event-name prefixes. Prefix matching was wrong in
+ * ways that flattered the product and could not be seen from the dashboard:
+ * `agent_%` matched only the three `agent_pkm_*` reliability events, so "people
+ * using Agent chat" was really "devices whose PKM context resolved"; the One
+ * Location bucket was 71% `one_location_foreground_retry`, a geolocation
+ * failure signal; and the Kai bucket was 78% `market_insights_loaded`, a load
+ * health ping.
+ *
+ * `human` events are deliberate actions. `background` events are the rest of
+ * the capability's traffic -- retries, prefetches, health pings, diagnostics.
+ * Both are reported, so the honest number is visible next to the total the
+ * dashboard used to show on its own.
+ *
+ * `instrumented: false` marks a capability that exists in the product but emits
+ * no event at all. It renders as "not instrumented" and never as zero: a
+ * capability nobody can measure and a capability nobody used are different
+ * facts, and only one of them is a product problem.
+ *
+ * Maintained against hushh-webapp/lib/observability/events.ts. An event that
+ * appears in neither list is counted nowhere, which is deliberate -- a new
+ * event should be classified on purpose rather than absorbed by a prefix.
  */
-const ONE_AGENT_CASE_SQL = `
-      CASE
-        WHEN event_name LIKE 'one_location%' THEN 'One Location'
-        WHEN event_name LIKE 'ria_%' THEN 'RIA'
-        WHEN event_name LIKE 'kai_%'
-          OR event_name IN ('market_insights_loaded', 'portfolio_viewed', 'recommendation_viewed', 'analysis_stream_started')
-          THEN 'Kai'
-        WHEN event_name LIKE 'consent_%' THEN 'Nav / Consent'
-        WHEN event_name LIKE 'gmail_%' OR event_name LIKE 'hushh_mail_%' THEN 'Email'
-        WHEN event_name LIKE 'agent_%' THEN 'Agent chat'
-        WHEN event_name LIKE 'pkm_%' OR event_name LIKE 'vault_%' THEN 'Vault / World model'
-        WHEN event_name LIKE 'auth_%'
-          OR event_name LIKE 'phone_verification%'
-          OR event_name LIKE 'onboarding%'
-          OR event_name LIKE 'google_sign_in%'
-          THEN 'Sign-up & onboarding'
-        ELSE NULL
-      END AS agent`;
+interface OneCapabilitySpec {
+  key: string;
+  label: string;
+  human: string[];
+  background: string[];
+  instrumented: boolean;
+  /** Why a capability cannot be measured. Shown verbatim in the UI. */
+  note?: string;
+}
+
+const ONE_CAPABILITIES: OneCapabilitySpec[] = [
+  {
+    key: 'one_location',
+    label: 'One Location',
+    human: [
+      'one_location_share_confirmed', 'one_location_check_in_completed',
+      'one_location_circle_created', 'one_location_circle_invite_created',
+      'one_location_public_link_created', 'one_location_request_sent',
+      'one_location_sos_triggered', 'one_location_recommendation_selected',
+      'one_location_share_review_opened', 'one_location_visit_rated',
+      'one_location_review_handoff_opened', 'one_location_setup_completed',
+      'one_location_onboarding_completed', 'one_location_activation_completed',
+    ],
+    // A retry is the app fighting the OS for a fix, and a contact sync is a
+    // background job. Neither is somebody using the product.
+    background: ['one_location_foreground_retry', 'one_location_contact_signal_synced'],
+    instrumented: true,
+  },
+  {
+    key: 'kai',
+    label: 'Kai',
+    human: [
+      'portfolio_viewed', 'recommendation_viewed', 'analysis_stream_started',
+      'analysis_stream_terminal_decision', 'import_upload_started',
+      'import_save_completed', 'import_parse_completed',
+    ],
+    background: [
+      'market_insights_loaded', 'profile_picks_loaded', 'analysis_stream_error',
+      'analysis_stream_aborted', 'import_quality_gate_passed', 'import_quality_gate_failed',
+    ],
+    instrumented: true,
+  },
+  {
+    key: 'consent_vault',
+    label: 'Consent & vault',
+    human: ['consent_action_submitted', 'consent_action_result', 'profile_method_switch_result'],
+    // consent_pending_loaded carries load_surface precisely to separate a real
+    // screen view from the unlock warm prefetch. It is split below rather than
+    // listed here, because the split is on a parameter, not the event name.
+    background: ['consent_pending_loaded'],
+    instrumented: true,
+  },
+  {
+    key: 'email',
+    label: 'Email',
+    human: [
+      'gmail_connect_started', 'gmail_connect_result', 'gmail_sync_requested',
+      'gmail_disconnect_result', 'hushh_mail_signin_screen_view',
+    ],
+    background: ['gmail_receipts_loaded', 'gmail_sync_result'],
+    instrumented: true,
+  },
+  {
+    key: 'onboarding',
+    label: 'Sign-up & onboarding',
+    human: [
+      'auth_started', 'auth_succeeded', 'google_sign_in_started', 'google_sign_in_completed',
+      'phone_verification_started', 'phone_verification_completed',
+      'onboarding_started', 'onboarding_step_completed', 'onboarding_completed',
+    ],
+    background: ['auth_failed', 'google_sign_in_failed'],
+    instrumented: true,
+  },
+  {
+    key: 'ria',
+    label: 'RIA',
+    human: [
+      'ria_onboarding_submitted', 'ria_request_created', 'ria_workspace_opened',
+      'marketplace_profile_viewed', 'persona_switched',
+    ],
+    background: [],
+    instrumented: true,
+  },
+  {
+    key: 'agent_chat',
+    label: 'Agent chat',
+    human: [],
+    background: [
+      'agent_pkm_context_resolved', 'agent_pkm_context_unavailable',
+      'agent_pkm_save_confirmation_completed',
+    ],
+    instrumented: false,
+    note: 'No agent invocation event is emitted. The only agent events are PKM reliability diagnostics, so agent usage cannot be measured yet.',
+  },
+  {
+    key: 'vault_world_model',
+    label: 'Vault / world model',
+    human: [],
+    background: [],
+    instrumented: false,
+    note: 'No pkm_* or vault_* event is emitted anywhere in the app.',
+  },
+];
 
 /**
- * Restricts every One-app query to surfaces that are actually the One app.
+ * Machine-generated events, excluded from every active-user and usage count.
  *
- * The production GA4 property carries one web stream, and that stream also
- * receives hushh.ai marketing traffic -- careers pages, PCHP research,
- * subscriptions. Over 30 days that was 471 people, against 195 real web-app
- * users. Counting them as One app users inflated the denominator by more than
- * double and made every conversion rate on this page wrong in the flattering
- * direction, which is the worst way for a number to be wrong.
- *
- * Native platforms are unambiguous. Web is admitted only from the app's own
- * host, which also keeps UAT web, localhost and the Firebase auth redirect
- * domain out of the production picture.
+ * An HTTP request is not a person and a cache warm is not a use. Kept in one
+ * place because the same list governs the production feed view
+ * (sql/kai_public_dashboard_feed.production.sql) and the reconciliation probe
+ * (scripts/check-one-metrics-reconciliation.mjs); the three drifting apart
+ * would make the dashboard and its own verification disagree.
  */
+const ONE_BACKGROUND_EVENTS = [
+  'api_request_completed', 'warmup_completed', 'startup_readiness_warmup_completed',
+  'cache_resource_resolved', 'route_readiness_completed', 'route_refresh_completed',
+  'web_vital', 'session_start', 'first_visit', 'first_open', 'user_engagement',
+  'notification_receive', 'notification_dismiss', 'notification_foreground',
+  'app_update', 'os_update', 'one_location_foreground_retry',
+];
+
+function sqlNameList(names: string[]): string {
+  return names.map((name) => sqlStringLiteral(name)).join(', ');
+}
+
+/**
+ * Builds `capability` and `is_human` for one event row.
+ *
+ * Kept in SQL rather than post-processed in TypeScript because distinct users
+ * per capability cannot be recovered by summing per-event counts after the fact.
+ */
+function oneCapabilitySql(): { capability: string; isHuman: string } {
+  const capabilityBranches = ONE_CAPABILITIES
+    .filter((spec) => spec.human.length > 0 || spec.background.length > 0)
+    .map((spec) => {
+      const all = [...spec.human, ...spec.background];
+      return `        WHEN event_name IN (${sqlNameList(all)}) THEN ${sqlStringLiteral(spec.key)}`;
+    })
+    .join('\n');
+
+  const humanNames = ONE_CAPABILITIES.flatMap((spec) => spec.human);
+
+  return {
+    capability: `      CASE\n${capabilityBranches}\n        ELSE NULL\n      END AS capability`,
+    // The consent prefetch is admitted only when the event says it was a real
+    // screen. `load_surface` is NULL on events emitted before the param
+    // shipped, and those stay out rather than being assumed human.
+    isHuman: `      (
+        event_name IN (${sqlNameList(humanNames)})
+        OR (
+          event_name = 'consent_pending_loaded'
+          AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'load_surface') = 'screen'
+        )
+      ) AS is_human`,
+  };
+}
+
 const ONE_APP_HOST = process.env.ONE_APP_WEB_HOST || 'one.hushh.ai';
 const ONE_APP_UAT_HOST = process.env.ONE_APP_UAT_WEB_HOST || 'uat.hushh.ai';
 
@@ -1839,16 +1983,30 @@ async function fetchOneAppSummary(
     GROUP BY step
   `;
 
+  const capabilitySql = oneCapabilitySql();
+
+  // Two numbers per capability. `humanUsers` is people who did something
+  // deliberate; `totalUsers` is everyone the old prefix bucket would have
+  // counted. Reporting both means the drop from the previous figures reads as
+  // a correction rather than as a regression.
   const agentQuery = `
-    SELECT agent, COUNT(DISTINCT user_pseudo_id) AS users, COUNT(*) AS events
+    SELECT
+      capability,
+      COUNT(DISTINCT IF(is_human, user_pseudo_id, NULL)) AS humanUsers,
+      COUNTIF(is_human) AS humanEvents,
+      COUNT(DISTINCT user_pseudo_id) AS totalUsers,
+      COUNT(*) AS totalEvents
     FROM (
-      SELECT user_pseudo_id, ${ONE_AGENT_CASE_SQL}
+      SELECT
+        user_pseudo_id,
+${capabilitySql.capability},
+${capabilitySql.isHuman}
       FROM ${table}
       WHERE ${dateFilter}
     )
-    WHERE agent IS NOT NULL
-    GROUP BY agent
-    ORDER BY users DESC
+    WHERE capability IS NOT NULL
+    GROUP BY capability
+    ORDER BY humanUsers DESC, totalUsers DESC
   `;
 
   const locationFeatureQuery = `
@@ -1871,20 +2029,21 @@ async function fetchOneAppSummary(
     ORDER BY users DESC
   `;
 
-  // Per-agent, per-day distinct users. Drives the trend chart on each agent
-  // card: a total alone cannot tell you whether an agent is growing or dying.
+  // Per-capability, per-day deliberate users. Drives the trend on each card: a
+  // total alone cannot tell you whether a capability is growing or dying.
   const agentDailyQuery = `
-    SELECT eventDate, agent, COUNT(DISTINCT user_pseudo_id) AS users
+    SELECT eventDate, capability, COUNT(DISTINCT user_pseudo_id) AS users
     FROM (
       SELECT
         CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
         user_pseudo_id,
-        ${ONE_AGENT_CASE_SQL}
+${capabilitySql.capability},
+${capabilitySql.isHuman}
       FROM ${table}
       WHERE ${dateFilter}
     )
-    WHERE agent IS NOT NULL
-    GROUP BY eventDate, agent
+    WHERE capability IS NOT NULL AND is_human
+    GROUP BY eventDate, capability
     ORDER BY eventDate
   `;
 
@@ -1957,6 +2116,111 @@ async function fetchOneAppSummary(
   const last24Query = ga4ExportTotalsSql(table, last24Filter);
   const totalsQuery = ga4ExportTotalsSql(table, dateFilter);
 
+  // ---------------------------------------------------------------------
+  // Usage metrics for the simplified readout.
+  //
+  // These are anchored to the END of the selected range rather than to its
+  // length. DAU/WAU/MAU have fixed meanings -- 1, 7 and 30 days -- and would
+  // stop meaning anything if a 7-day range silently redefined "monthly".
+  // ---------------------------------------------------------------------
+  const backgroundNames = sqlNameList(ONE_BACKGROUND_EVENTS);
+  const meaningful = `event_name NOT IN (${backgroundNames})`;
+
+  // Read a few days wider than thirty so a full 30-day window is still
+  // available after anchoring back to the last day that actually exported.
+  const activeWindowFilter = ga4ExportSuffixFilter(
+    formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -33)),
+    range.endDate,
+  );
+
+  // DAU is anchored to the last day with data, not to the end of the selected
+  // range. GA4's daily export lands a day or more late, so anchoring to "today"
+  // reports a sliver of a day -- a healthy product looks dead every morning.
+  // MAX(day) never exceeds the range end, so a historical range still anchors
+  // to its own last day.
+  //
+  // Days come from `event_date`, not from `DATE(TIMESTAMP_MICROS(event_timestamp))`.
+  // GA4 partitions the export by the property's reporting timezone while
+  // event_timestamp is UTC, so bucketing by the timestamp splits the newest
+  // daily table across two dates and invents a partial trailing day. That made
+  // DAU anchor to a handful of spillover events instead of to the real last day.
+  const activeQuery = `
+    WITH days AS (
+      SELECT user_pseudo_id, PARSE_DATE('%Y%m%d', event_date) AS day
+      FROM ${table}
+      WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
+    ),
+    anchor AS (SELECT MAX(day) AS latest FROM days)
+    SELECT
+      CAST((SELECT latest FROM anchor) AS STRING) AS asOf,
+      COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS dau,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+                AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS wau,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+                AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS mau
+    FROM days
+  `;
+
+  // New versus returning, decided by first touch rather than by whether we
+  // happened to see the person earlier in this window. Without this split an
+  // MAU made almost entirely of first-timers reads as health.
+  const growthQuery = `
+    SELECT
+      COUNT(DISTINCT IF(firstTouch IS NULL, user_pseudo_id, NULL)) AS unknownUsers,
+      COUNT(DISTINCT IF(firstTouch >= ${sqlStringLiteral(range.startDate)}, user_pseudo_id, NULL)) AS newUsers,
+      COUNT(DISTINCT IF(firstTouch < ${sqlStringLiteral(range.startDate)}, user_pseudo_id, NULL)) AS returningUsers
+    FROM (
+      SELECT
+        user_pseudo_id,
+        CAST(DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS STRING) AS firstTouch
+      FROM ${table}
+      WHERE ${dateFilter} AND ${meaningful}
+    )
+  `;
+
+  // Week-1 retention by acquisition cohort: of the people who first appeared in
+  // a given week, how many came back in the following seven days. Cohorts are
+  // read from a wider window than the selected range because a cohort has to be
+  // old enough to have had its week.
+  const retentionStart = formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -83));
+  const retentionQuery = `
+    SELECT
+      CAST(DATE_TRUNC(firstDay, WEEK) AS STRING) AS cohortWeek,
+      COUNT(DISTINCT user_pseudo_id) AS cohortSize,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_ADD(firstDay, INTERVAL 1 DAY) AND DATE_ADD(firstDay, INTERVAL 7 DAY),
+        user_pseudo_id, NULL)) AS returnedW1
+    FROM (
+      SELECT
+        user_pseudo_id,
+        PARSE_DATE('%Y%m%d', event_date) AS day,
+        DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
+      FROM ${table}
+      WHERE ${ga4ExportSuffixFilter(retentionStart, range.endDate)} AND ${surfaceFilter} AND ${meaningful}
+    )
+    WHERE firstDay IS NOT NULL
+    GROUP BY cohortWeek
+    ORDER BY cohortWeek DESC
+    LIMIT 8
+  `;
+
+  // Onboarding to first value, as three counts rather than a ratio, so a stage
+  // with no emitter cannot masquerade as a conversion collapse.
+  // Three stages, not four. `one_location_setup_completed` was tried as a stage
+  // between arrival and onboarding and it produced *fewer* people than the step
+  // after it -- the two are alternative paths through setup, not a sequence, and
+  // a funnel that goes back up teaches the reader to distrust the whole chart.
+  const activationQuery = `
+    SELECT
+      COUNT(DISTINCT user_pseudo_id) AS reachedApp,
+      COUNT(DISTINCT IF(event_name = 'one_location_onboarding_completed', user_pseudo_id, NULL)) AS onboarded,
+      COUNT(DISTINCT IF(event_name = 'one_location_activation_completed', user_pseudo_id, NULL)) AS activated
+    FROM ${table}
+    WHERE ${dateFilter} AND ${meaningful}
+  `;
+
   const queryProject = BQ_JOB_PROJECT || projectId;
   const [
     funnel,
@@ -1970,6 +2234,10 @@ async function fetchOneAppSummary(
     reliability,
     totals,
     last24,
+    active,
+    growth,
+    retention,
+    activationStages,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
     queryBigQuerySql(queryProject, agentQuery),
@@ -1982,6 +2250,10 @@ async function fetchOneAppSummary(
     queryBigQuerySql(queryProject, reliabilityQuery),
     queryBigQuerySql(queryProject, totalsQuery),
     queryBigQuerySql(queryProject, last24Query),
+    queryBigQuerySql(queryProject, activeQuery),
+    queryBigQuerySql(queryProject, growthQuery),
+    queryBigQuerySql(queryProject, retentionQuery),
+    queryBigQuerySql(queryProject, activationQuery),
   ]);
 
   const errors = [
@@ -1996,6 +2268,10 @@ async function fetchOneAppSummary(
     reliability.error,
     totals.error,
     last24.error,
+    active.error,
+    growth.error,
+    retention.error,
+    activationStages.error,
   ].filter(Boolean);
 
   const hasAnyRows =
@@ -2012,6 +2288,12 @@ async function fetchOneAppSummary(
   const totalsRow = totals.rows[0] ?? {};
   const last24Row = last24.rows[0] ?? {};
   const reliabilityRow = reliability.rows[0] ?? {};
+  const activeRow = active.rows[0] ?? {};
+  const growthRow = growth.rows[0] ?? {};
+  const activationRow = activationStages.rows[0] ?? {};
+  const capabilityRows = new Map(
+    agents.rows.map((row) => [String(row.capability), row]),
+  );
 
   const activatedUsers = usersByStep.get('activated') ?? 0;
   const locationRetries = toNumber(reliabilityRow.locationRetries);
@@ -2052,19 +2334,66 @@ async function fetchOneAppSummary(
         sharingUsers: toNumber(reliabilityRow.sharingUsers),
       },
       funnel: buildOneLocationFunnel(usersByStep),
-      agents: agents.rows.map((row) => {
-        const agent = String(row.agent);
+      activeUsers: {
+        dau: toNumber(activeRow.dau),
+        wau: toNumber(activeRow.wau),
+        mau: toNumber(activeRow.mau),
+        // Stickiness is only meaningful against a non-zero denominator, and a
+        // fabricated 0% would read as a product collapse rather than as no data.
+        stickiness: toNumber(activeRow.mau) > 0
+          ? toNumber(activeRow.dau) / toNumber(activeRow.mau)
+          : null,
+        // The day DAU was actually measured on, which is the last day with
+        // data rather than the end of the selected range.
+        asOf: String(activeRow.asOf ?? range.endDate),
+      },
+      growth: {
+        newUsers: toNumber(growthRow.newUsers),
+        returningUsers: toNumber(growthRow.returningUsers),
+        // First touch is missing on some rows. Named rather than folded into
+        // "new", which is where it would flatter the number.
+        unknownUsers: toNumber(growthRow.unknownUsers),
+      },
+      retention: retention.rows
+        .map((row) => {
+          const cohortSize = toNumber(row.cohortSize);
+          const returned = toNumber(row.returnedW1);
+          return {
+            cohortWeek: String(row.cohortWeek),
+            cohortSize,
+            returnedW1: returned,
+            rateW1: cohortSize > 0 ? returned / cohortSize : null,
+          };
+        })
+        // Oldest first, so the chart reads left to right like every other
+        // trend on the page.
+        .reverse(),
+      activationStages: [
+        { key: 'reached_app', label: 'Opened the app', users: toNumber(activationRow.reachedApp) },
+        { key: 'onboarded', label: 'Finished onboarding', users: toNumber(activationRow.onboarded) },
+        { key: 'activated', label: 'Shared or received a location', users: toNumber(activationRow.activated) },
+      ],
+      // Driven by the declared catalogue, not by what came back from the query,
+      // so a capability that emits nothing appears with a reason instead of
+      // vanishing from the list.
+      capabilities: ONE_CAPABILITIES.map((spec) => {
+        const row = capabilityRows.get(spec.key);
         const byDate = new Map(
           agentDaily.rows
-            .filter((point) => String(point.agent) === agent)
+            .filter((point) => String(point.capability) === spec.key)
             .map((point) => [String(point.eventDate), toNumber(point.users)]),
         );
         return {
-          agent,
-          users: toNumber(row.users),
-          events: toNumber(row.events),
-          // Spined so every agent's chart shares one x-axis and days with no
-          // activity read as zero rather than being skipped.
+          key: spec.key,
+          label: spec.label,
+          instrumented: spec.instrumented,
+          note: spec.note ?? null,
+          humanUsers: spec.instrumented ? toNumber(row?.humanUsers) : null,
+          humanEvents: spec.instrumented ? toNumber(row?.humanEvents) : null,
+          totalUsers: toNumber(row?.totalUsers),
+          totalEvents: toNumber(row?.totalEvents),
+          // Spined so every capability's chart shares one x-axis and quiet days
+          // read as zero rather than being skipped.
           daily: dateSpine(range).map((date) => ({
             eventDate: date,
             users: byDate.get(date) ?? 0,
