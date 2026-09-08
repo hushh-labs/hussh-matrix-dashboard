@@ -249,6 +249,7 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     one: null,
     oneUat: null,
     oneAgentMetrics: [],
+    oneHealthMetrics: [],
     oneLocationFeatureMetrics: [],
     onePlatformMetrics: [],
     oneAcquisitionMetrics: [],
@@ -315,17 +316,27 @@ function oneLocationEventLabel(eventName: string): string {
   );
 }
 
+/**
+ * Capability usage for the compact list view.
+ *
+ * Ranked and sized by deliberate use, not by total traffic -- ranking by total
+ * would put the noisiest capability on top, which is how a geolocation retry
+ * loop came to look like the most-used feature in the product. A capability
+ * with no usage event carries its reason instead of a number.
+ */
 function buildOneAgentMetrics(one: OneAppSummary | null): BreakdownMetric[] {
   if (!one) return [];
-  const total = one.agents.reduce((sum, agent) => sum + agent.users, 0);
-  return one.agents.map((agent) => ({
-    label: agent.agent,
-    value: agent.users,
-    displayValue: `${formatNumber(agent.users)} users`,
-    detail: `${formatNumber(agent.events)} events`,
-    // Share of agent-attributed users, not of all users: one person can use
-    // several agents, so these deliberately do not sum to 100%.
-    percentage: total > 0 ? (agent.users / total) * 100 : undefined,
+  const total = one.capabilities.reduce((sum, cap) => sum + (cap.humanUsers ?? 0), 0);
+  return one.capabilities.map((cap) => ({
+    label: cap.label,
+    value: cap.humanUsers ?? 0,
+    displayValue: cap.instrumented ? `${formatNumber(cap.humanUsers ?? 0)} people` : 'Not instrumented',
+    detail: cap.instrumented
+      ? `${formatNumber(cap.humanEvents ?? 0)} deliberate of ${formatNumber(cap.totalEvents)} events`
+      : cap.note ?? 'No usage event is emitted.',
+    // Share of capability-attributed people, not of all people: one person can
+    // use several capabilities, so these deliberately do not sum to 100%.
+    percentage: cap.instrumented && total > 0 ? ((cap.humanUsers ?? 0) / total) * 100 : undefined,
   }));
 }
 
@@ -398,7 +409,7 @@ function buildOneAcquisitionMetrics(one: OneAppSummary | null): BreakdownMetric[
 function buildOneHeadlineMetrics(one: OneAppSummary | null): BreakdownMetric[] {
   if (!one) return [];
   const locationUsers =
-    one.agents.find((agent) => agent.agent === 'One Location')?.users ?? 0;
+    one.capabilities.find((cap) => cap.key === 'one_location')?.humanUsers ?? 0;
   const activated = one.activation.activatedUsers || one.activation.sharingUsers;
 
   return [
@@ -711,6 +722,44 @@ function buildKaiProductionDailySummaryMetrics(kaiProduction: KaiProductionSumma
     metric('Cloud Run 5xx', asNumber(gcp?.errorCount), gcp?.serviceName),
     metric('Cloud Run Error Rate', asNumber(gcp?.errorRate), gcp?.serviceName, formatPercent(gcp?.errorRate)),
     metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.serviceName, formatLatency(gcp?.p95LatencyMs)),
+  ];
+}
+
+/**
+ * Operational context for the One readout.
+ *
+ * The One app is served by the same Cloud Run service as the rest of the web
+ * app, so this is the app's availability, not a separate One deployment. It
+ * sits at the bottom of the page on purpose: request counts are not people,
+ * and putting them near the active-user tiles invites exactly that confusion.
+ */
+function buildOneHealthMetrics(kaiProduction: KaiProductionSummary | null): BreakdownMetric[] {
+  const gcp = kaiProduction?.gcp;
+  // No requests at all means the monitoring read failed or the window is empty.
+  // Either way it is absence of data, not perfect availability, so report
+  // nothing rather than a flattering 100%.
+  if (!gcp || asNumber(gcp.requestCount) <= 0) return [];
+  const errorRate = asNumber(gcp.errorRate);
+  return [
+    {
+      label: 'Request success rate',
+      value: 1 - errorRate,
+      displayValue: formatPercent(1 - errorRate, 2),
+      detail: `${formatNumber(asNumber(gcp.errorCount))} failed of ${formatNumber(asNumber(gcp.requestCount))}`,
+    },
+    {
+      label: 'P95 latency',
+      value: asNumber(gcp.p95LatencyMs),
+      displayValue: formatLatency(gcp.p95LatencyMs),
+      detail: gcp.serviceName ?? 'Cloud Run',
+    },
+    {
+      label: 'Requests served',
+      value: asNumber(gcp.requestCount),
+      displayValue: formatNumber(asNumber(gcp.requestCount)),
+      // Said out loud, because this is the exact number people mistake for usage.
+      detail: 'HTTP requests, not people',
+    },
   ];
 }
 
@@ -1607,6 +1656,7 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     one,
     oneUat,
     oneAgentMetrics: buildOneAgentMetrics(one),
+    oneHealthMetrics: buildOneHealthMetrics(kaiProduction),
     oneLocationFeatureMetrics: buildOneLocationFeatureMetrics(one),
     onePlatformMetrics: buildOnePlatformMetrics(one),
     oneAcquisitionMetrics: buildOneAcquisitionMetrics(one),

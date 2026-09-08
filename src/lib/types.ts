@@ -697,12 +697,61 @@ export interface OneAgentDailyPoint {
   users: number;
 }
 
-export interface OneAgentUsage {
-  agent: string;
-  users: number;
-  events: number;
-  /** Date-spined, so every agent chart shares one x-axis. */
+/**
+ * One capability, reported twice.
+ *
+ * `humanUsers` counts people who did something deliberate. `totalUsers` counts
+ * everyone the old event-name-prefix bucket would have counted, including
+ * retries, prefetches and health pings. Both are shown, because the drop
+ * between them is the point: it is the size of the error the page used to
+ * publish, and hiding it would make a correction look like a regression.
+ *
+ * `instrumented: false` means the capability emits no usage event at all. Then
+ * `humanUsers` is null, never 0 -- "nobody used it" and "nobody can measure it"
+ * are different facts and only one of them is about the product.
+ */
+export interface OneCapabilityUsage {
+  key: string;
+  label: string;
+  instrumented: boolean;
+  /** Why it cannot be measured. Non-null only when `instrumented` is false. */
+  note: string | null;
+  humanUsers: number | null;
+  humanEvents: number | null;
+  totalUsers: number;
+  totalEvents: number;
+  /** Date-spined, so every capability chart shares one x-axis. */
   daily: OneAgentDailyPoint[];
+}
+
+export interface OneActiveUsers {
+  dau: number;
+  wau: number;
+  mau: number;
+  /** DAU/MAU. Null rather than 0 when MAU is 0, so no-data never reads as collapse. */
+  stickiness: number | null;
+  /** The day DAU is measured on -- the end of the selected range, not "today". */
+  asOf: string;
+}
+
+export interface OneGrowthSplit {
+  newUsers: number;
+  returningUsers: number;
+  /** First touch missing. Named rather than folded into `newUsers`. */
+  unknownUsers: number;
+}
+
+export interface OneRetentionCohort {
+  cohortWeek: string;
+  cohortSize: number;
+  returnedW1: number;
+  rateW1: number | null;
+}
+
+export interface OneActivationStage {
+  key: string;
+  label: string;
+  users: number;
 }
 
 /**
@@ -762,7 +811,11 @@ export interface OneAppSummary {
     sharingUsers: number;
   };
   funnel: OneLocationFunnelStep[];
-  agents: OneAgentUsage[];
+  activeUsers: OneActiveUsers;
+  growth: OneGrowthSplit;
+  retention: OneRetentionCohort[];
+  activationStages: OneActivationStage[];
+  capabilities: OneCapabilityUsage[];
   surfaces: OneSurfaceRow[];
   locationFeatures: OneLocationFeatureUsage[];
   platforms: OnePlatformUsage[];
@@ -838,6 +891,7 @@ export interface DashboardData {
   one: OneAppSummary | null;
   oneUat: OneAppSummary | null;
   oneAgentMetrics: BreakdownMetric[];
+  oneHealthMetrics: BreakdownMetric[];
   oneLocationFeatureMetrics: BreakdownMetric[];
   onePlatformMetrics: BreakdownMetric[];
   oneAcquisitionMetrics: BreakdownMetric[];

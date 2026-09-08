@@ -351,9 +351,10 @@ future MAU implementation.
 **Aggregation**
 11. ~~Replace the production `kai_public_dashboard_feed` view stub with a real query over
     `analytics_526603671`.~~ **Done, 2026-09-07.** See §6a.
-12. Build One DAU / WAU-7 / MAU-30 with the agreed definitions and an explicit identity basis.
-13. Replace `ONE_AGENT_CASE_SQL` with an explicit event→capability map; add the `load_surface`
-    filter; move `one_location_foreground_retry` to operational.
+12. ~~Build One DAU / WAU-7 / MAU-30 with the agreed definitions and an explicit identity basis.~~
+    **Done, 2026-09-08.** See §6b.
+13. ~~Replace `ONE_AGENT_CASE_SQL` with an explicit event→capability map; add the `load_surface`
+    filter; move `one_location_foreground_retry` out of usage.~~ **Done, 2026-09-08.** See §6b.
 14. Add a hushh.ai host-filtered acquisition query against the data already present.
 
 **UI**
@@ -402,6 +403,48 @@ point of running both. The public payload sanitizer still redacts `source_projec
 Cost note: the view scans ~275 MB per call and the API sends `no-store`, so every dashboard load
 is a fresh scan. That is affordable at current volume but is the first thing to revisit if the
 dashboard gets traffic or a polling client.
+
+## 6b. What was changed on 2026-09-08
+
+The One tab was rewritten around six questions instead of around data sources. What it shows now:
+active people (DAU/WAU/MAU/stickiness), new versus returning, week-1 retention by cohort,
+onboarding to first value, capability usage, and operational health. The source matrix,
+per-provider status cards, session and page-view totals, and the acquisition source breakdown came
+off this tab; the `overview` and `platforms` tabs are untouched.
+
+Definitions established in the process:
+
+- **Meaningful activity** is the event set in §1.3. `api_request_completed`, cache warms, route
+  readiness, `one_location_foreground_retry` and the GA4 automatic events are excluded from every
+  active-user and capability count. The list now lives in one place in `server.ts` and is shared
+  with the feed view and the reconciliation probe.
+- **Capabilities are declared, not inferred.** `ONE_CAPABILITIES` in `server.ts` names, per
+  capability, the events that mean deliberate use and the events that are background. Each one
+  reports both numbers, so the drop from the old prefix buckets is visible as a correction rather
+  than looking like a regression. A capability with no usage event carries `instrumented: false`
+  and a reason.
+- **The consent warm prefetch is excluded** from deliberate use via `load_surface = 'screen'`.
+  Events emitted before that param shipped are treated as background rather than assumed human.
+- **Agents claimed renders as an explicit gap** with what would have to exist to fill it. No number.
+
+Three bugs were found and fixed while verifying, none of which were visible from the UI:
+
+- **Days were bucketed by `DATE(TIMESTAMP_MICROS(event_timestamp))`.** GA4 partitions the export by
+  the property's reporting timezone while `event_timestamp` is UTC, so the newest daily table split
+  across two dates and produced a partial trailing day. DAU anchored to that sliver and read 7
+  instead of 28. Day bucketing now uses `event_date` throughout, matching the feed view.
+- **DAU was anchored to the end of the selected range**, which defaults to today — a day the daily
+  export has not reached. It now anchors to the last day with data, and the tile states that date.
+- **`one_location_setup_completed` was tried as an activation stage** and produced fewer people than
+  the stage after it: it is an alternative path through setup, not a predecessor of onboarding. The
+  funnel is three stages, and monotonic.
+
+Verified against independent queries: DAU 28 / WAU 99 / MAU 368 for 2026-09-07 matches
+`bq` run separately over the same window. Retention cohorts render 5–11% week-1.
+
+The measured picture as of 2026-09-07, which is what the simplification exists to make legible:
+368 monthly actives, of whom **291 were new and 19 returning**; week-1 return around 8%; and 9
+people of 336 reached first value. Acquisition works; retention does not.
 
 ## 7. Re-running these checks
 
