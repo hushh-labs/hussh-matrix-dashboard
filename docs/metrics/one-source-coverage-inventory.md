@@ -22,11 +22,13 @@ Five things are true today that the repository's own documentation says are not.
    `users_*` and `pseudonymous_users_*`. The README's standing blocker
    ("GA4 export dataset not materialized") has been stale for roughly four months.
 
-2. **The production `kai_public_dashboard_feed` view is a hardcoded stub.** Its SQL is a literal
-   `UNNEST([STRUCT(...)])` that always returns `production_ready = FALSE` and the string
+2. **The production `kai_public_dashboard_feed` view was a hardcoded stub — now fixed.** Its SQL was
+   a literal `UNNEST([STRUCT(...)])` that always returned `production_ready = FALSE` and the string
    *"Production GA4 export dataset hushh-pda.analytics_526603671 is not visible/materialized yet."*
-   It reads no event table. Every production Kai number the dashboard renders from that feed is a
-   constant, not a measurement. This is a view fix, not a dashboard fix.
+   It read no event table, so every production number the dashboard rendered from that feed was a
+   constant. Replaced on 2026-09-07 with a real aggregation over `analytics_526603671`
+   (`sql/kai_public_dashboard_feed.production.sql`; the original is kept in
+   `sql/kai_public_dashboard_feed.production.rollback.sql`). See §6a.
 
 3. **GA4 User-ID is bound on iOS and not on web.** Over the window, web produced 25,808 events
    from 412 distinct `user_pseudo_id` and **zero** distinct `user_id`. iOS produced 122,442 events
@@ -347,8 +349,8 @@ future MAU implementation.
 10. Document `ONE_APP_*` in `.env.example`.
 
 **Aggregation**
-11. Replace the production `kai_public_dashboard_feed` view stub with a real query over
-    `analytics_526603671`. Single highest-impact change in this list.
+11. ~~Replace the production `kai_public_dashboard_feed` view stub with a real query over
+    `analytics_526603671`.~~ **Done, 2026-09-07.** See §6a.
 12. Build One DAU / WAU-7 / MAU-30 with the agreed definitions and an explicit identity basis.
 13. Replace `ONE_AGENT_CASE_SQL` with an explicit event→capability map; add the `load_surface`
     filter; move `one_location_foreground_retry` to operational.
@@ -362,6 +364,44 @@ future MAU implementation.
 18. Add One DAU/WAU/MAU and capability drilldowns once §12–13 land.
 
 ---
+
+## 6a. What was changed on 2026-09-07
+
+The production feed view `hushh-pda.analytics_public.kai_public_dashboard_feed` was replaced.
+The definition now lives in `sql/kai_public_dashboard_feed.production.sql` and the previous
+hardcoded stub in `sql/kai_public_dashboard_feed.production.rollback.sql`.
+
+Decisions taken in that view, each of which is a definition the dashboard now inherits:
+
+- **Scope is the One app surface** — native iOS/Android plus `one.hushh.ai`. `hushh.ai` marketing
+  pages and `uat.hushh.ai` are excluded, and both exclusions are stated in a `surface_scope` status
+  row rather than being silent.
+- **Background traffic is excluded** from active-user and feature counts, using the list in §1.3.
+- **`events_intraday_*` is excluded** by an 8-digit table-suffix test. The `events_*` wildcard
+  matches the intraday table, which made the newest "day" the current, still-accumulating one —
+  DAU read as a partial count all day and every morning looked like a collapse.
+- **Windows are rolling and distinct-counted**: DAU on the last exported complete day, WAU over
+  7 days, MAU over 30. Never summed from the daily series.
+- **The latest day is the last day that actually exported**, not "yesterday" — GA4 lands a day or
+  more late, and pinning to yesterday reports DAU 0 on a healthy pipeline.
+- **Identity is disclosed, not hidden.** `identity_basis` says `user_pseudo_id`,
+  `web_user_id_coverage_devices` reports the measured web User-ID coverage, and `known_blockers`
+  carries the plain-language caveat that these are devices, not people, and that web and app
+  figures cannot be added together.
+- **Missing funnel steps emit 0 rather than being absent**, so a step with no emitter reads as a
+  gap in the chart instead of shifting every later step up one position. Activation rates emit
+  NULL when the denominator is 0 rather than a fabricated zero.
+
+Verified end to end: the view returns 360 rows across all nine metric groups, and
+`GET /api/analytics/kai/production` renders `production_ready = true` with
+`current_dau = 16`, `current_wau = 92`, `current_mau = 358` for the last exported day
+(2026-09-06). Those three figures match the independent queries in §1.3 exactly, which is the
+point of running both. The public payload sanitizer still redacts `source_project_id` and
+`source_dataset`, as before.
+
+Cost note: the view scans ~275 MB per call and the API sends `no-store`, so every dashboard load
+is a fresh scan. That is affordable at current volume but is the first thing to revisit if the
+dashboard gets traffic or a polling client.
 
 ## 7. Re-running these checks
 

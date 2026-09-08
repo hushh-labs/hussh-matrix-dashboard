@@ -19,7 +19,7 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
 - **Backend**: Express server proxying BigQuery and hushhtech.com analytics
 - **Data sources**:
   - UAT: `hushh-pda-uat.analytics_public.kai_public_dashboard_feed` (live, full data)
-  - Production: `hushh-pda.analytics_public.kai_public_dashboard_feed` (status-only until GA4 export materializes)
+  - Production: `hushh-pda.analytics_public.kai_public_dashboard_feed` (live; the view aggregates `hushh-pda.analytics_526603671`, scoped to the One app surface)
   - hushh.ai: Cloud Run Monitoring and Search Console export readiness only
   - kai.hushh.ai: public BigQuery feed plus raw GA4 export aggregates
   - hushhtech.com: Supabase database aggregates, canonical production summary endpoint for business/GA4, metrics.hushh.ai-owned Cloud Run Monitoring, and GCP-backed Search Console coverage
@@ -96,17 +96,30 @@ The HushhTech flow probe additionally verifies that `hushhtech.com` GA4 summary 
 The dashboard fetches from `/api/analytics/all` which returns:
 - **Kai UAT feed**: DAU, WAU, MAU, sessions, events, investor/RIA funnels, platform mix
 - **Kai raw GA4 export**: top events, users, sessions, country, device, and platform aggregates from `analytics_533362555`
-- **Kai Production feed**: Status-only with `production_ready=false` until `analytics_526603671` materializes
+- **Kai Production feed**: Live. `production_ready=true`, aggregated from `analytics_526603671` over the One app surface (native plus `one.hushh.ai`), excluding `hushh.ai` marketing pages and `uat.hushh.ai`. Counts are device-scoped; see `docs/metrics/one-source-coverage-inventory.md`
 - **Kai Production Cloud Run**: `kai.hushh.ai` requests, non-2xx, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp`
 - **hushh.ai**: Cloud Run request, latency, instance, and Search Console export-table status. No Supabase database is attached to this product.
 - **hushhtech.com**: Supabase database aggregates, public-safe summary from `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic, plus direct Cloud Run Monitoring and GCP-backed Search Console metrics fetched by `metrics.hushh.ai`. Search Console clicks, impressions, CTR, queries, pages, countries, and devices must not come from Supabase.
 
 When a provider is not fully configured, the dashboard keeps raw diagnostic text out of the visible UI and shows neutral empty or syncing states instead of synthetic metrics.
 
+## Metrics Documentation
+
+`docs/metrics/one-source-coverage-inventory.md` is the metric dictionary and source-coverage
+inventory for One adoption, agent usage and hushh.ai: what each metric means, which event or
+business record backs it, and what is still missing. `npm run test:metrics:one-reconciliation`
+re-verifies every figure in it against live data.
+
+`sql/kai_public_dashboard_feed.production.sql` is the deployed definition of the production
+feed view, with `.rollback.sql` alongside it.
+
 ## Remaining Blockers
 
 | Platform | Blocker | Action |
 | --- | --- | --- |
-| kai.hushh.ai (prod) | GA4 export dataset not materialized | Resolve `hushh-pda.analytics_526603671` materialization |
-| kai.hushh.ai (prod) | Web tag not deployed | Redeploy frontend with `G-2PCECPSKCR` |
+| One / kai.hushh.ai (prod) | GA4 User-ID never binds on web, so counts are devices rather than people and web/app figures cannot be summed | Fix `applyWebUserId` in `hushh-research`; see `docs/metrics/one-source-coverage-inventory.md` §1.2 |
+| One (prod) | No agent invocation event exists, so "agents used" is not measurable | Add an agent turn event in `hushh-research`; see §1.5 |
+| One (prod) | No agent claim event or queryable pod registry, so "agents claimed" is not measurable | Decide the authoritative record; see §1.4 |
+| hushh.ai | `HUSHH_AI_GA4_PROPERTY_ID` unset, so the GA4 card reads `not_configured` | Set it (candidate `458078330`); see §5 |
+| Production property | `uat.hushh.ai` traffic lands in the production GA4 property | Resolve at the source; see §4 |
 | hushhtech.com | Official Search Console bulk export has not produced `searchdata_site_impression` / `searchdata_url_impression` yet | The GCP-only fallback dataset `hushh-ai-prod.hushhtech_search_console_api` is active until Google's official export tables appear |
