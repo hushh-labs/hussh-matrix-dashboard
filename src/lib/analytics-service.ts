@@ -8,6 +8,7 @@
  */
 
 import type {
+  GrowthSummary,
   FeedRow,
   FeedStatus,
   UsageSummary,
@@ -49,6 +50,7 @@ interface AllAnalyticsResponse {
     data: { production: OneAppSummary | null; uat: OneAppSummary | null } | null;
     error?: string | null;
   };
+  growth?: { platform: string; data: GrowthSummary | null; error?: string | null };
   fetchedAt: string;
 }
 
@@ -250,6 +252,8 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     oneUat: null,
     oneAgentMetrics: [],
     oneHealthMetrics: [],
+    growth: null,
+    costPerActiveUser: null,
     oneLocationFeatureMetrics: [],
     onePlatformMetrics: [],
     oneAcquisitionMetrics: [],
@@ -1574,6 +1578,16 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
   const hushhAi = result.hushhAi?.data ?? null;
   const hushhTech = result.hushhTech.data;
   const one = result.one?.data?.production ?? null;
+  const growth = result.growth?.data ?? null;
+  // Computed here rather than server-side because it needs both the org cost
+  // roll-up and the One active-user count, and neither query should pay for the
+  // other. Production cost only: spend on environments no customer touches is a
+  // real problem but it is not what serving a person costs.
+  const monthlyActive = one?.activeUsers?.mau ?? 0;
+  const costPerActiveUser =
+    growth?.cost?.available && monthlyActive > 0
+      ? growth.cost.production / monthlyActive
+      : null;
   const oneUat = result.one?.data?.uat ?? null;
   const feedWarnings = [
     result.kai.uat.error,
@@ -1657,6 +1671,8 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     oneUat,
     oneAgentMetrics: buildOneAgentMetrics(one),
     oneHealthMetrics: buildOneHealthMetrics(kaiProduction),
+    growth,
+    costPerActiveUser,
     oneLocationFeatureMetrics: buildOneLocationFeatureMetrics(one),
     onePlatformMetrics: buildOnePlatformMetrics(one),
     oneAcquisitionMetrics: buildOneAcquisitionMetrics(one),

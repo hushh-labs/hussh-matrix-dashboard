@@ -446,6 +446,39 @@ The measured picture as of 2026-09-07, which is what the simplification exists t
 368 monthly actives, of whom **291 were new and 19 returning**; week-1 return around 8%; and 9
 people of 336 reached first value. Acquisition works; retention does not.
 
+## 6c. Organisation-level growth, added 2026-09-09
+
+A `Growth` tab now sits in front of the product tabs and answers six questions no single
+product panel can. Definitions:
+
+| Metric | Definition | Source | Caveat |
+| --- | --- | --- | --- |
+| **People picked up** | Distinct devices by week of first touch, weekly and cumulative | GA4 `user_first_touch_timestamp`, One surface | Device-scoped. A year of history, independent of the selected range. |
+| **Cost per active person** | Production cloud spend ÷ monthly active devices | `hushh-pda.billing` export ÷ One MAU | **Production projects only.** Non-production spend is reported beside it, never folded in. |
+| **Website → app** | Devices seen on `hushh.ai` that later appear on `one.hushh.ai` | One GA4 property, same `user_pseudo_id` | Same-device, web-only. Not an identity merge; app installs cannot be attributed while web User-ID is unbound. |
+| **Time to first value** | First touch → `one_location_activation_completed` | GA4 | Median plus distribution, never a mean — one person returning a month later would drag it. |
+| **Organic search** | Clicks, impressions, CTR, average position | Search Console export | ~3-day lag. |
+| **Instrumentation health** | Share of governed events carrying `event_category`; declared-but-unemitted count | GA4 + static contract list | Governed events only; counting GA4 automatic events would report a permanent unfixable deficit. |
+
+What the first run showed:
+
+- **1,033 devices picked up** across 16 weeks; 233 in the last four weeks, **down 19%** on the
+  four before.
+- **88% of cloud spend serves nobody.** $7,559 total, of which **$899 is production** and
+  **$6,659 is UAT, dev or idle**. Agent One spends **18.4× more** on non-production than on
+  production ($4,630 vs $251). Cost per active person is $2.51 against production spend; it would
+  be $21 against the whole bill.
+- **12.9% of website visitors go on to the app** — 21 of 163.
+- **Time to first value is 2.3 days** (median of 10). Fastest 26 minutes, slowest 33.9 days, and
+  4 of 10 took longer than a week.
+- **93.7% of events carry required tags**; 690 of 11,031 arrived untagged.
+- Organic search: **587 visits from 77,250 impressions**, 0.76% CTR, average position 10.1.
+
+Two rendering rules learned here and applied throughout: headline counts use exact
+thousands-separated values rather than the abbreviating `formatNumber` (1,033, not "1.0k"), and
+any two series with an order-of-magnitude gap get separate axes — clicks against impressions on a
+shared scale drew a flat line the legend claimed was data.
+
 ## 7. Re-running these checks
 
 `npm run test:metrics:one-reconciliation` runs `scripts/check-one-metrics-reconciliation.mjs`,
