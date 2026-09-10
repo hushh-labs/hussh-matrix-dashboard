@@ -830,6 +830,81 @@ export interface OneAppSummary {
 }
 
 // ---------------------------------------------------------------------------
+// Organisation-level growth
+// ---------------------------------------------------------------------------
+
+export interface OrgUserPoint {
+  week: string;
+  newUsers: number;
+  cumulative: number;
+}
+
+export interface OrgCostByProduct {
+  product: string;
+  production: number;
+  nonProduction: number;
+}
+
+export interface OrgTtfvBucket {
+  bucket: string;
+  users: number;
+}
+
+export interface OrgSearchPoint {
+  week: string;
+  clicks: number;
+  impressions: number;
+}
+
+export interface GrowthSummary {
+  generatedAt?: string;
+  range?: { startDate: string; endDate: string; days: number };
+  users: {
+    series: OrgUserPoint[];
+    totalEverSeen: number;
+    note: string;
+  };
+  crossProduct: {
+    siteVisitors: number;
+    appWebVisitors: number;
+    siteThenApp: number;
+    conversionRate: number | null;
+    note: string;
+  };
+  timeToFirstValue: {
+    activatedUsers: number;
+    medianMinutes: number | null;
+    fastestMinutes: number | null;
+    slowestMinutes: number | null;
+    distribution: OrgTtfvBucket[];
+  };
+  cost: {
+    total: number;
+    production: number;
+    nonProduction: number;
+    unattributed: number;
+    byProduct: OrgCostByProduct[];
+    available: boolean;
+  };
+  organicSearch: {
+    available: boolean;
+    clicks: number;
+    impressions: number;
+    ctr: number | null;
+    avgPosition: number | null;
+    latestDay: string | null;
+    series: OrgSearchPoint[];
+  };
+  instrumentation: {
+    governedEvents: number;
+    ungovernedEvents: number;
+    distinctEvents: number;
+    ungovernedEventNames: number;
+    declaredNotEmitted: string[];
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Aggregated dashboard state
 // ---------------------------------------------------------------------------
 
@@ -892,6 +967,9 @@ export interface DashboardData {
   oneUat: OneAppSummary | null;
   oneAgentMetrics: BreakdownMetric[];
   oneHealthMetrics: BreakdownMetric[];
+  growth: GrowthSummary | null;
+  /** Monthly cloud cost divided by monthly active devices. Null when either side is missing. */
+  costPerActiveUser: number | null;
   oneLocationFeatureMetrics: BreakdownMetric[];
   onePlatformMetrics: BreakdownMetric[];
   oneAcquisitionMetrics: BreakdownMetric[];

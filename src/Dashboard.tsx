@@ -72,6 +72,7 @@ const iconMap: Record<string, typeof Activity> = {
 };
 
 import { appleCard, applePanel, appleLabel, dashboardBand } from './lib/theme';
+import { GrowthPanel } from './components/GrowthPanel';
 import { OneAppPanel } from './components/OneAppPanel';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
@@ -1166,7 +1167,7 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 export default function Dashboard() {
   // 'one' leads because the One app is the active growth focus; the founder
   // should land on the scoreboard, not on the source matrix.
-  const [activeTab, setActiveTab] = useState<'one' | 'overview' | 'platforms'>('one');
+  const [activeTab, setActiveTab] = useState<'growth' | 'one' | 'overview' | 'platforms'>('growth');
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   // 30 days by default: the One app's agent volumes are small enough that a
   // 7-day window reads as noise rather than a trend.
@@ -1719,7 +1720,7 @@ export default function Dashboard() {
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="inline-flex min-w-0 flex-1 rounded-lg bg-[#f5f5f7] p-1 sm:flex-none" role="tablist" aria-label="Dashboard sections">
-                {(['one', 'overview', 'platforms'] as const).map((tab) => (
+                {(['growth', 'one', 'overview', 'platforms'] as const).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -1760,7 +1761,22 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {activeTab === 'one' ? (
+        {activeTab === 'growth' ? (
+          <GrowthPanel
+            growth={data?.growth ?? null}
+            costPerActiveUser={data?.costPerActiveUser ?? null}
+            monthlyActive={data?.one?.activeUsers?.mau ?? null}
+            rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
+            dateControl={(
+              <DateRangeControl
+                range={oneRange}
+                onPreset={(days) => setOneRange(rangeForPreset(days))}
+                onCustomRange={setOneRange}
+                ariaLabelPrefix="Growth"
+              />
+            )}
+          />
+        ) : activeTab === 'one' ? (
           <OneAppPanel
             // `data` is null for the whole of the first load, and that load
             // takes ten seconds or more. The loading state here is an OVERLAY,

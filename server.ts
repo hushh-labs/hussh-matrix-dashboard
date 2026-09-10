@@ -77,6 +77,37 @@ const ONE_APP_UAT_GA4_DATASET = process.env.ONE_APP_UAT_GA4_DATASET || KAI_GA4_D
 const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod';
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
+/**
+ * Org-level growth reporting.
+ *
+ * Every product on this dashboard was previously measured in its own silo, so
+ * nothing answered organisation-shaped questions: how many people we have
+ * picked up in total, what an active person costs us, whether the website
+ * feeds the app, and whether the measurement itself is healthy.
+ */
+const BILLING_PROJECT = process.env.BILLING_PROJECT || 'hushh-pda';
+const BILLING_DATASET = process.env.BILLING_DATASET || 'billing';
+const BILLING_TABLE =
+  process.env.BILLING_TABLE || 'gcp_billing_export_v1_014D7F_FD970D_D2459E';
+
+/**
+ * GCP project to product, and to whether the spend serves real users.
+ *
+ * The production/non-production split is the point. Spend on an environment no
+ * customer touches is a different fact from spend on serving people, and a
+ * single "cloud bill" number hides which one is growing.
+ */
+const COST_PROJECT_MAP: Array<{ project: string; product: string; production: boolean }> = [
+  { project: 'hushh-pda', product: 'Agent One', production: true },
+  { project: 'hushh-pda-uat', product: 'Agent One', production: false },
+  { project: 'hushh-pda-dev', product: 'Agent One', production: false },
+  { project: 'hushone-app', product: 'Agent One', production: false },
+  { project: 'hushh-ai-prod', product: 'hushh.ai', production: true },
+  { project: 'hushh-ai-uat', product: 'hushh.ai', production: false },
+  { project: 'hushh-tech-prod', product: 'Hussh fund', production: true },
+  { project: 'hushh-tech-uat', product: 'Hussh fund', production: false },
+];
+
 const HUSHH_AI_SEARCH_PROJECT = process.env.HUSHH_AI_SEARCH_PROJECT || BQ_PROD_PROJECT;
 const HUSHH_AI_SEARCH_DATASET =
   process.env.HUSHH_AI_SEARCH_DATASET || 'searchconsole_searchconsole_hushh_ai';
@@ -4200,6 +4231,280 @@ app.get('/api/analytics/hushhai', async (req, res) => {
   }));
 });
 
+/**
+ * Organisation-level growth summary.
+ *
+ * Six sections, each answering a question no single product panel can:
+ * how many people we have picked up over time, what an active person costs,
+ * whether the website feeds the app, how long first value takes, what organic
+ * search brings in, and whether the measurement itself is trustworthy.
+ *
+ * Everything is aggregate. Nothing here joins identities across products: the
+ * cross-product section works only because both surfaces sit in one GA4
+ * property and share a device id, which is a same-device fact rather than a
+ * merged person.
+ */
+async function fetchGrowthSummary(
+  range: HushhAiDateRange,
+): Promise<DataResult<Record<string, unknown>>> {
+  const generatedAt = new Date().toISOString();
+  const project = ONE_APP_GA4_PROJECT;
+  const table = `\`${project}.${ONE_APP_GA4_DATASET}.events_*\``;
+  const queryProject = BQ_JOB_PROJECT || project;
+  const surface = oneAppSurfaceFilter(ONE_APP_HOST);
+  const meaningful = `event_name NOT IN (${sqlNameList(ONE_BACKGROUND_EVENTS)})`;
+
+  // A year of first-touch history, so "users picked up over time" is a real
+  // curve rather than the slice the selected range happens to cover.
+  const historyFilter = ga4ExportSuffixFilter(
+    formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -364)),
+    range.endDate,
+  );
+
+  // Weekly first-touch cohorts. The running total is accumulated in TypeScript
+  // rather than with a window function so the same rows serve both the weekly
+  // bars and the cumulative line without a second scan.
+  const usersQuery = `
+    SELECT
+      CAST(DATE_TRUNC(firstDay, WEEK) AS STRING) AS week,
+      COUNT(DISTINCT user_pseudo_id) AS newUsers
+    FROM (
+      SELECT user_pseudo_id, DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
+      FROM ${table}
+      WHERE ${historyFilter} AND ${surface} AND ${meaningful}
+    )
+    WHERE firstDay IS NOT NULL
+    GROUP BY week
+    ORDER BY week
+  `;
+
+  // Same-device, same-property. A visitor to the marketing site who later
+  // appears on the app host is the only cross-product journey measurable
+  // without merging identities, and web User-ID is empty so nothing else is
+  // available. Ordering is checked so a person who used the app first and read
+  // the site afterwards is not counted as a conversion.
+  const crossProductQuery = `
+    WITH scoped AS (
+      SELECT
+        PARSE_DATE('%Y%m%d', event_date) AS d,
+        user_pseudo_id,
+        NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) AS host
+      FROM ${table}
+      WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate)}
+    ),
+    site AS (SELECT user_pseudo_id, MIN(d) AS firstSite FROM scoped WHERE host IN ('hushh.ai','www.hushh.ai') GROUP BY user_pseudo_id),
+    app AS (SELECT user_pseudo_id, MIN(d) AS firstApp FROM scoped WHERE host = ${sqlStringLiteral(ONE_APP_HOST)} GROUP BY user_pseudo_id)
+    SELECT
+      (SELECT COUNT(*) FROM site) AS siteVisitors,
+      (SELECT COUNT(*) FROM app) AS appWebVisitors,
+      (SELECT COUNT(*) FROM site s JOIN app a USING (user_pseudo_id) WHERE a.firstApp >= s.firstSite) AS siteThenApp
+  `;
+
+  // Measured from first touch to the activation event, so it is the whole
+  // journey a person experienced, not the part inside the selected window.
+  // Reported as median plus a distribution: a mean would be dragged around by
+  // the person who came back a month later.
+  const ttfvQuery = `
+    WITH activated AS (
+      SELECT
+        user_pseudo_id,
+        MIN(TIMESTAMP_MICROS(event_timestamp)) AS activatedAt,
+        ANY_VALUE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstTs
+      FROM ${table}
+      WHERE ${historyFilter} AND ${surface}
+        AND event_name = 'one_location_activation_completed'
+        AND user_first_touch_timestamp IS NOT NULL
+      GROUP BY user_pseudo_id
+    ),
+    deltas AS (
+      SELECT TIMESTAMP_DIFF(activatedAt, firstTs, MINUTE) AS minutes
+      FROM activated WHERE activatedAt >= firstTs
+    )
+    SELECT
+      COUNT(*) AS activatedUsers,
+      APPROX_QUANTILES(minutes, 2)[OFFSET(1)] AS medianMinutes,
+      MIN(minutes) AS fastestMinutes,
+      MAX(minutes) AS slowestMinutes,
+      COUNTIF(minutes <= 60) AS withinHour,
+      COUNTIF(minutes > 60 AND minutes <= 1440) AS withinDay,
+      COUNTIF(minutes > 1440 AND minutes <= 10080) AS withinWeek,
+      COUNTIF(minutes > 10080) AS beyondWeek
+    FROM deltas
+  `;
+
+  // Shared-param completeness on governed events only. Counting GA4's own
+  // automatic events here would report a permanent deficit nobody can fix.
+  const instrumentationQuery = `
+    SELECT
+      COUNTIF(category IS NOT NULL) AS governedEvents,
+      COUNTIF(category IS NULL) AS ungovernedEvents,
+      COUNT(DISTINCT event_name) AS distinctEvents,
+      COUNT(DISTINCT IF(category IS NULL, event_name, NULL)) AS ungovernedEventNames
+    FROM (
+      SELECT
+        event_name,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'event_category') AS category
+      FROM ${table}
+      WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate)} AND ${surface} AND ${meaningful}
+    )
+  `;
+
+  const costTable = `\`${BILLING_PROJECT}.${BILLING_DATASET}.${BILLING_TABLE}\``;
+  const costQuery = `
+    SELECT project.id AS project, ROUND(SUM(cost), 2) AS cost
+    FROM ${costTable}
+    WHERE DATE(usage_start_time) BETWEEN ${sqlStringLiteral(range.startDate)} AND ${sqlStringLiteral(range.endDate)}
+    GROUP BY project
+    HAVING cost > 0
+    ORDER BY cost DESC
+  `;
+
+  const searchTable = `\`${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}.searchdata_site_impression\``;
+  const searchQuery = `
+    SELECT
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), NULLIF(SUM(impressions), 0)) + 1 AS avgPosition,
+      CAST(MAX(data_date) AS STRING) AS latestDay
+    FROM ${searchTable}
+    WHERE data_date BETWEEN ${sqlStringLiteral(range.startDate)} AND ${sqlStringLiteral(range.endDate)}
+  `;
+  const searchTrendQuery = `
+    SELECT CAST(DATE_TRUNC(data_date, WEEK) AS STRING) AS week,
+           SUM(clicks) AS clicks, SUM(impressions) AS impressions
+    FROM ${searchTable}
+    WHERE data_date >= DATE_SUB(DATE ${sqlStringLiteral(range.endDate)}, INTERVAL 70 DAY)
+      AND data_date <= DATE ${sqlStringLiteral(range.endDate)}
+    GROUP BY week ORDER BY week
+  `;
+
+  const [users, cross, ttfv, instrumentation, cost, search, searchTrend] = await Promise.all([
+    queryBigQuerySql(queryProject, usersQuery),
+    queryBigQuerySql(queryProject, crossProductQuery),
+    queryBigQuerySql(queryProject, ttfvQuery),
+    queryBigQuerySql(queryProject, instrumentationQuery),
+    queryBigQuerySql(BQ_JOB_PROJECT || BILLING_PROJECT, costQuery),
+    queryBigQuerySql(BQ_JOB_PROJECT || HUSHH_AI_SEARCH_PROJECT, searchQuery),
+    queryBigQuerySql(BQ_JOB_PROJECT || HUSHH_AI_SEARCH_PROJECT, searchTrendQuery),
+  ]);
+
+  const errors = [
+    users.error, cross.error, ttfv.error, instrumentation.error,
+    cost.error, search.error, searchTrend.error,
+  ].filter(Boolean);
+
+  let runningTotal = 0;
+  const userSeries = users.rows.map((row) => {
+    const newUsers = toNumber(row.newUsers);
+    runningTotal += newUsers;
+    return { week: String(row.week), newUsers, cumulative: runningTotal };
+  });
+
+  const crossRow = cross.rows[0] ?? {};
+  const ttfvRow = ttfv.rows[0] ?? {};
+  const instrumentationRow = instrumentation.rows[0] ?? {};
+  const searchRow = search.rows[0] ?? {};
+
+  const byProject = new Map(cost.rows.map((row) => [String(row.project), toNumber(row.cost)]));
+  const totalCost = Array.from(byProject.values()).reduce((sum, value) => sum + value, 0);
+  const mapped = new Set(COST_PROJECT_MAP.map((entry) => entry.project));
+  const productCost = new Map<string, { production: number; nonProduction: number }>();
+  for (const entry of COST_PROJECT_MAP) {
+    const value = byProject.get(entry.project) ?? 0;
+    const current = productCost.get(entry.product) ?? { production: 0, nonProduction: 0 };
+    if (entry.production) current.production += value;
+    else current.nonProduction += value;
+    productCost.set(entry.product, current);
+  }
+  // Anything not in the map is reported as its own line rather than silently
+  // dropped -- an unattributed bill is still money, and hiding it would make
+  // the product totals look like the whole picture.
+  const unmapped = Array.from(byProject.entries())
+    .filter(([id]) => !mapped.has(id))
+    .reduce((sum, [, value]) => sum + value, 0);
+
+  const productionCost = COST_PROJECT_MAP
+    .filter((entry) => entry.production)
+    .reduce((sum, entry) => sum + (byProject.get(entry.project) ?? 0), 0);
+
+  return {
+    data: {
+      generatedAt,
+      range: { startDate: range.startDate, endDate: range.endDate, days: range.days },
+      users: {
+        series: userSeries,
+        totalEverSeen: runningTotal,
+        note: 'Distinct devices first seen on the One app surface, by week of first visit. Device-scoped, so one person on a phone and a laptop counts twice.',
+      },
+      crossProduct: {
+        siteVisitors: toNumber(crossRow.siteVisitors),
+        appWebVisitors: toNumber(crossRow.appWebVisitors),
+        siteThenApp: toNumber(crossRow.siteThenApp),
+        conversionRate: toNumber(crossRow.siteVisitors) > 0
+          ? toNumber(crossRow.siteThenApp) / toNumber(crossRow.siteVisitors)
+          : null,
+        note: 'Same device, same analytics property. Web only -- app installs cannot be attributed to a website visit while web User-ID is unbound.',
+      },
+      timeToFirstValue: {
+        activatedUsers: toNumber(ttfvRow.activatedUsers),
+        medianMinutes: ttfvRow.medianMinutes === null || ttfvRow.medianMinutes === undefined
+          ? null : toNumber(ttfvRow.medianMinutes),
+        fastestMinutes: ttfvRow.fastestMinutes === null || ttfvRow.fastestMinutes === undefined
+          ? null : toNumber(ttfvRow.fastestMinutes),
+        slowestMinutes: ttfvRow.slowestMinutes === null || ttfvRow.slowestMinutes === undefined
+          ? null : toNumber(ttfvRow.slowestMinutes),
+        distribution: [
+          { bucket: 'Within an hour', users: toNumber(ttfvRow.withinHour) },
+          { bucket: 'Same day', users: toNumber(ttfvRow.withinDay) },
+          { bucket: 'Within a week', users: toNumber(ttfvRow.withinWeek) },
+          { bucket: 'Longer', users: toNumber(ttfvRow.beyondWeek) },
+        ],
+      },
+      cost: {
+        total: Math.round(totalCost * 100) / 100,
+        production: Math.round(productionCost * 100) / 100,
+        nonProduction: Math.round((totalCost - productionCost) * 100) / 100,
+        unattributed: Math.round(unmapped * 100) / 100,
+        byProduct: Array.from(productCost.entries()).map(([product, value]) => ({
+          product,
+          production: Math.round(value.production * 100) / 100,
+          nonProduction: Math.round(value.nonProduction * 100) / 100,
+        })),
+        available: cost.rows.length > 0,
+      },
+      organicSearch: {
+        available: toNumber(searchRow.impressions) > 0,
+        clicks: toNumber(searchRow.clicks),
+        impressions: toNumber(searchRow.impressions),
+        ctr: searchRow.ctr === null || searchRow.ctr === undefined ? null : toNumber(searchRow.ctr),
+        avgPosition: searchRow.avgPosition === null || searchRow.avgPosition === undefined
+          ? null : toNumber(searchRow.avgPosition),
+        latestDay: searchRow.latestDay ? String(searchRow.latestDay) : null,
+        series: searchTrend.rows.map((row) => ({
+          week: String(row.week),
+          clicks: toNumber(row.clicks),
+          impressions: toNumber(row.impressions),
+        })),
+      },
+      instrumentation: {
+        governedEvents: toNumber(instrumentationRow.governedEvents),
+        ungovernedEvents: toNumber(instrumentationRow.ungovernedEvents),
+        distinctEvents: toNumber(instrumentationRow.distinctEvents),
+        ungovernedEventNames: toNumber(instrumentationRow.ungovernedEventNames),
+        // Declared in the observability contract with no live emitter. Static
+        // because it is a fact about the code, not about the data.
+        declaredNotEmitted: [
+          'ria_verification_status_changed',
+          'ria_request_blocked_policy',
+          'mcp_ria_read_tool_called',
+        ],
+      },
+    },
+    error: errors.length > 0 ? errors.join('; ') : null,
+  };
+}
+
 app.get('/api/analytics/one', async (req, res) => {
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
   const [production, uat] = await Promise.all([
@@ -4213,6 +4518,17 @@ app.get('/api/analytics/one', async (req, res) => {
     data: { production: production.data, uat: uat.data },
     error,
     fetchedAt,
+  }));
+});
+
+app.get('/api/analytics/growth', async (req, res) => {
+  const range = parseOneAppDateRange(req.query as Record<string, unknown>);
+  const growth = await fetchGrowthSummary(range);
+  res.status(growth.error && !growth.data ? 502 : 200).json(sanitizePublicPayload({
+    platform: 'organisation',
+    data: growth.data,
+    error: growth.error,
+    fetchedAt: new Date().toISOString(),
   }));
 });
 
@@ -4235,6 +4551,7 @@ app.get('/api/analytics/all', async (req, res) => {
     hushhTech,
     oneAppProduction,
     oneAppUat,
+    growth,
   ] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
@@ -4249,6 +4566,7 @@ app.get('/api/analytics/all', async (req, res) => {
     fetchHushhTechAnalytics(hushhTechRange),
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
     fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST),
+    fetchGrowthSummary(oneRange),
   ]);
   const fetchedAt = new Date().toISOString();
   const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
@@ -4307,6 +4625,7 @@ app.get('/api/analytics/all', async (req, res) => {
       data: { production: oneAppProduction.data, uat: oneAppUat.data },
       error: [oneAppProduction.error, oneAppUat.error].filter(Boolean).join('; ') || null,
     },
+    growth: { platform: 'organisation', data: growth.data, error: growth.error },
     fetchedAt,
   }));
 });
