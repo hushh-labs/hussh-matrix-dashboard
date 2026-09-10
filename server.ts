@@ -4411,6 +4411,26 @@ async function fetchGrowthSummary(
     ORDER BY week
   `;
 
+  // Devices against accounts, on the same window as the users chart above so
+  // the two numbers can be read side by side.
+  //
+  // This exists to make one gap impossible to miss: almost nobody on this
+  // product is identifiable. Reporting "people" anywhere on the dashboard
+  // would mean reporting only the identified slice and silently dropping the
+  // rest, so the page reports devices and shows the shortfall here instead of
+  // hiding it behind a single confident number.
+  const identityQuery = `
+    SELECT
+      COALESCE(platform, 'UNKNOWN') AS platform,
+      COUNT(DISTINCT user_pseudo_id) AS devices,
+      COUNT(DISTINCT user_id) AS accounts,
+      COUNT(DISTINCT IF(user_id IS NOT NULL, user_pseudo_id, NULL)) AS identifiedDevices
+    FROM ${table}
+    WHERE ${historyFilter} AND ${surface} AND ${meaningful}
+    GROUP BY platform
+    ORDER BY devices DESC
+  `;
+
   // Same-device, same-property. A visitor to the marketing site who later
   // appears on the app host is the only cross-product journey measurable
   // without merging identities, and web User-ID is empty so nothing else is
@@ -4512,8 +4532,9 @@ async function fetchGrowthSummary(
     GROUP BY week ORDER BY week
   `;
 
-  const [users, cross, ttfv, instrumentation, cost, search, searchTrend] = await Promise.all([
+  const [users, identity, cross, ttfv, instrumentation, cost, search, searchTrend] = await Promise.all([
     queryBigQuerySql(queryProject, usersQuery),
+    queryBigQuerySql(queryProject, identityQuery),
     queryBigQuerySql(queryProject, crossProductQuery),
     queryBigQuerySql(queryProject, ttfvQuery),
     queryBigQuerySql(queryProject, instrumentationQuery),
@@ -4523,7 +4544,7 @@ async function fetchGrowthSummary(
   ]);
 
   const errors = [
-    users.error, cross.error, ttfv.error, instrumentation.error,
+    users.error, identity.error, cross.error, ttfv.error, instrumentation.error,
     cost.error, search.error, searchTrend.error,
   ].filter(Boolean);
 
@@ -4570,6 +4591,32 @@ async function fetchGrowthSummary(
         totalEverSeen: runningTotal,
         note: 'Distinct devices first seen on the One app surface, by week of first visit. Device-scoped, so one person on a phone and a laptop counts twice.',
       },
+      // Devices against accounts. Deliberately reported as a shortfall rather
+      // than resolved into one "people" figure: only the identified slice
+      // could be counted as people, and that slice is small enough that
+      // publishing it as the headline would erase most of the audience.
+      identity: (() => {
+        const rows = identity.rows.map((row) => ({
+          platform: String(row.platform ?? 'UNKNOWN'),
+          devices: toNumber(row.devices),
+          accounts: toNumber(row.accounts),
+          identifiedDevices: toNumber(row.identifiedDevices),
+        }));
+        const devices = rows.reduce((sum, r) => sum + r.devices, 0);
+        const identified = rows.reduce((sum, r) => sum + r.identifiedDevices, 0);
+        // Accounts are summed across platforms rather than counted distinctly
+        // because the same person on iOS and web resolves to the same hash --
+        // but with web binding nothing today there is no overlap to correct
+        // for. Revisit once web User-ID lands.
+        const accounts = rows.reduce((sum, r) => sum + r.accounts, 0);
+        return {
+          devices,
+          accounts,
+          identifiedDevices: identified,
+          coverage: devices > 0 ? identified / devices : null,
+          byPlatform: rows,
+        };
+      })(),
       crossProduct: {
         siteVisitors: toNumber(crossRow.siteVisitors),
         appWebVisitors: toNumber(crossRow.appWebVisitors),

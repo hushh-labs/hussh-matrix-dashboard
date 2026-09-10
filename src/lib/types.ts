@@ -879,6 +879,29 @@ export interface OrgUserPoint {
   cumulative: number;
 }
 
+export interface OrgIdentityPlatform {
+  platform: string;
+  devices: number;
+  accounts: number;
+  identifiedDevices: number;
+}
+
+/**
+ * How much of the audience the analytics can actually identify.
+ *
+ * Reported as a shortfall rather than resolved into a single "people" number:
+ * only the identified slice could honestly be called people, and it is small
+ * enough that publishing it as the headline would erase most of the audience.
+ */
+export interface OrgIdentity {
+  devices: number;
+  accounts: number;
+  identifiedDevices: number;
+  /** Share of devices carrying any account identity. */
+  coverage: number | null;
+  byPlatform: OrgIdentityPlatform[];
+}
+
 export interface OrgCostByProduct {
   product: string;
   production: number;
@@ -904,6 +927,7 @@ export interface GrowthSummary {
     totalEverSeen: number;
     note: string;
   };
+  identity: OrgIdentity;
   crossProduct: {
     siteVisitors: number;
     appWebVisitors: number;
