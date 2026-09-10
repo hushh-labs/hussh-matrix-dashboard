@@ -21,6 +21,7 @@ import type {
   BreakdownMetric,
   OneAppSummary,
   OneCapabilityUsage,
+  OnePlatformActives,
 } from '../lib/types';
 
 /**
@@ -125,6 +126,82 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
           Daily of monthly — how much of the month a person shows up
         </p>
       </motion.div>
+    </div>
+  );
+}
+
+const PLATFORM_LABELS: Record<string, string> = {
+  IOS: 'iOS app',
+  ANDROID: 'Android app',
+  WEB: 'Web',
+  UNKNOWN: 'Unknown',
+};
+
+function platformLabel(platform: string): string {
+  return PLATFORM_LABELS[platform.toUpperCase()] ?? platform;
+}
+
+/**
+ * 1b. The same actives, split by platform.
+ *
+ * These rows are the honest form of the tiles above. GA4 gives web, iOS and
+ * Android separate device-id spaces, and the account key that would stitch a
+ * person across them is bound on iOS only -- so a person with a phone and a
+ * laptop is two rows here and nothing can collapse them.
+ *
+ * Splitting does not fix that. What it fixes is the page implying an addition
+ * that is not valid, and it puts the identity gap where you cannot miss it:
+ * the platform that cannot report accounts says so on its own row.
+ */
+function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
+  if (rows.length === 0) return null;
+  const anyBound = rows.some((row) => row.identityBound);
+
+  return (
+    <div className={cn(appleCard, 'overflow-hidden')}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
+              <th className="border-b border-black/5 px-5 py-3">Platform</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Daily</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Weekly</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Monthly</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Accounts</th>
+              <th className="border-b border-black/5 px-5 py-3">Identity</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.platform} className="font-semibold text-[#1d1d1f]">
+                <td className="border-b border-black/5 px-5 py-3">{platformLabel(row.platform)}</td>
+                <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">{formatNumber(row.dauDevices)}</td>
+                <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">{formatNumber(row.wauDevices)}</td>
+                <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">{formatNumber(row.mauDevices)}</td>
+                <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                  {row.accounts === null ? <span className="text-[#c7c7cc]">&mdash;</span> : formatNumber(row.accounts)}
+                </td>
+                <td className="border-b border-black/5 px-5 py-3 text-xs font-semibold">
+                  {row.identityBound ? (
+                    <span className="text-[#6e6e73]">
+                      {percentText(row.signedInShare, 0)} of devices signed in
+                    </span>
+                  ) : (
+                    <span className="text-[#8a5a04]">Not bound &mdash; devices only</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="border-t border-black/5 px-5 py-3 text-xs font-semibold leading-5 text-[#86868b]">
+        Rows are separate populations and <strong className="font-bold text-[#1d1d1f]">must not be added</strong>.
+        Each platform has its own device ids, so one person with a phone and a laptop appears twice.
+        {anyBound
+          ? ' Only platforms marked with a percentage can report people rather than devices, and only for that share of their devices.'
+          : ' No platform is currently binding an account, so every figure here is devices.'}
+      </p>
     </div>
   );
 }
@@ -577,7 +654,10 @@ export function OneAppPanel({
           </div>
           {dateControl}
         </div>
-        <ActivePeople one={one} />
+        <div className="flex flex-col gap-4">
+          <ActivePeople one={one} />
+          <ActivesByPlatform rows={one.activeByPlatform} />
+        </div>
       </section>
 
       <Block
