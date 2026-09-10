@@ -1771,9 +1771,25 @@ const ONE_LOCATION_FUNNEL_STEPS: Array<{ key: string; label: string }> = [
  * capability nobody can measure and a capability nobody used are different
  * facts, and only one of them is a product problem.
  *
- * Maintained against hushh-webapp/lib/observability/events.ts. An event that
- * appears in neither list is counted nowhere, which is deliberate -- a new
- * event should be classified on purpose rather than absorbed by a prefix.
+ * The rows mirror the product's own catalogue in
+ * hushh-webapp/lib/onboarding/one-capabilities.ts, using its ids and titles,
+ * so this list is what the team calls these agents rather than a parallel
+ * naming invented here. "Kai" is gone: that agent is Finance.
+ *
+ * Event membership is maintained against
+ * hushh-webapp/lib/observability/events.ts. An event in neither list is
+ * counted nowhere, which is deliberate -- a new event should be classified on
+ * purpose rather than absorbed by a prefix.
+ *
+ * Four product capabilities emit no events at all (Wallet, Calendar, KYC,
+ * CRM) and Memory emits only reliability diagnostics. They are listed anyway,
+ * marked not instrumented: an agent nobody can measure is a fact worth
+ * showing, and leaving them off made the dashboard imply the product had six
+ * agents when it has eleven.
+ *
+ * Sign-up & onboarding is not in the product catalogue -- it is a funnel
+ * stage, kept because it is useful and labelled so it cannot be mistaken for
+ * an agent.
  */
 interface OneCapabilitySpec {
   key: string;
@@ -1787,8 +1803,8 @@ interface OneCapabilitySpec {
 
 const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
-    key: 'one_location',
-    label: 'One Location',
+    key: 'location',
+    label: 'Location',
     human: [
       'one_location_share_confirmed', 'one_location_check_in_completed',
       'one_location_circle_created', 'one_location_circle_invite_created',
@@ -1804,8 +1820,8 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     instrumented: true,
   },
   {
-    key: 'kai',
-    label: 'Kai',
+    key: 'finance',
+    label: 'Finance',
     human: [
       'portfolio_viewed', 'recommendation_viewed', 'analysis_stream_started',
       'analysis_stream_terminal_decision', 'import_upload_started',
@@ -1818,24 +1834,87 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     instrumented: true,
   },
   {
-    key: 'consent_vault',
-    label: 'Consent & vault',
-    human: ['consent_action_submitted', 'consent_action_result', 'profile_method_switch_result'],
+    key: 'consent',
+    label: 'Consent',
+    human: ['consent_action_submitted', 'consent_action_result'],
     // consent_pending_loaded carries load_surface precisely to separate a real
-    // screen view from the unlock warm prefetch. It is split below rather than
-    // listed here, because the split is on a parameter, not the event name.
+    // screen view from the unlock warm prefetch. It is split on that parameter
+    // below rather than listed as human here.
     background: ['consent_pending_loaded'],
     instrumented: true,
   },
   {
-    key: 'email',
-    label: 'Email',
+    key: 'gmail',
+    label: 'Gmail',
     human: [
       'gmail_connect_started', 'gmail_connect_result', 'gmail_sync_requested',
       'gmail_disconnect_result', 'hushh_mail_signin_screen_view',
     ],
     background: ['gmail_receipts_loaded', 'gmail_sync_result'],
     instrumented: true,
+  },
+  {
+    key: 'ria',
+    label: 'RIA',
+    human: [
+      'ria_onboarding_submitted', 'ria_request_created', 'ria_workspace_opened',
+      'ria_verification_status_changed', 'persona_switched',
+    ],
+    background: [],
+    instrumented: true,
+  },
+  {
+    key: 'marketplace',
+    label: 'Information Marketplace',
+    human: ['marketplace_profile_viewed'],
+    background: [],
+    instrumented: true,
+  },
+  {
+    key: 'memory',
+    label: 'Memory',
+    human: [],
+    // The PKM events are agent-turn reliability diagnostics, not somebody
+    // using Memory. Counting them as usage is what made "Agent chat" look
+    // like a used capability when nothing measured its use.
+    background: [
+      'agent_pkm_context_resolved', 'agent_pkm_context_unavailable',
+      'agent_pkm_save_confirmation_completed',
+    ],
+    instrumented: false,
+    note: 'Only PKM reliability diagnostics are emitted. Nothing records a person using Memory.',
+  },
+  {
+    key: 'wallet',
+    label: 'Wallet',
+    human: [],
+    background: [],
+    instrumented: false,
+    note: 'No wallet event is emitted anywhere in the app.',
+  },
+  {
+    key: 'calendar',
+    label: 'Calendar',
+    human: [],
+    background: [],
+    instrumented: false,
+    note: 'No calendar event is emitted anywhere in the app.',
+  },
+  {
+    key: 'kyc',
+    label: 'KYC',
+    human: [],
+    background: [],
+    instrumented: false,
+    note: 'No KYC event is emitted anywhere in the app.',
+  },
+  {
+    key: 'connected_systems',
+    label: 'CRM',
+    human: [],
+    background: [],
+    instrumented: false,
+    note: 'No connected-systems event is emitted anywhere in the app.',
   },
   {
     key: 'onboarding',
@@ -1847,35 +1926,6 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     ],
     background: ['auth_failed', 'google_sign_in_failed'],
     instrumented: true,
-  },
-  {
-    key: 'ria',
-    label: 'RIA',
-    human: [
-      'ria_onboarding_submitted', 'ria_request_created', 'ria_workspace_opened',
-      'marketplace_profile_viewed', 'persona_switched',
-    ],
-    background: [],
-    instrumented: true,
-  },
-  {
-    key: 'agent_chat',
-    label: 'Agent chat',
-    human: [],
-    background: [
-      'agent_pkm_context_resolved', 'agent_pkm_context_unavailable',
-      'agent_pkm_save_confirmation_completed',
-    ],
-    instrumented: false,
-    note: 'No agent invocation event is emitted. The only agent events are PKM reliability diagnostics, so agent usage cannot be measured yet.',
-  },
-  {
-    key: 'vault_world_model',
-    label: 'Vault / world model',
-    human: [],
-    background: [],
-    instrumented: false,
-    note: 'No pkm_* or vault_* event is emitted anywhere in the app.',
   },
 ];
 

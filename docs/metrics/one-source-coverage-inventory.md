@@ -661,6 +661,42 @@ read production are relabelled. UAT is not a production KPI, its property is mis
 (`hushh-labs/hushh-research#6693`), and keeping it adjacent to production numbers was actively
 producing wrong conclusions.
 
+## 6h. Agent catalogue rebuilt against the product, 2026-09-10
+
+"Which agents do people use?" listed six buckets invented here. The product has **eleven**
+capabilities, defined in `hushh-webapp/lib/onboarding/one-capabilities.ts`. The dashboard now
+mirrors that list, with its ids and its titles.
+
+| Agent | Events declared | Deliberate users |
+| --- | ---: | ---: |
+| Location | 16 | 18 |
+| Consent | 3 | 19 |
+| Finance | 7 | 6 |
+| Gmail | 6 | 3 |
+| RIA | 5 | 2 |
+| Information Marketplace | 1 | 0 |
+| **Memory** | diagnostics only | **not instrumented** |
+| **Wallet** | 0 | **not instrumented** |
+| **Calendar** | 0 | **not instrumented** |
+| **KYC** | 0 | **not instrumented** |
+| **CRM** | 0 | **not instrumented** |
+
+**Four capabilities emit no events at all**, and Memory emits only agent-turn reliability
+diagnostics. They are listed anyway rather than omitted: leaving them off made the dashboard
+imply the product had six agents when it has eleven, and an agent nobody can measure is a fact
+worth showing. This is the same treatment already given to "agents claimed".
+
+Naming now follows the product. **"Kai" is gone — that agent is Finance.** "Email" was really
+Gmail, and there is a separate capability whose id is `email` but whose title is **KYC**, which
+the old naming would have collided with. "Consent & vault" conflated Consent with Memory; they
+are separate rows now.
+
+`Sign-up & onboarding` is kept although it is not in the product catalogue. It is a funnel stage,
+not an agent, and is labelled so it cannot be mistaken for one.
+
+Checked while rebuilding: the event taxonomy has gained only two events since §1.5 was written,
+both One Location. The gap is not drift — these capabilities were never instrumented.
+
 ## 7. Re-running these checks
 
 `npm run test:metrics:one-reconciliation` runs `scripts/check-one-metrics-reconciliation.mjs`,
