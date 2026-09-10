@@ -97,15 +97,15 @@ const BILLING_TABLE =
  * customer touches is a different fact from spend on serving people, and a
  * single "cloud bill" number hides which one is growing.
  */
-const COST_PROJECT_MAP: Array<{ project: string; product: string; production: boolean }> = [
-  { project: 'hushh-pda', product: 'Agent One', production: true },
-  { project: 'hushh-pda-uat', product: 'Agent One', production: false },
-  { project: 'hushh-pda-dev', product: 'Agent One', production: false },
-  { project: 'hushone-app', product: 'Agent One', production: false },
-  { project: 'hushh-ai-prod', product: 'hushh.ai', production: true },
-  { project: 'hushh-ai-uat', product: 'hushh.ai', production: false },
-  { project: 'hushh-tech-prod', product: 'Hussh fund', production: true },
-  { project: 'hushh-tech-uat', product: 'Hussh fund', production: false },
+const COST_PROJECT_MAP: Array<{ project: string; key: string; product: string; production: boolean }> = [
+  { project: 'hushh-pda', key: 'one', product: 'Agent One', production: true },
+  { project: 'hushh-pda-uat', key: 'one', product: 'Agent One', production: false },
+  { project: 'hushh-pda-dev', key: 'one', product: 'Agent One', production: false },
+  { project: 'hushone-app', key: 'one', product: 'Agent One', production: false },
+  { project: 'hushh-ai-prod', key: 'hushh_ai', product: 'hushh.ai', production: true },
+  { project: 'hushh-ai-uat', key: 'hushh_ai', product: 'hushh.ai', production: false },
+  { project: 'hushh-tech-prod', key: 'fund', product: 'Hussh fund', production: true },
+  { project: 'hushh-tech-uat', key: 'fund', product: 'Hussh fund', production: false },
 ];
 
 const HUSHH_AI_SEARCH_PROJECT = process.env.HUSHH_AI_SEARCH_PROJECT || BQ_PROD_PROJECT;
@@ -4563,10 +4563,10 @@ async function fetchGrowthSummary(
   const byProject = new Map(cost.rows.map((row) => [String(row.project), toNumber(row.cost)]));
   const totalCost = Array.from(byProject.values()).reduce((sum, value) => sum + value, 0);
   const mapped = new Set(COST_PROJECT_MAP.map((entry) => entry.project));
-  const productCost = new Map<string, { production: number; nonProduction: number }>();
+  const productCost = new Map<string, { key: string; production: number; nonProduction: number }>();
   for (const entry of COST_PROJECT_MAP) {
     const value = byProject.get(entry.project) ?? 0;
-    const current = productCost.get(entry.product) ?? { production: 0, nonProduction: 0 };
+    const current = productCost.get(entry.product) ?? { key: entry.key, production: 0, nonProduction: 0 };
     if (entry.production) current.production += value;
     else current.nonProduction += value;
     productCost.set(entry.product, current);
@@ -4647,6 +4647,9 @@ async function fetchGrowthSummary(
         nonProduction: Math.round((totalCost - productionCost) * 100) / 100,
         unattributed: Math.round(unmapped * 100) / 100,
         byProduct: Array.from(productCost.entries()).map(([product, value]) => ({
+          // Stable key so a consumer can attribute cost to a product without
+          // string-matching a display label.
+          key: value.key,
           product,
           production: Math.round(value.production * 100) / 100,
           nonProduction: Math.round(value.nonProduction * 100) / 100,

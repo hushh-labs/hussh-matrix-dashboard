@@ -903,6 +903,7 @@ export interface OrgIdentity {
 }
 
 export interface OrgCostByProduct {
+  key: string;
   product: string;
   production: number;
   nonProduction: number;

@@ -628,6 +628,39 @@ Even once web ships, identity will only ever cover people who sign in, and it ca
 backfilled: historical events carry no `user_id`. A person-scoped series can only start from the
 deploy date forward.
 
+## 6g. Accuracy corrections, 2026-09-10
+
+Three fixes after auditing the live dashboard. The second was the most consequential and had been
+there long before this work.
+
+**1. Cost per active person was roughly 4x too high — introduced in §6b.** The tile divided *all
+three products'* production spend ($910) by *Agent One's* monthly actives (358), charging
+hushh.ai's and the fund's infrastructure to One's users. Agent One's own production spend is
+$235, so the real figure is **$0.66, not $2.54**. Now attributed by a stable product key rather
+than a display string.
+
+**2. The overview tab was showing UAT and calling it nothing.** `analytics-service.ts` resolved
+its aggregates with:
+
+```ts
+const activeRows = uatRows.length > 0 ? uatRows : prodRows;
+```
+
+So active users, platform mix, feature engagement, instrumentation health and both funnels
+reported **UAT whenever UAT had any rows**, silently falling back to production only when it was
+empty. Nothing on the page named the environment. That is how the overview came to show 1,595
+monthly actives beside One's 358, and 41 governed events beside the growth tab's 8,625 — two
+numbers that looked like a contradiction and were simply different environments.
+
+Now production only. After the change the overview reports MAU 358 and 3,198 governed events,
+agreeing with the rest of the dashboard.
+
+**3. UAT removed from the dashboard.** The UAT status matrix, the UAT GA4 event/geo cards and the
+UAT series on the cross-product trend are gone; cards that had been labelled "Kai UAT" but now
+read production are relabelled. UAT is not a production KPI, its property is misconfigured
+(`hushh-labs/hushh-research#6693`), and keeping it adjacent to production numbers was actively
+producing wrong conclusions.
+
 ## 7. Re-running these checks
 
 `npm run test:metrics:one-reconciliation` runs `scripts/check-one-metrics-reconciliation.mjs`,

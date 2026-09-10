@@ -287,14 +287,6 @@ function kaiProductionDailyRows(rows: KaiDailyStatusPoint[]): DetailRow[] {
   ));
 }
 
-function kaiUatDailyRows(rows: KaiUatDailyStatusPoint[]): DetailRow[] {
-  return rows.map((row) => detailRow(
-    row.date,
-    `${formatOptionalNumber(row.ga4Users)} GA4 users`,
-    `${formatOptionalNumber(row.ga4Sessions)} GA4 sessions · ${formatOptionalNumber(row.ga4Events)} GA4 events`,
-    `DB DAU/sessions/events: ${formatOptionalNumber(row.feedDau)} / ${formatOptionalNumber(row.feedSessions)} / ${formatOptionalNumber(row.feedEvents)}`,
-  ));
-}
 
 function hushhTechDailyRows(rows: HushhAiDailyStatusPoint[]): DetailRow[] {
   return rows.map((row) => detailRow(
@@ -1031,48 +1023,6 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
   );
 }
 
-function KaiUatDailyStatusTable({ rows }: { rows: KaiUatDailyStatusPoint[] }) {
-  return (
-    <div className={cn(appleCard, 'p-5')}>
-      <div className="mb-5">
-        <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai UAT Daily Status</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">uat.kai.hushh.ai GA4 and UAT DB aggregate events by date.</p>
-      </div>
-      {rows.length === 0 ? (
-        <EmptyState>No Kai UAT daily rows available yet.</EmptyState>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
-            <thead>
-              <tr className="text-xs font-bold uppercase text-[#86868b]">
-                <th className="border-b border-black/5 py-3 pr-4">Date</th>
-                <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Users</th>
-                <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Sessions</th>
-                <th className="border-b border-black/5 px-4 py-3 text-right">GA4 Events</th>
-                <th className="border-b border-black/5 px-4 py-3 text-right">DB DAU</th>
-                <th className="border-b border-black/5 px-4 py-3 text-right">DB Sessions</th>
-                <th className="border-b border-black/5 py-3 pl-4 text-right">DB Events</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.date} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 py-3 pr-4 text-[#6e6e73]">{row.date}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Users)}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Sessions)}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.ga4Events)}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.feedDau)}</td>
-                  <td className="border-b border-black/5 px-4 py-3 text-right">{formatOptionalNumber(row.feedSessions)}</td>
-                  <td className="border-b border-black/5 py-3 pl-4 text-right">{formatOptionalNumber(row.feedEvents)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
   const maxUsers = Math.max(...steps.map((step) => step.users), 1);
@@ -1235,9 +1185,6 @@ export default function Dashboard() {
   const kaiProductionReadinessMetrics = data?.kaiProductionReadinessMetrics ?? [];
   const kaiProductionFreshness = data?.kaiProduction?.freshness;
   const kaiProductionGa4Available = Boolean(data?.kaiProduction?.productionGa4?.available);
-  const kaiUatFreshness = data?.kaiUatFreshness;
-  const kaiUatDailyStatus = data?.kaiUatDailyStatus ?? [];
-  const kaiUatDailySummaryMetrics = data?.kaiUatDailySummaryMetrics ?? [];
   const platformMix = data?.platformMix ?? [];
   const featureEngagement = data?.featureEngagement ?? [];
   const instrumentationHealth = data?.instrumentationHealth ?? [];
@@ -1559,49 +1506,6 @@ export default function Dashboard() {
     });
   };
 
-  const openKaiUatDetail = (label = 'Kai UAT Details', focus?: BreakdownMetric) => {
-    const ga4Warnings = data?.kaiGa4?.warnings ?? [];
-    setMetricDetail({
-      title: label,
-      subtitle: `uat.kai.hushh.ai UAT aggregate details for ${kaiRange.startDate} to ${kaiRange.endDate}.`,
-      badge: 'UAT',
-      summary: focusMetricSummary(kaiUatDailySummaryMetrics, focus),
-      sections: [
-        {
-          title: 'UAT Range Summary',
-          subtitle: 'GA4 export and UAT DB aggregate values for the selected range.',
-          rows: metricRows(kaiUatDailySummaryMetrics),
-        },
-        {
-          title: 'UAT Daily Status',
-          subtitle: 'GA4 daily rows aligned with UAT DB aggregate rows for the same selected range.',
-          rows: kaiUatDailyRows(kaiUatDailyStatus),
-        },
-        {
-          title: 'Kai UAT GA4 Events',
-          subtitle: 'Top GA4 event aggregates for uat.kai.hushh.ai.',
-          rows: metricRows(kaiEventMetrics),
-        },
-        {
-          title: 'Kai UAT Geo + Device',
-          subtitle: 'Aggregate country, device, and platform mix.',
-          rows: metricRows(kaiGeoMetrics),
-        },
-        {
-          title: 'Kai UAT Usage Snapshot',
-          subtitle: 'Latest public UAT feed aggregate rows.',
-          rows: metricRows(kaiUsageMetrics),
-        },
-        ...sourceCardSections(data?.kaiProduction?.uatSourceCards, 'Kai UAT Source'),
-      ],
-      caveats: [
-        'Kai UAT is validation traffic for uat.kai.hushh.ai; it is not production truth.',
-        'DB/Product Events are aggregate UAT feed metrics, not raw event/user rows.',
-        'GA4 and DB windows are shown separately when the underlying source timing differs.',
-        ...ga4Warnings,
-      ],
-    });
-  };
 
   const openHushhTechDetail = (label = 'HushhTech Details', focus?: BreakdownMetric) => {
     const qualityWarnings = data?.hushhTech?.dataQualityWarnings ?? [];
@@ -1900,7 +1804,7 @@ export default function Dashboard() {
                 </ChartShell>
                 <MetricListCard
                   title="Production Readiness"
-                  subtitle="Production feed and GA4 export only; UAT is tracked in its own matrix."
+                  subtitle="Production feed and GA4 export only."
                   items={kaiProductionReadinessMetrics}
                   onItemClick={(item) => openKaiProductionDetail(`Kai Production Readiness · ${item.label}`, item)}
                 />
@@ -1910,85 +1814,6 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section className={dashboardBand}>
-              <SectionHeader
-                kicker="uat.kai.hushh.ai · UAT"
-                title="UAT status matrix"
-                action={(
-                  <DateRangeControl
-                    range={kaiRange}
-                    onPreset={(days) => setKaiRange(rangeForPreset(days))}
-                    onCustomRange={setKaiRange}
-                    ariaLabelPrefix="Kai UAT"
-                  />
-                )}
-              />
-              <div className="mb-4">
-                <ProductLivePanel
-                  kicker="Kai UAT live mode"
-                  title="UAT sources"
-                  refreshingLabel="Refreshing Kai UAT sources"
-                  freshness={kaiUatFreshness}
-                  lastUpdated={data?.lastUpdated}
-                  autoRefresh={autoRefresh}
-                  isRefreshing={isRefreshing}
-                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
-                />
-              </div>
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
-                <MetricListCard
-                  title="UAT Range Summary"
-                  subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
-                  items={kaiUatDailySummaryMetrics}
-                  onItemClick={(item) => openKaiUatDetail(`Kai UAT · ${item.label}`, item)}
-                />
-                <ChartShell
-                  title="UAT Users, Sessions, Events"
-                  subtitle="uat.kai.hushh.ai GA4 export"
-                  action={<DetailActionButton onClick={() => openKaiUatDetail('Kai UAT GA4 Details')} />}
-                >
-                  {kaiUatDailyStatus.length === 0 ? (
-                    <EmptyState>No Kai UAT GA4 daily rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="ga4Users" name="GA4 Users" fill="#12b5cb" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="ga4Sessions" name="GA4 Sessions" fill="#007aff" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="ga4Events" name="GA4 Events" fill="#af52de" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-                <ChartShell
-                  title="UAT DB Events"
-                  subtitle="UAT public feed DAU, sessions, and total events"
-                  action={<DetailActionButton onClick={() => openKaiUatDetail('Kai UAT DB Event Details')} />}
-                >
-                  {kaiUatDailyStatus.length === 0 ? (
-                    <EmptyState>No Kai UAT DB daily rows available yet.</EmptyState>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={kaiUatDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid stroke="#ececf0" vertical={false} />
-                        <XAxis dataKey="label" stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} dy={10} />
-                        <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={formatAxisValue} dx={-10} />
-                        <Tooltip cursor={{ fill: '#f5f5f7' }} content={<CustomTooltip />} />
-                        <Bar dataKey="feedDau" name="DB DAU" fill="#34c759" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="feedSessions" name="DB Sessions" fill="#ff9500" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="feedEvents" name="DB Events" fill="#5856d6" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </ChartShell>
-                <div className="xl:col-span-2">
-                  <KaiUatDailyStatusTable rows={kaiUatDailyStatus} />
-                </div>
-              </div>
-            </section>
 
             <section className={dashboardBand}>
               <SectionHeader
@@ -2237,7 +2062,6 @@ export default function Dashboard() {
                         <Tooltip content={<CustomTooltip />} />
                         <Area type="monotone" dataKey="ai" name="hushh.ai" stroke="#007aff" strokeWidth={2.5} fill="url(#colorAi)" />
                         <Area type="monotone" dataKey="kaiProd" name="kai.hushh.ai prod events" stroke="#12b5cb" strokeWidth={2.5} fill="url(#colorKaiProd)" />
-                        <Area type="monotone" dataKey="kaiUat" name="uat.kai.hushh.ai events" stroke="#34c759" strokeWidth={2.5} fill="url(#colorKai)" />
                         <Area type="monotone" dataKey="tech" name="hushhtech.com" stroke="#af52de" strokeWidth={2.5} fill="url(#colorTech)" />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -2323,8 +2147,8 @@ export default function Dashboard() {
               </div>
 
               <div className={cn(appleCard, 'p-5')}>
-                <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai UAT Active Users</h3>
-                <p className="mt-1 text-sm font-medium text-[#86868b]">uat.kai.hushh.ai public feed, past 7 days</p>
+                <h3 className="text-lg font-semibold text-[#1d1d1f]">Daily Active Users</h3>
+                <p className="mt-1 text-sm font-medium text-[#86868b]">Production public feed, past 7 days</p>
                 <div className="mt-5 h-[250px]">
                   {dailyActiveUsers.length === 0 ? (
                     <EmptyState>No Kai daily active user rows available yet.</EmptyState>
@@ -2345,22 +2169,10 @@ export default function Dashboard() {
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
               <MetricListCard
-                title="Kai UAT GA4 Events"
-                subtitle="uat.kai.hushh.ai GA4 export, top events"
-                items={kaiEventMetrics}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT GA4 Event · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="Kai UAT Geo + Device"
-                subtitle="UAT country, device, and platform mix"
-                items={kaiGeoMetrics}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Geo + Device · ${item.label}`, item)}
-              />
-              <MetricListCard
-                title="Kai UAT Usage Snapshot"
-                subtitle="Latest UAT public feed usage rows"
+                title="Usage Snapshot"
+                subtitle="Latest production feed usage rows"
                 items={kaiUsageMetrics}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Usage · ${item.label}`, item)}
+                onItemClick={(item) => openKaiProductionDetail(`Production Usage · ${item.label}`, item)}
               />
             </section>
 
@@ -2417,19 +2229,19 @@ export default function Dashboard() {
                 title="Activation Rates"
                 subtitle="Investor and RIA activation"
                 items={kaiActivationMetrics}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Activation · ${item.label}`, item)}
+                onItemClick={(item) => openKaiProductionDetail(`Production Activation · ${item.label}`, item)}
               />
               <MetricListCard
                 title="Platform Mix"
                 subtitle="Users by platform, latest feed day"
                 items={platformMix}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Platform Mix · ${item.label}`, item)}
+                onItemClick={(item) => openKaiProductionDetail(`Production Platform Mix · ${item.label}`, item)}
               />
               <MetricListCard
                 title="Feature Engagement"
                 subtitle="Governed feature events"
                 items={featureEngagement}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Feature Engagement · ${item.label}`, item)}
+                onItemClick={(item) => openKaiProductionDetail(`Production Feature Engagement · ${item.label}`, item)}
               />
             </section>
 
@@ -2438,7 +2250,7 @@ export default function Dashboard() {
                 title="Instrumentation Health"
                 subtitle="Governed event schema coverage"
                 items={instrumentationHealth}
-                onItemClick={(item) => openKaiUatDetail(`Kai UAT Instrumentation · ${item.label}`, item)}
+                onItemClick={(item) => openKaiProductionDetail(`Production Instrumentation · ${item.label}`, item)}
               />
               <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
               <MetricListCard
