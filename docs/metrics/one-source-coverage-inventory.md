@@ -589,6 +589,45 @@ retention are all absent. GA4 reports zero uninstalls, which almost certainly me
 tracking them rather than that nobody left. The dashboard currently sees only what happens after
 someone opens the app — nothing about getting them there, and nothing about them leaving.
 
+## 6f. Identity coverage tiles, added 2026-09-10
+
+Every user figure on this dashboard counts devices. A section on the Growth tab now shows why,
+and by how much, rather than leaving that caveat to a footnote.
+
+Measured over the trailing 12 months on the One app surface:
+
+| | |
+| --- | ---: |
+| Devices seen | 1,079 |
+| Accounts we can name | 41 |
+| Devices we can identify | 22 |
+| **Identity coverage** | **2.0%** |
+
+| Platform | Devices | Accounts | Identity |
+| --- | ---: | ---: | --- |
+| iOS | 457 | 41 | 5% of devices |
+| Web | 399 | — | **Binds nothing** |
+| Android | 223 | — | **Binds nothing** |
+
+**Why the page does not simply report "people".** It could only report the identified slice, and
+that slice is 2% of the audience. Swapping the headline from 1,079 devices to 41 accounts would
+not be a more accurate version of the same number — it is a different metric that erases almost
+everyone. The two answer different questions: *how many people tried the product* versus *how
+many have an account*.
+
+Two distinct causes sit behind the 2%, and the table separates them:
+
+- **Web and Android bind no identity at all.** That is a bug, not behaviour. Web is fixed in
+  `hushh-labs/hushh-research#6695` — merged, but as of writing not yet deployed: the live bundle
+  still contains `"config",t,{user_id`. Android has never been checked.
+- **iOS binds correctly but only reaches 5% of its devices**, because a device becomes
+  identifiable only once someone signs in, and most never do (see §6e — 84% of installs never
+  attempt sign-in).
+
+Even once web ships, identity will only ever cover people who sign in, and it cannot be
+backfilled: historical events carry no `user_id`. A person-scoped series can only start from the
+deploy date forward.
+
 ## 7. Re-running these checks
 
 `npm run test:metrics:one-reconciliation` runs `scripts/check-one-metrics-reconciliation.mjs`,

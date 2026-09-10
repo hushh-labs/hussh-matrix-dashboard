@@ -18,7 +18,7 @@ import {
 import { cn } from '../lib/utils';
 import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
 import { formatNumber } from '../lib/analytics-service';
-import type { GrowthSummary } from '../lib/types';
+import type { GrowthSummary, OrgIdentityPlatform } from '../lib/types';
 
 /**
  * Organisation-level growth.
@@ -223,6 +223,104 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
           </span>
           <span>{note}</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+const IDENTITY_PLATFORM_LABELS: Record<string, string> = {
+  IOS: 'iOS app',
+  ANDROID: 'Android app',
+  WEB: 'Web',
+  UNKNOWN: 'Unknown',
+};
+
+/**
+ * 1b. Devices against accounts.
+ *
+ * Every user figure on this dashboard counts devices. This section is why.
+ * Reporting "people" anywhere would mean reporting only the identified slice
+ * and silently dropping the rest -- and the rest is nearly everyone. Showing
+ * the shortfall keeps the headline honest and makes the gap itself legible,
+ * because right now the gap is the more interesting number.
+ */
+function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] }) {
+  const { devices, accounts, identifiedDevices, coverage, byPlatform } = identity;
+  const rows: OrgIdentityPlatform[] = [...byPlatform].sort((a, b) => b.devices - a.devices);
+  const lowCoverage = coverage !== null && coverage < 0.25;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Figure
+          label="Devices seen"
+          value={exact(devices)}
+          detail="Browsers and app installs, this window"
+        />
+        <Figure
+          label="Accounts we can name"
+          value={exact(accounts)}
+          detail="Signed in at least once"
+        />
+        <Figure
+          label="Devices we can identify"
+          value={exact(identifiedDevices)}
+          detail="Carry an account identity"
+        />
+        <Figure
+          label="Identity coverage"
+          value={percentText(coverage, 1)}
+          tone={lowCoverage ? 'warn' : 'plain'}
+          detail={
+            lowCoverage
+              ? 'Too low to report people instead of devices'
+              : 'Share of devices we can attach to a person'
+          }
+        />
+      </div>
+
+      <div className={cn(appleCard, 'overflow-x-auto')}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
+              <th className="border-b border-black/5 px-5 py-3">Platform</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Devices</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Accounts</th>
+              <th className="border-b border-black/5 px-5 py-3">Identity</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const share = row.devices > 0 ? row.identifiedDevices / row.devices : null;
+              return (
+                <tr key={row.platform} className="font-semibold text-[#1d1d1f]">
+                  <td className="border-b border-black/5 px-5 py-3">
+                    {IDENTITY_PLATFORM_LABELS[row.platform.toUpperCase()] ?? row.platform}
+                  </td>
+                  <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                    {exact(row.devices)}
+                  </td>
+                  <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                    {row.accounts > 0 ? exact(row.accounts) : <span className="text-[#c7c7cc]">&mdash;</span>}
+                  </td>
+                  <td className="border-b border-black/5 px-5 py-3 text-xs font-semibold">
+                    {row.accounts > 0 ? (
+                      <span className="text-[#6e6e73]">{percentText(share, 0)} of devices</span>
+                    ) : (
+                      <span className="text-[#8a5a04]">Binds nothing</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p className="border-t border-black/5 px-5 py-3 text-xs font-semibold leading-5 text-[#86868b]">
+          A device becomes identifiable only once someone signs in, so this ceiling is partly the
+          sign-in rate and partly instrumentation. A platform marked{' '}
+          <strong className="font-bold text-[#1d1d1f]">Binds nothing</strong> sends no account
+          identity at all, which is a bug rather than behaviour.
+        </p>
       </div>
     </div>
   );
@@ -640,6 +738,12 @@ export function GrowthPanel({
       title: 'How many people have we picked up?',
       hint: 'Every device that has ever opened the One app, and the rate we are adding them.',
       body: <UsersOverTime growth={growth} />,
+    },
+    {
+      kicker: 'Identity',
+      title: 'How many of these are people we can name?',
+      hint: 'Every user number on this dashboard counts devices. This is why, and by how much.',
+      body: <IdentityCoverage identity={growth.identity} />,
     },
     {
       kicker: 'Unit economics',
