@@ -734,6 +734,23 @@ export interface OneActiveUsers {
   asOf: string;
 }
 
+/**
+ * Actives for one platform. Deliberately has no "total" sibling: web, iOS and
+ * Android are separate device-id spaces and the account key that would join
+ * them is bound on iOS only, so the rows must not be added.
+ */
+export interface OnePlatformActives {
+  platform: string;
+  dauDevices: number;
+  wauDevices: number;
+  mauDevices: number;
+  /** Null when this platform never binds an account, rather than 0. */
+  accounts: number | null;
+  /** Share of this platform's devices that ever bound an account. */
+  signedInShare: number | null;
+  identityBound: boolean;
+}
+
 export interface OneGrowthSplit {
   newUsers: number;
   returningUsers: number;
@@ -812,6 +829,7 @@ export interface OneAppSummary {
   };
   funnel: OneLocationFunnelStep[];
   activeUsers: OneActiveUsers;
+  activeByPlatform: OnePlatformActives[];
   growth: OneGrowthSplit;
   retention: OneRetentionCohort[];
   activationStages: OneActivationStage[];

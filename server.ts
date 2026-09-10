@@ -2194,6 +2194,41 @@ ${capabilitySql.isHuman}
     FROM days
   `;
 
+  // Per-platform actives, reported separately because they cannot be summed.
+  //
+  // GA4 keeps web, iOS and Android on separate streams with separate device
+  // ids, and the account key that would stitch them (`user_id`) is bound on
+  // iOS only. So the same person on a phone and a laptop is two rows here and
+  // there is no way to collapse them. Splitting does not fix that -- it stops
+  // the page implying an addition that is not valid, and shows exactly where
+  // the identity gap is instead of averaging it away.
+  const activeByPlatformQuery = `
+    WITH days AS (
+      SELECT
+        COALESCE(platform, 'UNKNOWN') AS platform,
+        user_pseudo_id,
+        user_id,
+        PARSE_DATE('%Y%m%d', event_date) AS day
+      FROM ${table}
+      WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
+    ),
+    anchor AS (SELECT MAX(day) AS latest FROM days)
+    SELECT
+      platform,
+      COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS dauDevices,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+                AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS wauDevices,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+                AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS mauDevices,
+      COUNT(DISTINCT user_id) AS accounts,
+      COUNT(DISTINCT IF(user_id IS NOT NULL, user_pseudo_id, NULL)) AS devicesWithAccount
+    FROM days
+    GROUP BY platform
+    ORDER BY mauDevices DESC
+  `;
+
   // New versus returning, decided by first touch rather than by whether we
   // happened to see the person earlier in this window. Without this split an
   // MAU made almost entirely of first-timers reads as health.
@@ -2266,6 +2301,7 @@ ${capabilitySql.isHuman}
     totals,
     last24,
     active,
+    activeByPlatform,
     growth,
     retention,
     activationStages,
@@ -2282,6 +2318,7 @@ ${capabilitySql.isHuman}
     queryBigQuerySql(queryProject, totalsQuery),
     queryBigQuerySql(queryProject, last24Query),
     queryBigQuerySql(queryProject, activeQuery),
+    queryBigQuerySql(queryProject, activeByPlatformQuery),
     queryBigQuerySql(queryProject, growthQuery),
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
@@ -2300,6 +2337,7 @@ ${capabilitySql.isHuman}
     totals.error,
     last24.error,
     active.error,
+    activeByPlatform.error,
     growth.error,
     retention.error,
     activationStages.error,
@@ -2378,6 +2416,25 @@ ${capabilitySql.isHuman}
         // data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
       },
+      // One row per platform, never a total. The columns are separate
+      // populations: the same person on an iPhone and a laptop is two rows and
+      // nothing here can collapse them.
+      activeByPlatform: activeByPlatform.rows.map((row) => {
+        const devices = toNumber(row.mauDevices);
+        const withAccount = toNumber(row.devicesWithAccount);
+        return {
+          platform: String(row.platform ?? 'UNKNOWN'),
+          dauDevices: toNumber(row.dauDevices),
+          wauDevices: toNumber(row.wauDevices),
+          mauDevices: devices,
+          // Null, not zero, when nothing on this platform ever bound an
+          // account: "no accounts signed in" and "this platform cannot report
+          // accounts" are different facts and only one is about behaviour.
+          accounts: withAccount > 0 ? toNumber(row.accounts) : null,
+          signedInShare: devices > 0 && withAccount > 0 ? withAccount / devices : null,
+          identityBound: withAccount > 0,
+        };
+      }),
       growth: {
         newUsers: toNumber(growthRow.newUsers),
         returningUsers: toNumber(growthRow.returningUsers),

@@ -479,6 +479,38 @@ thousands-separated values rather than the abbreviating `formatNumber` (1,033, n
 any two series with an order-of-magnitude gap get separate axes — clicks against impressions on a
 shared scale drew a flat line the legend claimed was data.
 
+## 6d. Platform split, added 2026-09-10
+
+The One tab now reports daily, weekly and monthly actives **per platform** rather than only as
+one blended figure, with an accounts column and an identity note per row.
+
+Measured 2026-08-10 to 2026-09-08:
+
+| Platform | DAU | WAU | MAU | Accounts | Devices signed in |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Web | 24 | 70 | 254 | **none** | 0% |
+| iOS | 8 | 35 | 103 | 41 | 21.4% |
+| Android | 0 | 0 | 1 | none | 0% |
+
+**What the split fixes.** The blended number invited an addition that was never valid: web, iOS
+and Android have separate GA4 device-id spaces, so summing them double-counts anyone with a phone
+and a laptop. Separate rows, with an explicit "must not be added" note, stop the page implying
+arithmetic it cannot support. It also puts the identity gap where it cannot be missed — the
+platforms that cannot report accounts say so on their own row rather than being averaged into a
+figure that looks fine.
+
+**What it does not fix, and this matters for prioritisation.** Splitting is presentation, not
+measurement. Three things remain true:
+
+1. Cross-platform double counting still exists. It is now visible rather than hidden, but nothing
+   here deduplicates a person across two rows.
+2. Web still cannot report people at all — 254 devices, zero accounts.
+3. Even iOS binds an account on only **21.4%** of its devices, so account-scoped counting there
+   covers a fifth of the platform, not all of it.
+
+Account-scoped reporting for the whole product still depends on fixing `applyWebUserId` in
+`hushh-research` (gap 3), and on understanding why four in five iOS devices never bind.
+
 ## 7. Re-running these checks
 
 `npm run test:metrics:one-reconciliation` runs `scripts/check-one-metrics-reconciliation.mjs`,
