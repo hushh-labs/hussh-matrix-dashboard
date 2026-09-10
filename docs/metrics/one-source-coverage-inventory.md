@@ -322,12 +322,56 @@ future MAU implementation.
 
 | Gap | Evidence | Impact |
 | --- | --- | --- |
-| UAT BigQuery unreadable | `bq ls hushh-pda-uat:analytics_533362555` → `Access Denied: bigquery.tables.list` for the current ADC identity | The One UAT panel and every Kai UAT tile fail for this operator. Whether they fail for the deployed service account is untested. |
+| ~~UAT BigQuery unreadable~~ **— this was wrong, see §5a** | `Access Denied` was hit with a *personal* ADC identity and written up as though it applied to the deployed service. It does not. | None. The deployed service account reads UAT fine. |
 | `HUSHH_AI_GA4_PROPERTY_ID` empty | `server.ts:99` defaults it to `''`, and `.env.example` ships it blank — yet `scripts/check-hushh-ai-ga4-data-api.mjs:4` hardcodes `DEFAULT_PROPERTY_ID = '458078330'` | The property id is known; only the server is not given it. The hushh.ai GA4 card renders "not configured" for want of one env var. Confirm `458078330` is the live property, then set it. |
 | `ONE_APP_*` undocumented | `server.ts:72-76` reads `ONE_APP_GA4_PROJECT`, `ONE_APP_GA4_DATASET`, `ONE_APP_GA4_WINDOW_DAYS`, `ONE_APP_UAT_*`, `ONE_APP_WEB_HOST`, `ONE_APP_UAT_WEB_HOST`; none appear in `.env.example` | The One panel silently falls back to the Kai production dataset. It happens to be the right dataset, which is why nobody noticed. |
 | README inventory incomplete | README describes three products; the server also serves `/api/analytics/one` | Confirms the issue's note that the README is not a complete inventory |
 
 ---
+
+## 5a. Correction — UAT access was never the problem
+
+Recorded because the original entry sent the reader at the wrong system, and the reasoning error
+is worth not repeating.
+
+**What this document originally claimed.** That the dashboard could not read
+`hushh-pda-uat:analytics_533362555`, on the evidence of a `bq ls` returning
+`Access Denied: bigquery.tables.list`.
+
+**Why that was wrong.** The denial was against a *personal* ADC identity. The deployed dashboard
+runs as `metrics-dashboard-runtime@hushh-ai-prod`, which holds `roles/bigquery.dataViewer` on
+`hushh-pda-uat` and reads it successfully. Verified live:
+
+| Kai UAT tile | Value |
+| --- | ---: |
+| UAT GA4 Users | 143 |
+| UAT GA4 Events | 60,667 |
+| UAT DB DAU | 25 |
+| UAT freshness lag | 1h 11m |
+
+Those numbers come from the UAT dataset. Access has never been the issue. One operator's
+credentials were mistaken for the service's.
+
+**Why the One UAT panel is empty anyway.** The query filters the UAT property for events whose
+host is `uat.hushh.ai`. There are none — because `uat.hushh.ai` serves the *production*
+measurement ID (`hushh-labs/hushh-research#6693`), so its traffic writes into the production
+property. The UAT property does hold 60,667 events, but they come from local development builds,
+which resolve the UAT measurement id correctly.
+
+The two web surfaces are effectively swapped:
+
+| Traffic | Should reach | Actually reaches |
+| --- | --- | --- |
+| `uat.hushh.ai` | UAT property `533362555` | **production `526603671`** |
+| Local dev builds | UAT property `533362555` | UAT property ✓ |
+
+**What actually fixes it.** Set `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` in `hushh-pda-uat` to
+`G-H1KGXGZTCF` and redeploy UAT. No dashboard change and no IAM change: the One UAT query is
+already correct and already has permission, and will populate on its own once the traffic arrives
+in the right property.
+
+A near-miss worth recording: acting on the original diagnosis would have meant setting
+`BQ_JOB_PROJECT` on the production service to fix a permission problem that did not exist.
 
 ## 6. Remaining gaps, by category
 
@@ -341,11 +385,11 @@ future MAU implementation.
 6. `pkm_*` / `vault_*` — declared as a dashboard bucket, never emitted.
 
 **Access / configuration**
-7. UAT BigQuery read access for the dashboard identity.
+7. ~~UAT BigQuery read access for the dashboard identity.~~ **Not a gap — retracted 2026-09-10, see §5a.**
 8. Set `HUSHH_AI_GA4_PROPERTY_ID` (candidate `458078330`, already hardcoded in the GA4 probe),
    and decide whether hushh.ai reports from the Data API or from a BigQuery export of
    `G-PPEF1CSJ5H`. This is close to a one-line fix and should be verified first.
-9. Resolve `uat.hushh.ai` routing into the production property.
+9. Resolve `uat.hushh.ai` routing into the production property. **Higher impact than first recorded**: this, not access, is why the One UAT panel is empty (§5a). Tracked as `hushh-labs/hushh-research#6693`; recurrence guard in PR `#6696`.
 10. Document `ONE_APP_*` in `.env.example`.
 
 **Aggregation**
