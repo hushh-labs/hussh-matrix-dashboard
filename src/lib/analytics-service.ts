@@ -1624,7 +1624,16 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
 
   const uatRows = result.kai.uat.rows ?? [];
   const prodRows = result.kai.production.rows ?? [];
-  const activeRows = uatRows.length > 0 ? uatRows : prodRows;
+  // Production only.
+  //
+  // This used to read `uatRows.length > 0 ? uatRows : prodRows`, so every
+  // aggregate below -- active users, platform mix, feature engagement,
+  // instrumentation health, both funnels -- silently reported UAT whenever UAT
+  // had any rows at all, and fell back to production only when it was empty.
+  // That is how the overview came to show 1,595 monthly actives beside One's
+  // 358, and 41 governed events beside the growth tab's 8,625. The labels
+  // never said which environment the reader was looking at.
+  const activeRows = prodRows;
   const allKaiRows = [...uatRows, ...prodRows];
   const kaiGa4 = result.kai.ga4?.data ?? null;
   const kaiProduction = result.kai.productionProduct?.data ?? null;
@@ -1634,12 +1643,22 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
   const growth = result.growth?.data ?? null;
   // Computed here rather than server-side because it needs both the org cost
   // roll-up and the One active-user count, and neither query should pay for the
-  // other. Production cost only: spend on environments no customer touches is a
-  // real problem but it is not what serving a person costs.
+  // other.
+  //
+  // Agent One's OWN production spend, not the organisation's. The denominator
+  // is One's monthly actives, so charging hushh.ai's and the fund's
+  // infrastructure to them overstated the figure roughly fourfold -- $910
+  // across three products divided by One's 358 people, when One's own
+  // production spend is $235.
+  //
+  // Production only: spend on environments no customer touches is a real
+  // problem, but it is not what serving a person costs.
   const monthlyActive = one?.activeUsers?.mau ?? 0;
+  const oneProductionCost =
+    growth?.cost?.byProduct?.find((entry) => entry.key === 'one')?.production ?? null;
   const costPerActiveUser =
-    growth?.cost?.available && monthlyActive > 0
-      ? growth.cost.production / monthlyActive
+    growth?.cost?.available && monthlyActive > 0 && oneProductionCost !== null
+      ? oneProductionCost / monthlyActive
       : null;
   const oneUat = result.one?.data?.uat ?? null;
   const feedWarnings = [
