@@ -2194,6 +2194,52 @@ ${capabilitySql.isHuman}
     FROM days
   `;
 
+  // What happens to a native install.
+  //
+  // The activation funnel elsewhere starts at "opened the app", which quietly
+  // omits the largest drop in the product: most people who install never sign
+  // in at all. This is a true cohort funnel -- every stage is measured against
+  // the same set of devices that installed inside the window, so the stages
+  // nest and the percentages mean something. Counting each stage independently
+  // would mix in people who installed months ago and make the rates nonsense.
+  //
+  // Web is excluded on purpose: there is no install to cohort on.
+  const installFunnelQuery = `
+    WITH scoped AS (
+      SELECT
+        COALESCE(platform, 'UNKNOWN') AS platform,
+        user_pseudo_id,
+        event_name
+      FROM ${table}
+      WHERE ${dateFilter} AND platform IN ('IOS', 'ANDROID')
+    ),
+    installs AS (
+      SELECT DISTINCT platform, user_pseudo_id FROM scoped WHERE event_name = 'first_open'
+    ),
+    progressed AS (
+      SELECT
+        i.platform,
+        i.user_pseudo_id,
+        MAX(IF(s.event_name IN ('auth_started', 'google_sign_in_started'), 1, 0)) AS triedSignIn,
+        MAX(IF(s.event_name IN ('auth_succeeded', 'google_sign_in_completed'), 1, 0)) AS signedIn,
+        MAX(IF(s.event_name = 'one_location_onboarding_completed', 1, 0)) AS onboarded,
+        MAX(IF(s.event_name = 'one_location_activation_completed', 1, 0)) AS activated
+      FROM installs i
+      JOIN scoped s USING (platform, user_pseudo_id)
+      GROUP BY i.platform, i.user_pseudo_id
+    )
+    SELECT
+      platform,
+      COUNT(*) AS installed,
+      SUM(triedSignIn) AS triedSignIn,
+      SUM(signedIn) AS signedIn,
+      SUM(onboarded) AS onboarded,
+      SUM(activated) AS activated
+    FROM progressed
+    GROUP BY platform
+    ORDER BY installed DESC
+  `;
+
   // Per-platform actives, reported separately because they cannot be summed.
   //
   // GA4 keeps web, iOS and Android on separate streams with separate device
@@ -2302,6 +2348,7 @@ ${capabilitySql.isHuman}
     last24,
     active,
     activeByPlatform,
+    installFunnel,
     growth,
     retention,
     activationStages,
@@ -2319,6 +2366,7 @@ ${capabilitySql.isHuman}
     queryBigQuerySql(queryProject, last24Query),
     queryBigQuerySql(queryProject, activeQuery),
     queryBigQuerySql(queryProject, activeByPlatformQuery),
+    queryBigQuerySql(queryProject, installFunnelQuery),
     queryBigQuerySql(queryProject, growthQuery),
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
@@ -2338,6 +2386,7 @@ ${capabilitySql.isHuman}
     last24.error,
     active.error,
     activeByPlatform.error,
+    installFunnel.error,
     growth.error,
     retention.error,
     activationStages.error,
@@ -2416,6 +2465,33 @@ ${capabilitySql.isHuman}
         // data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
       },
+      // The install cohort funnel, per native platform. Stages nest because
+      // every one is measured against the same devices that installed inside
+      // the window, so the ratios are real conversions rather than unrelated
+      // counts placed next to each other.
+      installFunnel: installFunnel.rows.map((row) => {
+        const installed = toNumber(row.installed);
+        const stage = (key: string, label: string, users: number) => ({
+          key,
+          label,
+          users,
+          // Share of the install cohort, not of the previous stage: the
+          // question this answers is "of everyone who installed, how many got
+          // here", and step-to-step ratios hide how steep the first drop is.
+          shareOfInstalls: installed > 0 ? users / installed : null,
+        });
+        return {
+          platform: String(row.platform ?? 'UNKNOWN'),
+          installed,
+          stages: [
+            stage('installed', 'Installed the app', installed),
+            stage('tried_sign_in', 'Tried to sign in', toNumber(row.triedSignIn)),
+            stage('signed_in', 'Signed in', toNumber(row.signedIn)),
+            stage('onboarded', 'Finished onboarding', toNumber(row.onboarded)),
+            stage('activated', 'Shared or received a location', toNumber(row.activated)),
+          ],
+        };
+      }),
       // One row per platform, never a total. The columns are separate
       // populations: the same person on an iPhone and a laptop is two rows and
       // nothing here can collapse them.

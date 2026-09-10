@@ -751,6 +751,27 @@ export interface OnePlatformActives {
   identityBound: boolean;
 }
 
+export interface OneInstallStage {
+  key: string;
+  label: string;
+  users: number;
+  /** Share of the install cohort, not of the previous stage. */
+  shareOfInstalls: number | null;
+}
+
+/**
+ * What happens to people who install the native app.
+ *
+ * A true cohort funnel: every stage counts the same set of devices that
+ * installed inside the window, so the stages nest. Web has no install to
+ * cohort on and is excluded.
+ */
+export interface OneInstallFunnel {
+  platform: string;
+  installed: number;
+  stages: OneInstallStage[];
+}
+
 export interface OneGrowthSplit {
   newUsers: number;
   returningUsers: number;
@@ -830,6 +851,7 @@ export interface OneAppSummary {
   funnel: OneLocationFunnelStep[];
   activeUsers: OneActiveUsers;
   activeByPlatform: OnePlatformActives[];
+  installFunnel: OneInstallFunnel[];
   growth: OneGrowthSplit;
   retention: OneRetentionCohort[];
   activationStages: OneActivationStage[];

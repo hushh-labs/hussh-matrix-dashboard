@@ -555,6 +555,40 @@ measurement. Three things remain true:
 Account-scoped reporting for the whole product still depends on fixing `applyWebUserId` in
 `hushh-research` (gap 3), and on understanding why four in five iOS devices never bind.
 
+## 6e. Install cohort funnel, added 2026-09-10
+
+The activation funnel started at "opened the app", which omitted the largest drop in the product.
+A native install cohort funnel now sits above it.
+
+Measured 2026-08-12 → 2026-09-10, iOS:
+
+| Stage | People | Share of installs |
+| --- | ---: | ---: |
+| Installed the app | 82 | 100% |
+| Tried to sign in | 13 | 16% |
+| Signed in | 9 | 11% |
+| Finished onboarding | 7 | 9% |
+| Shared or received a location | 6 | 7% |
+
+**84% of installs never even attempt to sign in.** That single step loses 69 of 82 people — far
+more than every later stage combined, and it was invisible while the funnel began at "opened".
+
+Definitions:
+
+- **A true cohort.** Every stage counts the same devices that fired `first_open` inside the
+  window. Counting each stage independently would mix in people who installed months ago and make
+  the rates meaningless.
+- **Share of installs, not of the previous stage.** Step-to-step ratios flatter a funnel by
+  hiding how steep the first drop is; the question here is "of everyone who installed, how many
+  got here".
+- **Native only.** Web has no install to cohort on and is excluded rather than shown as zero.
+
+Not covered, and the real gap for an app-focused view: **App Store Connect is not connected to
+anything.** Impressions, product-page views, download conversion, crashes, ratings and Apple's own
+retention are all absent. GA4 reports zero uninstalls, which almost certainly means it is not
+tracking them rather than that nobody left. The dashboard currently sees only what happens after
+someone opens the app — nothing about getting them there, and nothing about them leaving.
+
 ## 7. Re-running these checks
 
 `npm run test:metrics:one-reconciliation` runs `scripts/check-one-metrics-reconciliation.mjs`,

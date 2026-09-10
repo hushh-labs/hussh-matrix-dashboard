@@ -21,6 +21,7 @@ import type {
   BreakdownMetric,
   OneAppSummary,
   OneCapabilityUsage,
+  OneInstallFunnel,
   OnePlatformActives,
 } from '../lib/types';
 
@@ -374,6 +375,108 @@ function Retention({ one }: { one: OneAppSummary }) {
 }
 
 /**
+ * 3b. What happens to a native install.
+ *
+ * The activation funnel below starts at "opened the app", which omits the
+ * largest drop in the product: most people who install never sign in at all.
+ * Every stage here counts the same devices that installed inside the window,
+ * so the stages nest and the percentages are real conversions.
+ *
+ * Percentages are share of installs rather than of the previous stage. The
+ * question is "of everyone who installed, how many got here", and step-to-step
+ * ratios flatter a funnel by hiding how steep the first drop is.
+ */
+function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
+  const meaningful = funnels.filter((f) => f.installed > 0);
+  if (meaningful.length === 0) {
+    return (
+      <div className={cn(applePanel, 'p-6 text-center')}>
+        <p className="text-sm font-semibold text-[#6e6e73]">
+          No app installs recorded in this window.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {meaningful.map((funnel) => {
+        const last = funnel.stages[funnel.stages.length - 1];
+        const worst = funnel.stages.reduce(
+          (acc, stage, index) => {
+            if (index === 0) return acc;
+            const lost = funnel.stages[index - 1].users - stage.users;
+            return lost > acc.lost ? { lost, fromIndex: index - 1 } : acc;
+          },
+          { lost: -1, fromIndex: -1 },
+        );
+        const hasWorst = worst.fromIndex >= 0 && worst.lost > 0;
+
+        return (
+          <div key={funnel.platform} className={cn(appleCard, 'p-6')}>
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-[#6e6e73]">
+                  {platformLabel(funnel.platform)} &mdash; reached first value
+                </p>
+                <div className="mt-1 flex flex-wrap items-end gap-x-3">
+                  <p className="text-5xl font-semibold leading-none text-[#1d1d1f]">
+                    {formatNumber(last.users)}
+                  </p>
+                  <p className="pb-1 text-base font-semibold text-[#86868b]">
+                    of {formatNumber(funnel.installed)} who installed &middot;{' '}
+                    {percentText(last.shareOfInstalls, 1)}
+                  </p>
+                </div>
+              </div>
+              {hasWorst && (
+                <p className="max-w-xs text-xs font-semibold leading-5 text-[#8a5a04]">
+                  Biggest drop: {formatNumber(worst.lost)}{' '}
+                  {worst.lost === 1 ? 'person' : 'people'} lost between &ldquo;
+                  {funnel.stages[worst.fromIndex].label}&rdquo; and &ldquo;
+                  {funnel.stages[worst.fromIndex + 1].label}&rdquo;.
+                </p>
+              )}
+            </div>
+
+            <ol className="mt-6 flex flex-col gap-2.5">
+              {funnel.stages.map((stage, index) => {
+                const width =
+                  funnel.installed > 0
+                    ? Math.max((stage.users / funnel.installed) * 100, stage.users > 0 ? 2 : 0)
+                    : 0;
+                const isWorst = hasWorst && index === worst.fromIndex + 1;
+                return (
+                  <li key={stage.key} className="flex flex-col gap-1.5">
+                    <div className="flex items-baseline justify-between gap-4">
+                      <span className="text-sm font-semibold text-[#1d1d1f]">{stage.label}</span>
+                      <span className="shrink-0 text-sm font-semibold tabular-nums text-[#6e6e73]">
+                        {formatNumber(stage.users)}
+                        {index > 0 && (
+                          <span className="ml-2 text-[#86868b]">
+                            {percentText(stage.shareOfInstalls, 0)} of installs
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#f0f0f2]">
+                      <div
+                        className={cn('h-full rounded-full', isWorst ? 'bg-[#8a5a04]' : 'bg-[#007aff]')}
+                        style={{ width: `${width}%` }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * 4. Activation.
  *
  * Stages are absolute counts with the conversion stated between them, rather
@@ -673,6 +776,14 @@ export function OneAppPanel({
         title="Do they come back?"
       >
         <Retention one={one} />
+      </Block>
+
+      <Block
+        kicker="App installs"
+        title="What happens after someone installs the app?"
+        hint="A true cohort: every stage counts the same people who installed in this window, so the percentages are real conversions. Web has no install to measure."
+      >
+        <InstallFunnel funnels={one.installFunnel} />
       </Block>
 
       <Block
