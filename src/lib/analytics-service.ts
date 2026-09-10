@@ -834,7 +834,13 @@ function buildPlatforms(
   const traffic = verifiedHushhTechTrafficOverview(hushhTech);
   const audience = hushhTech?.audience;
   const search = hushhTech?.searchPerformance;
+  // Upstream warnings come first. The product's own statement about its health
+  // is more specific than anything inferred from which fields arrived -- and
+  // without it, an endpoint returning 503 was being reported on the card as
+  // "Search Console coverage waiting", which sent the reader to the wrong
+  // system entirely.
   const hushhTechSourceWarnings = [
+    ...(hushhTech?.dataQualityWarnings ?? []),
     !hushhTech?.gcp ? 'Cloud Monitoring coverage waiting' : null,
     !search ? 'Search Console coverage waiting' : null,
   ].filter(Boolean).join('; ') || null;
@@ -895,10 +901,21 @@ function buildPlatforms(
       color: '#9334e6',
       available: hushhTechAvailable,
       environment: 'production',
-      productionReady: Boolean(hushhTech?.businessFunnel && traffic),
+      // `businessFunnel` is present even when the upstream could not build it,
+      // so its mere existence is not readiness -- that is what let a 503 render
+      // as a ready product reporting zero signups.
+      productionReady: Boolean(
+        hushhTech?.businessFunnel
+        && !isHushhTechSourceUnavailable(hushhTech?.businessFunnel?.source)
+        && traffic,
+      ),
       knownBlockers: hushhTechSourceWarnings ?? hushhTech?.traffic?.note ?? search?.note ?? null,
       visitors: hushhTechVisitors ? formatNumber(hushhTechVisitors) : hushhTechMau ? formatNumber(hushhTechMau) : '—',
-      change: hushhTech ? `${formatNumber(hushhTech.businessFunnel.overview.signups)} signups` : '—',
+      change: !hushhTech
+        ? '—'
+        : isHushhTechSourceUnavailable(hushhTech.businessFunnel.source)
+          ? 'Business summary unavailable'
+          : `${formatNumber(hushhTech.businessFunnel.overview.signups)} signups`,
       avgSession: hushhTechSessions != null ? `${formatNumber(hushhTechSessions)} sessions` : 'GA4 traffic waiting',
       bounceRate: formatPercent(traffic?.engagementRate),
     },
@@ -1385,17 +1402,53 @@ function buildHushhTechAudienceMetrics(hushhTech: HushhTechMetricsSummary | null
   ];
 }
 
+/**
+ * The upstream summary marks a section it could not build with
+ * `source: 'unavailable'` and leaves the counts at their zero defaults.
+ *
+ * Reading those zeros as data is the specific failure this dashboard is meant
+ * to prevent: "nobody signed up" and "we could not ask" are opposite facts, and
+ * only one of them is a product problem. hushhtech.com's summary endpoint has
+ * been returning 503 and the funnel rendered six confident zeros for it.
+ */
+export function isHushhTechSourceUnavailable(source: string | null | undefined): boolean {
+  return String(source ?? '').toLowerCase() === 'unavailable';
+}
+
 function buildHushhTechBusinessMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
   if (!hushhTech) return [];
   const { overview, conversionRates } = hushhTech.businessFunnel;
+  const source = hushhTech.businessFunnel.source;
+
+  // Rows are kept rather than dropped. A vanished section reads as "there is
+  // nothing to show here"; a row that says Unavailable reads as "we owe you
+  // this number", which is the truth.
+  if (isHushhTechSourceUnavailable(source)) {
+    const unavailable = (label: string) => ({
+      label,
+      value: 0,
+      displayValue: 'Unavailable',
+      detail: 'Business summary endpoint is not responding',
+    });
+    return [
+      unavailable('Signups'),
+      unavailable('Persisted Users'),
+      unavailable('Onboarding Started'),
+      unavailable('Onboarding Completed'),
+      unavailable('Profiles Created'),
+      unavailable('Profiles Confirmed'),
+      unavailable('Signup -> Persisted'),
+      unavailable('Onboarding Completion'),
+    ];
+  }
 
   return [
-    metric('Signups', overview.signups, hushhTech.businessFunnel.source),
-    metric('Persisted Users', overview.persistedUsers, hushhTech.businessFunnel.source),
-    metric('Onboarding Started', overview.onboardingStarted, hushhTech.businessFunnel.source),
-    metric('Onboarding Completed', overview.onboardingCompleted, hushhTech.businessFunnel.source),
-    metric('Profiles Created', overview.profilesCreated, hushhTech.businessFunnel.source),
-    metric('Profiles Confirmed', overview.profilesConfirmed, hushhTech.businessFunnel.source),
+    metric('Signups', overview.signups, source),
+    metric('Persisted Users', overview.persistedUsers, source),
+    metric('Onboarding Started', overview.onboardingStarted, source),
+    metric('Onboarding Completed', overview.onboardingCompleted, source),
+    metric('Profiles Created', overview.profilesCreated, source),
+    metric('Profiles Confirmed', overview.profilesConfirmed, source),
     metric('Signup -> Persisted', asNumber(conversionRates.signupToPersistedUsers), undefined, formatPercent(conversionRates.signupToPersistedUsers)),
     metric('Onboarding Completion', asNumber(conversionRates.onboardingCompletionRate), undefined, formatPercent(conversionRates.onboardingCompletionRate)),
   ];
