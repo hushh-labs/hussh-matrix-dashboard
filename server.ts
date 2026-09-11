@@ -270,6 +270,10 @@ function parseProductDateRange(
     start = addUtcDays(end, -(MAX_HUSHH_AI_RANGE_DAYS - 1));
   }
 
+  return buildDateRange(start, end);
+}
+
+function buildDateRange(start: Date, end: Date): HushhAiDateRange {
   const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
   const endExclusive = addUtcDays(end, 1);
   return {
@@ -280,6 +284,30 @@ function parseProductDateRange(
     endTime: endExclusive.toISOString(),
     windowSeconds: Math.max(days * 86_400, 60),
   };
+}
+
+function utcToday(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+/** The trailing `days` days ending today, inclusive. */
+function trailingDateRange(days: number): HushhAiDateRange {
+  const end = utcToday();
+  return buildDateRange(addUtcDays(end, -(days - 1)), end);
+}
+
+// The earliest day any organisation-level feed has data: the One app GA4
+// export begins 2026-05-01 (billing follows on 2026-06-01). "All time" on the
+// comparison tab starts here rather than at some epoch so the label is honest
+// about what the number covers. Not passed through parseProductDateRange
+// because that caps at MAX_HUSHH_AI_RANGE_DAYS, which is the right ceiling for
+// an interactive range and the wrong one for this.
+const ORG_ALL_TIME_START_DATE = process.env.ORG_ALL_TIME_START_DATE || '2026-05-01';
+
+function allTimeDateRange(): HushhAiDateRange {
+  const start = parseUtcDate(ORG_ALL_TIME_START_DATE) ?? (parseUtcDate('2026-05-01') as Date);
+  return buildDateRange(start, utcToday());
 }
 
 function parseHushhAiDateRange(query: Record<string, unknown>): HushhAiDateRange {
@@ -4461,6 +4489,22 @@ async function fetchGrowthSummary(
     ORDER BY week
   `;
 
+  // New devices inside the selected range, and inside the equal-length window
+  // immediately before it for the trend. The weekly curve above is
+  // deliberately all-time; these are what the range picker actually moves.
+  const priorEnd = addUtcDays(parseUtcDate(range.startDate) as Date, -1);
+  const priorStart = addUtcDays(priorEnd, -(range.days - 1));
+  const windowQuery = `
+    SELECT
+      COUNT(DISTINCT IF(firstDay BETWEEN DATE ${sqlStringLiteral(range.startDate)} AND DATE ${sqlStringLiteral(range.endDate)}, user_pseudo_id, NULL)) AS newUsers,
+      COUNT(DISTINCT IF(firstDay BETWEEN DATE ${sqlStringLiteral(formatUtcDate(priorStart))} AND DATE ${sqlStringLiteral(formatUtcDate(priorEnd))}, user_pseudo_id, NULL)) AS priorNewUsers
+    FROM (
+      SELECT user_pseudo_id, DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
+      FROM ${table}
+      WHERE ${ga4ExportSuffixFilter(formatUtcDate(priorStart), range.endDate)} AND ${surface} AND ${meaningful}
+    )
+  `;
+
   // Devices against accounts, on the same window as the users chart above so
   // the two numbers can be read side by side.
   //
@@ -4582,8 +4626,9 @@ async function fetchGrowthSummary(
     GROUP BY week ORDER BY week
   `;
 
-  const [users, identity, cross, ttfv, instrumentation, cost, search, searchTrend] = await Promise.all([
+  const [users, usersWindow, identity, cross, ttfv, instrumentation, cost, search, searchTrend] = await Promise.all([
     queryBigQuerySql(queryProject, usersQuery),
+    queryBigQuerySql(queryProject, windowQuery),
     queryBigQuerySql(queryProject, identityQuery),
     queryBigQuerySql(queryProject, crossProductQuery),
     queryBigQuerySql(queryProject, ttfvQuery),
@@ -4594,7 +4639,7 @@ async function fetchGrowthSummary(
   ]);
 
   const errors = [
-    users.error, identity.error, cross.error, ttfv.error, instrumentation.error,
+    users.error, usersWindow.error, identity.error, cross.error, ttfv.error, instrumentation.error,
     cost.error, search.error, searchTrend.error,
   ].filter(Boolean);
 
@@ -4605,6 +4650,7 @@ async function fetchGrowthSummary(
     return { week: String(row.week), newUsers, cumulative: runningTotal };
   });
 
+  const windowRow = usersWindow.rows[0] ?? {};
   const crossRow = cross.rows[0] ?? {};
   const ttfvRow = ttfv.rows[0] ?? {};
   const instrumentationRow = instrumentation.rows[0] ?? {};
@@ -4639,6 +4685,15 @@ async function fetchGrowthSummary(
       users: {
         series: userSeries,
         totalEverSeen: runningTotal,
+        window: {
+          startDate: range.startDate,
+          endDate: range.endDate,
+          days: range.days,
+          newUsers: toNumber(windowRow.newUsers),
+          priorStartDate: formatUtcDate(priorStart),
+          priorEndDate: formatUtcDate(priorEnd),
+          priorNewUsers: toNumber(windowRow.priorNewUsers),
+        },
         note: 'Distinct devices first seen on the One app surface, by week of first visit. Device-scoped, so one person on a phone and a laptop counts twice.',
       },
       // Devices against accounts. Deliberately reported as a shortfall rather
@@ -4761,6 +4816,31 @@ app.get('/api/analytics/growth', async (req, res) => {
     platform: 'organisation',
     data: growth.data,
     error: growth.error,
+    fetchedAt: new Date().toISOString(),
+  }));
+});
+
+// The same organisation-level summary over three fixed windows, side by side.
+// Fetched on its own rather than folded into /all because it is three more
+// growth scans and only one tab reads it.
+app.get('/api/analytics/growth/compare', async (_req, res) => {
+  const windows = [
+    { key: '30d', label: 'Last 30 days', range: trailingDateRange(30) },
+    { key: '90d', label: 'Last 90 days', range: trailingDateRange(90) },
+    { key: 'all', label: 'All time', range: allTimeDateRange() },
+  ];
+  const results = await Promise.all(windows.map((window) => fetchGrowthSummary(window.range)));
+  const error = results.map((result) => result.error).filter(Boolean).join('; ') || null;
+  res.status(error && results.every((result) => !result.data) ? 502 : 200).json(sanitizePublicPayload({
+    platform: 'organisation',
+    windows: windows.map((window, index) => ({
+      key: window.key,
+      label: window.label,
+      range: { startDate: window.range.startDate, endDate: window.range.endDate, days: window.range.days },
+      data: results[index].data,
+      error: results[index].error,
+    })),
+    error,
     fetchedAt: new Date().toISOString(),
   }));
 });
