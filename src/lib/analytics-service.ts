@@ -8,6 +8,7 @@
  */
 
 import type {
+  GrowthCompare,
   GrowthSummary,
   FeedRow,
   FeedStatus,
@@ -1613,6 +1614,12 @@ function buildHushhTechFunnelMetrics(hushhTech: HushhTechMetricsSummary | null):
     }
   }
   return metrics.slice(0, 18);
+}
+
+export async function fetchGrowthCompare(): Promise<GrowthCompare | null> {
+  const result = await fetchJson<GrowthCompare>(`${API_BASE}/analytics/growth/compare`);
+  if (!result || !Array.isArray(result.windows)) return null;
+  return result;
 }
 
 export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Promise<DashboardData> {

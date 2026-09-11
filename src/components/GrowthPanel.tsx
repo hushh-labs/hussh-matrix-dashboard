@@ -133,11 +133,21 @@ const chartTooltip = {
 function UsersOverTime({ growth }: { growth: GrowthSummary }) {
   const { series, totalEverSeen, note } = growth.users;
   const recent = series.slice(-12);
+
+  // The running total and the weekly curve are all-time on purpose. The two
+  // tiles beside the total are the part the date picker moves: new devices
+  // inside the selected range, against the equal-length window before it.
+  // The picker sat next to "last 4 weeks" tiles for long enough that it read
+  // as broken.
+  const window = growth.users.window;
   const lastFour = series.slice(-4);
   const priorFour = series.slice(-8, -4);
-  const lastSum = lastFour.reduce((s, p) => s + p.newUsers, 0);
-  const priorSum = priorFour.reduce((s, p) => s + p.newUsers, 0);
-  const trend = priorSum > 0 ? lastSum / priorSum - 1 : null;
+  const windowNew = window ? window.newUsers : lastFour.reduce((s, p) => s + p.newUsers, 0);
+  const priorNew = window ? window.priorNewUsers : priorFour.reduce((s, p) => s + p.newUsers, 0);
+  const windowDays = window ? window.days : lastFour.length * 7;
+  const trend = priorNew > 0 ? windowNew / priorNew - 1 : null;
+  const windowLabel = window ? `${windowDays} days` : '4 weeks';
+  const perDay = windowDays > 0 ? windowNew / windowDays : 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -148,18 +158,18 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
           detail={`Distinct devices first seen, across ${series.length} weeks`}
         />
         <Figure
-          label="New in the last 4 weeks"
-          value={exact(lastSum)}
+          label={`New in the last ${windowLabel}`}
+          value={exact(windowNew)}
           detail={
             trend === null
-              ? 'No prior period to compare'
-              : `${trend >= 0 ? '+' : ''}${(trend * 100).toFixed(0)}% versus the 4 weeks before`
+              ? `No prior ${windowLabel} to compare`
+              : `${trend >= 0 ? '+' : ''}${(trend * 100).toFixed(0)}% versus the ${windowLabel} before`
           }
         />
         <Figure
-          label="Average per week"
-          value={formatNumber(Math.round(lastSum / Math.max(lastFour.length, 1)))}
-          detail="Over the last 4 weeks"
+          label="Average per day"
+          value={perDay >= 10 ? formatNumber(Math.round(perDay)) : perDay.toFixed(1)}
+          detail={window ? `Over ${window.startDate} to ${window.endDate}` : 'Over the last 4 weeks'}
         />
       </div>
 

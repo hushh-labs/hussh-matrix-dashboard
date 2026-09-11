@@ -36,10 +36,11 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { fetchAllAnalytics, formatNumber } from './lib/analytics-service';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { fetchAllAnalytics, fetchGrowthCompare, formatNumber } from './lib/analytics-service';
 import { cn } from './lib/utils';
 import type {
+  GrowthCompare,
   BreakdownMetric,
   DashboardData,
   FunnelStep,
@@ -72,6 +73,7 @@ const iconMap: Record<string, typeof Activity> = {
 };
 
 import { appleCard, applePanel, appleLabel, dashboardBand } from './lib/theme';
+import { ComparePanel } from './components/ComparePanel';
 import { GrowthPanel } from './components/GrowthPanel';
 import { OneAppPanel } from './components/OneAppPanel';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
@@ -686,30 +688,52 @@ function DateRangeControl({
   onPreset,
   onCustomRange,
   ariaLabelPrefix = 'Product',
+  refreshing = false,
 }: {
   range: HushhAiDateRangeState;
   onPreset: (days: DatePreset) => void;
   onCustomRange: (next: HushhAiDateRangeState) => void;
   ariaLabelPrefix?: string;
+  refreshing?: boolean;
 }) {
   const today = toDateInputValue(new Date());
   const presets: DatePreset[] = [7, 14, 30, 90];
 
   return (
-    <div className="flex w-full flex-col gap-2 rounded-lg border border-black/[0.06] bg-white/88 p-2 shadow-sm backdrop-blur-xl md:w-auto">
-      <div className="inline-flex rounded-lg bg-[#f5f5f7] p-1">
-        {presets.map((days) => (
-          <button
-            key={days}
-            onClick={() => onPreset(days)}
-            className={cn(
-              'min-h-9 flex-1 rounded-full px-3 text-xs font-bold transition md:flex-none',
-              range.preset === days ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
-            )}
-          >
-            {days}D
-          </button>
-        ))}
+    <div
+      className="flex w-full flex-col gap-2 rounded-lg border border-black/[0.06] bg-white/88 p-2 shadow-sm backdrop-blur-xl md:w-auto"
+      aria-busy={refreshing}
+    >
+      <div className="flex items-center gap-2">
+        <div className="inline-flex flex-1 rounded-lg bg-[#f5f5f7] p-1 md:flex-none">
+          {presets.map((days) => (
+            <button
+              key={days}
+              type="button"
+              onClick={() => onPreset(days)}
+              aria-pressed={range.preset === days}
+              className={cn(
+                'min-h-9 flex-1 rounded-full px-3 text-xs font-bold transition md:flex-none',
+                range.preset === days ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+              )}
+            >
+              {days}D
+            </button>
+          ))}
+        </div>
+        {/* The fetch behind a range change takes ten seconds or more. Without
+            an acknowledgement right here, the click reads as ignored. */}
+        <span
+          className={cn(
+            'inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold text-[#6e6e73] transition-opacity',
+            refreshing ? 'opacity-100' : 'pointer-events-none opacity-0',
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-[#007aff]" />
+          {refreshing ? 'Updating' : ''}
+        </span>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <label className="flex min-h-10 items-center gap-2 rounded-lg bg-[#f5f5f7] px-2 text-xs font-bold text-[#6e6e73]">
@@ -1117,7 +1141,7 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 export default function Dashboard() {
   // 'one' leads because the One app is the active growth focus; the founder
   // should land on the scoreboard, not on the source matrix.
-  const [activeTab, setActiveTab] = useState<'growth' | 'one' | 'overview' | 'platforms'>('growth');
+  const [activeTab, setActiveTab] = useState<'growth' | 'compare' | 'one' | 'overview' | 'platforms'>('growth');
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   // 30 days by default: the One app's agent volumes are small enough that a
   // 7-day window reads as noise rather than a trend.
@@ -1129,9 +1153,28 @@ export default function Dashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [usingMock, setUsingMock] = useState(false);
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
+  // Three fixed-window growth summaries for the over-time tab. Loaded on first
+  // visit to that tab rather than with everything else: it is three more
+  // BigQuery passes, and most sessions never open it.
+  const [compare, setCompare] = useState<GrowthCompare | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
+  // The full-screen "Loading live metrics" overlay is for the first paint
+  // only. A date-range change used to go through the same path, so every
+  // preset click blurred the whole page for the ten-plus seconds the fetch
+  // takes and then, on the growth tab, came back looking identical (the
+  // audience curve is deliberately all-time). Once data is on screen, every
+  // later load -- range change, manual refresh, auto refresh -- keeps the page
+  // visible and reports through `isRefreshing` instead.
+  const hasLoadedRef = useRef(false);
+  // Range clicks can outrun the fetch. Without this, clicking 14D and then 30D
+  // let the slower 14D response land last and overwrite the 30D data while the
+  // toggle still said 30D.
+  const requestSeqRef = useRef(0);
 
-  const loadData = useCallback(async (options: { background?: boolean } = {}) => {
-    if (options.background) {
+  const loadData = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
+    if (hasLoadedRef.current) {
       setIsRefreshing(true);
     } else {
       setLoading(true);
@@ -1144,6 +1187,8 @@ export default function Dashboard() {
       hushhAiStartDate: hushhAiRange.startDate,
       hushhAiEndDate: hushhAiRange.endDate,
     });
+    if (requestId !== requestSeqRef.current) return;
+    hasLoadedRef.current = true;
     setUsingMock(Boolean(result.error));
     setData(result);
     setLoading(false);
@@ -1154,6 +1199,21 @@ export default function Dashboard() {
     loadData();
   }, [loadData]);
 
+  const loadCompare = useCallback(async () => {
+    setCompareLoading(true);
+    const result = await fetchGrowthCompare();
+    setCompare(result);
+    setCompareError(result ? result.error : 'Failed to fetch the comparison. Is the server running?');
+    setCompareLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'compare' || compare || compareLoading) return;
+    void loadCompare();
+    // `compare`/`compareLoading` are read, not depended on: this should fire
+    // on entering the tab, not again when the load it started resolves.
+  }, [activeTab, loadCompare]);
+
   const liveRefreshSeconds = Math.min(
     data?.kaiProduction?.freshness?.refreshIntervalSeconds ?? 30,
     data?.hushhAi?.freshness?.refreshIntervalSeconds ?? 30,
@@ -1162,7 +1222,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (!autoRefresh) return undefined;
     const refreshId = window.setInterval(() => {
-      void loadData({ background: true });
+      void loadData();
     }, liveRefreshSeconds * 1000);
     return () => window.clearInterval(refreshId);
   }, [autoRefresh, liveRefreshSeconds, loadData]);
@@ -1624,7 +1684,7 @@ export default function Dashboard() {
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="inline-flex min-w-0 flex-1 rounded-lg bg-[#f5f5f7] p-1 sm:flex-none" role="tablist" aria-label="Dashboard sections">
-                {(['growth', 'one', 'overview', 'platforms'] as const).map((tab) => (
+                {(['growth', 'compare', 'one', 'overview', 'platforms'] as const).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -1635,12 +1695,15 @@ export default function Dashboard() {
                         : 'text-[#6e6e73] hover:text-[#1d1d1f]',
                     )}
                   >
-                    {tab === 'one' ? 'One app' : tab}
+                    {tab === 'one' ? 'One app' : tab === 'compare' ? 'Over time' : tab}
                   </button>
                 ))}
               </div>
               <button
-                onClick={() => loadData()}
+                onClick={() => {
+                  void loadData();
+                  if (compare) void loadCompare();
+                }}
                 className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] sm:px-4"
               >
                 <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
@@ -1674,11 +1737,19 @@ export default function Dashboard() {
             dateControl={(
               <DateRangeControl
                 range={oneRange}
+                refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(rangeForPreset(days))}
                 onCustomRange={setOneRange}
                 ariaLabelPrefix="Growth"
               />
             )}
+          />
+        ) : activeTab === 'compare' ? (
+          <ComparePanel
+            compare={compare}
+            loading={compareLoading}
+            error={compareError}
+            onRetry={() => void loadCompare()}
           />
         ) : activeTab === 'one' ? (
           <OneAppPanel
@@ -1698,6 +1769,7 @@ export default function Dashboard() {
             dateControl={(
               <DateRangeControl
                 range={oneRange}
+                refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(rangeForPreset(days))}
                 onCustomRange={setOneRange}
                 ariaLabelPrefix="One app"
@@ -1726,6 +1798,7 @@ export default function Dashboard() {
                 action={(
                   <DateRangeControl
                     range={kaiRange}
+                    refreshing={isRefreshing}
                     onPreset={(days) => setKaiRange(rangeForPreset(days))}
                     onCustomRange={setKaiRange}
                     ariaLabelPrefix="Kai production"
@@ -1822,6 +1895,7 @@ export default function Dashboard() {
                 action={(
                   <DateRangeControl
                     range={hushhAiRange}
+                    refreshing={isRefreshing}
                     onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
                     onCustomRange={setHushhAiRange}
                     ariaLabelPrefix="Hushh AI"

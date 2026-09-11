@@ -879,6 +879,16 @@ export interface OrgUserPoint {
   cumulative: number;
 }
 
+export interface OrgUserWindow {
+  startDate: string;
+  endDate: string;
+  days: number;
+  newUsers: number;
+  priorStartDate: string;
+  priorEndDate: string;
+  priorNewUsers: number;
+}
+
 export interface OrgIdentityPlatform {
   platform: string;
   devices: number;
@@ -926,6 +936,8 @@ export interface GrowthSummary {
   users: {
     series: OrgUserPoint[];
     totalEverSeen: number;
+    /** New devices inside the selected range, with the equal-length window before it. */
+    window?: OrgUserWindow;
     note: string;
   };
   identity: OrgIdentity;
@@ -967,6 +979,21 @@ export interface GrowthSummary {
     ungovernedEventNames: number;
     declaredNotEmitted: string[];
   };
+}
+
+/** One column of the over-time comparison: the growth summary over a fixed window. */
+export interface GrowthCompareWindow {
+  key: '30d' | '90d' | 'all';
+  label: string;
+  range: { startDate: string; endDate: string; days: number };
+  data: GrowthSummary | null;
+  error: string | null;
+}
+
+export interface GrowthCompare {
+  windows: GrowthCompareWindow[];
+  error: string | null;
+  fetchedAt: string;
 }
 
 // ---------------------------------------------------------------------------
