@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle, Info } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -17,6 +17,7 @@ import {
 import { cn } from '../lib/utils';
 import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
 import { formatNumber } from '../lib/analytics-service';
+import { OneLocationAnalyticsPanel } from './OneLocationAnalyticsPanel';
 import type {
   BreakdownMetric,
   OneAppSummary,
@@ -564,7 +565,7 @@ function CapabilityCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.03 }}
-      className={cn(appleCard, 'flex flex-col p-5')}
+      className={cn(appleCard, 'flex h-full flex-col p-5')}
     >
       <div className="flex items-start justify-between gap-3">
         <p className="text-base font-semibold text-[#1d1d1f]">{label}</p>
@@ -620,6 +621,9 @@ function CapabilityCard({
               </AreaChart>
             </ResponsiveContainer>
           </div>
+          {capability.key === 'location' && (
+            <p className="mt-3 text-xs font-bold text-[#007aff]">View detailed analytics →</p>
+          )}
         </>
       ) : (
         <div className="mt-3 flex flex-1 flex-col justify-between gap-3">
@@ -728,6 +732,8 @@ export function OneAppPanel({
    */
   dateControl: ReactNode;
 }) {
+  const [locationDetailOpen, setLocationDetailOpen] = useState(false);
+
   if (!one || !one.available) {
     return (
       <main className="space-y-10">
@@ -742,6 +748,20 @@ export function OneAppPanel({
           </p>
         </div>
       </main>
+    );
+  }
+
+  if (locationDetailOpen) {
+    return (
+      <OneLocationAnalyticsPanel
+        one={one}
+        rangeLabel={rangeLabel}
+        dateControl={dateControl}
+        onBack={() => {
+          setLocationDetailOpen(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
     );
   }
 
@@ -812,7 +832,21 @@ export function OneAppPanel({
               */}
             {one.capabilities.map((capability, index) => (
               <Fragment key={capability.key}>
-                <CapabilityCard capability={capability} index={index} />
+                {capability.key === 'location' ? (
+                  <button
+                    type="button"
+                    aria-label="Open detailed One Location analytics"
+                    onClick={() => {
+                      setLocationDetailOpen(true);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="h-full rounded-2xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] focus-visible:ring-offset-2"
+                  >
+                    <CapabilityCard capability={capability} index={index} />
+                  </button>
+                ) : (
+                  <CapabilityCard capability={capability} index={index} />
+                )}
               </Fragment>
             ))}
           </div>
