@@ -33,12 +33,33 @@ import type {
 } from '../lib/types';
 
 type DetailTab = 'overview' | 'features' | 'circles' | 'journey';
+type LocationEnvironment = 'production' | 'uat';
 
 const tabs: Array<{ key: DetailTab; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'features', label: 'Features' },
   { key: 'circles', label: 'Circles' },
   { key: 'journey', label: 'Journey' },
+];
+
+const environments: Array<{
+  key: LocationEnvironment;
+  label: string;
+  sourceLabel: string;
+  description: string;
+}> = [
+  {
+    key: 'production',
+    label: 'Production',
+    sourceLabel: 'one.hushh.ai · public apps',
+    description: 'Production web plus public iOS and Android builds. Tester traffic is excluded.',
+  },
+  {
+    key: 'uat',
+    label: 'UAT / Test builds',
+    sourceLabel: 'uat.one.hushh.ai · beta apps',
+    description: 'UAT web plus iOS TestFlight and Android internal. Production traffic is excluded.',
+  },
 ];
 
 const featureIcon: Record<string, typeof MapPin> = {
@@ -93,7 +114,13 @@ function StatCard({
   );
 }
 
-function FeatureTable({ features }: { features: OneLocationBehaviorMetric[] }) {
+function FeatureTable({
+  features,
+  environment,
+}: {
+  features: OneLocationBehaviorMetric[];
+  environment: LocationEnvironment;
+}) {
   return (
     <div className={cn(applePanel, 'overflow-hidden')}>
       <div className="overflow-x-auto">
@@ -122,7 +149,9 @@ function FeatureTable({ features }: { features: OneLocationBehaviorMetric[] }) {
                       <div>
                         <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
                         <p className="mt-0.5 text-xs font-medium text-[#86868b]">
-                          {waiting ? 'Waiting for first production event' : 'Event-level outcomes · not funnel conversion'}
+                          {waiting
+                            ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event`
+                            : 'Event-level outcomes · not funnel conversion'}
                         </p>
                       </div>
                     </div>
@@ -227,23 +256,35 @@ function CircleBreakdown({ one }: { one: OneAppSummary }) {
   );
 }
 
-function SourceCompleteness({ one }: { one: OneAppSummary }) {
+function SourceCompleteness({
+  one,
+  environment,
+}: {
+  one: OneAppSummary;
+  environment: LocationEnvironment;
+}) {
   const seen = new Set(
     one.locationAnalytics.platforms
       .filter((row) => row.events > 0)
       .map((row) => row.platform.toUpperCase()),
   );
-  const sources = [
-    { platform: 'WEB', label: 'Web app' },
-    { platform: 'IOS', label: 'iOS app' },
-    { platform: 'ANDROID', label: 'Android app' },
-  ];
+  const sources = environment === 'production'
+    ? [
+        { platform: 'WEB', label: 'Production web' },
+        { platform: 'IOS', label: 'Public iOS' },
+        { platform: 'ANDROID', label: 'Public Android' },
+      ]
+    : [
+        { platform: 'WEB', label: 'UAT web' },
+        { platform: 'IOS', label: 'iOS TestFlight' },
+        { platform: 'ANDROID', label: 'Android internal' },
+      ];
   return (
     <div className={cn(applePanel, 'flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between')}>
       <div>
         <p className="text-sm font-bold text-[#1d1d1f]">Combined platform total</p>
         <p className="mt-1 text-xs font-medium leading-5 text-[#6e6e73]">
-          Every headline and feature row combines all supported One surfaces; no platform is scored separately.
+          Every headline and feature row combines the three platforms inside this environment only.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -269,24 +310,30 @@ function SourceCompleteness({ one }: { one: OneAppSummary }) {
 
 export function OneLocationAnalyticsPanel({
   one,
+  uat,
   rangeLabel,
   dateControl,
   onBack,
 }: {
   one: OneAppSummary;
+  uat: OneAppSummary | null;
   rangeLabel: string;
   dateControl: ReactNode;
   onBack: () => void;
 }): ReactElement {
   const [tab, setTab] = useState<DetailTab>('overview');
-  const locationCapability = one.capabilities.find((capability) => capability.key === 'location');
+  const [environment, setEnvironment] = useState<LocationEnvironment>('production');
+  const selectedOne = environment === 'production' ? one : uat;
+  const environmentConfig = environments.find((item) => item.key === environment) ?? environments[0];
+  const locationAnalytics = selectedOne?.locationAnalytics;
+  const locationCapability = selectedOne?.capabilities.find((capability) => capability.key === 'location');
   const byKey = useMemo(
-    () => new Map(one.locationAnalytics.features.map((feature) => [feature.key, feature])),
-    [one.locationAnalytics.features],
+    () => new Map((locationAnalytics?.features ?? []).map((feature) => [feature.key, feature])),
+    [locationAnalytics?.features],
   );
-  const requestFulfilled = one.locationAnalytics.journey.find((row) => row.key === 'request_fulfilled');
-  const circleEngaged = one.locationAnalytics.journey.find((row) => row.key === 'circle_engaged');
-  const trend = one.daily.map((point) => ({
+  const requestFulfilled = locationAnalytics?.journey.find((row) => row.key === 'request_fulfilled');
+  const circleEngaged = locationAnalytics?.journey.find((row) => row.key === 'circle_engaged');
+  const trend = (selectedOne?.daily ?? []).map((point) => ({
     date: point.eventDate.slice(5),
     active: point.locationUsers,
     sharing: byKey.get('live_sharing')?.daily.find((row) => row.eventDate === point.eventDate)?.users ?? 0,
@@ -305,13 +352,41 @@ export function OneLocationAnalyticsPanel({
         </button>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className={appleLabel}>one.hushh.ai · One Location · {rangeLabel}</p>
+            <p className={appleLabel}>{environmentConfig.sourceLabel} · One Location · {rangeLabel}</p>
             <h2 className="mt-1 text-3xl font-semibold tracking-tight text-[#1d1d1f] sm:text-4xl">One Location analytics</h2>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
               Behaviour across web, iPhone and Android—from Connect and Circles through requests, sharing and Check-In.
             </p>
           </div>
           {dateControl}
+        </div>
+        <div className="mt-5 grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
+          <div
+            className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-black/[0.045] p-1"
+            role="tablist"
+            aria-label="One Location analytics environment"
+          >
+            {environments.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="tab"
+                aria-selected={environment === item.key}
+                onClick={() => setEnvironment(item.key)}
+                className={cn(
+                  'min-h-10 shrink-0 rounded-lg px-4 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff]',
+                  environment === item.key
+                    ? 'bg-white text-[#1d1d1f] shadow-sm'
+                    : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs font-semibold leading-5 text-[#6e6e73]">
+            {environmentConfig.description} Counts never mix across environments.
+          </p>
         </div>
         <div className="mt-5 flex max-w-full gap-1 overflow-x-auto rounded-xl bg-black/[0.035] p-1" role="tablist" aria-label="One Location analytics sections">
           {tabs.map((item) => (
@@ -332,6 +407,18 @@ export function OneLocationAnalyticsPanel({
         </div>
       </section>
 
+      {(!selectedOne || !selectedOne.available || !locationAnalytics) ? (
+        <section className={cn(applePanel, 'p-8 text-center')}>
+          <p className="text-base font-bold text-[#1d1d1f]">
+            {environment === 'production' ? 'Production' : 'UAT/test'} analytics are unavailable.
+          </p>
+          <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-[#6e6e73]">
+            This lane stays separate and will never fall back to the other environment. Check the matching GA4 export and dashboard access.
+          </p>
+        </section>
+      ) : (
+        <>
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Active Location devices" value={locationCapability?.humanUsers ?? 0} detail="deliberate One Location use in this range" icon={MapPin} />
         <StatCard label="Successful share actions" value={byKey.get('live_sharing')?.successes ?? 0} detail="completed live-location share events" icon={Radio} />
@@ -339,10 +426,10 @@ export function OneLocationAnalyticsPanel({
         <StatCard label="Circle engagement" value={circleEngaged?.users ?? null} detail="devices reaching a Circle action" icon={UsersRound} waiting={!circleEngaged?.instrumented} />
       </div>
 
-      {!one.locationAnalytics.journeyActionSeen && (
+      {!locationAnalytics.journeyActionSeen && (
         <div className="flex items-start gap-3 rounded-2xl border border-[#f0d8a8] bg-[#fff8ea] p-4 text-[#6a4600]">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <p className="text-sm font-semibold leading-5">{one.locationAnalytics.instrumentationNote}</p>
+          <p className="text-sm font-semibold leading-5">{locationAnalytics.instrumentationNote}</p>
         </div>
       )}
 
@@ -352,7 +439,7 @@ export function OneLocationAnalyticsPanel({
             <p className={appleLabel}>Feature adoption</p>
             <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What people actually use</h3>
           </div>
-          <FeatureTable features={one.locationAnalytics.features} />
+          <FeatureTable features={locationAnalytics.features} environment={environment} />
         </section>
       )}
 
@@ -380,7 +467,7 @@ export function OneLocationAnalyticsPanel({
               </ResponsiveContainer>
             </div>
           </div>
-          <JourneyReach rows={one.locationAnalytics.journey.slice(0, 7)} />
+          <JourneyReach rows={locationAnalytics.journey.slice(0, 7)} />
         </section>
       )}
 
@@ -390,7 +477,7 @@ export function OneLocationAnalyticsPanel({
             <p className={appleLabel}>Circles</p>
             <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">Creation mix and engagement</h3>
           </div>
-          <CircleBreakdown one={one} />
+          <CircleBreakdown one={selectedOne} />
         </section>
       )}
 
@@ -400,7 +487,7 @@ export function OneLocationAnalyticsPanel({
             <p className={appleLabel}>Cross-surface journey</p>
             <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">Connect to Circle to location value</h3>
           </div>
-          <JourneyReach rows={one.locationAnalytics.journey} />
+          <JourneyReach rows={locationAnalytics.journey} />
         </section>
       )}
 
@@ -410,7 +497,7 @@ export function OneLocationAnalyticsPanel({
             <p className={appleLabel}>Coverage</p>
             <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">All platforms, one total</h3>
           </div>
-          <SourceCompleteness one={one} />
+          <SourceCompleteness one={selectedOne} environment={environment} />
         </section>
       )}
 
@@ -425,6 +512,8 @@ export function OneLocationAnalyticsPanel({
           </p>
         </div>
       </section>
+        </>
+      )}
     </main>
   );
 }

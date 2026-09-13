@@ -2889,7 +2889,9 @@ ${capabilitySql.isHuman}
           : null,
         instrumentationNote: journeyActionInstrumented
           ? 'Detailed Connect, Circles, invitation and Profile actions are flowing from the shared web/native analytics adapter.'
-          : 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.',
+          : webHost === ONE_APP_HOST
+            ? 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.'
+            : 'The detailed journey event has not reached the UAT export yet. TestFlight, Android internal and UAT web events will appear after the next GA4 export.',
       },
       platforms: platforms.rows.map((row) => ({
         platform: String(row.platform),

@@ -719,11 +719,13 @@ function Provenance({ one, rangeLabel }: { one: OneAppSummary; rangeLabel: strin
 
 export function OneAppPanel({
   one,
+  oneUat,
   healthMetrics,
   rangeLabel,
   dateControl,
 }: {
   one: OneAppSummary | null;
+  oneUat: OneAppSummary | null;
   healthMetrics: BreakdownMetric[];
   rangeLabel: string;
   /**
@@ -755,6 +757,7 @@ export function OneAppPanel({
     return (
       <OneLocationAnalyticsPanel
         one={one}
+        uat={oneUat}
         rangeLabel={rangeLabel}
         dateControl={dateControl}
         onBack={() => {
