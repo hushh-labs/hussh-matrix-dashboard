@@ -154,8 +154,5 @@ jobs:
           METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
         run: npm run test:prod:kai -- --dashboard-url "${PRODUCTION_URL}" --timeout-ms 120000
 
-      - name: Verify One Location analytics contract
-        run: npm run test:api:one-location -- --base-url "${PRODUCTION_URL}" --days 7
-
       - name: Verify One Location production and UAT analytics
         run: npm run test:api:one-location -- --base-url "${PRODUCTION_URL}" --days 7
