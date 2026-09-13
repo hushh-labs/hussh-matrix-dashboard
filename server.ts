@@ -1777,6 +1777,35 @@ const ONE_LOCATION_FUNNEL_STEPS: Array<{ key: string; label: string }> = [
   { key: 'activated', label: 'Activated' },
 ];
 
+const ONE_LOCATION_BEHAVIOR_FEATURES = [
+  { key: 'live_sharing', label: 'Live sharing' },
+  { key: 'check_in', label: 'Check-In' },
+  { key: 'sms_safety', label: 'Save My Soul SMS' },
+  { key: 'request_location', label: 'Request Location' },
+  { key: 'public_sharing', label: 'Public location sharing' },
+  { key: 'contact_sync', label: 'Contact sync' },
+  { key: 'invitations', label: 'Invitation flow' },
+  { key: 'circle_engagement', label: 'Circle engagement' },
+] as const;
+
+/**
+ * These are independent reach milestones, not a strict nested funnel. People
+ * can share directly without syncing contacts or creating a Circle, so forcing
+ * the rows to descend would turn valid paths into apparent drop-off.
+ */
+const ONE_LOCATION_JOURNEY_STEPS = [
+  { key: 'location_opened', label: 'Opened One Location', requiresJourneyAction: false },
+  { key: 'connect_opened', label: 'Opened Connect', requiresJourneyAction: false },
+  { key: 'contact_sync', label: 'Completed contact sync', requiresJourneyAction: false },
+  { key: 'invitation_shared', label: 'Shared an invitation', requiresJourneyAction: false },
+  { key: 'circle_engaged', label: 'Engaged with a Circle', requiresJourneyAction: false },
+  { key: 'request_sent', label: 'Sent a location request', requiresJourneyAction: false },
+  { key: 'request_fulfilled', label: 'Request fulfilled', requiresJourneyAction: true },
+  { key: 'live_shared', label: 'Shared live location', requiresJourneyAction: false },
+  { key: 'check_in', label: 'Completed Check-In', requiresJourneyAction: false },
+  { key: 'profile_opened', label: 'Opened Profile', requiresJourneyAction: false },
+] as const;
+
 /**
  * The One capability catalogue: which events mean a person deliberately used a
  * capability, and which merely mean the app was running.
@@ -1841,6 +1870,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'one_location_share_review_opened', 'one_location_visit_rated',
       'one_location_review_handoff_opened', 'one_location_setup_completed',
       'one_location_onboarding_completed', 'one_location_activation_completed',
+      'one_location_journey_action',
     ],
     // A retry is the app fighting the OS for a fix, and a contact sync is a
     // background job. Neither is somebody using the product.
@@ -2125,6 +2155,132 @@ ${capabilitySql.isHuman}
     GROUP BY eventName
     ORDER BY users DESC
     LIMIT 20
+  `;
+
+  // One scan produces every level needed by the Location drill-down. The
+  // dedicated events preserve historical coverage; `one_location_journey_action`
+  // adds the Connect/Circles/Profile actions that did not exist before this
+  // dashboard. No identifiers or free text leave BigQuery.
+  const locationBehaviorQuery = `
+    WITH raw AS (
+      SELECT
+        CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
+        user_pseudo_id,
+        COALESCE(platform, 'UNKNOWN') AS platform,
+        event_name AS eventName,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') AS actionName,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') AS result,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'route_id') AS routeId,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'circle_kind') AS circleKind,
+        COALESCE((SELECT value.int_value = 1 FROM UNNEST(event_params) WHERE key = 'copied_to_clipboard'), FALSE) AS copiedToClipboard,
+        COALESCE((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'success_count'), 0) AS successCount
+      FROM ${table}
+      WHERE ${dateFilter}
+        AND (
+          event_name = 'page_view'
+          OR event_name IN (
+            'one_location_share_confirmed',
+            'one_location_check_in_completed',
+            'one_location_sos_triggered',
+            'one_location_request_sent',
+            'one_location_public_link_created',
+            'one_location_contact_signal_synced',
+            'one_location_circle_invite_created',
+            'one_location_circle_created',
+            'one_location_journey_action'
+          )
+        )
+    ),
+    classified AS (
+      SELECT
+        *,
+        CASE
+          WHEN eventName = 'one_location_share_confirmed' THEN 'live_sharing'
+          WHEN eventName = 'one_location_check_in_completed' THEN 'check_in'
+          WHEN eventName = 'one_location_sos_triggered' THEN 'sms_safety'
+          WHEN eventName = 'one_location_request_sent' THEN 'request_location'
+          WHEN eventName = 'one_location_public_link_created' THEN 'public_sharing'
+          WHEN eventName = 'one_location_contact_signal_synced' THEN 'contact_sync'
+          WHEN eventName = 'one_location_circle_invite_created' THEN 'invitations'
+          WHEN eventName = 'one_location_circle_created' THEN 'circle_engagement'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'contact_invitation_%' THEN 'invitations'
+          WHEN eventName = 'one_location_journey_action' AND actionName = 'circle_code_shared' THEN 'invitations'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'contact_sync_%' THEN 'contact_sync'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'public_link_%' THEN 'public_sharing'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_request_%' THEN 'request_location'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_share_%' THEN 'live_sharing'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'circle_%' THEN 'circle_engagement'
+          ELSE NULL
+        END AS featureKey,
+        CASE
+          WHEN eventName = 'page_view' AND routeId IN ('one_location', 'one_location_map', 'one_location_check_in') THEN 'location_opened'
+          WHEN eventName = 'page_view' AND routeId = 'connect' THEN 'connect_opened'
+          WHEN eventName = 'one_location_contact_signal_synced' AND result = 'success' THEN 'contact_sync'
+          WHEN eventName = 'one_location_circle_invite_created' AND result = 'success' AND copiedToClipboard THEN 'invitation_shared'
+          WHEN eventName = 'one_location_journey_action' AND actionName IN ('contact_invitation_handoff', 'circle_code_shared') AND result = 'success' THEN 'invitation_shared'
+          WHEN eventName = 'one_location_circle_created' AND result = 'success' THEN 'circle_engaged'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'circle_%' AND result = 'success' THEN 'circle_engaged'
+          WHEN eventName = 'one_location_request_sent' AND result = 'success' AND successCount > 0 THEN 'request_sent'
+          WHEN eventName = 'one_location_journey_action' AND actionName = 'location_request_fulfilled' AND result = 'success' THEN 'request_fulfilled'
+          WHEN eventName = 'one_location_share_confirmed' AND result = 'success' AND successCount > 0 THEN 'live_shared'
+          WHEN eventName = 'one_location_check_in_completed' AND result = 'success' AND successCount > 0 THEN 'check_in'
+          WHEN eventName = 'page_view' AND (routeId = 'profile' OR STARTS_WITH(routeId, 'profile_')) THEN 'profile_opened'
+          ELSE NULL
+        END AS journeyKey
+      FROM raw
+    )
+    SELECT
+      'feature' AS scope,
+      featureKey AS metricKey,
+      CAST(NULL AS STRING) AS eventDate,
+      CAST(NULL AS STRING) AS dimension,
+      COUNT(DISTINCT user_pseudo_id) AS users,
+      COUNT(*) AS events,
+      COUNTIF(result = 'success') AS successes,
+      COUNTIF(result IN ('expected_error', 'error')) AS failures
+    FROM classified
+    WHERE featureKey IS NOT NULL
+    GROUP BY featureKey
+    UNION ALL
+    SELECT
+      'feature_daily', featureKey, eventDate, NULL,
+      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
+    FROM classified
+    WHERE featureKey IS NOT NULL
+    GROUP BY featureKey, eventDate
+    UNION ALL
+    SELECT
+      'feature_platform', featureKey, NULL, platform,
+      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
+    FROM classified
+    WHERE featureKey IS NOT NULL
+    GROUP BY featureKey, platform
+    UNION ALL
+    SELECT
+      'journey', journeyKey, NULL, NULL,
+      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNTIF(result = 'success' OR eventName = 'page_view'),
+      COUNTIF(result IN ('expected_error', 'error'))
+    FROM classified
+    WHERE journeyKey IS NOT NULL
+    GROUP BY journeyKey
+    UNION ALL
+    SELECT
+      'circle_kind', COALESCE(NULLIF(circleKind, ''), 'unknown'), NULL, NULL,
+      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
+    FROM classified
+    WHERE eventName = 'one_location_circle_created'
+    GROUP BY COALESCE(NULLIF(circleKind, ''), 'unknown')
+    UNION ALL
+    SELECT
+      'instrumentation', 'journey_action', MIN(eventDate), NULL,
+      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
+    FROM classified
+    WHERE eventName = 'one_location_journey_action'
   `;
 
   const platformQuery = `
@@ -2418,6 +2574,7 @@ ${capabilitySql.isHuman}
     agentDaily,
     surfaces,
     locationFeatures,
+    locationBehavior,
     platforms,
     acquisition,
     daily,
@@ -2436,6 +2593,7 @@ ${capabilitySql.isHuman}
     queryBigQuerySql(queryProject, agentDailyQuery),
     queryBigQuerySql(queryProject, surfaceQuery),
     queryBigQuerySql(queryProject, locationFeatureQuery),
+    queryBigQuerySql(queryProject, locationBehaviorQuery),
     queryBigQuerySql(queryProject, platformQuery),
     queryBigQuerySql(queryProject, acquisitionQuery),
     queryBigQuerySql(queryProject, dailyQuery),
@@ -2456,6 +2614,7 @@ ${capabilitySql.isHuman}
     agentDaily.error,
     surfaces.error,
     locationFeatures.error,
+    locationBehavior.error,
     platforms.error,
     acquisition.error,
     daily.error,
@@ -2471,7 +2630,7 @@ ${capabilitySql.isHuman}
   ].filter(Boolean);
 
   const hasAnyRows =
-    daily.rows.length > 0 || agents.rows.length > 0 || locationFeatures.rows.length > 0;
+    daily.rows.length > 0 || agents.rows.length > 0 || locationFeatures.rows.length > 0 || locationBehavior.rows.length > 0;
 
   if (!hasAnyRows && errors.length > 0 && !tolerateMissingDataset) {
     return { data: null, error: errors.join('; ') };
@@ -2490,6 +2649,16 @@ ${capabilitySql.isHuman}
   const capabilityRows = new Map(
     agents.rows.map((row) => [String(row.capability), row]),
   );
+  const locationBehaviorRows = (scope: string) =>
+    locationBehavior.rows.filter((row) => String(row.scope) === scope);
+  const locationFeatureRows = new Map(
+    locationBehaviorRows('feature').map((row) => [String(row.metricKey), row]),
+  );
+  const locationJourneyRows = new Map(
+    locationBehaviorRows('journey').map((row) => [String(row.metricKey), row]),
+  );
+  const journeyInstrumentationRow = locationBehaviorRows('instrumentation')[0] ?? {};
+  const journeyActionInstrumented = toNumber(journeyInstrumentationRow.events) > 0;
 
   const activatedUsers = usersByStep.get('activated') ?? 0;
   const locationRetries = toNumber(reliabilityRow.locationRetries);
@@ -2652,6 +2821,76 @@ ${capabilitySql.isHuman}
         users: toNumber(row.users),
         events: toNumber(row.events),
       })),
+      locationAnalytics: {
+        // Stable catalogue ordering means a newly instrumented feature appears
+        // as "measuring" before its first event instead of disappearing.
+        features: ONE_LOCATION_BEHAVIOR_FEATURES.map((spec) => {
+          const row = locationFeatureRows.get(spec.key);
+          const byDate = new Map(
+            locationBehaviorRows('feature_daily')
+              .filter((point) => String(point.metricKey) === spec.key)
+              .map((point) => [String(point.eventDate), point]),
+          );
+          return {
+            key: spec.key,
+            label: spec.label,
+            instrumented: true,
+            users: toNumber(row?.users),
+            events: toNumber(row?.events),
+            successes: toNumber(row?.successes),
+            failures: toNumber(row?.failures),
+            daily: dateSpine(range).map((date) => {
+              const point = byDate.get(date) ?? {};
+              return {
+                eventDate: date,
+                users: toNumber(point.users),
+                events: toNumber(point.events),
+              };
+            }),
+          };
+        }),
+        // This is reach across optional branches, not a sequential conversion
+        // funnel. The UI says so explicitly and does not compute drop-off.
+        journey: ONE_LOCATION_JOURNEY_STEPS.map((spec) => {
+          const row = locationJourneyRows.get(spec.key);
+          const instrumented = !spec.requiresJourneyAction || journeyActionInstrumented;
+          return {
+            key: spec.key,
+            label: spec.label,
+            instrumented,
+            users: instrumented ? toNumber(row?.users) : null,
+            events: instrumented ? toNumber(row?.events) : null,
+          };
+        }),
+        circleKinds: [
+          { key: 'family', label: 'Family' },
+          { key: 'friends', label: 'Friends' },
+          { key: 'other', label: 'Custom' },
+        ].map((spec) => {
+          const row = locationBehaviorRows('circle_kind').find(
+            (candidate) => String(candidate.metricKey).toLowerCase() === spec.key,
+          );
+          return {
+            kind: spec.key,
+            label: spec.label,
+            creators: toNumber(row?.users),
+            circlesCreated: toNumber(row?.successes),
+          };
+        }),
+        platforms: locationBehaviorRows('feature_platform').map((row) => ({
+          platform: String(row.dimension ?? 'UNKNOWN').toUpperCase(),
+          feature: String(row.metricKey ?? ''),
+          users: toNumber(row.users),
+          events: toNumber(row.events),
+        })),
+        journeyActionSeen: journeyActionInstrumented,
+        instrumentationStartedAt: journeyActionInstrumented
+          ? String(journeyInstrumentationRow.eventDate)
+          : null,
+        instrumentationNote: journeyActionInstrumented
+          ? 'Detailed Connect, Circles, invitation and Profile actions are flowing from the shared web/native analytics adapter.'
+          : 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.',
+      },
       platforms: platforms.rows.map((row) => ({
         platform: String(row.platform),
         users: toNumber(row.users),

@@ -810,6 +810,61 @@ export interface OneLocationFeatureUsage {
   events: number;
 }
 
+export interface OneLocationMetricPoint {
+  eventDate: string;
+  users: number;
+  events: number;
+}
+
+/**
+ * A product-level One Location behaviour, normalized from the older dedicated
+ * events and the newer journey-action event. `instrumented` is explicit so a
+ * feature waiting for its first shipped event never masquerades as zero use.
+ */
+export interface OneLocationBehaviorMetric {
+  key: string;
+  label: string;
+  instrumented: boolean;
+  users: number | null;
+  events: number | null;
+  successes: number | null;
+  failures: number | null;
+  daily: OneLocationMetricPoint[];
+}
+
+export interface OneLocationJourneyMetric {
+  key: string;
+  label: string;
+  instrumented: boolean;
+  users: number | null;
+  events: number | null;
+}
+
+export interface OneLocationCircleKindMetric {
+  kind: string;
+  label: string;
+  creators: number;
+  circlesCreated: number;
+}
+
+export interface OneLocationPlatformBehaviorMetric {
+  platform: string;
+  feature: string;
+  users: number;
+  events: number;
+}
+
+export interface OneLocationBehaviorAnalytics {
+  /** First export date on which the richer journey-action event was observed. */
+  instrumentationStartedAt: string | null;
+  journeyActionSeen: boolean;
+  instrumentationNote: string;
+  features: OneLocationBehaviorMetric[];
+  journey: OneLocationJourneyMetric[];
+  circleKinds: OneLocationCircleKindMetric[];
+  platforms: OneLocationPlatformBehaviorMetric[];
+}
+
 export interface OnePlatformUsage {
   platform: string;
   users: number;
@@ -858,6 +913,7 @@ export interface OneAppSummary {
   capabilities: OneCapabilityUsage[];
   surfaces: OneSurfaceRow[];
   locationFeatures: OneLocationFeatureUsage[];
+  locationAnalytics: OneLocationBehaviorAnalytics;
   platforms: OnePlatformUsage[];
   acquisition: OneAcquisitionRow[];
   daily: OneDailyPoint[];

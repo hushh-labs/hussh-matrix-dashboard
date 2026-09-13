@@ -414,7 +414,7 @@ function buildOneAcquisitionMetrics(one: OneAppSummary | null): BreakdownMetric[
 function buildOneHeadlineMetrics(one: OneAppSummary | null): BreakdownMetric[] {
   if (!one) return [];
   const locationUsers =
-    one.capabilities.find((cap) => cap.key === 'one_location')?.humanUsers ?? 0;
+    one.capabilities.find((cap) => cap.key === 'location')?.humanUsers ?? 0;
   const activated = one.activation.activatedUsers || one.activation.sharingUsers;
 
   return [
