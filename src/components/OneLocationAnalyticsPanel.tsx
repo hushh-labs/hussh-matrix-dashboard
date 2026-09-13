@@ -47,18 +47,21 @@ const environments: Array<{
   label: string;
   sourceLabel: string;
   description: string;
+  waitingNote: string;
 }> = [
   {
     key: 'production',
     label: 'Production',
     sourceLabel: 'one.hushh.ai · public apps',
     description: 'Production web plus public iOS and Android builds. Tester traffic is excluded.',
+    waitingNote: 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.',
   },
   {
     key: 'uat',
     label: 'UAT / Test builds',
     sourceLabel: 'uat.one.hushh.ai · beta apps',
     description: 'UAT web plus iOS TestFlight and Android internal. Production traffic is excluded.',
+    waitingNote: 'The detailed journey event has not reached the UAT export yet. TestFlight, Android internal and UAT web events will appear after the next GA4 export.',
   },
 ];
 
@@ -279,6 +282,7 @@ function SourceCompleteness({
         { platform: 'IOS', label: 'iOS TestFlight' },
         { platform: 'ANDROID', label: 'Android internal' },
       ];
+  const sourcesWithActivity = sources.filter((source) => seen.has(source.platform)).length;
   return (
     <div className={cn(applePanel, 'flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between')}>
       <div>
@@ -286,20 +290,20 @@ function SourceCompleteness({
         <p className="mt-1 text-xs font-medium leading-5 text-[#6e6e73]">
           Every headline and feature row combines the three platforms inside this environment only.
         </p>
+        <p className="mt-1 text-xs font-semibold leading-5 text-[#86868b]">
+          Qualifying Location activity observed on {sourcesWithActivity} of {sources.length} included platform streams.
+          Zero-event streams remain included in the total.
+        </p>
       </div>
       <div className="flex flex-wrap gap-2">
         {sources.map((source) => {
-          const included = seen.has(source.platform);
           return (
             <span
               key={source.platform}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold',
-                included ? 'bg-[#e9f8ee] text-[#1f7a3c]' : 'bg-[#f2f2f7] text-[#86868b]',
-              )}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#e9f8ee] px-3 py-1.5 text-xs font-bold text-[#1f7a3c]"
             >
               <CheckCircle2 className="h-3.5 w-3.5" />
-              {source.label} {included ? 'included' : 'waiting for events'}
+              {source.label} included
             </span>
           );
         })}
@@ -429,7 +433,7 @@ export function OneLocationAnalyticsPanel({
       {!locationAnalytics.journeyActionSeen && (
         <div className="flex items-start gap-3 rounded-2xl border border-[#f0d8a8] bg-[#fff8ea] p-4 text-[#6a4600]">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <p className="text-sm font-semibold leading-5">{locationAnalytics.instrumentationNote}</p>
+          <p className="text-sm font-semibold leading-5">{environmentConfig.waitingNote}</p>
         </div>
       )}
 
