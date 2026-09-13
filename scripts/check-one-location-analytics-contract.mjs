@@ -87,6 +87,10 @@ async function main() {
   record('uat_available', uat?.available === true, `available=${String(uat?.available)}`);
   record('environment_windows_match', production?.windowDays === options.days && uat?.windowDays === options.days,
     `production=${String(production?.windowDays)}d; uat=${String(uat?.windowDays)}d; requested=${options.days}d`);
+  const productionNote = String(production?.locationAnalytics?.instrumentationNote ?? '').toLowerCase();
+  const uatNote = String(uat?.locationAnalytics?.instrumentationNote ?? '').toLowerCase();
+  record('environment_notes_isolated', !productionNote.includes('uat') && !uatNote.includes('production'),
+    'production and UAT instrumentation messages name only their own environment');
 
   for (const [environment, summary] of [['production', production], ['uat', uat]]) {
     const location = summary?.locationAnalytics;
