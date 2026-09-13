@@ -46,6 +46,9 @@ jobs:
       - name: Typecheck
         run: npm run lint
 
+      - name: Verify One Location routes
+        run: npm run test:routes:one-location
+
       - name: Build app
         run: npm run build
 

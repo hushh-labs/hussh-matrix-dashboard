@@ -77,6 +77,19 @@ For local developer runs, the Express proxy can also fall back to the authentica
    # Dashboard available at http://localhost:3001
    ```
 
+## Shareable One Location routes
+
+The One Location detail view has stable, refresh-safe URLs. The environment stays isolated in
+the path and each analytics section can be linked directly:
+
+- `/location-analytics` and `/location-analytics/production` — Production overview
+- `/location-analytics/uat` — UAT/Test overview
+- `/location-analytics/{production|uat}/features`
+- `/location-analytics/{production|uat}/circles`
+- `/location-analytics/{production|uat}/journey`
+
+Run `npm run test:routes:one-location` to verify the route parser and canonical URL contract.
+
 ## Production Checks
 
 Run the Hushh AI production probe instead of manually clicking through the hosted dashboard:

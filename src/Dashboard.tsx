@@ -38,6 +38,11 @@ import {
 } from 'recharts';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { fetchAllAnalytics, fetchGrowthCompare, formatNumber } from './lib/analytics-service';
+import {
+  locationAnalyticsPath,
+  parseLocationAnalyticsPath,
+  type LocationAnalyticsRoute,
+} from './lib/location-analytics-route';
 import { cn } from './lib/utils';
 import type {
   GrowthCompare,
@@ -80,6 +85,13 @@ const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` :
 const oneDayMs = 86_400_000;
 
 type DatePreset = 7 | 14 | 30 | 90;
+type DashboardTab = 'growth' | 'compare' | 'one' | 'overview' | 'platforms';
+
+const dashboardTabs: DashboardTab[] = ['growth', 'compare', 'one', 'overview', 'platforms'];
+
+function isDashboardTab(value: unknown): value is DashboardTab {
+  return typeof value === 'string' && dashboardTabs.includes(value as DashboardTab);
+}
 
 interface HushhAiDateRangeState {
   preset: DatePreset | 'custom';
@@ -1141,7 +1153,10 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 export default function Dashboard() {
   // 'one' leads because the One app is the active growth focus; the founder
   // should land on the scoreboard, not on the source matrix.
-  const [activeTab, setActiveTab] = useState<'growth' | 'compare' | 'one' | 'overview' | 'platforms'>('growth');
+  const [locationRoute, setLocationRoute] = useState<LocationAnalyticsRoute | null>(() => (
+    typeof window === 'undefined' ? null : parseLocationAnalyticsPath(window.location.pathname)
+  ));
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : 'growth'));
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   // 30 days by default: the One app's agent volumes are small enough that a
   // 7-day window reads as noise rather than a trend.
@@ -1171,6 +1186,68 @@ export default function Dashboard() {
   // let the slower 14D response land last and overwrite the 30D data while the
   // toggle still said 30D.
   const requestSeqRef = useRef(0);
+
+  const changeDashboardTab = useCallback((tab: DashboardTab) => {
+    if (locationRoute) {
+      window.history.pushState({ dashboardTab: tab }, '', '/');
+      setLocationRoute(null);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      window.history.replaceState({ ...window.history.state, dashboardTab: tab }, '', window.location.href);
+    }
+    setActiveTab(tab);
+  }, [locationRoute]);
+
+  const changeLocationRoute = useCallback((route: LocationAnalyticsRoute) => {
+    const path = locationAnalyticsPath(route);
+    if (window.location.pathname !== path) {
+      window.history.pushState({ dashboardTab: 'one' }, '', path);
+    }
+    setLocationRoute(route);
+    setActiveTab('one');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const openLocationAnalytics = useCallback(() => {
+    window.history.replaceState({ ...window.history.state, dashboardTab: 'one' }, '', window.location.href);
+    changeLocationRoute({ environment: 'production', tab: 'overview' });
+  }, [changeLocationRoute]);
+
+  const closeLocationAnalytics = useCallback(() => {
+    window.history.pushState({ dashboardTab: 'one' }, '', '/');
+    setLocationRoute(null);
+    setActiveTab('one');
+  }, []);
+
+  useEffect(() => {
+    window.history.replaceState(
+      { ...window.history.state, dashboardTab: locationRoute ? 'one' : activeTab },
+      '',
+      window.location.href,
+    );
+  }, [activeTab, locationRoute]);
+
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const route = parseLocationAnalyticsPath(window.location.pathname);
+      setLocationRoute(route);
+      setActiveTab(route ? 'one' : (isDashboardTab(event.state?.dashboardTab) ? event.state.dashboardTab : 'growth'));
+      window.scrollTo({ top: 0 });
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (!locationRoute) {
+      document.title = 'Hussh Matrix Dashboard';
+      return;
+    }
+    const section = locationRoute.tab === 'overview'
+      ? ''
+      : ` · ${locationRoute.tab[0].toUpperCase()}${locationRoute.tab.slice(1)}`;
+    document.title = `One Location ${locationRoute.environment === 'uat' ? 'UAT' : 'Production'}${section} | Hussh Matrix`;
+  }, [locationRoute]);
 
   const loadData = useCallback(async () => {
     const requestId = ++requestSeqRef.current;
@@ -1672,24 +1749,27 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="mx-auto max-w-[1320px] px-4 pb-10 pt-4 sm:px-6 sm:pb-12 sm:pt-6 lg:px-8">
-        <div className="sticky top-3 z-30 mb-8 rounded-lg border border-white/70 bg-white/76 p-2 shadow-[0_8px_24px_rgba(0,0,0,0.07)] backdrop-blur-2xl">
+      <div className="mx-auto max-w-[1320px] px-3 pb-10 pt-3 sm:px-6 sm:pb-12 sm:pt-6 lg:px-8">
+        <div className="relative z-30 mb-6 rounded-lg border border-white/70 bg-white/76 p-2 shadow-[0_8px_24px_rgba(0,0,0,0.07)] backdrop-blur-2xl sm:sticky sm:top-3 sm:mb-8">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div className={cn(
-              'flex min-h-10 min-w-0 items-center gap-2 rounded-lg border px-3 text-sm font-bold',
+              'flex min-h-10 min-w-0 items-start gap-2 rounded-lg border px-3 py-2 text-sm font-bold leading-5 sm:items-center',
               usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
             )}>
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 sm:mt-0" />
               <span className="min-w-0">{statusText}</span>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="inline-flex min-w-0 flex-1 rounded-lg bg-[#f5f5f7] p-1 sm:flex-none" role="tablist" aria-label="Dashboard sections">
-                {(['growth', 'compare', 'one', 'overview', 'platforms'] as const).map((tab) => (
+              <div className="grid min-w-0 flex-1 grid-cols-3 gap-1 rounded-lg bg-[#f5f5f7] p-1 sm:flex sm:flex-none" role="tablist" aria-label="Dashboard sections">
+                {dashboardTabs.map((tab) => (
                   <button
                     key={tab}
-                    onClick={() => setActiveTab(tab)}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    onClick={() => changeDashboardTab(tab)}
                     className={cn(
-                      'min-h-9 flex-1 rounded-md px-4 text-sm font-bold capitalize transition sm:flex-none',
+                      'min-h-10 min-w-0 rounded-md px-2 text-xs font-bold capitalize leading-4 transition sm:min-h-9 sm:shrink-0 sm:px-4 sm:text-sm',
                       activeTab === tab
                         ? 'bg-white text-[#1d1d1f] shadow-sm'
                         : 'text-[#6e6e73] hover:text-[#1d1d1f]',
@@ -1700,6 +1780,7 @@ export default function Dashboard() {
                 ))}
               </div>
               <button
+                type="button"
                 onClick={() => {
                   void loadData();
                   if (compare) void loadCompare();
@@ -1713,7 +1794,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        {!locationRoute && <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-lg border border-black/[0.06] bg-white/90 shadow-sm">
               <span className="text-3xl" aria-label="Hussh logo">🤫</span>
@@ -1726,7 +1807,7 @@ export default function Dashboard() {
               Live aggregate metrics for kai.hushh.ai, hushhtech.com, and hushh.ai with provider health surfaced inline.
             </p>
           </div>
-        </header>
+        </header>}
 
         {activeTab === 'growth' ? (
           <GrowthPanel
@@ -1767,6 +1848,10 @@ export default function Dashboard() {
             oneUat={data?.oneUat ?? null}
             healthMetrics={data?.oneHealthMetrics ?? []}
             rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
+            locationRoute={locationRoute}
+            onOpenLocation={openLocationAnalytics}
+            onCloseLocation={closeLocationAnalytics}
+            onLocationRouteChange={changeLocationRoute}
             dateControl={(
               <DateRangeControl
                 range={oneRange}
