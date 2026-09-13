@@ -1764,6 +1764,7 @@ export default function Dashboard() {
             // since the One app became the growth focus, which is what made a
             // pre-existing hazard the first thing every visitor hit.
             one={data?.one ?? null}
+            oneUat={data?.oneUat ?? null}
             healthMetrics={data?.oneHealthMetrics ?? []}
             rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
             dateControl={(
