@@ -94,7 +94,14 @@ async function main() {
 
   for (const [environment, summary] of [['production', production], ['uat', uat]]) {
     const location = summary?.locationAnalytics;
+    const expectedWebHost = environment === 'production' ? 'one.hushh.ai' : 'uat.one.hushh.ai';
     record(`${environment}_location_contract_present`, Boolean(location), location ? 'locationAnalytics object present' : 'locationAnalytics missing');
+    record(`${environment}_web_host_correct`, summary?.sourceWebHost === expectedWebHost,
+      `sourceWebHost=${String(summary?.sourceWebHost)}; expected=${expectedWebHost}`);
+    record(`${environment}_streaming_export_enabled`, summary?.realtimeMode === 'streaming_export',
+      `realtimeMode=${String(summary?.realtimeMode)}`);
+    record(`${environment}_streaming_lag_declared`, Number(summary?.expectedLagSeconds) <= 300,
+      `expectedLagSeconds=${String(summary?.expectedLagSeconds)}`);
 
     const featureKeys = (location?.features ?? []).map((row) => row.key);
     const journeyKeys = (location?.journey ?? []).map((row) => row.key);

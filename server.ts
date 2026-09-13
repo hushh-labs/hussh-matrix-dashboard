@@ -2041,7 +2041,7 @@ function oneCapabilitySql(): { capability: string; isHuman: string } {
 }
 
 const ONE_APP_HOST = process.env.ONE_APP_WEB_HOST || 'one.hushh.ai';
-const ONE_APP_UAT_HOST = process.env.ONE_APP_UAT_WEB_HOST || 'uat.hushh.ai';
+const ONE_APP_UAT_HOST = process.env.ONE_APP_UAT_WEB_HOST || 'uat.one.hushh.ai';
 
 function oneAppSurfaceFilter(webHost: string): string {
   return `(
@@ -2095,7 +2095,13 @@ async function fetchOneAppSummary(
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
   const surfaceFilter = oneAppSurfaceFilter(webHost);
-  const dateFilter = `${ga4ExportSuffixFilter(range.startDate, range.endDate)} AND ${surfaceFilter}`;
+  // Selected-range totals must include GA4's streaming table. Without it, an
+  // action completed today is already present in BigQuery but the dashboard
+  // continues to show zero until the finalized daily export lands. GA4 removes
+  // an intraday table when that day's daily table is finalized, so selecting
+  // both suffix forms keeps historical totals intact while making the current
+  // day visible within the streaming-export delay.
+  const dateFilter = `${ga4ExportSuffixFilter(range.startDate, range.endDate, true)} AND ${surfaceFilter}`;
   const last24Range = defaultUtcRange(2);
   // Intraday tables are what make the last-24h tile meaningful during a launch;
   // the finalized daily table lands a day late.
@@ -2197,6 +2203,7 @@ ${capabilitySql.isHuman}
         CASE
           WHEN eventName = 'one_location_share_confirmed' THEN 'live_sharing'
           WHEN eventName = 'one_location_check_in_completed' THEN 'check_in'
+          WHEN eventName = 'one_location_journey_action' AND actionName = 'nearby_check_in_result' THEN 'check_in'
           WHEN eventName = 'one_location_sos_triggered' THEN 'sms_safety'
           WHEN eventName = 'one_location_request_sent' THEN 'request_location'
           WHEN eventName = 'one_location_public_link_created' THEN 'public_sharing'
@@ -2224,6 +2231,7 @@ ${capabilitySql.isHuman}
           WHEN eventName = 'one_location_journey_action' AND actionName = 'location_request_fulfilled' AND result = 'success' THEN 'request_fulfilled'
           WHEN eventName = 'one_location_share_confirmed' AND result = 'success' AND successCount > 0 THEN 'live_shared'
           WHEN eventName = 'one_location_check_in_completed' AND result = 'success' AND successCount > 0 THEN 'check_in'
+          WHEN eventName = 'one_location_journey_action' AND actionName = 'nearby_check_in_result' AND result = 'success' THEN 'check_in'
           WHEN eventName = 'page_view' AND (routeId = 'profile' OR STARTS_WITH(routeId, 'profile_')) THEN 'profile_opened'
           ELSE NULL
         END AS journeyKey
@@ -2337,7 +2345,7 @@ ${capabilitySql.isHuman}
       END AS host,
       COUNT(DISTINCT user_pseudo_id) AS users
     FROM ${table}
-    WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate)}
+    WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true)}
     GROUP BY surface, host
     ORDER BY users DESC
     LIMIT 15
@@ -2396,6 +2404,7 @@ ${capabilitySql.isHuman}
   const activeWindowFilter = ga4ExportSuffixFilter(
     formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -33)),
     range.endDate,
+    true,
   );
 
   // DAU is anchored to the last day with data, not to the end of the selected
@@ -2544,7 +2553,7 @@ ${capabilitySql.isHuman}
         PARSE_DATE('%Y%m%d', event_date) AS day,
         DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
       FROM ${table}
-      WHERE ${ga4ExportSuffixFilter(retentionStart, range.endDate)} AND ${surfaceFilter} AND ${meaningful}
+      WHERE ${ga4ExportSuffixFilter(retentionStart, range.endDate, true)} AND ${surfaceFilter} AND ${meaningful}
     )
     WHERE firstDay IS NOT NULL
     GROUP BY cohortWeek
@@ -2669,9 +2678,10 @@ ${capabilitySql.isHuman}
       sourceProjectId: projectId,
       sourceDataset: dataset,
       sourceLabel: 'GA4 export',
+      sourceWebHost: webHost,
       generatedAt,
-      realtimeMode: 'delayed_export',
-      expectedLagSeconds: 86_400,
+      realtimeMode: 'streaming_export',
+      expectedLagSeconds: 300,
       available: hasAnyRows,
       windowDays: range.days,
       range: {
