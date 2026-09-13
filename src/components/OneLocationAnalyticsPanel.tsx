@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import {
   Activity,
@@ -27,15 +27,16 @@ import { formatNumber } from '../lib/analytics-service';
 import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
 import { cn } from '../lib/utils';
 import type {
+  LocationAnalyticsEnvironment,
+  LocationAnalyticsTab,
+} from '../lib/location-analytics-route';
+import type {
   OneAppSummary,
   OneLocationBehaviorMetric,
   OneLocationJourneyMetric,
 } from '../lib/types';
 
-type DetailTab = 'overview' | 'features' | 'circles' | 'journey';
-type LocationEnvironment = 'production' | 'uat';
-
-const tabs: Array<{ key: DetailTab; label: string }> = [
+const tabs: Array<{ key: LocationAnalyticsTab; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'features', label: 'Features' },
   { key: 'circles', label: 'Circles' },
@@ -43,7 +44,7 @@ const tabs: Array<{ key: DetailTab; label: string }> = [
 ];
 
 const environments: Array<{
-  key: LocationEnvironment;
+  key: LocationAnalyticsEnvironment;
   label: string;
   sourceLabel: string;
   description: string;
@@ -122,11 +123,54 @@ function FeatureTable({
   environment,
 }: {
   features: OneLocationBehaviorMetric[];
-  environment: LocationEnvironment;
+  environment: LocationAnalyticsEnvironment;
 }) {
   return (
-    <div className={cn(applePanel, 'overflow-hidden')}>
-      <div className="overflow-x-auto">
+    <>
+      <div className="space-y-3 sm:hidden">
+        {features.map((feature) => {
+          const Icon = featureIcon[feature.key] ?? Activity;
+          const waiting = !feature.instrumented;
+          const values = [
+            { label: 'Devices', value: feature.users },
+            { label: 'Signals', value: feature.events },
+            { label: 'Successful', value: feature.successes },
+            { label: 'Failed', value: feature.failures },
+          ];
+          return (
+            <article key={feature.key} className={cn(applePanel, 'p-4')}>
+              <div className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#007aff] shadow-sm">
+                  <Icon className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
+                  <p className="mt-0.5 text-xs font-medium leading-5 text-[#86868b]">
+                    {waiting
+                      ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event`
+                      : 'Event-level outcomes · not funnel conversion'}
+                  </p>
+                </div>
+              </div>
+              <dl className="mt-4 grid grid-cols-2 gap-2">
+                {values.map((item) => (
+                  <div key={item.label} className="rounded-xl bg-white/75 p-3">
+                    <dt className="text-[10px] font-bold uppercase tracking-wide text-[#86868b]">{item.label}</dt>
+                    <dd className="mt-1 text-base font-bold text-[#1d1d1f]">
+                      <MetricValue value={item.value} waiting={waiting} />
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+              <p className="mt-3 text-xs font-semibold text-[#6e6e73]">
+                Non-error share: <span className="font-bold text-[#1d1d1f]">{waiting ? '—' : ratio(feature.successes, feature.events)}</span>
+              </p>
+            </article>
+          );
+        })}
+      </div>
+      <div className={cn(applePanel, 'hidden overflow-hidden sm:block')}>
+        <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] border-collapse text-left">
           <thead>
             <tr className="border-b border-black/[0.06] bg-white/55 text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">
@@ -172,8 +216,9 @@ function FeatureTable({
             })}
           </tbody>
         </table>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -264,7 +309,7 @@ function SourceCompleteness({
   environment,
 }: {
   one: OneAppSummary;
-  environment: LocationEnvironment;
+  environment: LocationAnalyticsEnvironment;
 }) {
   const seen = new Set(
     one.locationAnalytics.platforms
@@ -315,18 +360,24 @@ function SourceCompleteness({
 export function OneLocationAnalyticsPanel({
   one,
   uat,
+  environment,
+  tab,
   rangeLabel,
   dateControl,
   onBack,
+  onEnvironmentChange,
+  onTabChange,
 }: {
-  one: OneAppSummary;
+  one: OneAppSummary | null;
   uat: OneAppSummary | null;
+  environment: LocationAnalyticsEnvironment;
+  tab: LocationAnalyticsTab;
   rangeLabel: string;
   dateControl: ReactNode;
   onBack: () => void;
+  onEnvironmentChange: (environment: LocationAnalyticsEnvironment) => void;
+  onTabChange: (tab: LocationAnalyticsTab) => void;
 }): ReactElement {
-  const [tab, setTab] = useState<DetailTab>('overview');
-  const [environment, setEnvironment] = useState<LocationEnvironment>('production');
   const selectedOne = environment === 'production' ? one : uat;
   const environmentConfig = environments.find((item) => item.key === environment) ?? environments[0];
   const locationAnalytics = selectedOne?.locationAnalytics;
@@ -344,7 +395,7 @@ export function OneLocationAnalyticsPanel({
   }));
 
   return (
-    <main className="space-y-8">
+    <main className="space-y-6 sm:space-y-8">
       <section className={dashboardBand}>
         <button
           type="button"
@@ -354,7 +405,7 @@ export function OneLocationAnalyticsPanel({
           <ArrowLeft className="h-4 w-4" />
           All One agents
         </button>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className={appleLabel}>{environmentConfig.sourceLabel} · One Location · {rangeLabel}</p>
             <h2 className="mt-1 text-3xl font-semibold tracking-tight text-[#1d1d1f] sm:text-4xl">One Location analytics</h2>
@@ -362,11 +413,11 @@ export function OneLocationAnalyticsPanel({
               Behaviour across web, iPhone and Android—from Connect and Circles through requests, sharing and Check-In.
             </p>
           </div>
-          {dateControl}
+          <div className="w-full lg:w-auto">{dateControl}</div>
         </div>
         <div className="mt-5 grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
           <div
-            className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-black/[0.045] p-1"
+            className="grid w-full grid-cols-2 gap-1 rounded-xl bg-black/[0.045] p-1 sm:flex sm:w-fit"
             role="tablist"
             aria-label="One Location analytics environment"
           >
@@ -376,9 +427,9 @@ export function OneLocationAnalyticsPanel({
                 type="button"
                 role="tab"
                 aria-selected={environment === item.key}
-                onClick={() => setEnvironment(item.key)}
+                onClick={() => onEnvironmentChange(item.key)}
                 className={cn(
-                  'min-h-10 shrink-0 rounded-lg px-4 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff]',
+                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
                   environment === item.key
                     ? 'bg-white text-[#1d1d1f] shadow-sm'
                     : 'text-[#6e6e73] hover:text-[#1d1d1f]',
@@ -392,16 +443,16 @@ export function OneLocationAnalyticsPanel({
             {environmentConfig.description} Counts never mix across environments.
           </p>
         </div>
-        <div className="mt-5 flex max-w-full gap-1 overflow-x-auto rounded-xl bg-black/[0.035] p-1" role="tablist" aria-label="One Location analytics sections">
+        <div className="mt-5 grid grid-cols-2 gap-1 rounded-xl bg-black/[0.035] p-1 sm:flex" role="tablist" aria-label="One Location analytics sections">
           {tabs.map((item) => (
             <button
               key={item.key}
               type="button"
               role="tab"
               aria-selected={tab === item.key}
-              onClick={() => setTab(item.key)}
+              onClick={() => onTabChange(item.key)}
               className={cn(
-                'min-h-10 shrink-0 rounded-lg px-4 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff]',
+                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
                 tab === item.key ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
               )}
             >

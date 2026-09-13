@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle, Info } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -17,6 +17,7 @@ import {
 import { cn } from '../lib/utils';
 import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
 import { formatNumber } from '../lib/analytics-service';
+import type { LocationAnalyticsRoute } from '../lib/location-analytics-route';
 import { OneLocationAnalyticsPanel } from './OneLocationAnalyticsPanel';
 import type {
   BreakdownMetric,
@@ -723,20 +724,26 @@ export function OneAppPanel({
   healthMetrics,
   rangeLabel,
   dateControl,
+  locationRoute,
+  onOpenLocation,
+  onCloseLocation,
+  onLocationRouteChange,
 }: {
   one: OneAppSummary | null;
   oneUat: OneAppSummary | null;
   healthMetrics: BreakdownMetric[];
   rangeLabel: string;
+  locationRoute: LocationAnalyticsRoute | null;
+  onOpenLocation: () => void;
+  onCloseLocation: () => void;
+  onLocationRouteChange: (route: LocationAnalyticsRoute) => void;
   /**
    * Owned by Dashboard so the range state lives with every other product's,
    * and rendered here so it sits with the numbers it governs.
    */
   dateControl: ReactNode;
 }) {
-  const [locationDetailOpen, setLocationDetailOpen] = useState(false);
-
-  if (!one || !one.available) {
+  if ((!one || !one.available) && !locationRoute) {
     return (
       <main className="space-y-10">
         <div className="flex justify-end">{dateControl}</div>
@@ -753,17 +760,21 @@ export function OneAppPanel({
     );
   }
 
-  if (locationDetailOpen) {
+  if (locationRoute) {
     return (
       <OneLocationAnalyticsPanel
         one={one}
         uat={oneUat}
+        environment={locationRoute.environment}
+        tab={locationRoute.tab}
         rangeLabel={rangeLabel}
         dateControl={dateControl}
         onBack={() => {
-          setLocationDetailOpen(false);
+          onCloseLocation();
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
+        onEnvironmentChange={(environment) => onLocationRouteChange({ ...locationRoute, environment })}
+        onTabChange={(tab) => onLocationRouteChange({ ...locationRoute, tab })}
       />
     );
   }
@@ -840,7 +851,7 @@ export function OneAppPanel({
                     type="button"
                     aria-label="Open detailed One Location analytics"
                     onClick={() => {
-                      setLocationDetailOpen(true);
+                      onOpenLocation();
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                     className="h-full rounded-2xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] focus-visible:ring-offset-2"

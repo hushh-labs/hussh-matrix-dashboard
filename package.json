@@ -21,6 +21,7 @@
     "test:prod:kai": "node scripts/check-kai-production.mjs",
     "test:metrics:one-reconciliation": "node scripts/check-one-metrics-reconciliation.mjs",
     "test:api:one-location": "node scripts/check-one-location-analytics-contract.mjs",
+    "test:routes:one-location": "tsx scripts/check-location-analytics-routes.ts",
     "test:chat:agent": "node scripts/check-insights-agent-local.mjs",
     "test:prod:agent": "node scripts/check-insights-agent-production.mjs"
   },
