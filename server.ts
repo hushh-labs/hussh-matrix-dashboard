@@ -2445,19 +2445,22 @@ ${capabilitySql.isHuman}
   // the same set of devices that installed inside the window, so the stages
   // nest and the percentages mean something. Counting each stage independently
   // would mix in people who installed months ago and make the rates nonsense.
-  //
-  // Web is excluded on purpose: there is no install to cohort on.
+  // The 6-stage native install cohort funnel (iOS & Android native only).
+  // Stages nest because every one is measured against the same set of devices
+  // that installed inside the window. Web is excluded (no native install cohort).
   const installFunnelQuery = `
     WITH scoped AS (
       SELECT
         COALESCE(platform, 'UNKNOWN') AS platform,
         user_pseudo_id,
-        event_name
+        event_name,
+        PARSE_DATE('%Y%m%d', event_date) AS day,
+        DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
       FROM ${table}
       WHERE ${dateFilter} AND platform IN ('IOS', 'ANDROID')
     ),
     installs AS (
-      SELECT DISTINCT platform, user_pseudo_id FROM scoped WHERE event_name = 'first_open'
+      SELECT DISTINCT platform, user_pseudo_id, firstDay FROM scoped WHERE event_name = 'first_open'
     ),
     progressed AS (
       SELECT
@@ -2466,10 +2469,11 @@ ${capabilitySql.isHuman}
         MAX(IF(s.event_name IN ('auth_started', 'google_sign_in_started'), 1, 0)) AS triedSignIn,
         MAX(IF(s.event_name IN ('auth_succeeded', 'google_sign_in_completed'), 1, 0)) AS signedIn,
         MAX(IF(s.event_name = 'one_location_onboarding_completed', 1, 0)) AS onboarded,
-        MAX(IF(s.event_name = 'one_location_activation_completed', 1, 0)) AS activated
+        MAX(IF(s.event_name = 'one_location_activation_completed', 1, 0)) AS activated,
+        MAX(IF(s.day BETWEEN DATE_ADD(i.firstDay, INTERVAL 1 DAY) AND DATE_ADD(i.firstDay, INTERVAL 7 DAY), 1, 0)) AS returnedW1
       FROM installs i
       JOIN scoped s USING (platform, user_pseudo_id)
-      GROUP BY i.platform, i.user_pseudo_id
+      GROUP BY i.platform, i.user_pseudo_id, i.firstDay
     )
     SELECT
       platform,
@@ -2477,7 +2481,8 @@ ${capabilitySql.isHuman}
       SUM(triedSignIn) AS triedSignIn,
       SUM(signedIn) AS signedIn,
       SUM(onboarded) AS onboarded,
-      SUM(activated) AS activated
+      SUM(activated) AS activated,
+      SUM(returnedW1) AS returnedW1
     FROM progressed
     GROUP BY platform
     ORDER BY installed DESC
@@ -2745,7 +2750,8 @@ ${capabilitySql.isHuman}
             stage('tried_sign_in', 'Tried to sign in', toNumber(row.triedSignIn)),
             stage('signed_in', 'Signed in', toNumber(row.signedIn)),
             stage('onboarded', 'Finished onboarding', toNumber(row.onboarded)),
-            stage('activated', 'Shared or received a location', toNumber(row.activated)),
+            stage('activated', 'Reached first value', toNumber(row.activated)),
+            stage('returned_w1', 'Returned in week 1', toNumber(row.returnedW1)),
           ],
         };
       }),

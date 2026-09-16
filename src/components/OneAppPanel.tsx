@@ -377,7 +377,7 @@ function Retention({ one }: { one: OneAppSummary }) {
 }
 
 /**
- * 3b. What happens to a native install.
+ * 3b. What happens to a native install (6-stage funnel).
  *
  * The activation funnel below starts at "opened the app", which omits the
  * largest drop in the product: most people who install never sign in at all.
@@ -394,7 +394,7 @@ function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
     return (
       <div className={cn(applePanel, 'p-6 text-center')}>
         <p className="text-sm font-semibold text-[#6e6e73]">
-          No app installs recorded in this window.
+          No native app installs (iOS/Android) recorded in this window.
         </p>
       </div>
     );
@@ -402,6 +402,15 @@ function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3 px-1">
+        <span className="inline-flex items-center rounded-md bg-[#e5f1ff] px-2.5 py-1 text-xs font-semibold text-[#007aff]">
+          iOS & Android native only
+        </span>
+        <span className="text-xs font-medium text-[#86868b]">
+          Web has no app install to cohort on and is excluded
+        </span>
+      </div>
+
       {meaningful.map((funnel) => {
         const last = funnel.stages[funnel.stages.length - 1];
         const worst = funnel.stages.reduce(
@@ -418,15 +427,17 @@ function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
           <div key={funnel.platform} className={cn(appleCard, 'p-6')}>
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="text-sm font-semibold text-[#6e6e73]">
-                  {platformLabel(funnel.platform)} &mdash; reached first value
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-[#6e6e73]">
+                    {platformLabel(funnel.platform)} &mdash; 6-stage install retention funnel
+                  </p>
+                </div>
                 <div className="mt-1 flex flex-wrap items-end gap-x-3">
                   <p className="text-5xl font-semibold leading-none text-[#1d1d1f]">
                     {formatNumber(last.users)}
                   </p>
                   <p className="pb-1 text-base font-semibold text-[#86868b]">
-                    of {formatNumber(funnel.installed)} who installed &middot;{' '}
+                    returned in week 1 of {formatNumber(funnel.installed)} who installed &middot;{' '}
                     {percentText(last.shareOfInstalls, 1)}
                   </p>
                 </div>
@@ -443,6 +454,9 @@ function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
 
             <ol className="mt-6 flex flex-col gap-2.5">
               {funnel.stages.map((stage, index) => {
+                const previousUsers = index > 0 ? funnel.stages[index - 1].users : null;
+                const dropCount = previousUsers !== null ? Math.max(0, previousUsers - stage.users) : 0;
+                const dropRate = previousUsers && previousUsers > 0 ? dropCount / previousUsers : null;
                 const width =
                   funnel.installed > 0
                     ? Math.max((stage.users / funnel.installed) * 100, stage.users > 0 ? 2 : 0)
@@ -451,12 +465,17 @@ function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
                 return (
                   <li key={stage.key} className="flex flex-col gap-1.5">
                     <div className="flex items-baseline justify-between gap-4">
-                      <span className="text-sm font-semibold text-[#1d1d1f]">{stage.label}</span>
+                      <span className="text-sm font-semibold text-[#1d1d1f]">
+                        {index + 1}. {stage.label}
+                      </span>
                       <span className="shrink-0 text-sm font-semibold tabular-nums text-[#6e6e73]">
                         {formatNumber(stage.users)}
                         {index > 0 && (
                           <span className="ml-2 text-[#86868b]">
-                            {percentText(stage.shareOfInstalls, 0)} of installs
+                            ({percentText(stage.shareOfInstalls, 0)} of installs
+                            {dropRate !== null && dropRate > 0 && (
+                              <span className="text-[#8a5a04]"> &middot; {percentText(dropRate, 0)} drop</span>
+                            )})
                           </span>
                         )}
                       </span>
@@ -471,6 +490,12 @@ function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
                 );
               })}
             </ol>
+
+            <div className="mt-5 border-t border-black/5 pt-3">
+              <p className="text-xs font-semibold leading-5 text-[#86868b]">
+                💡 Drop-off reasons require additional instrumentation (agent turn telemetry, auth failure reason emitters, and uninstrumented capability events) &mdash; not yet available in current data.
+              </p>
+            </div>
           </div>
         );
       })}
