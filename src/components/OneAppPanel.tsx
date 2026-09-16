@@ -504,6 +504,94 @@ function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
 }
 
 /**
+ * Agent Drop-off & Capability Diagnostic Component.
+ */
+function FunnelDropoffAgentDiagnostic({
+  funnels,
+  capabilities,
+}: {
+  funnels: OneInstallFunnel[];
+  capabilities: OneCapabilityUsage[];
+}) {
+  const drops = funnels
+    .flatMap((f) => {
+      return f.stages.slice(1).map((stage, i) => {
+        const prev = f.stages[i];
+        const lost = prev.users - stage.users;
+        const rate = prev.users > 0 ? lost / prev.users : 0;
+        return {
+          platform: f.platform,
+          fromStage: prev.label,
+          toStage: stage.label,
+          lost,
+          rate,
+        };
+      });
+    })
+    .sort((a, b) => b.lost - a.lost);
+
+  return (
+    <div className={cn(appleCard, 'mt-4 p-6')}>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h3 className="text-base font-bold text-[#1d1d1f]">Drop-off & Agent Diagnostics</h3>
+          <p className="mt-0.5 text-xs font-semibold text-[#6e6e73]">
+            Stage-by-stage loss analysis and capability telemetry status
+          </p>
+        </div>
+        <span className="rounded-md bg-[#fff4e5] px-2.5 py-1 text-xs font-bold text-[#8a5a04]">
+          Telemetry Diagnostics
+        </span>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Where they drop off */}
+        <div className="rounded-xl border border-black/5 bg-[#fafafa] p-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-[#86868b]">Where They Drop Off</p>
+          <ul className="mt-3 flex flex-col gap-2 text-sm">
+            {drops.slice(0, 3).map((drop, idx) => (
+              <li key={idx} className="flex items-center justify-between border-b border-black/5 pb-2 last:border-0 last:pb-0">
+                <span className="font-medium text-[#1d1d1f]">
+                  {drop.fromStage} → {drop.toStage} ({platformLabel(drop.platform)})
+                </span>
+                <span className="font-bold tabular-nums text-[#8a5a04]">
+                  -{formatNumber(drop.lost)} ({percentText(drop.rate, 0)})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Which agent capabilities are instrumented vs uninstrumented */}
+        <div className="rounded-xl border border-black/5 bg-[#fafafa] p-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-[#86868b]">Agent Capabilities (Which Agent)</p>
+          <ul className="mt-3 flex flex-col gap-2 text-sm">
+            {capabilities.slice(0, 4).map((cap) => (
+              <li key={cap.key} className="flex items-center justify-between border-b border-black/5 pb-2 last:border-0 last:pb-0">
+                <span className="font-medium text-[#1d1d1f]">{cap.label}</span>
+                {cap.instrumented ? (
+                  <span className="font-semibold text-[#1f7a36]">
+                    {formatNumber(cap.humanUsers ?? 0)} users
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold text-[#8a5a04]">
+                    Not instrumented
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg bg-[#f5f5f7] p-3 text-xs font-semibold leading-5 text-[#6e6e73]">
+        <span className="font-bold text-[#1d1d1f]">Why do they drop off?</span> Pinpointing agent-level failure causes (e.g. auth cancellation vs agent execution timeout) requires dedicated event emitters (<code>agent_turn_completed</code>, <code>auth_failure_code</code>) in the main app codebase.
+      </div>
+    </div>
+  );
+}
+
+/**
  * 4. Activation.
  *
  * Stages are absolute counts with the conversion stated between them, rather
@@ -843,6 +931,7 @@ export function OneAppPanel({
         hint="A true cohort: every stage counts the same people who installed in this window, so the percentages are real conversions. Web has no install to measure."
       >
         <InstallFunnel funnels={one.installFunnel} />
+        <FunnelDropoffAgentDiagnostic funnels={one.installFunnel} capabilities={one.capabilities} />
       </Block>
 
       <Block

@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle, Info } from 'lucide-react';
 import {
@@ -33,6 +33,8 @@ import type { GrowthSummary, OrgIdentityPlatform } from '../lib/types';
  * heading, one card, one headline figure, and the qualification directly under
  * it. No section is allowed a number without saying what the number is of.
  */
+
+type TimeGranularity = 'daily' | 'weekly' | 'monthly';
 
 function percentText(value: number | null | undefined, decimals = 1): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -124,21 +126,55 @@ const chartTooltip = {
 } as const;
 
 /**
- * 1. Users picked up over time.
+ * 1. Users picked up over time (Daily / Weekly / Monthly toggle).
  *
  * The cumulative line is the "how big are we" number; the bars are the pace.
  * Both are on one chart because either alone misleads — a rising total looks
  * like health even while the weekly intake collapses.
  */
 function UsersOverTime({ growth }: { growth: GrowthSummary }) {
+  const [granularity, setGranularity] = useState<TimeGranularity>('weekly');
   const { series, totalEverSeen, note } = growth.users;
-  const recent = series.slice(-12);
 
-  // The running total and the weekly curve are all-time on purpose. The two
-  // tiles beside the total are the part the date picker moves: new devices
-  // inside the selected range, against the equal-length window before it.
-  // The picker sat next to "last 4 weeks" tiles for long enough that it read
-  // as broken.
+  const displayData = useMemo(() => {
+    if (granularity === 'weekly') {
+      return series.slice(-12).map((item) => ({
+        label: item.week.slice(5),
+        newUsers: item.newUsers,
+        cumulative: item.cumulative,
+        tooltipLabel: 'New that week',
+      }));
+    } else if (granularity === 'monthly') {
+      const monthlyMap = new Map<string, { newUsers: number; cumulative: number }>();
+      for (const item of series) {
+        const monthKey = item.week.slice(0, 7);
+        const existing = monthlyMap.get(monthKey) || { newUsers: 0, cumulative: 0 };
+        existing.newUsers += item.newUsers;
+        existing.cumulative = item.cumulative;
+        monthlyMap.set(monthKey, existing);
+      }
+      return Array.from(monthlyMap.entries()).slice(-12).map(([month, data]) => ({
+        label: month,
+        newUsers: data.newUsers,
+        cumulative: data.cumulative,
+        tooltipLabel: 'New that month',
+      }));
+    } else {
+      // Daily estimation / breakdown from weekly intake
+      return series.slice(-4).flatMap((item) => {
+        const dailyAvg = Math.round(item.newUsers / 7);
+        return [
+          {
+            label: item.week.slice(5),
+            newUsers: dailyAvg,
+            cumulative: item.cumulative,
+            tooltipLabel: 'Est. daily avg',
+          },
+        ];
+      });
+    }
+  }, [series, granularity]);
+
   const window = growth.users.window;
   const lastFour = series.slice(-4);
   const priorFour = series.slice(-8, -4);
@@ -174,17 +210,54 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
       </div>
 
       <div className={cn(appleCard, 'p-6')}>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold text-[#86868b]">
+            Time aggregation: <span className="capitalize font-bold text-[#1d1d1f]">{granularity}</span>
+          </p>
+          <div className="flex items-center gap-1 rounded-lg bg-[#f0f0f2] p-1 text-xs font-semibold text-[#6e6e73]">
+            <button
+              type="button"
+              onClick={() => setGranularity('daily')}
+              className={cn(
+                'rounded-md px-2.5 py-1 transition-all',
+                granularity === 'daily' ? 'bg-white text-[#1d1d1f] shadow-sm' : 'hover:text-[#1d1d1f]'
+              )}
+            >
+              Daily
+            </button>
+            <button
+              type="button"
+              onClick={() => setGranularity('weekly')}
+              className={cn(
+                'rounded-md px-2.5 py-1 transition-all',
+                granularity === 'weekly' ? 'bg-white text-[#1d1d1f] shadow-sm' : 'hover:text-[#1d1d1f]'
+              )}
+            >
+              Weekly
+            </button>
+            <button
+              type="button"
+              onClick={() => setGranularity('monthly')}
+              className={cn(
+                'rounded-md px-2.5 py-1 transition-all',
+                granularity === 'monthly' ? 'bg-white text-[#1d1d1f] shadow-sm' : 'hover:text-[#1d1d1f]'
+              )}
+            >
+              Monthly
+            </button>
+          </div>
+        </div>
+
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={recent} margin={{ top: 4, right: 8, left: -14, bottom: 0 }}>
+            <ComposedChart data={displayData} margin={{ top: 4, right: 8, left: -14, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e8e8ed" vertical={false} />
               <XAxis
-                dataKey="week"
+                dataKey="label"
                 stroke="#86868b"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v: string) => v.slice(5)}
               />
               <YAxis yAxisId="left" stroke="#86868b" fontSize={11} tickLine={false} axisLine={false} />
               <YAxis
@@ -198,9 +271,9 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
               <Tooltip
                 contentStyle={chartTooltip}
                 cursor={{ fill: 'rgba(0,0,0,0.03)' }}
-                formatter={(value: number, name) => [
+                formatter={(value: number, name, item) => [
                   formatNumber(value),
-                  name === 'newUsers' ? 'New that week' : 'Running total',
+                  name === 'newUsers' ? (item?.payload?.tooltipLabel ?? 'New users') : 'Running total',
                 ]}
               />
               <Bar
@@ -225,7 +298,7 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold text-[#86868b]">
           <span>
             <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#007aff]" />
-            New that week (left)
+            New ({granularity})
           </span>
           <span>
             <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#1f7a36]" />
