@@ -2437,6 +2437,50 @@ ${capabilitySql.isHuman}
     FROM days
   `;
 
+  // Active user identities breakdown query (identifying accounts & devices)
+  const activeIdentitiesQuery = `
+    WITH days AS (
+      SELECT
+        user_pseudo_id,
+        user_id,
+        COALESCE(platform, 'UNKNOWN') AS platform,
+        PARSE_DATE('%Y%m%d', event_date) AS day,
+        MAX(event_timestamp) AS max_event_ts,
+        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key = 'email')) AS prop_email,
+        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email'))) AS param_email
+      FROM ${table}
+      WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
+      GROUP BY user_pseudo_id, user_id, platform, day
+    ),
+    anchor AS (SELECT MAX(day) AS latest FROM days),
+    user_summary AS (
+      SELECT
+        user_pseudo_id,
+        MAX(user_id) AS user_id,
+        MAX(COALESCE(prop_email, param_email)) AS bound_email,
+        MAX(platform) AS platform,
+        MAX(max_event_ts) AS max_event_ts,
+        MAX(IF(day = (SELECT latest FROM anchor), 1, 0)) AS is_daily,
+        MAX(IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_weekly,
+        MAX(IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_monthly
+      FROM days
+      GROUP BY user_pseudo_id
+    )
+    SELECT
+      user_pseudo_id AS userPseudoId,
+      user_id AS userId,
+      bound_email AS boundEmail,
+      platform,
+      CAST(TIMESTAMP_MICROS(max_event_ts) AS STRING) AS lastActiveTimestamp,
+      (is_daily = 1) AS isDaily,
+      (is_weekly = 1) AS isWeekly,
+      (is_monthly = 1) AS isMonthly
+    FROM user_summary
+    WHERE is_monthly = 1
+    ORDER BY is_daily DESC, is_weekly DESC, max_event_ts DESC
+    LIMIT 200
+  `;
+
   // What happens to a native install.
   //
   // The activation funnel elsewhere starts at "opened the app", which quietly
@@ -2601,6 +2645,7 @@ ${capabilitySql.isHuman}
     growth,
     retention,
     activationStages,
+    activeIdentities,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
     queryBigQuerySql(queryProject, agentQuery),
@@ -2620,6 +2665,7 @@ ${capabilitySql.isHuman}
     queryBigQuerySql(queryProject, growthQuery),
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
+    queryBigQuerySql(queryProject, activeIdentitiesQuery),
   ]);
 
   const errors = [
@@ -2641,6 +2687,7 @@ ${capabilitySql.isHuman}
     growth.error,
     retention.error,
     activationStages.error,
+    activeIdentities.error,
   ].filter(Boolean);
 
   const hasAnyRows =
@@ -2726,6 +2773,16 @@ ${capabilitySql.isHuman}
         // The day DAU was actually measured on, which is the last day with
         // data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
+        identities: activeIdentities.rows.map((row) => ({
+          userPseudoId: String(row.userPseudoId ?? ''),
+          userId: row.userId ? String(row.userId) : null,
+          boundEmail: row.boundEmail ? String(row.boundEmail) : null,
+          platform: String(row.platform ?? 'UNKNOWN'),
+          lastActiveTimestamp: String(row.lastActiveTimestamp ?? ''),
+          isDaily: Boolean(row.isDaily),
+          isWeekly: Boolean(row.isWeekly),
+          isMonthly: Boolean(row.isMonthly),
+        })),
       },
       // The install cohort funnel, per native platform. Stages nest because
       // every one is measured against the same devices that installed inside

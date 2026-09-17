@@ -1,6 +1,6 @@
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { AlertTriangle, Info } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Search, UserCheck, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
   Area,
@@ -91,44 +91,234 @@ function Block({
  * blank rather than 0% when there is no denominator.
  */
 function ActivePeople({ one }: { one: OneAppSummary }) {
-  const { dau, wau, mau, stickiness, asOf } = one.activeUsers;
-  const tiles = [
-    { label: 'Daily active', value: dau, detail: asOf },
-    { label: 'Weekly active', value: wau, detail: '7 days to ' + asOf },
-    { label: 'Monthly active', value: mau, detail: '30 days to ' + asOf },
+  const { dau, wau, mau, stickiness, asOf, identities = [] } = one.activeUsers;
+  const [selectedTier, setSelectedTier] = useState<'daily' | 'weekly' | 'monthly' | null>('daily');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterAccountOnly, setFilterAccountOnly] = useState(false);
+
+  const tiles: Array<{ key: 'daily' | 'weekly' | 'monthly'; label: string; value: number; detail: string }> = [
+    { key: 'daily', label: 'Daily active', value: dau, detail: asOf },
+    { key: 'weekly', label: 'Weekly active', value: wau, detail: '7 days to ' + asOf },
+    { key: 'monthly', label: 'Monthly active', value: mau, detail: '30 days to ' + asOf },
   ];
 
+  const filteredIdentities = identities.filter((item) => {
+    if (selectedTier === 'daily' && !item.isDaily) return false;
+    if (selectedTier === 'weekly' && !item.isWeekly) return false;
+    if (selectedTier === 'monthly' && !item.isMonthly) return false;
+    if (filterAccountOnly && !item.userId && !item.boundEmail) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const matchEmail = item.boundEmail?.toLowerCase().includes(q);
+      const matchUserId = item.userId?.toLowerCase().includes(q);
+      const matchPseudo = item.userPseudoId?.toLowerCase().includes(q);
+      const matchPlatform = item.platform?.toLowerCase().includes(q);
+      return Boolean(matchEmail || matchUserId || matchPseudo || matchPlatform);
+    }
+    return true;
+  });
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {tiles.map((tile, index) => (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {tiles.map((tile, index) => {
+          const isSelected = selectedTier === tile.key;
+          return (
+            <motion.div
+              key={tile.label}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.04 }}
+              onClick={() => setSelectedTier(isSelected ? null : tile.key)}
+              className={cn(
+                appleCard,
+                'group relative cursor-pointer p-5 transition-all duration-200 hover:shadow-md',
+                isSelected
+                  ? 'bg-[#f5f9ff] ring-2 ring-[#007aff] shadow-sm'
+                  : 'hover:border-[#007aff]/30'
+              )}
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
+                <span
+                  className={cn(
+                    'flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-colors',
+                    isSelected
+                      ? 'bg-[#007aff] text-white'
+                      : 'bg-black/5 text-[#6e6e73] group-hover:bg-[#007aff]/10 group-hover:text-[#007aff]'
+                  )}
+                >
+                  {isSelected ? 'Active View' : 'Click to inspect'}
+                  {isSelected ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </span>
+              </div>
+              <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">
+                {formatNumber(tile.value)}
+              </p>
+              <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
+            </motion.div>
+          );
+        })}
         <motion.div
-          key={tile.label}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: index * 0.04 }}
+          transition={{ delay: 0.12 }}
           className={cn(appleCard, 'p-5')}
         >
-          <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
+          <p className="text-sm font-semibold text-[#6e6e73]">Stickiness</p>
           <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">
-            {formatNumber(tile.value)}
+            {percentText(stickiness, 1)}
           </p>
-          <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
+          <p className="mt-2 text-xs font-semibold text-[#86868b]">
+            Daily of monthly — how much of the month a person shows up
+          </p>
         </motion.div>
-      ))}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.12 }}
-        className={cn(appleCard, 'p-5')}
-      >
-        <p className="text-sm font-semibold text-[#6e6e73]">Stickiness</p>
-        <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">
-          {percentText(stickiness, 1)}
-        </p>
-        <p className="mt-2 text-xs font-semibold text-[#86868b]">
-          Daily of monthly — how much of the month a person shows up
-        </p>
-      </motion.div>
+      </div>
+
+      {selectedTier && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          className={cn(appleCard, 'p-5 sm:p-6 overflow-hidden border-2 border-[#007aff]/20')}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-black/5 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-[#007aff]" />
+                <h3 className="text-base font-bold text-[#1d1d1f]">
+                  Active User Breakdown & Identifiers (
+                  {selectedTier === 'daily'
+                    ? 'Daily Active'
+                    : selectedTier === 'weekly'
+                    ? 'Weekly Active'
+                    : 'Monthly Active'}
+                  )
+                </h3>
+                <span className="rounded-full bg-[#007aff]/10 px-2.5 py-0.5 text-xs font-bold text-[#007aff]">
+                  {filteredIdentities.length} {filteredIdentities.length === 1 ? 'user' : 'users'}
+                </span>
+              </div>
+              <p className="mt-1 text-xs font-semibold text-[#6e6e73]">
+                Clicking daily/weekly/monthly displays active user IDs, bound email accounts, and anonymous device GUIDs.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFilterAccountOnly(!filterAccountOnly)}
+                className={cn(
+                  'rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors flex items-center gap-1.5',
+                  filterAccountOnly
+                    ? 'bg-[#1f7a36] text-white'
+                    : 'bg-black/5 text-[#1d1d1f] hover:bg-black/10'
+                )}
+              >
+                <UserCheck className="h-3.5 w-3.5" />
+                {filterAccountOnly ? 'Showing Signed-in Only' : 'Filter Signed-in Accounts'}
+              </button>
+
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
+                <input
+                  type="text"
+                  placeholder="Search email, UID, GUID..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-48 sm:w-64 rounded-lg border border-black/10 bg-white py-1.5 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {filteredIdentities.length === 0 ? (
+            <div className="py-8 text-center">
+              <p className="text-sm font-semibold text-[#6e6e73]">
+                {identities.length === 0
+                  ? 'No active user identity rows exported yet for this window.'
+                  : 'No matching user identities found for this filter.'}
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-black/5 text-left text-[11px] font-bold uppercase tracking-wider text-[#86868b]">
+                    <th className="py-2.5 px-3">Identity / Account / Email</th>
+                    <th className="py-2.5 px-3">Device GUID (user_pseudo_id)</th>
+                    <th className="py-2.5 px-3">Platform</th>
+                    <th className="py-2.5 px-3">Active Scope</th>
+                    <th className="py-2.5 px-3 text-right">Last Active</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/5">
+                  {filteredIdentities.map((item, idx) => {
+                    const hasAccount = Boolean(item.boundEmail || item.userId);
+                    const displayIdentity =
+                      item.boundEmail || item.userId || 'Anonymous Device';
+
+                    return (
+                      <tr key={item.userPseudoId + idx} className="hover:bg-black/[0.02]">
+                        <td className="py-2.5 px-3 font-semibold text-[#1d1d1f]">
+                          <div className="flex items-center gap-2">
+                            {hasAccount ? (
+                              <span className="flex items-center gap-1 rounded bg-[#1f7a36]/10 px-2 py-0.5 font-mono text-xs text-[#1f7a36]">
+                                <Mail className="h-3 w-3" />
+                                {displayIdentity}
+                              </span>
+                            ) : (
+                              <span className="text-[#86868b] italic">
+                                Anonymous (Unbound)
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-[#6e6e73]">
+                          {item.userPseudoId}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="rounded bg-black/5 px-2 py-0.5 font-bold uppercase text-[#1d1d1f]">
+                            {item.platform}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-1">
+                            {item.isDaily && (
+                              <span className="rounded bg-[#007aff]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#007aff]">
+                                DAU
+                              </span>
+                            )}
+                            {item.isWeekly && (
+                              <span className="rounded bg-[#34c759]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#1f7a36]">
+                                WAU
+                              </span>
+                            )}
+                            {item.isMonthly && (
+                              <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-bold text-[#6e6e73]">
+                                MAU
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-[#6e6e73]">
+                          {item.lastActiveTimestamp
+                            ? new Date(item.lastActiveTimestamp).toLocaleString()
+                            : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="mt-4 border-t border-black/5 pt-3 text-[11px] font-medium text-[#86868b]">
+            <strong>Identity note:</strong> GA4 binds <code className="font-mono text-[#1d1d1f]">user_id</code> (Firebase UID / Account hash / email) upon sign-in. Anonymous visitors are tracked via <code className="font-mono text-[#1d1d1f]">user_pseudo_id</code>.
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }

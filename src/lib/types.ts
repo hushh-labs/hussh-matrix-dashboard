@@ -724,6 +724,17 @@ export interface OneCapabilityUsage {
   daily: OneAgentDailyPoint[];
 }
 
+export interface OneActiveUserIdentity {
+  userPseudoId: string;
+  userId: string | null;
+  boundEmail?: string | null;
+  platform: string;
+  lastActiveTimestamp: string;
+  isDaily: boolean;
+  isWeekly: boolean;
+  isMonthly: boolean;
+}
+
 export interface OneActiveUsers {
   dau: number;
   wau: number;
@@ -732,6 +743,7 @@ export interface OneActiveUsers {
   stickiness: number | null;
   /** The day DAU is measured on -- the end of the selected range, not "today". */
   asOf: string;
+  identities?: OneActiveUserIdentity[];
 }
 
 /**
