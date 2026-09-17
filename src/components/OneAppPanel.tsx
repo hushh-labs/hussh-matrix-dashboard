@@ -140,7 +140,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   UNKNOWN: 'Unknown',
 };
 
-function platformLabel(platform: string): string {
+export function platformLabel(platform: string): string {
   return PLATFORM_LABELS[platform.toUpperCase()] ?? platform;
 }
 
@@ -156,7 +156,7 @@ function platformLabel(platform: string): string {
  * that is not valid, and it puts the identity gap where you cannot miss it:
  * the platform that cannot report accounts says so on its own row.
  */
-function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
+export function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
   if (rows.length === 0) return null;
   const anyBound = rows.some((row) => row.identityBound);
 
@@ -283,7 +283,7 @@ function GrowthQuality({ one }: { one: OneAppSummary }) {
  * paler rather than omitted, because dropping it would make the series look
  * like it ends earlier than it does.
  */
-function Retention({ one }: { one: OneAppSummary }) {
+export function Retention({ one }: { one: OneAppSummary }) {
   if (one.retention.length === 0) {
     return (
       <div className={cn(applePanel, 'p-6 text-center')}>
@@ -388,7 +388,7 @@ function Retention({ one }: { one: OneAppSummary }) {
  * question is "of everyone who installed, how many got here", and step-to-step
  * ratios flatter a funnel by hiding how steep the first drop is.
  */
-function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
+export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
   const meaningful = funnels.filter((f) => f.installed > 0);
   if (meaningful.length === 0) {
     return (
@@ -486,7 +486,7 @@ function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
  * people with the conversion suppressed, so a missing event cannot be misread
  * as a catastrophic drop-off.
  */
-function Activation({ one }: { one: OneAppSummary }) {
+export function Activation({ one }: { one: OneAppSummary }) {
   const stages = one.activationStages;
   const first = stages[0]?.users ?? 0;
   const last = stages[stages.length - 1]?.users ?? 0;
