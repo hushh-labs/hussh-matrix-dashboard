@@ -33,7 +33,7 @@ const BQ_PROD_PROJECT = process.env.BQ_PROD_PROJECT || 'hushh-pda';
 const BQ_PROD_DATASET = process.env.BQ_PROD_DATASET || 'analytics_public';
 const BQ_PROD_VIEW = process.env.BQ_PROD_VIEW || 'kai_public_dashboard_feed';
 
-const BQ_JOB_PROJECT = process.env.BQ_JOB_PROJECT || '';
+const BQ_JOB_PROJECT = process.env.BQ_JOB_PROJECT || 'hushh-pda';
 const BQ_CLI_FALLBACK = process.env.BQ_CLI_FALLBACK !== 'false';
 const DEFAULT_HUSHHTECH_ENDPOINT =
   'https://hushhtech.com/api/metrics/summary';
@@ -2439,32 +2439,41 @@ ${capabilitySql.isHuman}
 
   // Active user identities breakdown query (identifying accounts & devices)
   const activeIdentitiesQuery = `
-    WITH days AS (
+    WITH active_devices AS (
       SELECT
         user_pseudo_id,
-        user_id,
         COALESCE(platform, 'UNKNOWN') AS platform,
-        PARSE_DATE('%Y%m%d', event_date) AS day,
-        MAX(event_timestamp) AS max_event_ts,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key = 'email')) AS prop_email,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email'))) AS param_email
+        PARSE_DATE('%Y%m%d', REGEXP_EXTRACT(_TABLE_SUFFIX, r'(\\d{8})$')) AS day,
+        MAX(event_timestamp) AS max_event_ts
       FROM ${table}
-      WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
-      GROUP BY user_pseudo_id, user_id, platform, day
+      WHERE ${activeWindowFilter} AND ${surfaceFilter}
+      GROUP BY user_pseudo_id, platform, day
     ),
-    anchor AS (SELECT MAX(day) AS latest FROM days),
-    user_summary AS (
+    user_identities AS (
       SELECT
         user_pseudo_id,
         MAX(user_id) AS user_id,
-        MAX(COALESCE(prop_email, param_email)) AS bound_email,
-        MAX(platform) AS platform,
-        MAX(max_event_ts) AS max_event_ts,
-        MAX(IF(day = (SELECT latest FROM anchor), 1, 0)) AS is_daily,
-        MAX(IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_weekly,
-        MAX(IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_monthly
-      FROM days
+        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key = 'email')) AS prop_email,
+        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail'))) AS param_email
+      FROM ${table}
+      WHERE ${activeWindowFilter}
+        AND (user_id IS NOT NULL OR EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail')))
       GROUP BY user_pseudo_id
+    ),
+    anchor AS (SELECT MAX(day) AS latest FROM active_devices),
+    user_summary AS (
+      SELECT
+        d.user_pseudo_id,
+        MAX(i.user_id) AS user_id,
+        MAX(COALESCE(i.prop_email, i.param_email)) AS bound_email,
+        MAX(d.platform) AS platform,
+        MAX(d.max_event_ts) AS max_event_ts,
+        MAX(IF(d.day = (SELECT latest FROM anchor), 1, 0)) AS is_daily,
+        MAX(IF(d.day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_weekly,
+        MAX(IF(d.day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_monthly
+      FROM active_devices d
+      LEFT JOIN user_identities i ON d.user_pseudo_id = i.user_pseudo_id
+      GROUP BY d.user_pseudo_id
     )
     SELECT
       user_pseudo_id AS userPseudoId,
@@ -2477,7 +2486,7 @@ ${capabilitySql.isHuman}
       (is_monthly = 1) AS isMonthly
     FROM user_summary
     WHERE is_monthly = 1
-    ORDER BY is_daily DESC, is_weekly DESC, max_event_ts DESC
+    ORDER BY (userId IS NOT NULL OR boundEmail IS NOT NULL) DESC, is_daily DESC, is_weekly DESC, max_event_ts DESC
     LIMIT 200
   `;
 

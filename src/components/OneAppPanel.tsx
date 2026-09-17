@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Search, UserCheck, Users } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Search, ShieldCheck, UserCheck, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
   Area,
@@ -254,22 +254,29 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                 </thead>
                 <tbody className="divide-y divide-black/5">
                   {filteredIdentities.map((item, idx) => {
-                    const hasAccount = Boolean(item.boundEmail || item.userId);
-                    const displayIdentity =
-                      item.boundEmail || item.userId || 'Anonymous Device';
+                    const hasEmail = Boolean(item.boundEmail);
+                    const hasUserId = Boolean(item.userId);
+                    const hasAccount = hasEmail || hasUserId;
 
                     return (
                       <tr key={item.userPseudoId + idx} className="hover:bg-black/[0.02]">
                         <td className="py-2.5 px-3 font-semibold text-[#1d1d1f]">
-                          <div className="flex items-center gap-2">
-                            {hasAccount ? (
-                              <span className="flex items-center gap-1 rounded bg-[#1f7a36]/10 px-2 py-0.5 font-mono text-xs text-[#1f7a36]">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {hasEmail && (
+                              <span className="flex items-center gap-1 rounded bg-[#1f7a36]/10 px-2 py-0.5 font-mono text-xs font-bold text-[#1f7a36]">
                                 <Mail className="h-3 w-3" />
-                                {displayIdentity}
+                                {item.boundEmail}
                               </span>
-                            ) : (
+                            )}
+                            {hasUserId && (
+                              <span className="flex items-center gap-1 rounded bg-[#007aff]/10 px-2 py-0.5 font-mono text-xs font-bold text-[#007aff]">
+                                <ShieldCheck className="h-3 w-3" />
+                                {item.userId}
+                              </span>
+                            )}
+                            {!hasAccount && (
                               <span className="text-[#86868b] italic">
-                                Anonymous (Unbound)
+                                Anonymous (Unbound Device)
                               </span>
                             )}
                           </div>
