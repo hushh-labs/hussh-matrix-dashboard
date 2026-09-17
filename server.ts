@@ -74,6 +74,15 @@ async function getFirebaseUsersMap(): Promise<Map<string, CachedFirebaseUser>> {
             const raw = `${OBSERVABILITY_USER_ID_SALT}:${u.localId}`;
             const hash = crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
             map.set(hash, info);
+            const md5Uid = crypto.createHash('md5').update(u.localId).digest('hex');
+            map.set(md5Uid, info);
+
+            if (u.email) {
+              const normEmail = u.email.toLowerCase().trim();
+              map.set(normEmail, info);
+              const md5Email = crypto.createHash('md5').update(normEmail).digest('hex');
+              map.set(md5Email, info);
+            }
           }
         }
       }
@@ -2854,8 +2863,11 @@ ${capabilitySql.isHuman}
         identities: activeIdentities.rows.map((row) => {
           const userIdStr = row.userId ? String(row.userId) : null;
           const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
-          const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null) || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null);
-          const boundEmail = row.boundEmail ? String(row.boundEmail) : (userMatch?.email || null);
+          const boundEmailStr = row.boundEmail ? String(row.boundEmail) : null;
+          const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null)
+            || (boundEmailStr ? firebaseMap.get(boundEmailStr.toLowerCase().trim()) : null)
+            || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null);
+          const boundEmail = boundEmailStr || userMatch?.email || null;
           return {
             userPseudoId: String(row.userPseudoId ?? ''),
             userId: userIdStr,
