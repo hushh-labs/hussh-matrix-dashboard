@@ -7,14 +7,25 @@
  * so the React SPA can consume real metrics without exposing credentials.
  */
 
-import 'dotenv/config';
+import { config as loadDotenvFile } from 'dotenv';
 import { execFile } from 'node:child_process';
+import { sign as cryptoSign } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import express from 'express';
 import path from 'path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
 import { GoogleAuth } from 'google-auth-library';
+
+// `.env.local` (git-ignored, per-developer) overrides `.env` (shared
+// defaults, if present) -- Vite's own convention via `loadEnv`, which the
+// frontend already relies on. Plain `dotenv/config` only loads `.env`, so
+// this repo's own documented "cp .env.example .env.local" setup step did
+// nothing on the backend until now.
+loadDotenvFile({ path: '.env' });
+loadDotenvFile({ path: '.env.local', override: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -153,6 +164,37 @@ const ONE_APP_UAT_GA4_DATASET = process.env.ONE_APP_UAT_GA4_DATASET || KAI_GA4_D
 const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod';
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
+// App Store Connect — Hushh 1 iOS. Official Analytics Reports API only; see the
+// "App Store Connect" section below. Credentials are optional: when absent the
+// dashboard reports `App Store Connect analytics not connected` rather than a
+// fabricated number.
+const APP_STORE_CONNECT_KEY_ID = process.env.APP_STORE_CONNECT_KEY_ID || '';
+const APP_STORE_CONNECT_ISSUER_ID = process.env.APP_STORE_CONNECT_ISSUER_ID || '';
+/**
+ * The .p8 private key, resolved once at startup. `APP_STORE_CONNECT_PRIVATE_KEY_PATH`
+ * (read straight off disk) takes precedence over `APP_STORE_CONNECT_PRIVATE_KEY`
+ * (inline PEM, real or "\n"-escaped) when both are set -- reading from a path
+ * outside the repo means the key never has to sit in `.env.local` at all. A
+ * read failure is logged without the path's contents and leaves the key
+ * empty, so `appStoreConnectConfigured()` correctly reports "not connected"
+ * instead of crashing the server over a bad path.
+ */
+function resolveAppStoreConnectPrivateKey(): string {
+  const inlineKey = (process.env.APP_STORE_CONNECT_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+  const keyPath = process.env.APP_STORE_CONNECT_PRIVATE_KEY_PATH || '';
+  if (!keyPath) return inlineKey;
+  try {
+    return readFileSync(keyPath, 'utf8');
+  } catch (err) {
+    console.error(
+      `App Store Connect: could not read APP_STORE_CONNECT_PRIVATE_KEY_PATH (${err instanceof Error ? err.message : String(err)})`,
+    );
+    return inlineKey;
+  }
+}
+const APP_STORE_CONNECT_PRIVATE_KEY = resolveAppStoreConnectPrivateKey();
+const APP_STORE_CONNECT_APP_ID = process.env.APP_STORE_CONNECT_APP_ID || '6757718917';
+const APP_STORE_CONNECT_WINDOW_DAYS = parseInt(process.env.APP_STORE_CONNECT_WINDOW_DAYS || '90', 10);
 /**
  * Org-level growth reporting.
  *
@@ -400,6 +442,10 @@ function parseHushhTechDateRange(query: Record<string, unknown>): HushhAiDateRan
 
 function parseOneAppDateRange(query: Record<string, unknown>): HushhAiDateRange {
   return parseProductDateRange(query, 'one', ONE_APP_GA4_WINDOW_DAYS);
+}
+
+function parseAppStoreConnectDateRange(query: Record<string, unknown>): HushhAiDateRange {
+  return parseProductDateRange(query, 'app_store_connect', APP_STORE_CONNECT_WINDOW_DAYS);
 }
 
 function dateSpine(range: HushhAiDateRange): string[] {
@@ -5204,6 +5250,549 @@ async function fetchGrowthSummary(
   };
 }
 
+// ---------------------------------------------------------------------------
+// App Store Connect — Hushh 1 iOS
+// ---------------------------------------------------------------------------
+//
+// Official server-side APIs only, per
+// https://developer.apple.com/documentation/appstoreconnectapi -- no scraping
+// and no undocumented endpoint. Auth is a short-lived ES256 JWT signed with an
+// App Store Connect API key
+// (https://developer.apple.com/documentation/appstoreconnectapi/generating-tokens-for-api-requests),
+// built with node:crypto so no new signing dependency is needed.
+//
+// Permissions: an Admin-role key is required to request a new Analytics
+// Report type the first time (`ensureAppStoreConnectReportRequestId` below).
+// After that request exists, a key with the Sales and Reports or Finance
+// role can list and download the generated reports on every later call.
+// The TestFlight endpoints below (beta testers, beta build/tester usage
+// metrics, beta feedback) are gated separately from Production, per-resource
+// -- Apple's role requirements are not uniform across them and are not
+// encoded in the OpenAPI spec itself (only in its prose Help docs), so the
+// exact role each one needs should be confirmed against that endpoint's own
+// documentation rather than assumed from another endpoint in this file.
+//
+// Production (the App Store) and UAT (TestFlight) are two genuinely different
+// Apple APIs, not one API with a channel filter:
+//
+// - Production uses the bulk Analytics Reports API (this section's first
+//   half): impressions, product page views, downloads, conversion rate,
+//   sessions, active devices, installations, deletions, crashes. Apple does
+//   not publish the literal TSV column header strings for these reports
+//   outside a live report sample, so columns are matched by a
+//   case-insensitive "contains all these tokens" test rather than an exact
+//   name. If Apple renames a column this degrades to `null` for that one
+//   metric rather than silently reading the wrong column.
+// - TestFlight has no equivalent bulk Analytics Reports API -- a pre-release
+//   build has no App Store product page, so impressions/page views/downloads/
+//   conversion rate genuinely do not exist for it. What TestFlight *does*
+//   expose is a separate set of REST/metrics resources (this section's second
+//   half), confirmed against Apple's published OpenAPI spec (App Store
+//   Connect API v4.4.1) rather than assumed:
+//     - `GET /v1/betaTesters?filter[apps]=` -- the tester roster, including
+//       `attributes.state` (NOT_INVITED / INVITED / ACCEPTED / INSTALLED /
+//       REVOKED). Per-tester accepted/installed state IS a documented field;
+//       an earlier version of this integration said it was not, which was
+//       wrong.
+//     - `GET /v1/apps/{id}/metrics/betaTesterUsages?period=` -- app-level
+//       sessionCount/crashCount/feedbackCount over a fixed trailing period
+//       (P7D/P30D/P90D/P365D; Apple does not accept an arbitrary date range
+//       here).
+//     - `GET /v1/builds/{id}/metrics/betaBuildUsages` -- per-build
+//       installCount/inviteCount/sessionCount/crashCount/feedbackCount as a
+//       time series; this is the only place installCount/inviteCount exist.
+//   What is genuinely not in the current OpenAPI spec: an app-level (not
+//   per-build) install/invite count, and an arbitrary custom-date-range
+//   equivalent of the `period` metrics (only the four fixed periods exist).
+//   Visible in the App Store Connect UI's Builds tab, but with no
+//   corresponding public REST field/endpoint found in the current spec:
+//   nothing beyond what's listed above -- Installs and Sessions *are* both
+//   covered, by the two metrics endpoints, contrary to what an earlier
+//   version of this integration claimed.
+
+let appStoreConnectReportRequestId: string | null = null;
+
+function appStoreConnectConfigured(): boolean {
+  return Boolean(
+    APP_STORE_CONNECT_KEY_ID && APP_STORE_CONNECT_ISSUER_ID && APP_STORE_CONNECT_PRIVATE_KEY && APP_STORE_CONNECT_APP_ID,
+  );
+}
+
+function base64UrlEncode(input: Buffer | string): string {
+  return (Buffer.isBuffer(input) ? input : Buffer.from(input))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+/** A 19-minute ES256 JWT, under Apple's 20-minute cap. */
+function buildAppStoreConnectToken(): string {
+  const header = { alg: 'ES256', kid: APP_STORE_CONNECT_KEY_ID, typ: 'JWT' };
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: APP_STORE_CONNECT_ISSUER_ID,
+    iat: nowSeconds,
+    exp: nowSeconds + 19 * 60,
+    aud: 'appstoreconnect-v1',
+  };
+  const signingInput = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(JSON.stringify(payload))}`;
+  // JOSE ES256 needs the raw r||s signature, not the DER encoding node
+  // produces by default -- `dsaEncoding: 'ieee-p1363'` asks for that directly.
+  const signature = cryptoSign('sha256', Buffer.from(signingInput), {
+    key: APP_STORE_CONNECT_PRIVATE_KEY,
+    dsaEncoding: 'ieee-p1363',
+  });
+  return `${signingInput}.${base64UrlEncode(signature)}`;
+}
+
+const APP_STORE_CONNECT_API_BASE = 'https://api.appstoreconnect.apple.com/v1';
+
+async function appStoreConnectRequest(
+  pathAndQuery: string,
+  init?: { method?: string; body?: unknown },
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${APP_STORE_CONNECT_API_BASE}${pathAndQuery}`, {
+    method: init?.method ?? 'GET',
+    headers: {
+      Authorization: `Bearer ${buildAppStoreConnectToken()}`,
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: init?.body ? JSON.stringify(init.body) : undefined,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`App Store Connect API ${pathAndQuery} returned ${res.status}: ${body.slice(0, 300)}`);
+  }
+  if (res.status === 204) return {};
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+/**
+ * Ongoing report requests persist once created, so this reuses one across the
+ * process instead of asking Apple to create a duplicate on every dashboard
+ * load -- creating one also requires the Admin role, which the day-to-day
+ * runtime identity may not have.
+ */
+async function ensureAppStoreConnectReportRequestId(): Promise<string> {
+  if (appStoreConnectReportRequestId) return appStoreConnectReportRequestId;
+  const list = await appStoreConnectRequest(
+    `/apps/${APP_STORE_CONNECT_APP_ID}/analyticsReportRequests?filter[accessType]=ONGOING`,
+  );
+  const existing = (list.data as Array<Record<string, unknown>> | undefined)?.[0];
+  if (existing && typeof existing.id === 'string') {
+    appStoreConnectReportRequestId = existing.id;
+    return appStoreConnectReportRequestId;
+  }
+  const created = await appStoreConnectRequest('/analyticsReportRequests', {
+    method: 'POST',
+    body: {
+      data: {
+        type: 'analyticsReportRequests',
+        attributes: { accessType: 'ONGOING' },
+        relationships: { app: { data: { type: 'apps', id: APP_STORE_CONNECT_APP_ID } } },
+      },
+    },
+  });
+  const createdId = (created.data as Record<string, unknown> | undefined)?.id;
+  if (typeof createdId !== 'string') {
+    throw new Error('App Store Connect did not return a report request id.');
+  }
+  appStoreConnectReportRequestId = createdId;
+  return appStoreConnectReportRequestId;
+}
+
+async function findAppStoreConnectReportId(
+  reportRequestId: string,
+  category: string,
+  nameContains: string,
+): Promise<string | null> {
+  const list = await appStoreConnectRequest(
+    `/analyticsReportRequests/${reportRequestId}/reports?filter[category]=${category}&limit=50`,
+  );
+  const rows = (list.data as Array<Record<string, unknown>> | undefined) ?? [];
+  const match = rows.find((row) => {
+    const name = (row.attributes as Record<string, unknown> | undefined)?.name;
+    return typeof name === 'string' && name.toLowerCase().includes(nameContains.toLowerCase());
+  });
+  return typeof match?.id === 'string' ? match.id : null;
+}
+
+async function downloadAppStoreConnectSegment(url: string): Promise<Array<Record<string, string>>> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`App Store Connect segment download returned ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const text = gunzipSync(buffer).toString('utf8');
+  const lines = text.split('\n').filter((line) => line.length > 0);
+  if (lines.length === 0) return [];
+  const headers = lines[0].split('\t');
+  return lines.slice(1).map((line) => {
+    const cells = line.split('\t');
+    const row: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      row[header] = cells[index] ?? '';
+    });
+    return row;
+  });
+}
+
+async function fetchAppStoreConnectReportRows(
+  reportId: string,
+  range: HushhAiDateRange,
+): Promise<Array<Record<string, string>>> {
+  const instancesResp = await appStoreConnectRequest(
+    `/analyticsReports/${reportId}/instances?filter[granularity]=DAILY&limit=200`,
+  );
+  const instances = (instancesResp.data as Array<Record<string, unknown>> | undefined) ?? [];
+  const inRange = instances.filter((instance) => {
+    const date = (instance.attributes as Record<string, unknown> | undefined)?.processingDate;
+    return typeof date === 'string' && date >= range.startDate && date <= range.endDate;
+  });
+  const rows: Array<Record<string, string>> = [];
+  for (const instance of inRange) {
+    const segmentsResp = await appStoreConnectRequest(`/analyticsReportInstances/${instance.id}/segments`);
+    const segments = (segmentsResp.data as Array<Record<string, unknown>> | undefined) ?? [];
+    for (const segment of segments) {
+      const url = (segment.attributes as Record<string, unknown> | undefined)?.url;
+      if (typeof url !== 'string') continue;
+      rows.push(...(await downloadAppStoreConnectSegment(url)));
+    }
+  }
+  return rows;
+}
+
+/** First header containing every token, case-insensitively. */
+function findAppStoreConnectColumn(headers: string[], tokens: string[]): string | null {
+  const found = headers.find((header) => {
+    const lower = header.toLowerCase();
+    return tokens.every((token) => lower.includes(token));
+  });
+  return found ?? null;
+}
+
+function sumAppStoreConnectColumn(rows: Array<Record<string, string>>, column: string | null): number | null {
+  if (!column) return null;
+  let total = 0;
+  let sawValue = false;
+  for (const row of rows) {
+    const raw = row[column];
+    if (raw === undefined || raw === '') continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) {
+      total += value;
+      sawValue = true;
+    }
+  }
+  return sawValue ? total : null;
+}
+
+const APP_STORE_CONNECT_NOT_CONNECTED: { available: false; note: string; metrics: null } = {
+  available: false,
+  note: 'App Store Connect analytics not connected',
+  metrics: null,
+};
+
+/**
+ * TestFlight metrics, confirmed against Apple's published OpenAPI spec
+ * (App Store Connect API v4.4.1) rather than assumed. What's left out and
+ * why is in `APP_STORE_CONNECT_TESTFLIGHT_GAP_NOTE` below, not in this
+ * comment, so the running note and the code agree by construction.
+ */
+const APP_STORE_CONNECT_TESTFLIGHT_GAP_NOTE =
+  'Sessions, crashes and feedback are Apple\'s own trailing-period rollup (nearest fixed period to the selected ' +
+  'window -- P7D/P30D/P90D/P365D; Apple\'s metrics API takes no arbitrary date range). Invites and installs are ' +
+  'each build\'s lifetime-to-date total (Apple has no app-level total for either, and no windowed one either -- ' +
+  'per build is the only granularity, and it is cumulative, not scoped to any date range), summed across builds ' +
+  'uploaded inside the selected window.';
+
+/** Every row of a paginated App Store Connect list endpoint, one page at a time. */
+async function listAppStoreConnectAll(
+  pathAndQuery: string,
+  maxPages = 5,
+): Promise<{ rows: Array<Record<string, unknown>>; truncated: boolean }> {
+  const rows: Array<Record<string, unknown>> = [];
+  let next: string | null = pathAndQuery;
+  let pages = 0;
+  while (next && pages < maxPages) {
+    const resp: Record<string, unknown> = await appStoreConnectRequest(next);
+    rows.push(...((resp.data as Array<Record<string, unknown>> | undefined) ?? []));
+    const nextLink = (resp.links as Record<string, unknown> | undefined)?.next;
+    next = typeof nextLink === 'string' ? nextLink.replace(APP_STORE_CONNECT_API_BASE, '') : null;
+    pages += 1;
+  }
+  return { rows, truncated: Boolean(next) };
+}
+
+/** Apple's beta usage metrics take one of four fixed trailing periods, never an arbitrary range. */
+function appStoreConnectPeriodFor(days: number): 'P7D' | 'P30D' | 'P90D' | 'P365D' {
+  if (days <= 7) return 'P7D';
+  if (days <= 30) return 'P30D';
+  if (days <= 90) return 'P90D';
+  return 'P365D';
+}
+
+const BETA_TESTER_STATE_KEYS: Record<string, string> = {
+  NOT_INVITED: 'notInvited',
+  INVITED: 'invited',
+  ACCEPTED: 'accepted',
+  INSTALLED: 'installed',
+  REVOKED: 'revoked',
+};
+
+/** `BetaTester.attributes.state` is a documented enum -- NOT_INVITED / INVITED / ACCEPTED / INSTALLED / REVOKED. */
+function summarizeBetaTesterStates(rows: Array<Record<string, unknown>>): Record<string, number> {
+  const counts: Record<string, number> = { notInvited: 0, invited: 0, accepted: 0, installed: 0, revoked: 0 };
+  for (const row of rows) {
+    const state = (row.attributes as Record<string, unknown> | undefined)?.state;
+    const key = typeof state === 'string' ? BETA_TESTER_STATE_KEYS[state] : undefined;
+    if (key) counts[key] += 1;
+  }
+  return counts;
+}
+
+/**
+ * Sums `values.<key>` across every dataPoint of every returned group.
+ *
+ * Confirmed against the live API rather than assumed: neither endpoint's
+ * dataPoints line up with our own selected date range, so re-filtering by
+ * date here would silently zero out real data rather than scope it.
+ * `apps/{id}/metrics/betaTesterUsages?period=` (grouped by tester) returns
+ * one dataPoint per tester spanning exactly the requested period -- already
+ * scoped by Apple, nothing left to filter. `builds/{id}/metrics/betaBuildUsages`
+ * returns one dataPoint per build spanning roughly the trailing year ending
+ * today, regardless of any parameter -- a lifetime-to-date total, not a
+ * windowed series at all.
+ */
+function sumAppStoreConnectMetricValues(groups: Array<Record<string, unknown>>, key: string): number | null {
+  let total = 0;
+  let sawValue = false;
+  for (const group of groups) {
+    const dataPoints = (group.dataPoints as Array<Record<string, unknown>> | undefined) ?? [];
+    for (const point of dataPoints) {
+      const value = (point.values as Record<string, unknown> | undefined)?.[key];
+      if (typeof value === 'number') {
+        total += value;
+        sawValue = true;
+      }
+    }
+  }
+  return sawValue ? total : null;
+}
+
+/** No more than this many builds get a per-build usage call in one fetch, so a long-lived app cannot turn into hundreds of sequential requests on every dashboard load. */
+const APP_STORE_CONNECT_MAX_BUILDS_QUERIED = 15;
+
+async function fetchAppStoreConnectTestFlightSummary(
+  range: HushhAiDateRange,
+): Promise<{ available: boolean; note: string | null; generatedAt: string; range: { startDate: string; endDate: string; days: number }; metrics: Record<string, unknown> | null }> {
+  const generatedAt = new Date().toISOString();
+  const rangeOut = { startDate: range.startDate, endDate: range.endDate, days: range.days };
+
+  if (!appStoreConnectConfigured()) {
+    return { available: false, note: 'App Store Connect analytics not connected', generatedAt, range: rangeOut, metrics: null };
+  }
+
+  const errors: string[] = [];
+  async function safely<T>(label: string, run: () => Promise<T>): Promise<T | null> {
+    try {
+      return await run();
+    } catch (err) {
+      errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  const [testerResult, usageResult, buildsResult] = await Promise.all([
+    safely('beta testers', () => listAppStoreConnectAll(`/betaTesters?filter[apps]=${APP_STORE_CONNECT_APP_ID}&limit=200`)),
+    safely('beta tester usage', () => appStoreConnectRequest(
+      // `groupBy=betaTesters` is required here -- the live API rejects the call
+      // with PARAMETER_ERROR.REQUIRED without it (the OpenAPI spec lists it as
+      // optional; it is not, in practice). `limit` is rejected outright unless
+      // paired with `groupBy`/`filter`, so it is left off; grouping by tester
+      // already bounds the response to one entry per tester.
+      `/apps/${APP_STORE_CONNECT_APP_ID}/metrics/betaTesterUsages?period=${appStoreConnectPeriodFor(range.days)}&groupBy=betaTesters`,
+    )),
+    safely('builds', () => listAppStoreConnectAll(
+      `/builds?filter[app]=${APP_STORE_CONNECT_APP_ID}&fields[builds]=uploadedDate&sort=-uploadedDate&limit=200`,
+    )),
+  ]);
+
+  const testerCount = testerResult ? testerResult.rows.length : null;
+  const testersByState = testerResult ? summarizeBetaTesterStates(testerResult.rows) : null;
+
+  const usageGroups = (usageResult?.data as Array<Record<string, unknown>> | undefined) ?? [];
+  const sessions = usageResult ? sumAppStoreConnectMetricValues(usageGroups, 'sessionCount') : null;
+  const crashes = usageResult ? sumAppStoreConnectMetricValues(usageGroups, 'crashCount') : null;
+  const feedback = usageResult ? sumAppStoreConnectMetricValues(usageGroups, 'feedbackCount') : null;
+
+  // installCount/inviteCount exist only per build (GET /v1/builds/{id}/metrics/betaBuildUsages,
+  // no `limit` param -- rejected outright), not at the app level, so this queries every build
+  // uploaded inside the window, capped. Each build's numbers are that build's lifetime-to-date
+  // totals (roughly the trailing year), not scoped to the window -- see the note this feeds.
+  const buildIdsInRange = (buildsResult?.rows ?? [])
+    .filter((row) => {
+      const uploadedDate = (row.attributes as Record<string, unknown> | undefined)?.uploadedDate;
+      return typeof uploadedDate === 'string' && uploadedDate.slice(0, 10) >= range.startDate && uploadedDate.slice(0, 10) <= range.endDate;
+    })
+    .map((row) => row.id)
+    .filter((id): id is string => typeof id === 'string');
+  const buildIdsQueried = buildIdsInRange.slice(0, APP_STORE_CONNECT_MAX_BUILDS_QUERIED);
+  const buildUsageResults = buildIdsQueried.length
+    ? await Promise.all(buildIdsQueried.map((buildId) =>
+        safely(`build ${buildId} usage`, () => appStoreConnectRequest(`/builds/${buildId}/metrics/betaBuildUsages`)),
+      ))
+    : [];
+  const fetchedAnyBuildUsage = buildUsageResults.some((result) => result !== null);
+  const buildUsageGroups = buildUsageResults
+    .filter((result): result is Record<string, unknown> => result !== null)
+    .flatMap((result) => (result.data as Array<Record<string, unknown>> | undefined) ?? []);
+  const invites = fetchedAnyBuildUsage ? sumAppStoreConnectMetricValues(buildUsageGroups, 'inviteCount') : null;
+  const installs = fetchedAnyBuildUsage ? sumAppStoreConnectMetricValues(buildUsageGroups, 'installCount') : null;
+
+  const anyAvailable = [testerCount, sessions, crashes, feedback, invites, installs].some((value) => value !== null);
+  const notes = [
+    anyAvailable ? APP_STORE_CONNECT_TESTFLIGHT_GAP_NOTE : null,
+    buildIdsInRange.length > APP_STORE_CONNECT_MAX_BUILDS_QUERIED
+      ? `${buildIdsInRange.length} builds were uploaded in this window; invites/installs were summed from the ${APP_STORE_CONNECT_MAX_BUILDS_QUERIED} most recent only.`
+      : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    available: anyAvailable,
+    note: notes.length
+      ? notes.join(' ')
+      : publicIntegrationError('App Store Connect TestFlight', new Error(errors.join('; ') || 'request failed')),
+    generatedAt,
+    range: rangeOut,
+    metrics: anyAvailable ? { testerCount, testersByState, invites, installs, sessions, crashes, feedback } : null,
+  };
+}
+
+async function fetchAppStoreConnectProductionSummary(
+  range: HushhAiDateRange,
+): Promise<{ available: boolean; note: string | null; generatedAt?: string; range?: { startDate: string; endDate: string; days: number }; metrics: Record<string, number | null> | null }> {
+  if (!appStoreConnectConfigured()) {
+    return APP_STORE_CONNECT_NOT_CONNECTED;
+  }
+
+  try {
+    const reportRequestId = await ensureAppStoreConnectReportRequestId();
+    const [engagementReportId, downloadsReportId, sessionsReportId, installDeleteReportId, crashesReportId] =
+      await Promise.all([
+        findAppStoreConnectReportId(reportRequestId, 'APP_STORE_ENGAGEMENT', 'discovery and engagement'),
+        findAppStoreConnectReportId(reportRequestId, 'COMMERCE', 'downloads standard'),
+        findAppStoreConnectReportId(reportRequestId, 'APP_USAGE', 'sessions'),
+        findAppStoreConnectReportId(reportRequestId, 'APP_USAGE', 'installation and deletion standard'),
+        findAppStoreConnectReportId(reportRequestId, 'APP_USAGE', 'crashes'),
+      ]);
+
+    const [engagementRows, downloadRows, sessionRows, installDeleteRows, crashRows] = await Promise.all([
+      engagementReportId ? fetchAppStoreConnectReportRows(engagementReportId, range) : Promise.resolve([]),
+      downloadsReportId ? fetchAppStoreConnectReportRows(downloadsReportId, range) : Promise.resolve([]),
+      sessionsReportId ? fetchAppStoreConnectReportRows(sessionsReportId, range) : Promise.resolve([]),
+      installDeleteReportId ? fetchAppStoreConnectReportRows(installDeleteReportId, range) : Promise.resolve([]),
+      crashesReportId ? fetchAppStoreConnectReportRows(crashesReportId, range) : Promise.resolve([]),
+    ]);
+
+    const engagementHeaders = engagementRows[0] ? Object.keys(engagementRows[0]) : [];
+    const downloadHeaders = downloadRows[0] ? Object.keys(downloadRows[0]) : [];
+    const sessionHeaders = sessionRows[0] ? Object.keys(sessionRows[0]) : [];
+    const installDeleteHeaders = installDeleteRows[0] ? Object.keys(installDeleteRows[0]) : [];
+    const crashHeaders = crashRows[0] ? Object.keys(crashRows[0]) : [];
+
+    const impressions = sumAppStoreConnectColumn(engagementRows, findAppStoreConnectColumn(engagementHeaders, ['impression']));
+    const productPageViews = sumAppStoreConnectColumn(
+      engagementRows,
+      findAppStoreConnectColumn(engagementHeaders, ['page', 'view']),
+    );
+    const firstTimeDownloads = sumAppStoreConnectColumn(
+      downloadRows,
+      findAppStoreConnectColumn(downloadHeaders, ['first', 'download']),
+    );
+    const redownloads = sumAppStoreConnectColumn(downloadRows, findAppStoreConnectColumn(downloadHeaders, ['redownload']));
+    const totalDownloadsColumn =
+      findAppStoreConnectColumn(downloadHeaders, ['total', 'download']) ??
+      findAppStoreConnectColumn(downloadHeaders, ['download']);
+    let totalDownloads = sumAppStoreConnectColumn(downloadRows, totalDownloadsColumn);
+    if (totalDownloads === null && (firstTimeDownloads !== null || redownloads !== null)) {
+      totalDownloads = (firstTimeDownloads ?? 0) + (redownloads ?? 0);
+    }
+    const sessions = sumAppStoreConnectColumn(sessionRows, findAppStoreConnectColumn(sessionHeaders, ['session']));
+    const activeDevices =
+      sumAppStoreConnectColumn(sessionRows, findAppStoreConnectColumn(sessionHeaders, ['unique', 'device'])) ??
+      sumAppStoreConnectColumn(sessionRows, findAppStoreConnectColumn(sessionHeaders, ['device']));
+    const installations = sumAppStoreConnectColumn(installDeleteRows, findAppStoreConnectColumn(installDeleteHeaders, ['install']));
+    const deletions = sumAppStoreConnectColumn(installDeleteRows, findAppStoreConnectColumn(installDeleteHeaders, ['delet']));
+    const crashes = sumAppStoreConnectColumn(crashRows, findAppStoreConnectColumn(crashHeaders, ['crash']));
+    const conversionRate = totalDownloads !== null && productPageViews ? totalDownloads / productPageViews : null;
+
+    const anyMetricFound = [
+      impressions, productPageViews, firstTimeDownloads, redownloads, totalDownloads,
+      sessions, activeDevices, installations, deletions, crashes,
+    ].some((value) => value !== null);
+
+    return {
+      available: anyMetricFound,
+      note: anyMetricFound
+        ? null
+        : 'App Store Connect responded but no matching report columns were found for this window. A newly ' +
+          'created ONGOING report request can take 24-48 hours to produce its first report.',
+      generatedAt: new Date().toISOString(),
+      range: { startDate: range.startDate, endDate: range.endDate, days: range.days },
+      // `null`, not a bag of nulls, when unavailable -- matching every other unavailable
+      // case in this file (not-connected, request-failed, TestFlight's own unavailable branch).
+      metrics: !anyMetricFound ? null : {
+        impressions, productPageViews, firstTimeDownloads, redownloads, totalDownloads,
+        conversionRate, sessions, activeDevices, installations, crashes, deletions,
+      },
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('App Store Connect production analytics failed:', message);
+    return {
+      available: false,
+      note: publicIntegrationError('App Store Connect', err),
+      metrics: null,
+    };
+  }
+}
+
+/**
+ * Fetches Production (App Store) and UAT (TestFlight) independently -- they
+ * are two unrelated Apple APIs (Analytics Reports vs. plain REST resources),
+ * so one failing does not take the other down.
+ */
+async function fetchAppStoreConnectSummary(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+  const [production, testflight] = await Promise.all([
+    fetchAppStoreConnectProductionSummary(range),
+    fetchAppStoreConnectTestFlightSummary(range),
+  ]);
+  // "Not connected" (no credentials configured) is a setup state, not a
+  // fetch failure -- only surface `error` when credentials exist and a real
+  // request still failed, so a fresh, unconfigured deploy does not add a
+  // permanent warning to every dashboard load.
+  const error = appStoreConnectConfigured()
+    ? [!production.available ? production.note : null, !testflight.available ? testflight.note : null]
+        .filter(Boolean).join('; ') || null
+    : null;
+
+  return {
+    data: { appAppleId: APP_STORE_CONNECT_APP_ID, production, testflight },
+    error,
+  };
+}
+
+app.get('/api/analytics/app-store-connect', async (req, res) => {
+  const range = parseAppStoreConnectDateRange(req.query as Record<string, unknown>);
+  const result = await fetchAppStoreConnectSummary(range);
+  res.status(result.error && !result.data ? 502 : 200).json(sanitizePublicPayload({
+    platform: 'Hushh 1 iOS',
+    data: result.data,
+    error: result.error,
+    fetchedAt: new Date().toISOString(),
+  }));
+});
+
 app.get('/api/analytics/one', async (req, res) => {
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
   const [production, uat] = await Promise.all([
@@ -5261,6 +5850,7 @@ app.get('/api/analytics/all', async (req, res) => {
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
   const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
+  const appStoreConnectRange = parseAppStoreConnectDateRange(req.query as Record<string, unknown>);
   const [
     uat,
     production,
@@ -5276,6 +5866,7 @@ app.get('/api/analytics/all', async (req, res) => {
     oneAppProduction,
     oneAppUat,
     growth,
+    appStoreConnect,
   ] = await Promise.all([
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
@@ -5291,6 +5882,7 @@ app.get('/api/analytics/all', async (req, res) => {
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
     fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST),
     fetchGrowthSummary(oneRange),
+    fetchAppStoreConnectSummary(appStoreConnectRange),
   ]);
   const fetchedAt = new Date().toISOString();
   const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
@@ -5350,6 +5942,7 @@ app.get('/api/analytics/all', async (req, res) => {
       error: [oneAppProduction.error, oneAppUat.error].filter(Boolean).join('; ') || null,
     },
     growth: { platform: 'organisation', data: growth.data, error: growth.error },
+    appStoreConnect: { platform: 'Hushh 1 iOS', data: appStoreConnect.data, error: appStoreConnect.error },
     fetchedAt,
   }));
 });
@@ -5381,6 +5974,8 @@ app.get('/api/health', (_req, res) => {
       hushhTechSearchConsoleFallback: `${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}`,
       hushhTechSearchConsoleSiteUrl: HUSHHTECH_SEARCH_CONSOLE_SITE_URL,
       hushhTechSupabase: HUSHHTECH_SUPABASE_PROJECT_REF,
+      appStoreConnectAppId: APP_STORE_CONNECT_APP_ID,
+      appStoreConnectConfigured: appStoreConnectConfigured(),
     },
   }));
 });

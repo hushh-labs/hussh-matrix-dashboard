@@ -23,7 +23,8 @@
     "test:api:one-location": "node scripts/check-one-location-analytics-contract.mjs",
     "test:routes:one-location": "tsx scripts/check-location-analytics-routes.ts",
     "test:chat:agent": "node scripts/check-insights-agent-local.mjs",
-    "test:prod:agent": "node scripts/check-insights-agent-production.mjs"
+    "test:prod:agent": "node scripts/check-insights-agent-production.mjs",
+    "test:api:app-store-connect": "node scripts/check-app-store-connect.mjs"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.1",

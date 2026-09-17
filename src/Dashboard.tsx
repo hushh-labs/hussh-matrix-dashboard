@@ -81,13 +81,14 @@ import { appleCard, applePanel, appleLabel, dashboardBand } from './lib/theme';
 import { ComparePanel } from './components/ComparePanel';
 import { GrowthPanel } from './components/GrowthPanel';
 import { OneAppPanel } from './components/OneAppPanel';
+import { AppsPanel } from './components/AppsPanel';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
 type DatePreset = 7 | 14 | 30 | 90;
-type DashboardTab = 'growth' | 'compare' | 'one' | 'overview' | 'platforms';
+type DashboardTab = 'growth' | 'compare' | 'one' | 'apps' | 'overview' | 'platforms';
 
-const dashboardTabs: DashboardTab[] = ['growth', 'compare', 'one', 'overview', 'platforms'];
+const dashboardTabs: DashboardTab[] = ['growth', 'compare', 'one', 'apps', 'overview', 'platforms'];
 
 function isDashboardTab(value: unknown): value is DashboardTab {
   return typeof value === 'string' && dashboardTabs.includes(value as DashboardTab);
@@ -1775,7 +1776,7 @@ export default function Dashboard() {
                         : 'text-[#6e6e73] hover:text-[#1d1d1f]',
                     )}
                   >
-                    {tab === 'one' ? 'One app' : tab === 'compare' ? 'Over time' : tab}
+                    {tab === 'one' ? 'One app' : tab === 'compare' ? 'Over time' : tab === 'apps' ? 'Hushh Connect' : tab}
                   </button>
                 ))}
               </div>
@@ -1859,6 +1860,22 @@ export default function Dashboard() {
                 onPreset={(days) => setOneRange(rangeForPreset(days))}
                 onCustomRange={setOneRange}
                 ariaLabelPrefix="One app"
+              />
+            )}
+          />
+        ) : activeTab === 'apps' ? (
+          <AppsPanel
+            one={data?.one ?? null}
+            oneUat={data?.oneUat ?? null}
+            appStoreConnect={data?.appStoreConnect ?? null}
+            rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
+            dateControl={(
+              <DateRangeControl
+                range={oneRange}
+                refreshing={isRefreshing}
+                onPreset={(days) => setOneRange(rangeForPreset(days))}
+                onCustomRange={setOneRange}
+                ariaLabelPrefix="Hushh Connect"
               />
             )}
           />

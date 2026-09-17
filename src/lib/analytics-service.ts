@@ -33,6 +33,7 @@ import type {
   ProductSourceCard,
   ProductSourceGroup,
   OneAppSummary,
+  AppStoreConnectEnvironments,
 } from './types';
 
 const API_BASE = '/api';
@@ -52,6 +53,7 @@ interface AllAnalyticsResponse {
     error?: string | null;
   };
   growth?: { platform: string; data: GrowthSummary | null; error?: string | null };
+  appStoreConnect?: { platform: string; data: AppStoreConnectEnvironments | null; error?: string | null };
   fetchedAt: string;
 }
 
@@ -255,6 +257,7 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     oneHealthMetrics: [],
     growth: null,
     costPerActiveUser: null,
+    appStoreConnect: null,
     oneLocationFeatureMetrics: [],
     onePlatformMetrics: [],
     oneAcquisitionMetrics: [],
@@ -1676,6 +1679,7 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     result.hushhAi?.error,
     result.hushhTech.error,
     result.one?.error,
+    result.appStoreConnect?.error,
   ].filter((value): value is string => Boolean(value));
 
   if (activeRows.length === 0 && !hushhTech) {
@@ -1752,6 +1756,7 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     oneHealthMetrics: buildOneHealthMetrics(kaiProduction),
     growth,
     costPerActiveUser,
+    appStoreConnect: result.appStoreConnect?.data ?? null,
     oneLocationFeatureMetrics: buildOneLocationFeatureMetrics(one),
     onePlatformMetrics: buildOnePlatformMetrics(one),
     oneAcquisitionMetrics: buildOneAcquisitionMetrics(one),

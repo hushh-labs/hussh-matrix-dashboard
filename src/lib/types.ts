@@ -1066,6 +1066,90 @@ export interface GrowthCompare {
 }
 
 // ---------------------------------------------------------------------------
+// App Store Connect — Hushh 1 iOS (official Analytics Reports API)
+// ---------------------------------------------------------------------------
+
+export interface AppStoreConnectMetrics {
+  impressions: number | null;
+  productPageViews: number | null;
+  firstTimeDownloads: number | null;
+  redownloads: number | null;
+  totalDownloads: number | null;
+  /** Total downloads over product page views. Null when either side is unavailable. */
+  conversionRate: number | null;
+  sessions: number | null;
+  activeDevices: number | null;
+  installations: number | null;
+  crashes: number | null;
+  deletions: number | null;
+}
+
+export interface AppStoreConnectSummary {
+  available: boolean;
+  /** Set whenever `available` is false: why (not connected, not applicable, or the request failed). */
+  note: string | null;
+  generatedAt?: string;
+  range?: { startDate: string; endDate: string; days: number };
+  metrics: AppStoreConnectMetrics | null;
+}
+
+/**
+ * TestFlight has no bulk Analytics Reports API (no product page, so no
+ * impressions, page views, downloads or conversion rate), but it does have
+ * real, documented metrics -- confirmed against Apple's published OpenAPI
+ * spec, not assumed:
+ *
+ * - `testerCount` / `testersByState`: the beta tester roster and
+ *   `BetaTester.attributes.state` (NOT_INVITED / INVITED / ACCEPTED /
+ *   INSTALLED / REVOKED -- a documented enum; per-tester accepted/installed
+ *   state is real, not a gap).
+ * - `sessions` / `crashes` / `feedback`: Apple's own trailing-period rollup
+ *   for the app (`GET /v1/apps/{id}/metrics/betaTesterUsages`), over the
+ *   nearest fixed period to the selected window -- Apple's metrics API takes
+ *   no arbitrary date range.
+ * - `invites` / `installs`: each build's lifetime-to-date total (`GET
+ *   /v1/builds/{id}/metrics/betaBuildUsages`), summed across builds uploaded
+ *   in the selected window. Apple has no app-level total for either, and no
+ *   windowed one either -- per build is the only granularity, and each
+ *   build's number is cumulative, not scoped to any date range.
+ */
+export interface AppStoreConnectTestFlightMetrics {
+  testerCount: number | null;
+  testersByState: {
+    notInvited: number;
+    invited: number;
+    accepted: number;
+    installed: number;
+    revoked: number;
+  } | null;
+  invites: number | null;
+  installs: number | null;
+  sessions: number | null;
+  crashes: number | null;
+  feedback: number | null;
+}
+
+export interface AppStoreConnectTestFlightSummary {
+  available: boolean;
+  /** Present whether or not `available` is true: a real reading still names what it doesn't cover. */
+  note: string | null;
+  generatedAt?: string;
+  range?: { startDate: string; endDate: string; days: number };
+  metrics: AppStoreConnectTestFlightMetrics | null;
+}
+
+/**
+ * Production (App Store) and UAT (TestFlight) are reported separately and
+ * never summed -- they are different distribution channels, fetched from two
+ * unrelated Apple APIs, with different metric shapes.
+ */
+export interface AppStoreConnectEnvironments {
+  appAppleId: string;
+  production: AppStoreConnectSummary;
+  testflight: AppStoreConnectTestFlightSummary;
+}
+
+// ---------------------------------------------------------------------------
 // Aggregated dashboard state
 // ---------------------------------------------------------------------------
 
@@ -1131,6 +1215,7 @@ export interface DashboardData {
   growth: GrowthSummary | null;
   /** Monthly cloud cost divided by monthly active devices. Null when either side is missing. */
   costPerActiveUser: number | null;
+  appStoreConnect: AppStoreConnectEnvironments | null;
   oneLocationFeatureMetrics: BreakdownMetric[];
   onePlatformMetrics: BreakdownMetric[];
   oneAcquisitionMetrics: BreakdownMetric[];
