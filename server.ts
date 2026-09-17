@@ -13,10 +13,77 @@ import express from 'express';
 import path from 'path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'url';
+import crypto from 'node:crypto';
+import { GoogleAuth } from 'google-auth-library';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const execFileAsync = promisify(execFile);
+
+interface CachedFirebaseUser {
+  displayName: string | null;
+  email: string | null;
+  phoneNumber: string | null;
+}
+
+const OBSERVABILITY_USER_ID_SALT = 'hushh-observability-v1';
+let firebaseUsersCacheMap: { timestamp: number; map: Map<string, CachedFirebaseUser> } | null = null;
+const FIREBASE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function getFirebaseUsersMap(): Promise<Map<string, CachedFirebaseUser>> {
+  const now = Date.now();
+  if (firebaseUsersCacheMap && (now - firebaseUsersCacheMap.timestamp) < FIREBASE_CACHE_TTL_MS) {
+    return firebaseUsersCacheMap.map;
+  }
+
+  const map = new Map<string, CachedFirebaseUser>();
+  try {
+    const auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/firebase'],
+    });
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+    if (!token.token) return map;
+
+    for (const sortBy of ['CREATED_AT', 'LAST_LOGIN_AT']) {
+      for (const order of ['ASC', 'DESC']) {
+        const res = await fetch('https://identitytoolkit.googleapis.com/v1/projects/hushh-pda/accounts:query', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token.token}`,
+            'x-goog-user-project': 'hushh-pda',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            returnUserInfo: true,
+            limit: 1000,
+            sortBy,
+            order,
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { userInfo?: Array<{ localId: string; displayName?: string; email?: string; phoneNumber?: string }> };
+          const users = data.userInfo || [];
+          for (const u of users) {
+            const info: CachedFirebaseUser = {
+              displayName: u.displayName || null,
+              email: u.email || null,
+              phoneNumber: u.phoneNumber || null,
+            };
+            map.set(u.localId, info);
+            const raw = `${OBSERVABILITY_USER_ID_SALT}:${u.localId}`;
+            const hash = crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
+            map.set(hash, info);
+          }
+        }
+      }
+    }
+    firebaseUsersCacheMap = { timestamp: now, map };
+  } catch (err) {
+    console.error('Firebase Auth identity enrichment lookup failed:', err);
+  }
+  return map;
+}
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -2443,10 +2510,10 @@ ${capabilitySql.isHuman}
       SELECT
         user_pseudo_id,
         COALESCE(platform, 'UNKNOWN') AS platform,
-        PARSE_DATE('%Y%m%d', REGEXP_EXTRACT(_TABLE_SUFFIX, r'(\\d{8})$')) AS day,
+        PARSE_DATE('%Y%m%d', event_date) AS day,
         MAX(event_timestamp) AS max_event_ts
       FROM ${table}
-      WHERE ${activeWindowFilter} AND ${surfaceFilter}
+      WHERE ${activeWindowFilter}
       GROUP BY user_pseudo_id, platform, day
     ),
     user_identities AS (
@@ -2456,7 +2523,7 @@ ${capabilitySql.isHuman}
         MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key = 'email')) AS prop_email,
         MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail'))) AS param_email
       FROM ${table}
-      WHERE ${activeWindowFilter}
+      WHERE _TABLE_SUFFIX >= '20260501'
         AND (user_id IS NOT NULL OR EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail')))
       GROUP BY user_pseudo_id
     ),
@@ -2655,6 +2722,7 @@ ${capabilitySql.isHuman}
     retention,
     activationStages,
     activeIdentities,
+    firebaseMap,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
     queryBigQuerySql(queryProject, agentQuery),
@@ -2675,6 +2743,7 @@ ${capabilitySql.isHuman}
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, activeIdentitiesQuery),
+    getFirebaseUsersMap(),
   ]);
 
   const errors = [
@@ -2782,16 +2851,23 @@ ${capabilitySql.isHuman}
         // The day DAU was actually measured on, which is the last day with
         // data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
-        identities: activeIdentities.rows.map((row) => ({
-          userPseudoId: String(row.userPseudoId ?? ''),
-          userId: row.userId ? String(row.userId) : null,
-          boundEmail: row.boundEmail ? String(row.boundEmail) : null,
-          platform: String(row.platform ?? 'UNKNOWN'),
-          lastActiveTimestamp: String(row.lastActiveTimestamp ?? ''),
-          isDaily: Boolean(row.isDaily),
-          isWeekly: Boolean(row.isWeekly),
-          isMonthly: Boolean(row.isMonthly),
-        })),
+        identities: activeIdentities.rows.map((row) => {
+          const userIdStr = row.userId ? String(row.userId) : null;
+          const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
+          const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null) || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null);
+          const boundEmail = row.boundEmail ? String(row.boundEmail) : (userMatch?.email || null);
+          return {
+            userPseudoId: String(row.userPseudoId ?? ''),
+            userId: userIdStr,
+            displayName: userMatch?.displayName || null,
+            boundEmail,
+            platform: String(row.platform ?? 'UNKNOWN'),
+            lastActiveTimestamp: String(row.lastActiveTimestamp ?? ''),
+            isDaily: Boolean(row.isDaily),
+            isWeekly: Boolean(row.isWeekly),
+            isMonthly: Boolean(row.isMonthly),
+          };
+        }),
       },
       // The install cohort funnel, per native platform. Stages nest because
       // every one is measured against the same devices that installed inside

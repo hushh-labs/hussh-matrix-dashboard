@@ -727,6 +727,7 @@ export interface OneCapabilityUsage {
 export interface OneActiveUserIdentity {
   userPseudoId: string;
   userId: string | null;
+  displayName?: string | null;
   boundEmail?: string | null;
   platform: string;
   lastActiveTimestamp: string;

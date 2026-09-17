@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Search, ShieldCheck, UserCheck, Users } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Search, ShieldCheck, User, UserCheck, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
   Area,
@@ -106,14 +106,15 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
     if (selectedTier === 'daily' && !item.isDaily) return false;
     if (selectedTier === 'weekly' && !item.isWeekly) return false;
     if (selectedTier === 'monthly' && !item.isMonthly) return false;
-    if (filterAccountOnly && !item.userId && !item.boundEmail) return false;
+    if (filterAccountOnly && !item.userId && !item.boundEmail && !item.displayName) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
+      const matchName = item.displayName?.toLowerCase().includes(q);
       const matchEmail = item.boundEmail?.toLowerCase().includes(q);
       const matchUserId = item.userId?.toLowerCase().includes(q);
       const matchPseudo = item.userPseudoId?.toLowerCase().includes(q);
       const matchPlatform = item.platform?.toLowerCase().includes(q);
-      return Boolean(matchEmail || matchUserId || matchPseudo || matchPlatform);
+      return Boolean(matchName || matchEmail || matchUserId || matchPseudo || matchPlatform);
     }
     return true;
   });
@@ -254,31 +255,40 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                 </thead>
                 <tbody className="divide-y divide-black/5">
                   {filteredIdentities.map((item, idx) => {
+                    const hasName = Boolean(item.displayName);
                     const hasEmail = Boolean(item.boundEmail);
                     const hasUserId = Boolean(item.userId);
-                    const hasAccount = hasEmail || hasUserId;
+                    const hasAccount = hasEmail || hasUserId || hasName;
 
                     return (
                       <tr key={item.userPseudoId + idx} className="hover:bg-black/[0.02]">
                         <td className="py-2.5 px-3 font-semibold text-[#1d1d1f]">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {hasEmail && (
-                              <span className="flex items-center gap-1 rounded bg-[#1f7a36]/10 px-2 py-0.5 font-mono text-xs font-bold text-[#1f7a36]">
-                                <Mail className="h-3 w-3" />
-                                {item.boundEmail}
-                              </span>
+                          <div className="flex flex-col gap-1">
+                            {hasName && (
+                              <div className="flex items-center gap-1.5 font-bold text-sm text-[#1d1d1f]">
+                                <User className="h-3.5 w-3.5 text-[#007aff]" />
+                                <span>{item.displayName}</span>
+                              </div>
                             )}
-                            {hasUserId && (
-                              <span className="flex items-center gap-1 rounded bg-[#007aff]/10 px-2 py-0.5 font-mono text-xs font-bold text-[#007aff]">
-                                <ShieldCheck className="h-3 w-3" />
-                                {item.userId}
-                              </span>
-                            )}
-                            {!hasAccount && (
-                              <span className="text-[#86868b] italic">
-                                Anonymous (Unbound Device)
-                              </span>
-                            )}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {hasEmail && (
+                                <span className="flex items-center gap-1 rounded bg-[#1f7a36]/10 px-2 py-0.5 font-mono text-xs font-bold text-[#1f7a36]">
+                                  <Mail className="h-3 w-3" />
+                                  {item.boundEmail}
+                                </span>
+                              )}
+                              {hasUserId && (
+                                <span className="flex items-center gap-1 rounded bg-[#007aff]/10 px-2 py-0.5 font-mono text-xs font-bold text-[#007aff]">
+                                  <ShieldCheck className="h-3 w-3" />
+                                  {item.userId}
+                                </span>
+                              )}
+                              {!hasAccount && (
+                                <span className="text-[#86868b] italic">
+                                  Anonymous (Unbound Device)
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </td>
                         <td className="py-2.5 px-3 font-mono text-[11px] text-[#6e6e73]">
