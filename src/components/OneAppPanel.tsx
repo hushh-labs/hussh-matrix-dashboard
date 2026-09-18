@@ -93,7 +93,7 @@ function Block({
  */
 function ActivePeople({ one }: { one: OneAppSummary }) {
   const { dau, wau, mau, stickiness, asOf, identities = [] } = one.activeUsers;
-  const [selectedTier, setSelectedTier] = useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
+  const [selectedTier, setSelectedTier] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAccountOnly, setFilterAccountOnly] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
@@ -109,10 +109,11 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
   ];
 
   const filteredIdentities = identities.filter((item) => {
-    if (selectedTier === 'daily' && !item.isDaily) return false;
-    if (selectedTier === 'weekly' && !item.isWeekly) return false;
-    if (selectedTier === 'monthly' && !item.isMonthly) return false;
-    if (filterAccountOnly && !item.userId && !item.boundEmail && !item.displayName && !item.phoneNumber) return false;
+    const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
+    if (selectedTier === 'daily' && !item.isDaily && !hasInfo) return false;
+    if (selectedTier === 'weekly' && !item.isWeekly && !hasInfo) return false;
+    if (selectedTier === 'monthly' && !item.isMonthly && !hasInfo) return false;
+    if (filterAccountOnly && !hasInfo) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchName = item.displayName?.toLowerCase().includes(q);
@@ -135,7 +136,6 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
   const displayedIdentities = filteredIdentities.slice(0, visibleCount);
 
   const registeredCount = filteredIdentities.filter(i => i.displayName || i.boundEmail || i.phoneNumber || i.userId).length;
-  const guestCount = filteredIdentities.length - registeredCount;
 
   return (
     <div className="space-y-4">
@@ -148,7 +148,7 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.04 }}
-              onClick={() => setSelectedTier(isSelected ? 'all' : tile.key)}
+              onClick={() => setSelectedTier(tile.key)}
               className={cn(
                 appleCard,
                 'group relative cursor-pointer p-5 transition-all duration-200 hover:shadow-md',
@@ -205,9 +205,7 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
               <Users className="h-5 w-5 text-[#007aff]" />
               <h3 className="text-base font-bold text-[#1d1d1f]">
                 Active User Breakdown (
-                {selectedTier === 'all'
-                  ? 'All Logged-in Users'
-                  : selectedTier === 'daily'
+                {selectedTier === 'daily'
                   ? 'Daily Active'
                   : selectedTier === 'weekly'
                   ? 'Weekly Active'
@@ -227,10 +225,9 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={selectedTier}
-              onChange={(e) => setSelectedTier(e.target.value as 'all' | 'daily' | 'weekly' | 'monthly')}
+              onChange={(e) => setSelectedTier(e.target.value as 'daily' | 'weekly' | 'monthly')}
               className="rounded-lg border border-black/10 bg-white py-1.5 px-3 text-xs font-bold text-[#1d1d1f] focus:border-[#007aff] focus:outline-none shadow-sm cursor-pointer"
             >
-              <option value="all">All Logged-in Users ({identities.length})</option>
               <option value="daily">Daily Active Users ({dau})</option>
               <option value="weekly">Weekly Active Users ({wau})</option>
               <option value="monthly">Monthly Active Users ({mau})</option>
