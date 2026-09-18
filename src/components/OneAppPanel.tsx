@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Phone, Search, ShieldCheck, User, UserCheck, Users } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -96,6 +96,11 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
   const [selectedTier, setSelectedTier] = useState<'daily' | 'weekly' | 'monthly' | null>('daily');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAccountOnly, setFilterAccountOnly] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(10);
+
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [selectedTier, searchQuery, filterAccountOnly]);
 
   const tiles: Array<{ key: 'daily' | 'weekly' | 'monthly'; label: string; value: number; detail: string }> = [
     { key: 'daily', label: 'Daily active', value: dau, detail: asOf },
@@ -126,6 +131,8 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
     if (!aHasInfo && bHasInfo) return 1;
     return 0;
   });
+
+  const displayedIdentities = filteredIdentities.slice(0, visibleCount);
 
   return (
     <div className="space-y-4">
@@ -263,7 +270,7 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-black/5">
-                  {filteredIdentities.map((item, idx) => {
+                  {displayedIdentities.map((item, idx) => {
                     const displayName = item.displayName || null;
                     const email = item.boundEmail || null;
                     const phone = item.phoneNumber || null;
@@ -344,7 +351,36 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
             </div>
           )}
 
-          <div className="mt-4 border-t border-black/5 pt-3 text-[11px] font-medium text-[#86868b]">
+          {filteredIdentities.length > 0 && (
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-black/5 pt-3">
+              <p className="text-xs font-semibold text-[#6e6e73]">
+                Showing <strong className="text-[#1d1d1f]">{displayedIdentities.length}</strong> of{' '}
+                <strong className="text-[#1d1d1f]">{filteredIdentities.length}</strong> active users
+              </p>
+              <div className="flex items-center gap-2">
+                {visibleCount < filteredIdentities.length && (
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount((prev) => prev + 10)}
+                    className="rounded-lg bg-[#007aff] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#0062cc] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
+                  >
+                    Load 10 More Users
+                  </button>
+                )}
+                {visibleCount > 10 && (
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount(10)}
+                    className="rounded-lg bg-black/5 px-3 py-2 text-xs font-semibold text-[#6e6e73] transition hover:bg-black/10"
+                  >
+                    Show Less (Top 10)
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-3 border-t border-black/5 pt-3 text-[11px] font-medium text-[#86868b]">
             <strong>User Details:</strong> Displays registered Firebase users (Name, Email Address, Contact Number) resolved automatically via static catalog and Identity Toolkit API.
           </div>
         </motion.div>
