@@ -1125,6 +1125,9 @@ export function OneAppPanel({
   dateControl: ReactNode;
 }) {
   const [selectedAgentCapability, setSelectedAgentCapability] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
+
+  const activeData = (environment === 'production' ? one : (oneUat || one)) as OneAppSummary;
 
   if ((!one || !one.available) && !locationRoute && !selectedAgentCapability) {
     return (
@@ -1181,18 +1184,57 @@ export function OneAppPanel({
   return (
     <main className="space-y-10">
       <section>
+        {/* Environment Selector Toggle Bar */}
+        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-2xl bg-[#f5f5f7] p-3 border border-black/5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex rounded-lg bg-black/5 p-1 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setEnvironment('production')}
+                className={cn(
+                  'rounded-md px-3 py-1.5 transition',
+                  environment === 'production'
+                    ? 'bg-white text-[#1d1d1f] shadow-sm'
+                    : 'text-[#6e6e73] hover:text-[#1d1d1f]'
+                )}
+              >
+                Production
+              </button>
+              <button
+                type="button"
+                onClick={() => setEnvironment('uat')}
+                className={cn(
+                  'rounded-md px-3 py-1.5 transition',
+                  environment === 'uat'
+                    ? 'bg-white text-[#1d1d1f] shadow-sm'
+                    : 'text-[#6e6e73] hover:text-[#1d1d1f]'
+                )}
+              >
+                UAT / Test builds
+              </button>
+            </div>
+            <p className="text-xs font-medium text-[#6e6e73] max-w-xl">
+              {environment === 'production'
+                ? 'Production web plus public iOS and Android builds. Tester traffic is excluded. Counts never mix across environments.'
+                : 'Internal UAT web (uat.one.hushh.ai) plus iOS TestFlight and Android Beta builds. Tester traffic is isolated.'}
+            </p>
+          </div>
+          {dateControl}
+        </div>
+
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className={appleLabel}>one.hushh.ai · production · {rangeLabel}</p>
+            <p className={appleLabel}>
+              {environment === 'production' ? 'one.hushh.ai · production' : 'uat.one.hushh.ai · uat / test builds'} · {rangeLabel}
+            </p>
             <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
               How many people are using One?
             </h2>
           </div>
-          {dateControl}
         </div>
         <div className="flex flex-col gap-4">
-          <ActivePeople one={one} />
-          <ActivesByPlatform rows={one.activeByPlatform} />
+          <ActivePeople one={activeData} />
+          <ActivesByPlatform rows={activeData.activeByPlatform} />
         </div>
       </section>
 
@@ -1201,14 +1243,14 @@ export function OneAppPanel({
         title="Is that growth, or churn?"
         hint="An active-user count made mostly of first-timers is not the same product story as one made of people coming back."
       >
-        <GrowthQuality one={one} />
+        <GrowthQuality one={activeData} />
       </Block>
 
       <Block
         kicker="Retention"
         title="Do they come back?"
       >
-        <Retention one={one} />
+        <Retention one={activeData} />
       </Block>
 
       <Block
@@ -1216,8 +1258,8 @@ export function OneAppPanel({
         title="What happens after someone installs the app?"
         hint="A true cohort: every stage counts the same people who installed in this window, so the percentages are real conversions. Web has no install to measure."
       >
-        <InstallFunnel funnels={one.installFunnel} />
-        <FunnelDropoffAgentDiagnostic funnels={one.installFunnel} capabilities={one.capabilities} />
+        <InstallFunnel funnels={activeData.installFunnel} />
+        <FunnelDropoffAgentDiagnostic funnels={activeData.installFunnel} capabilities={activeData.capabilities} />
       </Block>
 
       <Block
@@ -1225,7 +1267,7 @@ export function OneAppPanel({
         title="Do they reach first value?"
         hint="First value is a location actually moving between two people — sent or received."
       >
-        <Activation one={one} />
+        <Activation one={activeData} />
       </Block>
 
       <Block
@@ -1236,15 +1278,7 @@ export function OneAppPanel({
         <div className="flex flex-col gap-4">
           <AgentsClaimed />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/*
-              * Fragment carries the key instead of the component itself. This
-              * project has no @types/react installed, so TS does not recognise
-              * `key` on a custom component; Dashboard.tsx works around the same
-              * gap with a wrapper div. Fragment is used here because a wrapper
-              * element would become the grid item and the cards would stop
-              * sharing a row height.
-              */}
-            {one.capabilities.map((capability, index) => (
+            {activeData.capabilities.map((capability, index) => (
               <Fragment key={capability.key}>
                 <button
                   type="button"
@@ -1276,7 +1310,7 @@ export function OneAppPanel({
       </Block>
 
       <section className={dashboardBand}>
-        <Provenance one={one} rangeLabel={rangeLabel} />
+        <Provenance one={activeData} rangeLabel={rangeLabel} />
       </section>
     </main>
   );
