@@ -21,7 +21,11 @@ export function FeatureUserBreakdownPanel({
   const [filterRegisteredOnly, setFilterRegisteredOnly] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
 
-  const filteredIdentities = identities.filter((item) => {
+  const scopedIdentities = typeof totalDevices === 'number' && totalDevices >= 0
+    ? identities.slice(0, totalDevices)
+    : identities;
+
+  const filteredIdentities = scopedIdentities.filter((item) => {
     const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
     if (filterRegisteredOnly && !hasInfo) return false;
     if (searchQuery.trim()) {
