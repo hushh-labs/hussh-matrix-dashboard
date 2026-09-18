@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { GoogleAuth } from 'google-auth-library';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
