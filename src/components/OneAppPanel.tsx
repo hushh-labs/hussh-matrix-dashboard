@@ -19,6 +19,7 @@ import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
 import { formatNumber } from '../lib/analytics-service';
 import type { LocationAnalyticsRoute } from '../lib/location-analytics-route';
 import { OneLocationAnalyticsPanel } from './OneLocationAnalyticsPanel';
+import { AgentCapabilityAnalyticsPanel } from './AgentCapabilityAnalyticsPanel';
 import type {
   BreakdownMetric,
   OneAppSummary,
@@ -118,6 +119,12 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
       return Boolean(matchName || matchEmail || matchPhone || matchUserId || matchPseudo || matchPlatform);
     }
     return true;
+  }).sort((a, b) => {
+    const aHasInfo = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
+    const bHasInfo = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
+    if (aHasInfo && !bHasInfo) return -1;
+    if (!aHasInfo && bHasInfo) return 1;
+    return 0;
   });
 
   return (
@@ -948,14 +955,13 @@ function CapabilityCard({
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          {capability.key === 'location' && (
-            <p className="mt-3 text-xs font-bold text-[#007aff]">View detailed analytics →</p>
-          )}
+          <p className="mt-3 text-xs font-bold text-[#007aff] group-hover:underline">View detailed analytics →</p>
         </>
       ) : (
         <div className="mt-3 flex flex-1 flex-col justify-between gap-3">
           <p className="text-4xl font-semibold leading-none text-[#c7c7cc]">—</p>
           <p className="text-xs font-medium leading-5 text-[#6e6e73]">{note}</p>
+          <p className="mt-2 text-xs font-bold text-[#007aff] group-hover:underline">View detailed analytics →</p>
         </div>
       )}
     </motion.div>
@@ -1069,7 +1075,9 @@ export function OneAppPanel({
    */
   dateControl: ReactNode;
 }) {
-  if ((!one || !one.available) && !locationRoute) {
+  const [selectedAgentCapability, setSelectedAgentCapability] = useState<string | null>(null);
+
+  if ((!one || !one.available) && !locationRoute && !selectedAgentCapability) {
     return (
       <main className="space-y-10">
         <div className="flex justify-end">{dateControl}</div>
@@ -1083,6 +1091,22 @@ export function OneAppPanel({
           </p>
         </div>
       </main>
+    );
+  }
+
+  if (selectedAgentCapability) {
+    return (
+      <AgentCapabilityAnalyticsPanel
+        capabilityKey={selectedAgentCapability}
+        one={one}
+        uat={oneUat}
+        rangeLabel={rangeLabel}
+        dateControl={dateControl}
+        onBack={() => {
+          setSelectedAgentCapability(null);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
     );
   }
 
@@ -1173,21 +1197,21 @@ export function OneAppPanel({
               */}
             {one.capabilities.map((capability, index) => (
               <Fragment key={capability.key}>
-                {capability.key === 'location' ? (
-                  <button
-                    type="button"
-                    aria-label="Open detailed One Location analytics"
-                    onClick={() => {
+                <button
+                  type="button"
+                  aria-label={`Open detailed ${capability.label} analytics`}
+                  onClick={() => {
+                    if (capability.key === 'location') {
                       onOpenLocation();
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="h-full rounded-2xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] focus-visible:ring-offset-2"
-                  >
-                    <CapabilityCard capability={capability} index={index} />
-                  </button>
-                ) : (
+                    } else {
+                      setSelectedAgentCapability(capability.key);
+                    }
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="h-full rounded-2xl text-left transition-all duration-200 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] focus-visible:ring-offset-2"
+                >
                   <CapabilityCard capability={capability} index={index} />
-                )}
+                </button>
               </Fragment>
             ))}
           </div>

@@ -2586,12 +2586,15 @@ ${capabilitySql.isHuman}
     user_identities AS (
       SELECT
         user_pseudo_id,
-        MAX(user_id) AS user_id,
+        MAX(IF(LOWER(user_id) != LOWER(TO_HEX(MD5(user_pseudo_id))), user_id, NULL)) AS user_id,
         MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key = 'email')) AS prop_email,
         MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail'))) AS param_email
       FROM ${table}
       WHERE _TABLE_SUFFIX >= '20260501'
-        AND (user_id IS NOT NULL OR EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail')))
+        AND (
+          (user_id IS NOT NULL AND LOWER(user_id) != LOWER(TO_HEX(MD5(user_pseudo_id))))
+          OR EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail'))
+        )
       GROUP BY user_pseudo_id
     ),
     anchor AS (SELECT MAX(day) AS latest FROM active_devices),
@@ -2919,9 +2922,14 @@ ${capabilitySql.isHuman}
         // data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
         identities: activeIdentities.rows.map((row) => {
-          const userIdStr = row.userId ? String(row.userId) : null;
+          let userIdStr = row.userId ? String(row.userId) : null;
           const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
           const boundEmailStr = row.boundEmail ? String(row.boundEmail) : null;
+
+          if (userIdStr && pseudoIdStr && crypto.createHash('md5').update(pseudoIdStr).digest('hex').toLowerCase() === userIdStr.toLowerCase()) {
+            userIdStr = null;
+          }
+
           const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null)
             || (boundEmailStr ? firebaseMap.get(boundEmailStr.toLowerCase().trim()) : null)
             || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null);
@@ -2938,6 +2946,12 @@ ${capabilitySql.isHuman}
             isWeekly: Boolean(row.isWeekly),
             isMonthly: Boolean(row.isMonthly),
           };
+        }).sort((a, b) => {
+          const aHasName = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
+          const bHasName = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
+          if (aHasName && !bHasName) return -1;
+          if (!aHasName && bHasName) return 1;
+          return 0;
         }),
       },
       // The install cohort funnel, per native platform. Stages nest because
