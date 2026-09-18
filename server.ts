@@ -2610,10 +2610,10 @@ ${capabilitySql.isHuman}
       SELECT
         user_pseudo_id,
         COALESCE(platform, 'UNKNOWN') AS platform,
-        PARSE_DATE('%Y%m%d', event_date) AS day,
+        COALESCE(SAFE.PARSE_DATE('%Y%m%d', event_date), DATE(TIMESTAMP_MICROS(event_timestamp))) AS day,
         MAX(event_timestamp) AS max_event_ts
       FROM ${table}
-      WHERE ${activeWindowFilter}
+      WHERE ${activeWindowFilter} AND ${surfaceFilter}
       GROUP BY user_pseudo_id, platform, day
     ),
     user_identities AS (
@@ -2627,10 +2627,10 @@ ${capabilitySql.isHuman}
         MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('display_name', 'name', 'user_name', 'username', 'full_name', 'first_name'))) AS param_name,
         MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('phone', 'phone_number', 'contact', 'contact_number', 'mobile', 'mobile_number', 'user_phone', 'caller_phone', 'telephone', 'phone_no'))) AS param_phone
       FROM ${table}
-      WHERE _TABLE_SUFFIX >= '20260501'
+      WHERE ${activeWindowFilter} AND ${surfaceFilter}
       GROUP BY user_pseudo_id
     ),
-    anchor AS (SELECT MAX(day) AS latest FROM active_devices),
+    anchor AS (SELECT COALESCE(MAX(day), CURRENT_DATE()) AS latest FROM active_devices),
     user_summary AS (
       SELECT
         d.user_pseudo_id,
@@ -2659,8 +2659,7 @@ ${capabilitySql.isHuman}
       (is_weekly = 1) AS isWeekly,
       (is_monthly = 1) AS isMonthly
     FROM user_summary
-    WHERE is_monthly = 1
-    ORDER BY (userId IS NOT NULL OR boundEmail IS NOT NULL OR paramName IS NOT NULL OR paramPhone IS NOT NULL) DESC, is_daily DESC, is_weekly DESC, max_event_ts DESC
+    ORDER BY (userId IS NOT NULL OR boundEmail IS NOT NULL OR paramName IS NOT NULL OR paramPhone IS NOT NULL) DESC, is_monthly DESC, is_daily DESC, is_weekly DESC, max_event_ts DESC
     LIMIT 1000
   `;
 
