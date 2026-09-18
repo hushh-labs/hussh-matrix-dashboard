@@ -912,6 +912,7 @@ export function AgentCapabilityAnalyticsPanel({
                             <FeatureUserBreakdownPanel
                               featureLabel={feature.label}
                               identities={activeIdentities}
+                              fallbackIdentities={one?.activeUsers?.identities || []}
                               totalDevices={feature.devices}
                               onClose={() => setExpandedFeatureKey(null)}
                             />

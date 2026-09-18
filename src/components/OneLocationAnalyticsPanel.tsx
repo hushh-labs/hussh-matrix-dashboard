@@ -276,6 +276,7 @@ function FeatureTable({
                   <FeatureUserBreakdownPanel
                     featureLabel={feature.label}
                     identities={identities}
+                    fallbackIdentities={identities}
                     totalDevices={feature.users ?? undefined}
                     onClose={() => setExpandedFeatureKey(null)}
                   />
@@ -363,6 +364,7 @@ function FeatureTable({
                         <FeatureUserBreakdownPanel
                           featureLabel={feature.label}
                           identities={identities}
+                          fallbackIdentities={identities}
                           totalDevices={feature.users ?? undefined}
                           onClose={() => setExpandedFeatureKey(null)}
                         />
