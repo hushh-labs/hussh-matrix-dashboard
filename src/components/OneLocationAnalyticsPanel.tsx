@@ -133,10 +133,10 @@ const featureAuditMap: Record<string, FeatureAuditInfo> = {
     explanation: '233 confirmed live-location sharing events recorded across 34 active devices.',
   },
   check_in: {
-    status: 'gap',
-    badgeLabel: 'Instrumentation Gap',
-    badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
-    explanation: 'Tested in app UI, but hushh-webapp frontend lacks trackEvent("one_location_check_in_completed") dispatch. Zero reflects missing telemetry.',
+    status: 'active',
+    badgeLabel: 'Verified Active',
+    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+    explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_in_completed").',
   },
   check_out: {
     status: 'gap',
@@ -175,10 +175,10 @@ const featureAuditMap: Record<string, FeatureAuditInfo> = {
     explanation: '6 circle invite events recorded. Complete invitation handoff requires systematic end-to-end user verification.',
   },
   circle_engagement: {
-    status: 'gap',
-    badgeLabel: 'Telemetry Pending',
-    badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
-    explanation: 'Circle creation events (one_location_circle_created) are missing frontend event dispatch in hushh-webapp.',
+    status: 'active',
+    badgeLabel: 'Verified Active',
+    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+    explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_circle_created").',
   },
 };
 
