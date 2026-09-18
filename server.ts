@@ -2037,7 +2037,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'one_location_share_review_opened', 'one_location_visit_rated',
       'one_location_review_handoff_opened', 'one_location_setup_completed',
       'one_location_onboarding_completed', 'one_location_activation_completed',
-      'one_location_journey_action',
+      'one_location_journey_action', 'one_location_checkin', 'one_location_circle_engagement',
     ],
     // A retry is the app fighting the OS for a fix, and a contact sync is a
     // background job. Neither is somebody using the product.
@@ -2051,6 +2051,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'portfolio_viewed', 'recommendation_viewed', 'analysis_stream_started',
       'analysis_stream_terminal_decision', 'import_upload_started',
       'import_save_completed', 'import_parse_completed',
+      'one_finance_portfolio_viewed', 'one_finance_analysis_started',
     ],
     background: [
       'market_insights_loaded', 'profile_picks_loaded', 'analysis_stream_error',
@@ -2061,7 +2062,10 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'consent',
     label: 'Consent',
-    human: ['consent_action_submitted', 'consent_action_result'],
+    human: [
+      'consent_action_submitted', 'consent_action_result',
+      'one_consent_preferences_updated', 'one_consent_data_unlocked',
+    ],
     // consent_pending_loaded carries load_surface precisely to separate a real
     // screen view from the unlock warm prefetch. It is split on that parameter
     // below rather than listed as human here.
@@ -2074,6 +2078,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     human: [
       'gmail_connect_started', 'gmail_connect_result', 'gmail_sync_requested',
       'gmail_disconnect_result', 'hushh_mail_signin_screen_view',
+      'one_gmail_connected', 'one_gmail_receipt_synced',
     ],
     background: ['gmail_receipts_loaded', 'gmail_sync_result'],
     instrumented: true,
@@ -2084,6 +2089,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     human: [
       'ria_onboarding_submitted', 'ria_request_created', 'ria_workspace_opened',
       'ria_verification_status_changed', 'persona_switched',
+      'one_ria_workspace_visited', 'one_ria_onboarding_completed',
     ],
     background: [],
     instrumented: true,
@@ -2148,6 +2154,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'auth_started', 'auth_succeeded', 'google_sign_in_started', 'google_sign_in_completed',
       'phone_verification_started', 'phone_verification_completed',
       'onboarding_started', 'onboarding_step_completed', 'onboarding_completed',
+      'one_auth_login_completed', 'one_phone_verified', 'one_onboarding_completed',
     ],
     background: ['auth_failed', 'google_sign_in_failed'],
     instrumented: true,
