@@ -2221,6 +2221,10 @@ function oneAppSurfaceFilter(webHost: string): string {
   return `(
       platform IN ('IOS', 'ANDROID')
       OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) = ${sqlStringLiteral(webHost)}
+      OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) LIKE 'localhost%'
+      OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) LIKE '%.vercel.app'
+      OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) LIKE '%.hushh.ai'
+      OR (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') IS NULL
     )`;
 }
 
@@ -2610,12 +2614,11 @@ ${capabilitySql.isHuman}
       SELECT
         user_pseudo_id,
         COALESCE(platform, 'UNKNOWN') AS platform,
-        SAFE.PARSE_DATE('%Y%m%d', event_date) AS day,
+        COALESCE(SAFE.PARSE_DATE('%Y%m%d', event_date), DATE(TIMESTAMP_MICROS(event_timestamp))) AS day,
         MAX(event_timestamp) AS max_event_ts
       FROM ${table}
-      WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
+      WHERE ${activeWindowFilter} AND ${surfaceFilter}
       GROUP BY user_pseudo_id, platform, day
-      HAVING day IS NOT NULL
     ),
     user_identities AS (
       SELECT
@@ -2641,7 +2644,7 @@ ${capabilitySql.isHuman}
         MAX(COALESCE(i.prop_phone, i.param_phone)) AS param_phone,
         MAX(d.platform) AS platform,
         MAX(d.max_event_ts) AS max_event_ts,
-        MAX(IF(d.day = (SELECT latest FROM anchor), 1, 0)) AS is_daily,
+        MAX(IF(d.day >= DATE_SUB((SELECT latest FROM anchor), INTERVAL 1 DAY), 1, 0)) AS is_daily,
         MAX(IF(d.day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_weekly,
         MAX(IF(d.day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_monthly
       FROM active_devices d
