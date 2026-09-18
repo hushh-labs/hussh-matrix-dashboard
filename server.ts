@@ -1920,6 +1920,7 @@ const ONE_LOCATION_FUNNEL_STEPS: Array<{ key: string; label: string }> = [
 const ONE_LOCATION_BEHAVIOR_FEATURES = [
   { key: 'live_sharing', label: 'Live sharing' },
   { key: 'check_in', label: 'Check-In' },
+  { key: 'check_out', label: 'Check-Out' },
   { key: 'sms_safety', label: 'Save My Soul SMS' },
   { key: 'request_location', label: 'Request Location' },
   { key: 'public_sharing', label: 'Public location sharing' },
@@ -2324,17 +2325,9 @@ ${capabilitySql.isHuman}
       WHERE ${dateFilter}
         AND (
           event_name = 'page_view'
-          OR event_name IN (
-            'one_location_share_confirmed',
-            'one_location_check_in_completed',
-            'one_location_sos_triggered',
-            'one_location_request_sent',
-            'one_location_public_link_created',
-            'one_location_contact_signal_synced',
-            'one_location_circle_invite_created',
-            'one_location_circle_created',
-            'one_location_journey_action'
-          )
+          OR event_name LIKE 'one_location%'
+          OR event_name LIKE '%check_in%'
+          OR event_name LIKE '%check_out%'
         )
     ),
     classified AS (
@@ -2342,7 +2335,8 @@ ${capabilitySql.isHuman}
         *,
         CASE
           WHEN eventName = 'one_location_share_confirmed' THEN 'live_sharing'
-          WHEN eventName = 'one_location_check_in_completed' THEN 'check_in'
+          WHEN eventName = 'one_location_check_in_completed' OR eventName LIKE '%check_in%' THEN 'check_in'
+          WHEN eventName LIKE '%check_out%' THEN 'check_out'
           WHEN eventName = 'one_location_journey_action' AND actionName = 'nearby_check_in_result' THEN 'check_in'
           WHEN eventName = 'one_location_sos_triggered' THEN 'sms_safety'
           WHEN eventName = 'one_location_request_sent' THEN 'request_location'
