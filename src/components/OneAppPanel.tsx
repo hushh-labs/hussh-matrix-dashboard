@@ -134,6 +134,9 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
 
   const displayedIdentities = filteredIdentities.slice(0, visibleCount);
 
+  const registeredCount = filteredIdentities.filter(i => i.displayName || i.boundEmail || i.phoneNumber || i.userId).length;
+  const guestCount = filteredIdentities.length - registeredCount;
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -213,10 +216,11 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                 </h3>
                 <span className="rounded-full bg-[#007aff]/10 px-2.5 py-0.5 text-xs font-bold text-[#007aff]">
                   {filteredIdentities.length} {filteredIdentities.length === 1 ? 'user' : 'users'}
+                  {registeredCount > 0 ? ` (${registeredCount} registered resolved)` : ''}
                 </span>
               </div>
               <p className="mt-1 text-xs font-semibold text-[#6e6e73]">
-                Human details (Name, Email, Contact Number, Platform) of active users in this tier.
+                Registered accounts (Name & Email resolved via Firebase catalog) are sorted at top. Web browser cookies without telemetry user_id show as Anonymous User.
               </p>
             </div>
 
