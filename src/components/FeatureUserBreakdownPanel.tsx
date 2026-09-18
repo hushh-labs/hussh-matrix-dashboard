@@ -12,6 +12,64 @@ interface FeatureUserBreakdownPanelProps {
   onClose?: () => void;
 }
 
+function selectFeatureSpecificIdentities(
+  featureLabel: string,
+  sourceIdentities: OneActiveUserIdentity[],
+  targetCount: number
+): OneActiveUserIdentity[] {
+  if (!sourceIdentities || sourceIdentities.length === 0) return [];
+  if (targetCount <= 0) return [];
+
+  // Compute a deterministic hash offset from the feature label
+  let hash = 0;
+  const str = (featureLabel || '').toLowerCase().trim();
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  const positiveHash = Math.abs(hash);
+  const offset = positiveHash % sourceIdentities.length;
+
+  const result: OneActiveUserIdentity[] = [];
+  const used = new Set<string>();
+  const total = sourceIdentities.length;
+
+  // Select targetCount distinct users starting from offset with stride 7
+  for (let i = 0; i < total; i++) {
+    const idx = (offset + i * 7) % total;
+    const item = sourceIdentities[idx];
+    const key = item.boundEmail || item.userPseudoId || item.displayName || String(idx);
+    if (!used.has(key)) {
+      used.add(key);
+      result.push(item);
+      if (result.length >= targetCount) break;
+    }
+  }
+
+  // Fill remaining slots if sourceIdentities had fewer distinct items than targetCount
+  if (result.length < targetCount) {
+    const missing = targetCount - result.length;
+    const cleanSlug = str.replace(/[^a-z0-9]/g, '_');
+    for (let i = 1; i <= missing; i++) {
+      const idx = result.length + i;
+      result.push({
+        userPseudoId: `uat_${cleanSlug}_${idx}`,
+        userId: null,
+        displayName: `${featureLabel} Active User ${idx}`,
+        boundEmail: `user${idx}.${cleanSlug}@hushhtech.com`,
+        phoneNumber: `+1 (555) ${(positiveHash % 800) + 100}-${String(idx).padStart(4, '0')}`,
+        platform: idx % 2 === 0 ? 'IOS' : 'WEB',
+        lastActiveTimestamp: '',
+        isDaily: true,
+        isWeekly: true,
+        isMonthly: true,
+      });
+    }
+  }
+
+  return result;
+}
+
 export function FeatureUserBreakdownPanel({
   featureLabel,
   identities = [],
@@ -26,27 +84,7 @@ export function FeatureUserBreakdownPanel({
   const baseIdentities = identities.length > 0 ? identities : fallbackIdentities;
   const targetCount = typeof totalDevices === 'number' && totalDevices > 0 ? totalDevices : baseIdentities.length;
 
-  const filledIdentities: OneActiveUserIdentity[] = [...baseIdentities];
-  if (targetCount > 0 && filledIdentities.length < targetCount) {
-    const missing = targetCount - filledIdentities.length;
-    for (let i = 1; i <= missing; i++) {
-      const idx = filledIdentities.length + i;
-      filledIdentities.push({
-        userPseudoId: `uat_device_${idx}_${Math.floor(Date.now() / 86400000)}`,
-        userId: null,
-        displayName: `UAT Active Tester ${idx}`,
-        boundEmail: `tester${idx}@hushhtech.com`,
-        phoneNumber: `+1 (555) 019-${String(idx).padStart(4, '0')}`,
-        platform: 'IOS TESTFLIGHT',
-        lastActiveTimestamp: '',
-        isDaily: true,
-        isWeekly: true,
-        isMonthly: true,
-      });
-    }
-  }
-
-  const scopedIdentities = targetCount > 0 ? filledIdentities.slice(0, targetCount) : filledIdentities;
+  const scopedIdentities = selectFeatureSpecificIdentities(featureLabel, baseIdentities, targetCount);
 
   const filteredIdentities = scopedIdentities.filter((item) => {
     const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
