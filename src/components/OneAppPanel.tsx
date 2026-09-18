@@ -110,9 +110,9 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
 
   const filteredIdentities = identities.filter((item) => {
     const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
-    if (selectedTier === 'daily' && !item.isDaily && !hasInfo) return false;
-    if (selectedTier === 'weekly' && !item.isWeekly && !hasInfo) return false;
-    if (selectedTier === 'monthly' && !item.isMonthly && !hasInfo) return false;
+    if (selectedTier === 'daily' && !item.isDaily) return false;
+    if (selectedTier === 'weekly' && !item.isWeekly) return false;
+    if (selectedTier === 'monthly' && !item.isMonthly) return false;
     if (filterAccountOnly && !hasInfo) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();

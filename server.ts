@@ -3022,9 +3022,9 @@ ${capabilitySql.isHuman}
                   boundEmail: val.email,
                   phoneNumber: val.phoneNumber || null,
                   platform: 'WEB',
-                  lastActiveTimestamp: new Date().toISOString(),
-                  isDaily: true,
-                  isWeekly: true,
+                  lastActiveTimestamp: '',
+                  isDaily: false,
+                  isWeekly: false,
                   isMonthly: true,
                 });
               }
