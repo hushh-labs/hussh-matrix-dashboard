@@ -223,16 +223,6 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={selectedTier}
-              onChange={(e) => setSelectedTier(e.target.value as 'daily' | 'weekly' | 'monthly')}
-              className="rounded-lg border border-black/10 bg-white py-1.5 px-3 text-xs font-bold text-[#1d1d1f] focus:border-[#007aff] focus:outline-none shadow-sm cursor-pointer"
-            >
-              <option value="daily">Daily Active Users ({dau})</option>
-              <option value="weekly">Weekly Active Users ({wau})</option>
-              <option value="monthly">Monthly Active Users ({mau})</option>
-            </select>
-
             <button
               type="button"
               onClick={() => setFilterAccountOnly(!filterAccountOnly)}
