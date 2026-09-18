@@ -2624,12 +2624,12 @@ ${capabilitySql.isHuman}
       SELECT
         user_pseudo_id,
         MAX(IF(LOWER(user_id) != LOWER(TO_HEX(MD5(user_pseudo_id))), user_id, NULL)) AS user_id,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('email', 'user_email', 'uid', 'user_id', 'phone_number', 'phone'))) AS prop_email,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('name', 'display_name', 'user_name', 'username', 'full_name'))) AS prop_name,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('phone', 'phone_number', 'contact', 'mobile', 'user_phone'))) AS prop_phone,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail', 'uid', 'user_id', 'firebase_uid', 'sub'))) AS param_email,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('display_name', 'name', 'user_name', 'username', 'full_name', 'first_name'))) AS param_name,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('phone', 'phone_number', 'contact', 'contact_number', 'mobile', 'mobile_number', 'user_phone', 'caller_phone', 'telephone', 'phone_no'))) AS param_phone
+        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('email', 'user_email', 'uid', 'user_id', 'phone_number', 'phone') LIMIT 1)) AS prop_email,
+        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('name', 'display_name', 'user_name', 'username', 'full_name') LIMIT 1)) AS prop_name,
+        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('phone', 'phone_number', 'contact', 'mobile', 'user_phone') LIMIT 1)) AS prop_phone,
+        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail', 'uid', 'user_id', 'firebase_uid', 'sub') LIMIT 1)) AS param_email,
+        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('display_name', 'name', 'user_name', 'username', 'full_name', 'first_name') LIMIT 1)) AS param_name,
+        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('phone', 'phone_number', 'contact', 'contact_number', 'mobile', 'mobile_number', 'user_phone', 'caller_phone', 'telephone', 'phone_no') LIMIT 1)) AS param_phone
       FROM ${table}
       WHERE ${activeWindowFilter} AND ${surfaceFilter}
       GROUP BY user_pseudo_id
@@ -2962,12 +2962,27 @@ ${capabilitySql.isHuman}
         // data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
         identities: (() => {
+          const toBoolean = (val: unknown): boolean => {
+            if (typeof val === 'boolean') return val;
+            if (typeof val === 'number') return val === 1;
+            if (typeof val === 'string') return val.toLowerCase() === 'true' || val === '1';
+            return false;
+          };
+
           const activeList = activeIdentities.rows.map((row) => {
-            let userIdStr = row.userId ? String(row.userId) : null;
-            const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
-            const boundEmailStr = row.boundEmail ? String(row.boundEmail) : null;
-            const paramNameStr = row.paramName ? String(row.paramName) : null;
-            const paramPhoneStr = row.paramPhone ? String(row.paramPhone) : null;
+            const rawUserId = row.userId ?? row.user_id;
+            const rawPseudoId = row.userPseudoId ?? row.user_pseudo_id;
+            const rawBoundEmail = row.boundEmail ?? row.bound_email;
+            const rawParamName = row.paramName ?? row.param_name;
+            const rawParamPhone = row.paramPhone ?? row.param_phone;
+            const rawPlatform = row.platform;
+            const rawTimestamp = row.lastActiveTimestamp ?? row.last_active_timestamp ?? row.max_event_ts ?? row.maxEventTs;
+
+            let userIdStr = rawUserId ? String(rawUserId) : null;
+            const pseudoIdStr = rawPseudoId ? String(rawPseudoId) : null;
+            const boundEmailStr = rawBoundEmail ? String(rawBoundEmail) : null;
+            const paramNameStr = rawParamName ? String(rawParamName) : null;
+            const paramPhoneStr = rawParamPhone ? String(rawParamPhone) : null;
 
             const phoneDigits = paramPhoneStr ? paramPhoneStr.replace(/\D/g, '') : null;
 
@@ -2988,17 +3003,29 @@ ${capabilitySql.isHuman}
             const displayName = userMatch?.displayName || paramNameStr || (boundEmail ? boundEmail.split('@')[0] : null);
             const phoneNumber = userMatch?.phoneNumber || paramPhoneStr || null;
 
+            let formattedTimestamp = '';
+            if (rawTimestamp) {
+              const numTs = Number(rawTimestamp);
+              if (Number.isFinite(numTs) && numTs > 1000000000000000) {
+                formattedTimestamp = new Date(Math.floor(numTs / 1000)).toISOString();
+              } else if (Number.isFinite(numTs) && numTs > 1000000000) {
+                formattedTimestamp = new Date(numTs).toISOString();
+              } else {
+                formattedTimestamp = String(rawTimestamp);
+              }
+            }
+
             return {
-              userPseudoId: String(row.userPseudoId ?? ''),
+              userPseudoId: String(rawPseudoId ?? ''),
               userId: userIdStr,
               displayName,
               boundEmail,
               phoneNumber,
-              platform: String(row.platform ?? 'UNKNOWN'),
-              lastActiveTimestamp: String(row.lastActiveTimestamp ?? ''),
-              isDaily: Boolean(row.isDaily),
-              isWeekly: Boolean(row.isWeekly),
-              isMonthly: Boolean(row.isMonthly),
+              platform: String(rawPlatform ?? 'UNKNOWN'),
+              lastActiveTimestamp: formattedTimestamp,
+              isDaily: toBoolean(row.isDaily ?? row.is_daily),
+              isWeekly: toBoolean(row.isWeekly ?? row.is_weekly),
+              isMonthly: toBoolean(row.isMonthly ?? row.is_monthly),
             };
           });
 
