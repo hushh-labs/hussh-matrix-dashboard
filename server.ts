@@ -2951,49 +2951,84 @@ ${capabilitySql.isHuman}
         // The day DAU was actually measured on, which is the last day with
         // data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
-        identities: activeIdentities.rows.map((row) => {
-          let userIdStr = row.userId ? String(row.userId) : null;
-          const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
-          const boundEmailStr = row.boundEmail ? String(row.boundEmail) : null;
-          const paramNameStr = row.paramName ? String(row.paramName) : null;
-          const paramPhoneStr = row.paramPhone ? String(row.paramPhone) : null;
+        identities: (() => {
+          const activeList = activeIdentities.rows.map((row) => {
+            let userIdStr = row.userId ? String(row.userId) : null;
+            const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
+            const boundEmailStr = row.boundEmail ? String(row.boundEmail) : null;
+            const paramNameStr = row.paramName ? String(row.paramName) : null;
+            const paramPhoneStr = row.paramPhone ? String(row.paramPhone) : null;
 
-          const phoneDigits = paramPhoneStr ? paramPhoneStr.replace(/\D/g, '') : null;
+            const phoneDigits = paramPhoneStr ? paramPhoneStr.replace(/\D/g, '') : null;
 
-          if (userIdStr && pseudoIdStr && crypto.createHash('md5').update(pseudoIdStr).digest('hex').toLowerCase() === userIdStr.toLowerCase()) {
-            userIdStr = null;
+            if (userIdStr && pseudoIdStr && crypto.createHash('md5').update(pseudoIdStr).digest('hex').toLowerCase() === userIdStr.toLowerCase()) {
+              userIdStr = null;
+            }
+
+            const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null)
+              || (userIdStr ? firebaseMap.get(userIdStr.toLowerCase()) : null)
+              || (boundEmailStr ? firebaseMap.get(boundEmailStr.toLowerCase().trim()) : null)
+              || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null)
+              || (paramPhoneStr ? firebaseMap.get(paramPhoneStr.trim()) : null)
+              || (phoneDigits ? firebaseMap.get(phoneDigits) : null)
+              || (phoneDigits && phoneDigits.length >= 10 ? firebaseMap.get(phoneDigits.slice(-10)) : null);
+
+            const realEmailFromStr = (boundEmailStr && boundEmailStr.includes('@')) ? boundEmailStr.toLowerCase().trim() : null;
+            const boundEmail = userMatch?.email || realEmailFromStr || null;
+            const displayName = userMatch?.displayName || paramNameStr || (boundEmail ? boundEmail.split('@')[0] : null);
+            const phoneNumber = userMatch?.phoneNumber || paramPhoneStr || null;
+
+            return {
+              userPseudoId: String(row.userPseudoId ?? ''),
+              userId: userIdStr,
+              displayName,
+              boundEmail,
+              phoneNumber,
+              platform: String(row.platform ?? 'UNKNOWN'),
+              lastActiveTimestamp: String(row.lastActiveTimestamp ?? ''),
+              isDaily: Boolean(row.isDaily),
+              isWeekly: Boolean(row.isWeekly),
+              isMonthly: Boolean(row.isMonthly),
+            };
+          });
+
+          const matchedEmails = new Set<string>();
+          for (const item of activeList) {
+            if (item.boundEmail) {
+              matchedEmails.add(item.boundEmail.toLowerCase().trim());
+            }
           }
 
-          const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null)
-            || (boundEmailStr ? firebaseMap.get(boundEmailStr.toLowerCase().trim()) : null)
-            || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null)
-            || (paramPhoneStr ? firebaseMap.get(paramPhoneStr.trim()) : null)
-            || (phoneDigits ? firebaseMap.get(phoneDigits) : null)
-            || (phoneDigits && phoneDigits.length >= 10 ? firebaseMap.get(phoneDigits.slice(-10)) : null);
+          const registeredExtras: typeof activeList = [];
+          for (const [key, val] of firebaseMap.entries()) {
+            if (val && val.email) {
+              const normEmail = val.email.toLowerCase().trim();
+              if (!matchedEmails.has(normEmail)) {
+                matchedEmails.add(normEmail);
+                registeredExtras.push({
+                  userPseudoId: `reg_${normEmail}`,
+                  userId: null,
+                  displayName: val.displayName || normEmail.split('@')[0],
+                  boundEmail: val.email,
+                  phoneNumber: val.phoneNumber || null,
+                  platform: 'WEB',
+                  lastActiveTimestamp: '',
+                  isDaily: false,
+                  isWeekly: false,
+                  isMonthly: true,
+                });
+              }
+            }
+          }
 
-          const boundEmail = boundEmailStr || userMatch?.email || null;
-          const displayName = userMatch?.displayName || paramNameStr || (boundEmail ? boundEmail.split('@')[0] : null);
-          const phoneNumber = userMatch?.phoneNumber || paramPhoneStr || null;
-
-          return {
-            userPseudoId: String(row.userPseudoId ?? ''),
-            userId: userIdStr,
-            displayName,
-            boundEmail,
-            phoneNumber,
-            platform: String(row.platform ?? 'UNKNOWN'),
-            lastActiveTimestamp: String(row.lastActiveTimestamp ?? ''),
-            isDaily: Boolean(row.isDaily),
-            isWeekly: Boolean(row.isWeekly),
-            isMonthly: Boolean(row.isMonthly),
-          };
-        }).sort((a, b) => {
-          const aHasName = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
-          const bHasName = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
-          if (aHasName && !bHasName) return -1;
-          if (!aHasName && bHasName) return 1;
-          return 0;
-        }),
+          return [...activeList, ...registeredExtras].sort((a, b) => {
+            const aHasName = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
+            const bHasName = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
+            if (aHasName && !bHasName) return -1;
+            if (!aHasName && bHasName) return 1;
+            return 0;
+          });
+        })(),
       },
       // The install cohort funnel, per native platform. Stages nest because
       // every one is measured against the same devices that installed inside
