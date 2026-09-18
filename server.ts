@@ -2654,7 +2654,7 @@ ${capabilitySql.isHuman}
     FROM user_summary
     WHERE is_monthly = 1
     ORDER BY (userId IS NOT NULL OR boundEmail IS NOT NULL OR paramName IS NOT NULL OR paramPhone IS NOT NULL) DESC, is_daily DESC, is_weekly DESC, max_event_ts DESC
-    LIMIT 200
+    LIMIT 1000
   `;
 
   // What happens to a native install.

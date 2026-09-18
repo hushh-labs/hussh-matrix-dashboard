@@ -361,7 +361,7 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                 Showing <strong className="text-[#1d1d1f]">{displayedIdentities.length}</strong> of{' '}
                 <strong className="text-[#1d1d1f]">{filteredIdentities.length}</strong> active users
               </p>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {visibleCount < filteredIdentities.length && (
                   <button
                     type="button"
@@ -369,6 +369,15 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                     className="rounded-lg bg-[#007aff] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#0062cc] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
                   >
                     Load 10 More Users
+                  </button>
+                )}
+                {visibleCount < filteredIdentities.length && (
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount(filteredIdentities.length)}
+                    className="rounded-lg bg-[#34c759]/15 px-3.5 py-2 text-xs font-bold text-[#1f7a36] transition hover:bg-[#34c759]/25"
+                  >
+                    Show All ({filteredIdentities.length})
                   </button>
                 )}
                 {visibleCount > 10 && (
