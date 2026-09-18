@@ -729,6 +729,7 @@ export interface OneActiveUserIdentity {
   userId: string | null;
   displayName?: string | null;
   boundEmail?: string | null;
+  phoneNumber?: string | null;
   platform: string;
   lastActiveTimestamp: string;
   isDaily: boolean;

@@ -17,7 +17,7 @@ import path from 'path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
-import { GoogleAuth } from 'google-auth-library';
+import fs from 'node:fs';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -41,13 +41,30 @@ const OBSERVABILITY_USER_ID_SALT = 'hushh-observability-v1';
 let firebaseUsersCacheMap: { timestamp: number; map: Map<string, CachedFirebaseUser> } | null = null;
 const FIREBASE_CACHE_TTL_MS = 5 * 60 * 1000;
 
+function loadStaticFirebaseUserMap(): Map<string, CachedFirebaseUser> {
+  const map = new Map<string, CachedFirebaseUser>();
+  try {
+    const mapPath = path.join(__dirname, 'src', 'lib', 'firebase-user-map.json');
+    if (fs.existsSync(mapPath)) {
+      const raw = fs.readFileSync(mapPath, 'utf8');
+      const parsed = JSON.parse(raw) as Record<string, CachedFirebaseUser>;
+      for (const [key, val] of Object.entries(parsed)) {
+        map.set(key, val);
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load static firebase-user-map.json:', e);
+  }
+  return map;
+}
+
 async function getFirebaseUsersMap(): Promise<Map<string, CachedFirebaseUser>> {
   const now = Date.now();
   if (firebaseUsersCacheMap && (now - firebaseUsersCacheMap.timestamp) < FIREBASE_CACHE_TTL_MS) {
     return firebaseUsersCacheMap.map;
   }
 
-  const map = new Map<string, CachedFirebaseUser>();
+  const map = loadStaticFirebaseUserMap();
   try {
     const auth = new GoogleAuth({
       scopes: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/firebase'],
@@ -2919,6 +2936,7 @@ ${capabilitySql.isHuman}
             userId: userIdStr,
             displayName: userMatch?.displayName || null,
             boundEmail,
+            phoneNumber: userMatch?.phoneNumber || null,
             platform: String(row.platform ?? 'UNKNOWN'),
             lastActiveTimestamp: String(row.lastActiveTimestamp ?? ''),
             isDaily: Boolean(row.isDaily),

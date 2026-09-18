@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Search, ShieldCheck, User, UserCheck, Users } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Phone, Search, ShieldCheck, User, UserCheck, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
   Area,
@@ -106,15 +106,16 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
     if (selectedTier === 'daily' && !item.isDaily) return false;
     if (selectedTier === 'weekly' && !item.isWeekly) return false;
     if (selectedTier === 'monthly' && !item.isMonthly) return false;
-    if (filterAccountOnly && !item.userId && !item.boundEmail && !item.displayName) return false;
+    if (filterAccountOnly && !item.userId && !item.boundEmail && !item.displayName && !item.phoneNumber) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchName = item.displayName?.toLowerCase().includes(q);
       const matchEmail = item.boundEmail?.toLowerCase().includes(q);
+      const matchPhone = item.phoneNumber?.toLowerCase().includes(q);
       const matchUserId = item.userId?.toLowerCase().includes(q);
       const matchPseudo = item.userPseudoId?.toLowerCase().includes(q);
       const matchPlatform = item.platform?.toLowerCase().includes(q);
-      return Boolean(matchName || matchEmail || matchUserId || matchPseudo || matchPlatform);
+      return Boolean(matchName || matchEmail || matchPhone || matchUserId || matchPseudo || matchPlatform);
     }
     return true;
   });
@@ -188,7 +189,7 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
               <div className="flex items-center gap-2">
                 <Users className="h-5 w-5 text-[#007aff]" />
                 <h3 className="text-base font-bold text-[#1d1d1f]">
-                  Active User Breakdown & Identifiers (
+                  Active User Breakdown (
                   {selectedTier === 'daily'
                     ? 'Daily Active'
                     : selectedTier === 'weekly'
@@ -201,7 +202,7 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                 </span>
               </div>
               <p className="mt-1 text-xs font-semibold text-[#6e6e73]">
-                Clicking daily/weekly/monthly displays active user IDs, bound email accounts, and anonymous device GUIDs.
+                Human details (Name, Email, Contact Number, Platform) of active users in this tier.
               </p>
             </div>
 
@@ -217,14 +218,14 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                 )}
               >
                 <UserCheck className="h-3.5 w-3.5" />
-                {filterAccountOnly ? 'Showing Signed-in Only' : 'Filter Signed-in Accounts'}
+                {filterAccountOnly ? 'Showing Registered Only' : 'Filter Registered Accounts'}
               </button>
 
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
                 <input
                   type="text"
-                  placeholder="Search email, UID, GUID..."
+                  placeholder="Search Name, Email, Phone..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-48 sm:w-64 rounded-lg border border-black/10 bg-white py-1.5 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
@@ -246,8 +247,9 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-black/5 text-left text-[11px] font-bold uppercase tracking-wider text-[#86868b]">
-                    <th className="py-2.5 px-3">Identity / Account / Email</th>
-                    <th className="py-2.5 px-3">Device GUID (user_pseudo_id)</th>
+                    <th className="py-2.5 px-3">User / Name</th>
+                    <th className="py-2.5 px-3">Email Address</th>
+                    <th className="py-2.5 px-3">Contact Number</th>
                     <th className="py-2.5 px-3">Platform</th>
                     <th className="py-2.5 px-3">Active Scope</th>
                     <th className="py-2.5 px-3 text-right">Last Active</th>
@@ -255,44 +257,48 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                 </thead>
                 <tbody className="divide-y divide-black/5">
                   {filteredIdentities.map((item, idx) => {
-                    const hasName = Boolean(item.displayName);
-                    const hasEmail = Boolean(item.boundEmail);
-                    const hasUserId = Boolean(item.userId);
-                    const hasAccount = hasEmail || hasUserId || hasName;
+                    const displayName = item.displayName || null;
+                    const email = item.boundEmail || null;
+                    const phone = item.phoneNumber || null;
 
                     return (
                       <tr key={item.userPseudoId + idx} className="hover:bg-black/[0.02]">
                         <td className="py-2.5 px-3 font-semibold text-[#1d1d1f]">
-                          <div className="flex flex-col gap-1">
-                            {hasName && (
-                              <div className="flex items-center gap-1.5 font-bold text-sm text-[#1d1d1f]">
-                                <User className="h-3.5 w-3.5 text-[#007aff]" />
-                                <span>{item.displayName}</span>
-                              </div>
-                            )}
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {hasEmail && (
-                                <span className="flex items-center gap-1 rounded bg-[#1f7a36]/10 px-2 py-0.5 font-mono text-xs font-bold text-[#1f7a36]">
-                                  <Mail className="h-3 w-3" />
-                                  {item.boundEmail}
-                                </span>
-                              )}
-                              {hasUserId && (
-                                <span className="flex items-center gap-1 rounded bg-[#007aff]/10 px-2 py-0.5 font-mono text-xs font-bold text-[#007aff]">
-                                  <ShieldCheck className="h-3 w-3" />
-                                  {item.userId}
-                                </span>
-                              )}
-                              {!hasAccount && (
-                                <span className="text-[#86868b] italic">
-                                  Anonymous (Unbound Device)
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#007aff]/10 text-[#007aff] font-bold text-xs">
+                              {displayName ? displayName.charAt(0).toUpperCase() : <User className="h-3.5 w-3.5" />}
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="font-bold text-sm text-[#1d1d1f]">
+                                {displayName || (email ? email.split('@')[0] : 'Anonymous User')}
+                              </span>
+                              {!displayName && !email && (
+                                <span className="font-mono text-[10px] text-[#86868b]">
+                                  {item.userPseudoId.slice(0, 16)}...
                                 </span>
                               )}
                             </div>
                           </div>
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-[11px] text-[#6e6e73]">
-                          {item.userPseudoId}
+                        <td className="py-2.5 px-3">
+                          {email ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-md bg-[#007aff]/10 px-2.5 py-1 font-mono text-xs font-semibold text-[#007aff]">
+                              <Mail className="h-3.5 w-3.5 text-[#007aff]" />
+                              {email}
+                            </span>
+                          ) : (
+                            <span className="text-[#a1a1a6] font-medium">&mdash;</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {phone ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-md bg-[#34c759]/10 px-2.5 py-1 font-mono text-xs font-bold text-[#1f7a36]">
+                              <Phone className="h-3.5 w-3.5 text-[#1f7a36]" />
+                              {phone}
+                            </span>
+                          ) : (
+                            <span className="text-[#a1a1a6] font-medium">&mdash;</span>
+                          )}
                         </td>
                         <td className="py-2.5 px-3">
                           <span className="rounded bg-black/5 px-2 py-0.5 font-bold uppercase text-[#1d1d1f]">
@@ -332,7 +338,7 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
           )}
 
           <div className="mt-4 border-t border-black/5 pt-3 text-[11px] font-medium text-[#86868b]">
-            <strong>Identity note:</strong> GA4 binds <code className="font-mono text-[#1d1d1f]">user_id</code> (Firebase UID / Account hash / email) upon sign-in. Anonymous visitors are tracked via <code className="font-mono text-[#1d1d1f]">user_pseudo_id</code>.
+            <strong>User Details:</strong> Displays registered Firebase users (Name, Email Address, Contact Number) resolved automatically via static catalog and Identity Toolkit API.
           </div>
         </motion.div>
       )}
