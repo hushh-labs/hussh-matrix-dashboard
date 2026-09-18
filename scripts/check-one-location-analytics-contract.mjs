@@ -12,6 +12,7 @@
 const FEATURE_KEYS = [
   'live_sharing',
   'check_in',
+  'check_out',
   'sms_safety',
   'request_location',
   'public_sharing',
