@@ -93,7 +93,7 @@ function Block({
  */
 function ActivePeople({ one }: { one: OneAppSummary }) {
   const { dau, wau, mau, stickiness, asOf, identities = [] } = one.activeUsers;
-  const [selectedTier, setSelectedTier] = useState<'daily' | 'weekly' | 'monthly' | null>('daily');
+  const [selectedTier, setSelectedTier] = useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAccountOnly, setFilterAccountOnly] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
@@ -148,7 +148,7 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.04 }}
-              onClick={() => setSelectedTier(isSelected ? null : tile.key)}
+              onClick={() => setSelectedTier(isSelected ? 'all' : tile.key)}
               className={cn(
                 appleCard,
                 'group relative cursor-pointer p-5 transition-all duration-200 hover:shadow-md',
@@ -194,63 +194,74 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
         </motion.div>
       </div>
 
-      {selectedTier && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 'auto' }}
-          exit={{ opacity: 0, height: 0 }}
-          className={cn(appleCard, 'p-5 sm:p-6 overflow-hidden border-2 border-[#007aff]/20')}
-        >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-black/5 pb-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-[#007aff]" />
-                <h3 className="text-base font-bold text-[#1d1d1f]">
-                  Active User Breakdown (
-                  {selectedTier === 'daily'
-                    ? 'Daily Active'
-                    : selectedTier === 'weekly'
-                    ? 'Weekly Active'
-                    : 'Monthly Active'}
-                  )
-                </h3>
-                <span className="rounded-full bg-[#007aff]/10 px-2.5 py-0.5 text-xs font-bold text-[#007aff]">
-                  {filteredIdentities.length} {filteredIdentities.length === 1 ? 'user' : 'users'}
-                  {registeredCount > 0 ? ` (${registeredCount} registered resolved)` : ''}
-                </span>
-              </div>
-              <p className="mt-1 text-xs font-semibold text-[#6e6e73]">
-                Registered accounts (Name & Email resolved via Firebase catalog) are sorted at top. Web browser cookies without telemetry user_id show as Anonymous User.
-              </p>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className={cn(appleCard, 'p-5 sm:p-6 overflow-hidden border-2 border-[#007aff]/20')}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-black/5 pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-[#007aff]" />
+              <h3 className="text-base font-bold text-[#1d1d1f]">
+                Active User Breakdown (
+                {selectedTier === 'all'
+                  ? 'All Logged-in Users'
+                  : selectedTier === 'daily'
+                  ? 'Daily Active'
+                  : selectedTier === 'weekly'
+                  ? 'Weekly Active'
+                  : 'Monthly Active'}
+                )
+              </h3>
+              <span className="rounded-full bg-[#007aff]/10 px-2.5 py-0.5 text-xs font-bold text-[#007aff]">
+                {filteredIdentities.length} {filteredIdentities.length === 1 ? 'user' : 'users'}
+                {registeredCount > 0 ? ` (${registeredCount} registered resolved)` : ''}
+              </span>
             </div>
+            <p className="mt-1 text-xs font-semibold text-[#6e6e73]">
+              Registered accounts (Name, Email & Mobile resolved via Firebase catalog) sorted at top.
+            </p>
+          </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setFilterAccountOnly(!filterAccountOnly)}
-                className={cn(
-                  'rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors flex items-center gap-1.5',
-                  filterAccountOnly
-                    ? 'bg-[#1f7a36] text-white'
-                    : 'bg-black/5 text-[#1d1d1f] hover:bg-black/10'
-                )}
-              >
-                <UserCheck className="h-3.5 w-3.5" />
-                {filterAccountOnly ? 'Showing Registered Only' : 'Filter Registered Accounts'}
-              </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={selectedTier}
+              onChange={(e) => setSelectedTier(e.target.value as 'all' | 'daily' | 'weekly' | 'monthly')}
+              className="rounded-lg border border-black/10 bg-white py-1.5 px-3 text-xs font-bold text-[#1d1d1f] focus:border-[#007aff] focus:outline-none shadow-sm cursor-pointer"
+            >
+              <option value="all">All Logged-in Users ({identities.length})</option>
+              <option value="daily">Daily Active Users ({dau})</option>
+              <option value="weekly">Weekly Active Users ({wau})</option>
+              <option value="monthly">Monthly Active Users ({mau})</option>
+            </select>
 
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
-                <input
-                  type="text"
-                  placeholder="Search Name, Email, Phone..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-48 sm:w-64 rounded-lg border border-black/10 bg-white py-1.5 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
-                />
-              </div>
+            <button
+              type="button"
+              onClick={() => setFilterAccountOnly(!filterAccountOnly)}
+              className={cn(
+                'rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors flex items-center gap-1.5',
+                filterAccountOnly
+                  ? 'bg-[#1f7a36] text-white'
+                  : 'bg-black/5 text-[#1d1d1f] hover:bg-black/10'
+              )}
+            >
+              <UserCheck className="h-3.5 w-3.5" />
+              {filterAccountOnly ? 'Showing Registered Only' : 'Filter Registered Accounts'}
+            </button>
+
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
+              <input
+                type="text"
+                placeholder="Search Name, Email, Phone..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-48 sm:w-64 rounded-lg border border-black/10 bg-white py-1.5 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
+              />
             </div>
           </div>
+        </div>
 
           {filteredIdentities.length === 0 ? (
             <div className="py-8 text-center">
@@ -397,7 +408,6 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
             <strong>User Details:</strong> Displays registered Firebase users (Name, Email Address, Contact Number) resolved automatically via static catalog and Identity Toolkit API.
           </div>
         </motion.div>
-      )}
     </div>
   );
 }
