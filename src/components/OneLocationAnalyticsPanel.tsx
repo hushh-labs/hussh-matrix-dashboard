@@ -228,7 +228,11 @@ function FeatureTable({
                     )}
                   </div>
                   <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">
-                    {audit ? audit.explanation : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
+                    {audit
+                      ? (audit.status === 'active'
+                          ? `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} active ${feature.users === 1 ? 'device' : 'devices'} in this window.`
+                          : audit.explanation)
+                      : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
                   </p>
                 </div>
               </div>
@@ -284,7 +288,11 @@ function FeatureTable({
                           )}
                         </div>
                         <p className="mt-0.5 text-xs font-medium text-[#86868b]">
-                          {audit ? audit.explanation : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
+                          {audit
+                            ? (audit.status === 'active'
+                                ? `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} active ${feature.users === 1 ? 'device' : 'devices'} in this window.`
+                                : audit.explanation)
+                            : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
                         </p>
                       </div>
                     </div>
