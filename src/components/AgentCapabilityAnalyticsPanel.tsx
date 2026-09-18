@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, Fragment } from 'react';
 import type { ReactNode } from 'react';
 import {
   Activity,
@@ -8,6 +8,7 @@ import {
   Briefcase,
   Calendar,
   CheckCircle2,
+  ChevronDown,
   CircleDot,
   ContactRound,
   Database,
@@ -46,6 +47,7 @@ import { formatNumber } from '../lib/analytics-service';
 import { appleCard, appleLabel, applePanel } from '../lib/theme';
 import { cn } from '../lib/utils';
 import type { OneAppSummary } from '../lib/types';
+import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
 
 interface AgentCapabilityAnalyticsPanelProps {
   capabilityKey: string;
@@ -588,6 +590,7 @@ export function AgentCapabilityAnalyticsPanel({
   onBack,
 }: AgentCapabilityAnalyticsPanelProps) {
   const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
+  const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
 
   const activeSummary = environment === 'production' ? one : uat;
   const capability = activeSummary?.capabilities?.find((c) => c.key === capabilityKey);
@@ -854,42 +857,68 @@ export function AgentCapabilityAnalyticsPanel({
                 {computedFeatures.map((feature) => {
                   const FeatureIcon = feature.icon;
                   const waiting = !instrumented || feature.status === 'gap';
+                  const isExpanded = expandedFeatureKey === feature.key;
+                  const activeIdentities = activeSummary?.activeUsers?.identities || [];
                   return (
-                    <tr key={feature.key} className="border-b border-black/[0.05] last:border-b-0">
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f2f2f7] text-[#007aff]">
-                            <FeatureIcon className="h-4 w-4" />
-                          </span>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
-                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', feature.badgeClass)}>
-                                {feature.badgeLabel}
-                              </span>
+                    <Fragment key={feature.key}>
+                      <tr className="border-b border-black/[0.05] last:border-b-0 hover:bg-black/[0.01]">
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f2f2f7] text-[#007aff]">
+                              <FeatureIcon className="h-4 w-4" />
+                            </span>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
+                                <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', feature.badgeClass)}>
+                                  {feature.badgeLabel}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-xs font-medium text-[#86868b]">
+                                {feature.explanation}
+                              </p>
                             </div>
-                            <p className="mt-0.5 text-xs font-medium text-[#86868b]">
-                              {feature.explanation}
-                            </p>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                        <MetricValue value={feature.devices} waiting={waiting} />
-                      </td>
-                      <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                        <MetricValue value={feature.signals} waiting={waiting} />
-                      </td>
-                      <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                        <MetricValue value={feature.successful} waiting={waiting} />
-                      </td>
-                      <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                        <MetricValue value={feature.failed} waiting={waiting} />
-                      </td>
-                      <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
-                        {waiting ? '—' : ratio(feature.successful, feature.signals)}
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
+                            className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
+                            title="Click to view users who used this feature"
+                          >
+                            <Users className="h-3 w-3" />
+                            <span><MetricValue value={feature.devices} waiting={waiting} /></span>
+                            <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
+                          </button>
+                        </td>
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                          <MetricValue value={feature.signals} waiting={waiting} />
+                        </td>
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                          <MetricValue value={feature.successful} waiting={waiting} />
+                        </td>
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                          <MetricValue value={feature.failed} waiting={waiting} />
+                        </td>
+                        <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
+                          {waiting ? '—' : ratio(feature.successful, feature.signals)}
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr key={`${feature.key}-users`}>
+                          <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
+                            <FeatureUserBreakdownPanel
+                              featureLabel={feature.label}
+                              identities={activeIdentities}
+                              totalDevices={feature.devices}
+                              onClose={() => setExpandedFeatureKey(null)}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>

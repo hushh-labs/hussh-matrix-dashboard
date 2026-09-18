@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import {
   Activity,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   CircleDot,
   ContactRound,
   Info,
@@ -11,6 +12,7 @@ import {
   MessageCircleMore,
   Radio,
   ShieldCheck,
+  Users,
   UsersRound,
 } from 'lucide-react';
 import {
@@ -31,10 +33,12 @@ import type {
   LocationAnalyticsTab,
 } from '../lib/location-analytics-route';
 import type {
+  OneActiveUserIdentity,
   OneAppSummary,
   OneLocationBehaviorMetric,
   OneLocationJourneyMetric,
 } from '../lib/types';
+import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
 
 const tabs: Array<{ key: LocationAnalyticsTab; label: string }> = [
   { key: 'overview', label: 'Overview' },
@@ -185,10 +189,14 @@ const featureAuditMap: Record<string, FeatureAuditInfo> = {
 function FeatureTable({
   features,
   environment,
+  identities = [],
 }: {
   features: OneLocationBehaviorMetric[];
   environment: LocationAnalyticsEnvironment;
+  identities?: OneActiveUserIdentity[];
 }) {
+  const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
+
   return (
     <>
       <div className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs">
@@ -206,6 +214,7 @@ function FeatureTable({
           const Icon = featureIcon[feature.key] ?? Activity;
           const waiting = !feature.instrumented;
           const audit = featureAuditMap[feature.key];
+          const isExpanded = expandedFeatureKey === feature.key;
           const values = [
             { label: 'Devices', value: feature.users },
             { label: 'Signals', value: feature.events },
@@ -214,27 +223,39 @@ function FeatureTable({
           ];
           return (
             <article key={feature.key} className={cn(applePanel, 'p-4')}>
-              <div className="flex items-start gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#007aff] shadow-sm">
-                  <Icon className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
-                    {audit && (
-                      <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', audit.badgeClass)}>
-                        {audit.badgeLabel}
-                      </span>
-                    )}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#007aff] shadow-sm">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
+                      {audit && (
+                        <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', audit.badgeClass)}>
+                          {audit.badgeLabel}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">
+                      {audit
+                        ? (audit.status === 'active'
+                            ? `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} active ${feature.users === 1 ? 'device' : 'devices'} in this window.`
+                            : audit.explanation)
+                        : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
+                    </p>
                   </div>
-                  <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">
-                    {audit
-                      ? (audit.status === 'active'
-                          ? `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} active ${feature.users === 1 ? 'device' : 'devices'} in this window.`
-                          : audit.explanation)
-                      : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
-                  </p>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
+                >
+                  <Users className="h-3 w-3" />
+                  <span>Users</span>
+                  <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
+                </button>
               </div>
               <dl className="mt-4 grid grid-cols-2 gap-2">
                 {values.map((item) => (
@@ -249,6 +270,17 @@ function FeatureTable({
               <p className="mt-3 text-xs font-semibold text-[#6e6e73]">
                 Non-error share: <span className="font-bold text-[#1d1d1f]">{waiting ? '—' : ratio(feature.successes, feature.events)}</span>
               </p>
+
+              {isExpanded && (
+                <div className="mt-3 border-t border-black/5 pt-3">
+                  <FeatureUserBreakdownPanel
+                    featureLabel={feature.label}
+                    identities={identities}
+                    totalDevices={feature.users ?? undefined}
+                    onClose={() => setExpandedFeatureKey(null)}
+                  />
+                </div>
+              )}
             </article>
           );
         })}
@@ -271,41 +303,73 @@ function FeatureTable({
               const Icon = featureIcon[feature.key] ?? Activity;
               const waiting = !feature.instrumented;
               const audit = featureAuditMap[feature.key];
+              const isExpanded = expandedFeatureKey === feature.key;
               return (
-                <tr key={feature.key} className="border-b border-black/[0.05] last:border-b-0">
-                  <td className="px-5 py-4">
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f2f2f7] text-[#007aff]">
-                        <Icon className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
-                          {audit && (
-                            <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', audit.badgeClass)}>
-                              {audit.badgeLabel}
-                            </span>
-                          )}
+                <Fragment key={feature.key}>
+                  <tr className="border-b border-black/[0.05] last:border-b-0 hover:bg-black/[0.01]">
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f2f2f7] text-[#007aff]">
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
+                            {audit && (
+                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', audit.badgeClass)}>
+                                {audit.badgeLabel}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs font-medium text-[#86868b]">
+                            {audit
+                              ? (audit.status === 'active'
+                                  ? `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} active ${feature.users === 1 ? 'device' : 'devices'} in this window.`
+                                  : audit.explanation)
+                              : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
+                          </p>
                         </div>
-                        <p className="mt-0.5 text-xs font-medium text-[#86868b]">
-                          {audit
-                            ? (audit.status === 'active'
-                                ? `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} active ${feature.users === 1 ? 'device' : 'devices'} in this window.`
-                                : audit.explanation)
-                            : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
-                        </p>
                       </div>
-                    </div>
-                  </td>
-                  {[feature.users, feature.events, feature.successes, feature.failures].map((value, index) => (
-                    <td key={index} className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                      <MetricValue value={value} waiting={waiting} />
                     </td>
-                  ))}
-                  <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
-                    {waiting ? '—' : ratio(feature.successes, feature.events)}
-                  </td>
-                </tr>
+                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
+                        title="Click to view users who used this feature"
+                      >
+                        <Users className="h-3 w-3" />
+                        <span><MetricValue value={feature.users} waiting={waiting} /></span>
+                        <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
+                      </button>
+                    </td>
+                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                      <MetricValue value={feature.events} waiting={waiting} />
+                    </td>
+                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                      <MetricValue value={feature.successes} waiting={waiting} />
+                    </td>
+                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                      <MetricValue value={feature.failures} waiting={waiting} />
+                    </td>
+                    <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
+                      {waiting ? '—' : ratio(feature.successes, feature.events)}
+                    </td>
+                  </tr>
+
+                  {isExpanded && (
+                    <tr key={`${feature.key}-users`}>
+                      <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
+                        <FeatureUserBreakdownPanel
+                          featureLabel={feature.label}
+                          identities={identities}
+                          totalDevices={feature.users ?? undefined}
+                          onClose={() => setExpandedFeatureKey(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
@@ -588,7 +652,7 @@ export function OneLocationAnalyticsPanel({
             <p className={appleLabel}>Feature adoption</p>
             <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What people actually use</h3>
           </div>
-          <FeatureTable features={locationAnalytics.features} environment={environment} />
+          <FeatureTable features={locationAnalytics.features} environment={environment} identities={selectedOne.activeUsers.identities} />
         </section>
       )}
 
