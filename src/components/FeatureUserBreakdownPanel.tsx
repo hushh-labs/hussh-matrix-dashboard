@@ -14,11 +14,14 @@ interface FeatureUserBreakdownPanelProps {
 }
 
 function selectFeatureSpecificIdentities(
-  featureLabel: string,
+  _featureLabel: string,
   sourceIdentities: OneActiveUserIdentity[],
   targetCount: number
 ): OneActiveUserIdentity[] {
   if (!sourceIdentities || sourceIdentities.length === 0 || targetCount <= 0) return [];
+
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
 
   // Filter out pure fallback placeholders if we have real telemetry identities
   const telemetryUsers = sourceIdentities.filter(
@@ -27,8 +30,23 @@ function selectFeatureSpecificIdentities(
 
   const activeCatalog = telemetryUsers.length > 0 ? telemetryUsers : sourceIdentities;
 
-  // Sort sourceIdentities by recency (newest active users first)
-  const sortedSource = [...activeCatalog].sort((a, b) => {
+  // Filter strictly to trailing 7 days
+  const recentIdentities = activeCatalog.filter((item) => {
+    if (item.lastActiveTimestamp) {
+      const ts = new Date(item.lastActiveTimestamp).getTime();
+      if (!isNaN(ts) && ts > 0) {
+        if (now - ts > SEVEN_DAYS_MS && !item.isDaily && !item.isWeekly) {
+          return false;
+        }
+      }
+    }
+    return true;
+  });
+
+  const sourcePool = recentIdentities.length > 0 ? recentIdentities : activeCatalog;
+
+  // Sort strictly by recency (newest active users first)
+  const sortedSource = [...sourcePool].sort((a, b) => {
     if (a.lastActiveTimestamp && b.lastActiveTimestamp) {
       const diff = new Date(b.lastActiveTimestamp).getTime() - new Date(a.lastActiveTimestamp).getTime();
       if (!isNaN(diff) && diff !== 0) return diff;
@@ -38,23 +56,8 @@ function selectFeatureSpecificIdentities(
 
     if (a.isDaily !== b.isDaily) return a.isDaily ? -1 : 1;
     if (a.isWeekly !== b.isWeekly) return a.isWeekly ? -1 : 1;
-
-    const aHasInfo = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
-    const bHasInfo = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
-    if (aHasInfo && !bHasInfo) return -1;
-    if (!aHasInfo && bHasInfo) return 1;
     return 0;
   });
-
-  let hash = 0;
-  const str = (featureLabel || '').toLowerCase().trim();
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  const positiveHash = Math.abs(hash);
-  const total = sortedSource.length;
-  const offset = positiveHash % total;
 
   const result: OneActiveUserIdentity[] = [];
   const usedKeys = new Set<string>();
@@ -67,27 +70,14 @@ function selectFeatureSpecificIdentities(
     return '';
   };
 
-  // Select targetCount distinct unique users starting from offset with stride 7
-  for (let i = 0; i < total; i++) {
-    const idx = (offset + i * 7) % total;
-    const item = sortedSource[idx];
+  // Select targetCount distinct unique users strictly in order of recency
+  for (let i = 0; i < sortedSource.length; i++) {
+    const item = sortedSource[i];
     const k = getKey(item);
     if (k && !usedKeys.has(k)) {
       usedKeys.add(k);
       result.push(item);
       if (result.length >= targetCount) break;
-    }
-  }
-
-  if (result.length < targetCount) {
-    for (let i = 0; i < total; i++) {
-      const item = sortedSource[i];
-      const k = getKey(item);
-      if (k && !usedKeys.has(k)) {
-        usedKeys.add(k);
-        result.push(item);
-        if (result.length >= targetCount) break;
-      }
     }
   }
 
@@ -225,7 +215,8 @@ export function FeatureUserBreakdownPanel({
                 <th className="py-2 px-3">Email Address</th>
                 <th className="py-2 px-3">Contact Number</th>
                 <th className="py-2 px-3">Platform</th>
-                <th className="py-2 px-3 text-right">Active Status</th>
+                <th className="py-2 px-3">Active Status</th>
+                <th className="py-2 px-3 text-right">Last Active</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-black/5">
@@ -276,7 +267,7 @@ export function FeatureUserBreakdownPanel({
                         {item.platform || 'WEB'}
                       </span>
                     </td>
-                    <td className="py-2 px-3 text-right">
+                    <td className="py-2 px-3">
                       {item.isDaily ? (
                         <span className="rounded bg-[#34c759]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#1f7a36]">
                           DAU Active
@@ -290,6 +281,11 @@ export function FeatureUserBreakdownPanel({
                           MAU
                         </span>
                       )}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono text-[11px] text-[#6e6e73]">
+                      {item.lastActiveTimestamp
+                        ? new Date(item.lastActiveTimestamp).toLocaleString()
+                        : '—'}
                     </td>
                   </tr>
                 );

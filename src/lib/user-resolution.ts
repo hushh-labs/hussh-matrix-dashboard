@@ -100,19 +100,17 @@ function md5(str: string): string {
   return (wordToHex(a) + wordToHex(b) + wordToHex(c) + wordToHex(d)).toLowerCase();
 }
 
-// Pre-filtered registered catalog entries with Name, Email & Phone
-const registeredCatalogList = Object.values(userCatalogMap).filter(
-  (u) => u && (u.displayName || u.email || u.phoneNumber)
-);
-
+/**
+ * Strict exact catalog lookup.
+ * NO fallback guessing or random index backfilling!
+ * Returns record ONLY if an exact match exists by UID, Email, Phone, or MD5 hash.
+ */
 export function findInCatalog(item: Partial<OneActiveUserIdentity>): FirebaseUserRecord | null {
-  // 1. Direct key matches
   if (item.userId && userCatalogMap[item.userId]) return userCatalogMap[item.userId];
   if (item.userId && userCatalogMap[item.userId.toLowerCase()]) return userCatalogMap[item.userId.toLowerCase()];
   if (item.boundEmail && userCatalogMap[item.boundEmail.toLowerCase().trim()]) return userCatalogMap[item.boundEmail.toLowerCase().trim()];
   if (item.phoneNumber && userCatalogMap[item.phoneNumber.trim()]) return userCatalogMap[item.phoneNumber.trim()];
 
-  // 2. MD5 of userPseudoId (how server.ts indexes device identities)
   if (item.userPseudoId) {
     const p = item.userPseudoId.trim();
     if (userCatalogMap[p]) return userCatalogMap[p];
@@ -126,18 +124,7 @@ export function findInCatalog(item: Partial<OneActiveUserIdentity>): FirebaseUse
     if (userCatalogMap[prefixHash]) return userCatalogMap[prefixHash];
   }
 
-  // 3. Registered UAT Firebase Catalog lookup: join active UAT test devices to verified registered Firebase user profiles!
-  if (item.userPseudoId && registeredCatalogList.length > 0) {
-    let hashNum = 0;
-    const seed = item.userPseudoId.toLowerCase().trim();
-    for (let i = 0; i < seed.length; i++) {
-      hashNum = (hashNum << 5) - hashNum + seed.charCodeAt(i);
-      hashNum |= 0;
-    }
-    const idx = Math.abs(hashNum) % registeredCatalogList.length;
-    return registeredCatalogList[idx];
-  }
-
+  // Strictly no fallback guessing or random matching!
   return null;
 }
 
@@ -156,7 +143,7 @@ export function resolveUserPhoneNumber(
     return record.phoneNumber.trim();
   }
 
-  // 3. Authentic & accurate: NO fake/hallucinated numbers! Return '—' if no phone number exists
+  // 3. Strict authentic empty state: '—' if no real phone number exists on file in Firebase
   return '—';
 }
 
@@ -192,7 +179,7 @@ export function resolveUserName(
     if (words.length > 0) return words.join(' ');
   }
 
-  // 4. Clean anonymous fallback only if unresolvable
+  // 4. Clean anonymous label if unresolvable in Firebase
   if (item.userPseudoId) {
     return `Active Device (${item.userPseudoId.slice(0, 8)})`;
   }
