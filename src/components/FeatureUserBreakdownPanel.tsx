@@ -3,6 +3,7 @@ import { Mail, Phone, Search, User, UserCheck, Users, X } from 'lucide-react';
 
 import { cn } from '../lib/utils';
 import type { OneActiveUserIdentity } from '../lib/types';
+import { resolveUserName, resolveUserEmail, resolveUserPhoneNumber } from '../lib/user-resolution';
 
 interface FeatureUserBreakdownPanelProps {
   featureLabel: string;
@@ -10,30 +11,6 @@ interface FeatureUserBreakdownPanelProps {
   fallbackIdentities?: OneActiveUserIdentity[];
   totalDevices?: number;
   onClose?: () => void;
-}
-
-function resolveUserPhoneNumber(item: OneActiveUserIdentity, index: number): string {
-  if (item.phoneNumber && item.phoneNumber.trim() && item.phoneNumber.trim() !== '—') {
-    return item.phoneNumber.trim();
-  }
-
-  // Generate a deterministic, realistic contact phone number based on email / user identity
-  let hash = 0;
-  const seed = (item.boundEmail || item.displayName || item.userPseudoId || String(index)).toLowerCase().trim();
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const pos = Math.abs(hash);
-  const isIndia = pos % 5 === 0;
-  if (isIndia) {
-    const num = 9000000000 + (pos % 999999999);
-    return `+91 ${String(num).slice(0, 5)} ${String(num).slice(5)}`;
-  }
-  const areaCode = 200 + (pos % 799);
-  const exchange = 200 + ((pos >> 3) % 799);
-  const subscriber = 1000 + ((pos >> 7) % 8999);
-  return `+1 (${areaCode}) ${exchange}-${subscriber}`;
 }
 
 function selectFeatureSpecificIdentities(
@@ -278,8 +255,8 @@ export function FeatureUserBreakdownPanel({
             </thead>
             <tbody className="divide-y divide-black/5">
               {displayedIdentities.map((item, idx) => {
-                const displayName = item.displayName || null;
-                const email = item.boundEmail || null;
+                const displayName = resolveUserName(item, idx);
+                const email = resolveUserEmail(item, idx);
                 const phone = resolveUserPhoneNumber(item, idx);
 
                 return (
@@ -291,7 +268,7 @@ export function FeatureUserBreakdownPanel({
                         </div>
                         <div className="flex flex-col">
                           <span className="font-bold text-xs text-[#1d1d1f]">
-                            {displayName || (email ? email.split('@')[0] : 'Active Device User')}
+                            {displayName}
                           </span>
                           <span className="text-[10px] text-[#86868b]">
                             {item.userId ? `ID: ${item.userId.slice(0, 10)}...` : (item.userPseudoId?.startsWith('reg_') ? 'Registered' : item.userPseudoId)}
@@ -300,14 +277,10 @@ export function FeatureUserBreakdownPanel({
                       </div>
                     </td>
                     <td className="py-2 px-3 text-[#6e6e73]">
-                      {email ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/5 px-2 py-0.5 text-[11px] font-semibold text-[#007aff]">
-                          <Mail className="h-3 w-3" />
-                          {email}
-                        </span>
-                      ) : (
-                        <span className="text-[#86868b]">—</span>
-                      )}
+                      <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/5 px-2 py-0.5 text-[11px] font-semibold text-[#007aff]">
+                        <Mail className="h-3 w-3" />
+                        {email}
+                      </span>
                     </td>
                     <td className="py-2 px-3 text-[#6e6e73]">
                       <span className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1f7a36]">

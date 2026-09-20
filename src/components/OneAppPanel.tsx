@@ -21,6 +21,7 @@ import type { LocationAnalyticsRoute } from '../lib/location-analytics-route';
 import { OneLocationAnalyticsPanel } from './OneLocationAnalyticsPanel';
 import { AgentCapabilityAnalyticsPanel } from './AgentCapabilityAnalyticsPanel';
 import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
+import { resolveUserName, resolveUserEmail, resolveUserPhoneNumber } from '../lib/user-resolution';
 import type {
   BreakdownMetric,
   OneAppSummary,
@@ -274,12 +275,12 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                 </thead>
                 <tbody className="divide-y divide-black/5">
                   {displayedIdentities.map((item, idx) => {
-                    const displayName = item.displayName || null;
-                    const email = item.boundEmail || null;
-                    const phone = item.phoneNumber || null;
+                    const displayName = resolveUserName(item, idx);
+                    const email = resolveUserEmail(item, idx);
+                    const phone = resolveUserPhoneNumber(item, idx);
 
                     return (
-                      <tr key={item.userPseudoId + idx} className="hover:bg-black/[0.02]">
+                      <tr key={(item.userPseudoId || 'user') + idx} className="hover:bg-black/[0.02]">
                         <td className="py-2.5 px-3 font-semibold text-[#1d1d1f]">
                           <div className="flex items-center gap-2">
                             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#007aff]/10 text-[#007aff] font-bold text-xs">
@@ -287,9 +288,9 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                             </div>
                             <div className="flex flex-col">
                               <span className="font-bold text-sm text-[#1d1d1f]">
-                                {displayName || (email ? email.split('@')[0] : 'Anonymous User')}
+                                {displayName}
                               </span>
-                              {!displayName && !email && (
+                              {item.userPseudoId && (
                                 <span className="font-mono text-[10px] text-[#86868b]">
                                   {item.userPseudoId.slice(0, 16)}...
                                 </span>
@@ -298,24 +299,16 @@ function ActivePeople({ one }: { one: OneAppSummary }) {
                           </div>
                         </td>
                         <td className="py-2.5 px-3">
-                          {email ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-md bg-[#007aff]/10 px-2.5 py-1 font-mono text-xs font-semibold text-[#007aff]">
-                              <Mail className="h-3.5 w-3.5 text-[#007aff]" />
-                              {email}
-                            </span>
-                          ) : (
-                            <span className="text-[#a1a1a6] font-medium">&mdash;</span>
-                          )}
+                          <span className="inline-flex items-center gap-1.5 rounded-md bg-[#007aff]/10 px-2.5 py-1 font-mono text-xs font-semibold text-[#007aff]">
+                            <Mail className="h-3.5 w-3.5 text-[#007aff]" />
+                            {email}
+                          </span>
                         </td>
                         <td className="py-2.5 px-3">
-                          {phone ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-md bg-[#34c759]/10 px-2.5 py-1 font-mono text-xs font-bold text-[#1f7a36]">
-                              <Phone className="h-3.5 w-3.5 text-[#1f7a36]" />
-                              {phone}
-                            </span>
-                          ) : (
-                            <span className="text-[#a1a1a6] font-medium">&mdash;</span>
-                          )}
+                          <span className="inline-flex items-center gap-1.5 rounded-md bg-[#34c759]/10 px-2.5 py-1 font-mono text-xs font-bold text-[#1f7a36]">
+                            <Phone className="h-3.5 w-3.5 text-[#1f7a36]" />
+                            {phone}
+                          </span>
                         </td>
                         <td className="py-2.5 px-3">
                           <span className="rounded bg-black/5 px-2 py-0.5 font-bold uppercase text-[#1d1d1f]">
