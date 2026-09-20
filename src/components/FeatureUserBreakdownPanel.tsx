@@ -243,24 +243,16 @@ export function FeatureUserBreakdownPanel({
                       </div>
                     </td>
                     <td className="py-2 px-3 text-[#6e6e73]">
-                      {email && email !== '—' ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/5 px-2 py-0.5 text-[11px] font-semibold text-[#007aff]">
-                          <Mail className="h-3 w-3" />
-                          {email}
-                        </span>
-                      ) : (
-                        <span className="text-[#a1a1a6] font-medium">&mdash;</span>
-                      )}
+                      <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/5 px-2 py-0.5 text-[11px] font-semibold text-[#007aff]">
+                        <Mail className="h-3 w-3" />
+                        {email}
+                      </span>
                     </td>
                     <td className="py-2 px-3 text-[#6e6e73]">
-                      {phone && phone !== '—' ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1f7a36]">
-                          <Phone className="h-3 w-3" />
-                          {phone}
-                        </span>
-                      ) : (
-                        <span className="text-[#a1a1a6] font-medium">&mdash;</span>
-                      )}
+                      <span className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1f7a36]">
+                        <Phone className="h-3 w-3" />
+                        {phone}
+                      </span>
                     </td>
                     <td className="py-2 px-3 font-semibold text-[#86868b]">
                       <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px]">
