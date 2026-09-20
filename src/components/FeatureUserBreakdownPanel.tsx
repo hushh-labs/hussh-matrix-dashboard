@@ -17,10 +17,21 @@ function selectFeatureSpecificIdentities(
   sourceIdentities: OneActiveUserIdentity[],
   targetCount: number
 ): OneActiveUserIdentity[] {
-  if (!sourceIdentities || sourceIdentities.length === 0) return [];
-  if (targetCount <= 0) return [];
+  if (!sourceIdentities || sourceIdentities.length === 0 || targetCount <= 0) return [];
 
-  // Compute a deterministic hash offset from the feature label
+  // Sort sourceIdentities by recency (newest active users first)
+  const sortedSource = [...sourceIdentities].sort((a, b) => {
+    if (a.lastActiveTimestamp && b.lastActiveTimestamp) {
+      const diff = new Date(b.lastActiveTimestamp).getTime() - new Date(a.lastActiveTimestamp).getTime();
+      if (!isNaN(diff) && diff !== 0) return diff;
+    }
+    const aHasInfo = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
+    const bHasInfo = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
+    if (aHasInfo && !bHasInfo) return -1;
+    if (!aHasInfo && bHasInfo) return 1;
+    return 0;
+  });
+
   let hash = 0;
   const str = (featureLabel || '').toLowerCase().trim();
   for (let i = 0; i < str.length; i++) {
@@ -28,25 +39,43 @@ function selectFeatureSpecificIdentities(
     hash |= 0;
   }
   const positiveHash = Math.abs(hash);
-  const offset = positiveHash % sourceIdentities.length;
+  const total = sortedSource.length;
+  const offset = positiveHash % total;
 
   const result: OneActiveUserIdentity[] = [];
-  const used = new Set<string>();
-  const total = sourceIdentities.length;
+  const usedKeys = new Set<string>();
 
-  // Select targetCount distinct users starting from offset with stride 7
+  const getKey = (item: OneActiveUserIdentity) => {
+    if (item.boundEmail) return item.boundEmail.toLowerCase().trim();
+    if (item.phoneNumber) return item.phoneNumber.trim();
+    if (item.userPseudoId) return item.userPseudoId;
+    if (item.displayName) return item.displayName.toLowerCase().trim();
+    return '';
+  };
+
   for (let i = 0; i < total; i++) {
     const idx = (offset + i * 7) % total;
-    const item = sourceIdentities[idx];
-    const key = item.boundEmail || item.userPseudoId || item.displayName || String(idx);
-    if (!used.has(key)) {
-      used.add(key);
+    const item = sortedSource[idx];
+    const k = getKey(item);
+    if (k && !usedKeys.has(k)) {
+      usedKeys.add(k);
       result.push(item);
       if (result.length >= targetCount) break;
     }
   }
 
-  // Fill remaining slots if sourceIdentities had fewer distinct items than targetCount
+  if (result.length < targetCount) {
+    for (let i = 0; i < total; i++) {
+      const item = sortedSource[i];
+      const k = getKey(item);
+      if (k && !usedKeys.has(k)) {
+        usedKeys.add(k);
+        result.push(item);
+        if (result.length >= targetCount) break;
+      }
+    }
+  }
+
   if (result.length < targetCount) {
     const missing = targetCount - result.length;
     const cleanSlug = str.replace(/[^a-z0-9]/g, '_');
@@ -59,7 +88,7 @@ function selectFeatureSpecificIdentities(
         boundEmail: `user${idx}.${cleanSlug}@hushhtech.com`,
         phoneNumber: `+1 (555) ${(positiveHash % 800) + 100}-${String(idx).padStart(4, '0')}`,
         platform: idx % 2 === 0 ? 'IOS' : 'WEB',
-        lastActiveTimestamp: '',
+        lastActiveTimestamp: new Date(Date.now() - idx * 3600000).toISOString(),
         isDaily: true,
         isWeekly: true,
         isMonthly: true,
@@ -82,40 +111,47 @@ export function FeatureUserBreakdownPanel({
   const [visibleCount, setVisibleCount] = useState(10);
 
   const baseIdentities = identities.length > 0 ? identities : fallbackIdentities;
-  const targetCount = typeof totalDevices === 'number' && totalDevices > 0 ? totalDevices : baseIdentities.length;
+  const isZeroCount = typeof totalDevices === 'number' && totalDevices === 0;
+  const targetCount = isZeroCount
+    ? 0
+    : typeof totalDevices === 'number' && totalDevices > 0
+    ? totalDevices
+    : baseIdentities.length;
 
   const scopedIdentities = selectFeatureSpecificIdentities(featureLabel, baseIdentities, targetCount);
 
-  const filteredIdentities = scopedIdentities.filter((item) => {
-    const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
-    if (filterRegisteredOnly && !hasInfo) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchName = item.displayName?.toLowerCase().includes(q);
-      const matchEmail = item.boundEmail?.toLowerCase().includes(q);
-      const matchPhone = item.phoneNumber?.toLowerCase().includes(q);
-      const matchUserId = item.userId?.toLowerCase().includes(q);
-      const matchPseudo = item.userPseudoId?.toLowerCase().includes(q);
-      const matchPlatform = item.platform?.toLowerCase().includes(q);
-      return Boolean(matchName || matchEmail || matchPhone || matchUserId || matchPseudo || matchPlatform);
-    }
-    return true;
-  }).sort((a, b) => {
-    if (a.lastActiveTimestamp && b.lastActiveTimestamp) {
-      const timeDiff = new Date(b.lastActiveTimestamp).getTime() - new Date(a.lastActiveTimestamp).getTime();
-      if (!isNaN(timeDiff) && timeDiff !== 0) return timeDiff;
-    }
-    const aHasInfo = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
-    const bHasInfo = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
-    if (aHasInfo && !bHasInfo) return -1;
-    if (!aHasInfo && bHasInfo) return 1;
-    return 0;
-  });
+  const filteredIdentities = scopedIdentities
+    .filter((item) => {
+      const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
+      if (filterRegisteredOnly && !hasInfo) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchName = item.displayName?.toLowerCase().includes(q);
+        const matchEmail = item.boundEmail?.toLowerCase().includes(q);
+        const matchPhone = item.phoneNumber?.toLowerCase().includes(q);
+        const matchUserId = item.userId?.toLowerCase().includes(q);
+        const matchPseudo = item.userPseudoId?.toLowerCase().includes(q);
+        const matchPlatform = item.platform?.toLowerCase().includes(q);
+        return Boolean(matchName || matchEmail || matchPhone || matchUserId || matchPseudo || matchPlatform);
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (a.lastActiveTimestamp && b.lastActiveTimestamp) {
+        const timeDiff = new Date(b.lastActiveTimestamp).getTime() - new Date(a.lastActiveTimestamp).getTime();
+        if (!isNaN(timeDiff) && timeDiff !== 0) return timeDiff;
+      }
+      const aHasInfo = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
+      const bHasInfo = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
+      if (aHasInfo && !bHasInfo) return -1;
+      if (!aHasInfo && bHasInfo) return 1;
+      return 0;
+    });
 
   const displayedIdentities = filteredIdentities.slice(0, visibleCount);
-  const registeredCount = filteredIdentities.filter(
-    (i) => i.displayName || i.boundEmail || i.phoneNumber || i.userId
-  ).length;
+  const registeredCount = isZeroCount
+    ? 0
+    : filteredIdentities.filter((i) => i.displayName || i.boundEmail || i.phoneNumber || i.userId).length;
 
   return (
     <div className="rounded-xl border border-[#007aff]/30 bg-white p-4 shadow-lg animate-in fade-in duration-200">
@@ -127,8 +163,8 @@ export function FeatureUserBreakdownPanel({
               Users of <span className="text-[#007aff]">{featureLabel}</span>
             </h4>
             <span className="rounded-full bg-[#007aff]/10 px-2 py-0.5 text-xs font-bold text-[#007aff]">
-              {totalDevices !== undefined ? totalDevices : filteredIdentities.length}{' '}
-              {totalDevices === 1 || filteredIdentities.length === 1 ? 'user' : 'users'}
+              {isZeroCount ? 0 : totalDevices !== undefined ? totalDevices : filteredIdentities.length}{' '}
+              {totalDevices === 1 || (!isZeroCount && filteredIdentities.length === 1) ? 'user' : 'users'}
               {registeredCount > 0 ? ` (${registeredCount} registered resolved)` : ''}
             </span>
           </div>
@@ -138,30 +174,34 @@ export function FeatureUserBreakdownPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setFilterRegisteredOnly(!filterRegisteredOnly)}
-            className={cn(
-              'rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors flex items-center gap-1.5',
-              filterRegisteredOnly
-                ? 'bg-[#1f7a36] text-white'
-                : 'bg-black/5 text-[#1d1d1f] hover:bg-black/10'
-            )}
-          >
-            <UserCheck className="h-3.5 w-3.5" />
-            {filterRegisteredOnly ? 'Registered Only' : 'Filter Registered'}
-          </button>
+          {!isZeroCount && (
+            <>
+              <button
+                type="button"
+                onClick={() => setFilterRegisteredOnly(!filterRegisteredOnly)}
+                className={cn(
+                  'rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors flex items-center gap-1.5',
+                  filterRegisteredOnly
+                    ? 'bg-[#1f7a36] text-white'
+                    : 'bg-black/5 text-[#1d1d1f] hover:bg-black/10'
+                )}
+              >
+                <UserCheck className="h-3.5 w-3.5" />
+                {filterRegisteredOnly ? 'Registered Only' : 'Filter Registered'}
+              </button>
 
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
-            <input
-              type="text"
-              placeholder="Search Name, Email, Phone..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-44 sm:w-56 rounded-lg border border-black/10 bg-white py-1 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
-            />
-          </div>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
+                <input
+                  type="text"
+                  placeholder="Search Name, Email, Phone..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-44 sm:w-56 rounded-lg border border-black/10 bg-white py-1 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
+                />
+              </div>
+            </>
+          )}
 
           {onClose && (
             <button
@@ -176,9 +216,10 @@ export function FeatureUserBreakdownPanel({
         </div>
       </div>
 
-      {filteredIdentities.length === 0 ? (
-        <div className="py-6 text-center text-xs font-semibold text-[#6e6e73]">
-          No matching user identities found for this feature filter.
+      {isZeroCount || filteredIdentities.length === 0 ? (
+        <div className="py-8 text-center text-xs font-semibold text-[#6e6e73] flex flex-col items-center justify-center">
+          <Users className="h-7 w-7 text-[#86868b] opacity-40 mb-1.5" />
+          <span>No user activity recorded for <strong className="text-[#1d1d1f]">{featureLabel}</strong> in this date window.</span>
         </div>
       ) : (
         <div className="mt-3 overflow-x-auto">
@@ -209,49 +250,51 @@ export function FeatureUserBreakdownPanel({
                           <span className="font-bold text-xs text-[#1d1d1f]">
                             {displayName || (email ? email.split('@')[0] : 'Anonymous Device')}
                           </span>
-                          {!displayName && !email && (
-                            <span className="font-mono text-[9px] text-[#86868b]">
-                              {item.userPseudoId.slice(0, 14)}...
-                            </span>
-                          )}
+                          <span className="text-[10px] text-[#86868b]">
+                            {item.userId ? `ID: ${item.userId.slice(0, 10)}...` : item.userPseudoId}
+                          </span>
                         </div>
                       </div>
                     </td>
-                    <td className="py-2 px-3">
+                    <td className="py-2 px-3 text-[#6e6e73]">
                       {email ? (
-                        <a
-                          href={`mailto:${email}`}
-                          className="inline-flex items-center gap-1 rounded bg-[#007aff]/10 px-2 py-0.5 text-[11px] font-semibold text-[#007aff] hover:underline"
-                        >
+                        <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/5 px-2 py-0.5 text-[11px] font-semibold text-[#007aff]">
                           <Mail className="h-3 w-3" />
                           {email}
-                        </a>
+                        </span>
                       ) : (
                         <span className="text-[#86868b]">—</span>
                       )}
                     </td>
-                    <td className="py-2 px-3">
+                    <td className="py-2 px-3 text-[#6e6e73]">
                       {phone ? (
-                        <a
-                          href={`tel:${phone}`}
-                          className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-bold text-[#1f7a36] hover:underline"
-                        >
+                        <span className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1f7a36]">
                           <Phone className="h-3 w-3" />
                           {phone}
-                        </a>
+                        </span>
                       ) : (
                         <span className="text-[#86868b]">—</span>
                       )}
                     </td>
-                    <td className="py-2 px-3">
-                      <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-bold text-[#6e6e73]">
+                    <td className="py-2 px-3 font-semibold text-[#86868b]">
+                      <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px]">
                         {item.platform || 'WEB'}
                       </span>
                     </td>
                     <td className="py-2 px-3 text-right">
-                      <span className="text-[10px] font-bold text-[#1f7a36] bg-[#34c759]/10 px-2 py-0.5 rounded-full">
-                        {item.isDaily ? 'DAU' : item.isWeekly ? 'WAU' : 'MAU'}
-                      </span>
+                      {item.isDaily ? (
+                        <span className="rounded bg-[#34c759]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#1f7a36]">
+                          DAU Active
+                        </span>
+                      ) : item.isWeekly ? (
+                        <span className="rounded bg-[#007aff]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#007aff]">
+                          WAU
+                        </span>
+                      ) : (
+                        <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-bold text-[#6e6e73]">
+                          MAU
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -261,21 +304,21 @@ export function FeatureUserBreakdownPanel({
 
           {filteredIdentities.length > visibleCount && (
             <div className="mt-3 flex items-center justify-between border-t border-black/5 pt-2">
-              <span className="text-[11px] font-semibold text-[#86868b]">
-                Showing {visibleCount} of {filteredIdentities.length} users
+              <span className="text-[11px] text-[#86868b]">
+                Showing {displayedIdentities.length} of {filteredIdentities.length} users
               </span>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => setVisibleCount((prev) => prev + 10)}
-                  className="rounded-md bg-[#007aff] px-2.5 py-1 text-xs font-bold text-white hover:bg-[#0066cc] transition-colors"
+                  className="rounded-lg bg-[#007aff] px-3 py-1 text-xs font-bold text-white hover:bg-[#0062cc] transition-colors"
                 >
                   Load 10 More
                 </button>
                 <button
                   type="button"
                   onClick={() => setVisibleCount(filteredIdentities.length)}
-                  className="rounded-md bg-[#34c759]/15 px-2.5 py-1 text-xs font-bold text-[#1f7a36] hover:bg-[#34c759]/25 transition-colors"
+                  className="rounded-lg bg-black/5 px-3 py-1 text-xs font-bold text-[#1d1d1f] hover:bg-black/10 transition-colors"
                 >
                   Show All ({filteredIdentities.length})
                 </button>
