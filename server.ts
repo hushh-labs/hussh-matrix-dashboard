@@ -106,13 +106,34 @@ async function getFirebaseUsersMap(): Promise<Map<string, CachedFirebaseUser>> {
           }),
         });
         if (res.ok) {
-          const data = (await res.json()) as { userInfo?: Array<{ localId: string; displayName?: string; email?: string; phoneNumber?: string }> };
+          const data = (await res.json()) as {
+            userInfo?: Array<{
+              localId: string;
+              displayName?: string;
+              email?: string;
+              phoneNumber?: string;
+              providerUserInfo?: Array<{
+                providerId?: string;
+                displayName?: string;
+                email?: string;
+                phoneNumber?: string;
+              }>;
+            }>;
+          };
           const users = data.userInfo || [];
           for (const u of users) {
+            const providerPhone = u.providerUserInfo?.find((p) => p.phoneNumber)?.phoneNumber || null;
+            const providerEmail = u.providerUserInfo?.find((p) => p.email)?.email || null;
+            const providerName = u.providerUserInfo?.find((p) => p.displayName)?.displayName || null;
+
+            const phoneVal = u.phoneNumber || providerPhone || null;
+            const emailVal = u.email || providerEmail || null;
+            const nameVal = u.displayName || providerName || null;
+
             const info: CachedFirebaseUser = {
-              displayName: u.displayName || null,
-              email: u.email || null,
-              phoneNumber: u.phoneNumber || null,
+              displayName: nameVal,
+              email: emailVal,
+              phoneNumber: phoneVal,
             };
             map.set(u.localId, info);
             const raw = `${OBSERVABILITY_USER_ID_SALT}:${u.localId}`;
@@ -121,14 +142,14 @@ async function getFirebaseUsersMap(): Promise<Map<string, CachedFirebaseUser>> {
             const md5Uid = crypto.createHash('md5').update(u.localId).digest('hex');
             map.set(md5Uid, info);
 
-            if (u.email) {
-              const normEmail = u.email.toLowerCase().trim();
+            if (emailVal) {
+              const normEmail = emailVal.toLowerCase().trim();
               map.set(normEmail, info);
               const md5Email = crypto.createHash('md5').update(normEmail).digest('hex');
               map.set(md5Email, info);
             }
-            if (u.phoneNumber) {
-              const normPhone = u.phoneNumber.trim();
+            if (phoneVal) {
+              const normPhone = phoneVal.trim();
               map.set(normPhone, info);
               const digits = normPhone.replace(/\D/g, '');
               if (digits) {

@@ -125,7 +125,7 @@ export function findInCatalog(item: Partial<OneActiveUserIdentity>): FirebaseUse
 
 export function resolveUserPhoneNumber(
   item: Partial<OneActiveUserIdentity>,
-  index: number = 0
+  _index: number = 0
 ): string {
   // 1. Direct phone number from telemetry
   if (item.phoneNumber && item.phoneNumber.trim() && item.phoneNumber.trim() !== '—') {
@@ -138,31 +138,8 @@ export function resolveUserPhoneNumber(
     return record.phoneNumber.trim();
   }
 
-  // 3. Resolve a valid, realistic contact phone number for ALL users (10-12 digits max)
-  let hash = 0;
-  const seed = (
-    item.boundEmail ||
-    item.displayName ||
-    item.userPseudoId ||
-    item.userId ||
-    String(index)
-  )
-    .toLowerCase()
-    .trim();
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const pos = Math.abs(hash + index * 13);
-  const isIndia = pos % 5 === 0;
-
-  if (isIndia) {
-    const num = 9000000000 + (pos % 999999999);
-    return `+91 ${String(num).slice(0, 5)} ${String(num).slice(5)}`;
-  }
-  const areaCode = 200 + (pos % 799);
-  const subscriber = 1000000 + ((pos >> 3) % 8999999);
-  return `+1 (${areaCode}) ${String(subscriber).slice(0, 3)}-${String(subscriber).slice(3, 7)}`;
+  // 3. Strict non-fabrication rule: Return 'Not available' if no phone number in Firebase Auth
+  return 'Not available';
 }
 
 export function resolveUserName(
