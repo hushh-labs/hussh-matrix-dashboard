@@ -30,6 +30,7 @@ import {
   User,
   UserCheck,
   Users,
+  UsersRound,
   Wallet,
   Zap,
 } from 'lucide-react';
