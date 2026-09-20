@@ -197,6 +197,19 @@ function FeatureTable({
 }) {
   const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
 
+  const sortedFeatures = useMemo(() => {
+    return [...features].sort((a, b) => {
+      if (a.instrumented !== b.instrumented) return a.instrumented ? -1 : 1;
+      const usersA = a.users ?? 0;
+      const usersB = b.users ?? 0;
+      if (usersA !== usersB) return usersB - usersA;
+      const eventsA = a.events ?? 0;
+      const eventsB = b.events ?? 0;
+      if (eventsA !== eventsB) return eventsB - eventsA;
+      return 0;
+    });
+  }, [features]);
+
   return (
     <>
       <div className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs">
@@ -210,7 +223,7 @@ function FeatureTable({
       </div>
 
       <div className="space-y-3 sm:hidden">
-        {features.map((feature) => {
+        {sortedFeatures.map((feature) => {
           const Icon = featureIcon[feature.key] ?? Activity;
           const waiting = !feature.instrumented;
           const audit = featureAuditMap[feature.key];
@@ -300,7 +313,7 @@ function FeatureTable({
             </tr>
           </thead>
           <tbody>
-            {features.map((feature) => {
+            {sortedFeatures.map((feature) => {
               const Icon = featureIcon[feature.key] ?? Activity;
               const waiting = !feature.instrumented;
               const audit = featureAuditMap[feature.key];

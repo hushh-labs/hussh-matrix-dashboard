@@ -629,86 +629,110 @@ export function AgentCapabilityAnalyticsPanel({
     },
   ];
 
-  const computedFeatures = specs.map((spec) => {
-    const isGap = spec.status === 'gap' || !instrumented;
-    const devices = isGap ? 0 : Math.max(1, Math.round(humanUsers * (spec.userWeight ?? 1)));
-    const signals = isGap ? 0 : Math.max(1, Math.round(humanEvents * (spec.eventWeight ?? 1)));
-    const failed = Math.round(signals * (spec.failureRate ?? 0));
-    const successful = Math.max(0, signals - failed);
-    const explanation =
-      spec.status === 'active' && instrumented && signals > 0
-        ? `${formatNumber(signals)} event signals recorded across ${formatNumber(devices)} active ${devices === 1 ? 'device' : 'devices'} in this window.`
-        : spec.explanation;
+  const computedFeatures = specs
+    .map((spec) => {
+      const isGap = spec.status === 'gap' || !instrumented;
+      const devices = isGap ? 0 : Math.max(1, Math.round(humanUsers * (spec.userWeight ?? 1)));
+      const signals = isGap ? 0 : Math.max(1, Math.round(humanEvents * (spec.eventWeight ?? 1)));
+      const failed = Math.round(signals * (spec.failureRate ?? 0));
+      const successful = Math.max(0, signals - failed);
+      const explanation =
+        spec.status === 'active' && instrumented && signals > 0
+          ? `${formatNumber(signals)} event signals recorded across ${formatNumber(devices)} active ${devices === 1 ? 'device' : 'devices'} in this window.`
+          : spec.explanation;
 
-    return {
-      ...spec,
-      devices,
-      signals,
-      successful,
-      failed,
-      explanation,
-    };
-  });
+      return {
+        ...spec,
+        devices,
+        signals,
+        successful,
+        failed,
+        explanation,
+      };
+    })
+    .sort((a, b) => {
+      if (a.status !== b.status) {
+        if (a.status === 'active') return -1;
+        if (b.status === 'active') return 1;
+      }
+      if (a.devices !== b.devices) return b.devices - a.devices;
+      if (a.signals !== b.signals) return b.signals - a.signals;
+      return 0;
+    });
 
   return (
     <div className="space-y-8">
       {/* Top Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-black/5 pb-6">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="flex h-10 w-10 items-center justify-center rounded-xl bg-black/5 text-[#1d1d1f] hover:bg-black/10 transition-colors"
-            aria-label="Back to One App"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#007aff]/10 text-[#007aff]">
-                <Icon className="h-4 w-4" />
-              </span>
-              <p className={appleLabel}>{meta.title} &middot; Detailed Analytics</p>
-            </div>
-            <h1 className="mt-1 text-2xl font-bold text-[#1d1d1f] sm:text-3xl">
-              {meta.title} Deep-Dive
-            </h1>
-            <p className="mt-1 text-sm font-medium text-[#6e6e73] max-w-2xl">
-              {meta.description}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Environment Switcher */}
-          <div className="flex rounded-lg bg-[#f5f5f7] p-1 text-xs font-bold">
+      <div className="flex flex-col gap-4 border-b border-black/5 pb-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex items-center gap-3">
             <button
               type="button"
+              onClick={onBack}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-black/5 text-[#1d1d1f] hover:bg-black/10 transition-colors"
+              aria-label="Back to One App"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#007aff]/10 text-[#007aff]">
+                  <Icon className="h-4 w-4" />
+                </span>
+                <p className={appleLabel}>{meta.title} &middot; Detailed Analytics &middot; {rangeLabel}</p>
+              </div>
+              <h1 className="mt-1 text-2xl font-bold text-[#1d1d1f] sm:text-3xl">
+                {meta.title} Deep-Dive
+              </h1>
+              <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
+                {meta.description}
+              </p>
+            </div>
+          </div>
+          <div className="w-full lg:w-auto">{dateControl}</div>
+        </div>
+
+        {/* Unified Environment Switcher matching Image 3 */}
+        <div className="mt-2 grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
+          <div
+            className="grid w-full grid-cols-2 gap-1 rounded-xl bg-black/[0.045] p-1 sm:flex sm:w-fit"
+            role="tablist"
+            aria-label="Agent capability environment"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={environment === 'production'}
               onClick={() => setEnvironment('production')}
               className={cn(
-                'rounded-md px-3 py-1.5 transition',
+                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
                 environment === 'production'
                   ? 'bg-white text-[#1d1d1f] shadow-sm'
-                  : 'text-[#6e6e73] hover:text-[#1d1d1f]'
+                  : 'text-[#6e6e73] hover:text-[#1d1d1f]',
               )}
             >
               Production
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={environment === 'uat'}
               onClick={() => setEnvironment('uat')}
               className={cn(
-                'rounded-md px-3 py-1.5 transition',
+                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
                 environment === 'uat'
                   ? 'bg-white text-[#1d1d1f] shadow-sm'
-                  : 'text-[#6e6e73] hover:text-[#1d1d1f]'
+                  : 'text-[#6e6e73] hover:text-[#1d1d1f]',
               )}
             >
-              UAT / Beta
+              UAT / Test builds
             </button>
           </div>
-
-          {dateControl}
+          <p className="text-xs font-semibold leading-5 text-[#6e6e73]">
+            {environment === 'production'
+              ? 'Production web plus public iOS and Android builds. Tester traffic is excluded. Counts never mix across environments.'
+              : 'UAT web plus iOS TestFlight and Android internal. Production traffic is excluded. Counts never mix across environments.'}
+          </p>
         </div>
       </div>
 

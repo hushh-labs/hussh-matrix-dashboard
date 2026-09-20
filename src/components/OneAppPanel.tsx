@@ -1235,41 +1235,49 @@ export function OneAppPanel({
     <main className="space-y-10">
       <section>
         {/* Environment Selector Toggle Bar */}
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-2xl bg-[#f5f5f7] p-3 border border-black/5">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="flex rounded-lg bg-black/5 p-1 text-xs font-bold">
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-black/5 pb-5">
+          <div className="grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center flex-1">
+            <div
+              className="grid w-full grid-cols-2 gap-1 rounded-xl bg-black/[0.045] p-1 sm:flex sm:w-fit"
+              role="tablist"
+              aria-label="One App environment"
+            >
               <button
                 type="button"
+                role="tab"
+                aria-selected={environment === 'production'}
                 onClick={() => setEnvironment('production')}
                 className={cn(
-                  'rounded-md px-3 py-1.5 transition',
+                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
                   environment === 'production'
                     ? 'bg-white text-[#1d1d1f] shadow-sm'
-                    : 'text-[#6e6e73] hover:text-[#1d1d1f]'
+                    : 'text-[#6e6e73] hover:text-[#1d1d1f]',
                 )}
               >
                 Production
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={environment === 'uat'}
                 onClick={() => setEnvironment('uat')}
                 className={cn(
-                  'rounded-md px-3 py-1.5 transition',
+                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
                   environment === 'uat'
                     ? 'bg-white text-[#1d1d1f] shadow-sm'
-                    : 'text-[#6e6e73] hover:text-[#1d1d1f]'
+                    : 'text-[#6e6e73] hover:text-[#1d1d1f]',
                 )}
               >
                 UAT / Test builds
               </button>
             </div>
-            <p className="text-xs font-medium text-[#6e6e73] max-w-xl">
+            <p className="text-xs font-semibold leading-5 text-[#6e6e73]">
               {environment === 'production'
                 ? 'Production web plus public iOS and Android builds. Tester traffic is excluded. Counts never mix across environments.'
-                : 'Internal UAT web (uat.one.hushh.ai) plus iOS TestFlight and Android Beta builds. Tester traffic is isolated.'}
+                : 'UAT web plus iOS TestFlight and Android internal. Production traffic is excluded. Counts never mix across environments.'}
             </p>
           </div>
-          {dateControl}
+          <div className="shrink-0">{dateControl}</div>
         </div>
 
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

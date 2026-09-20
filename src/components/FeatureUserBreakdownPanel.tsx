@@ -101,6 +101,10 @@ export function FeatureUserBreakdownPanel({
     }
     return true;
   }).sort((a, b) => {
+    if (a.lastActiveTimestamp && b.lastActiveTimestamp) {
+      const timeDiff = new Date(b.lastActiveTimestamp).getTime() - new Date(a.lastActiveTimestamp).getTime();
+      if (!isNaN(timeDiff) && timeDiff !== 0) return timeDiff;
+    }
     const aHasInfo = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
     const bHasInfo = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
     if (aHasInfo && !bHasInfo) return -1;
