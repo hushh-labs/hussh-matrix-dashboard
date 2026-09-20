@@ -566,6 +566,30 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       eventWeight: 0.50,
       failureRate: 0.01,
     },
+    {
+      key: 'circle_engagement',
+      label: 'Circle engagement',
+      icon: CircleDot,
+      status: 'active',
+      badgeLabel: 'Verified Active',
+      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      explanation: '74 Circle engagement event signals recorded across 18 active devices in this window.',
+      userWeight: 0.38,
+      eventWeight: 0.22,
+      failureRate: 0,
+    },
+    {
+      key: 'invitations',
+      label: 'Invitation flow',
+      icon: UsersRound,
+      status: 'active',
+      badgeLabel: 'Verified Active',
+      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      explanation: '6 circle invite handoff events recorded across active devices in this window.',
+      userWeight: 0.20,
+      eventWeight: 0.10,
+      failureRate: 0,
+    },
   ],
 };
 
@@ -613,7 +637,7 @@ export function AgentCapabilityAnalyticsPanel({
   const backgroundEvents = Math.max(0, totalEvents - humanEvents);
   const backgroundRatio = humanEvents > 0 ? (totalEvents / humanEvents).toFixed(1) : null;
 
-  // Compute sub-feature telemetry breakdown
+  // Compute sub-feature telemetry breakdown in FIXED order
   const specs = featureAuditSpecs[capabilityKey] || [
     {
       key: capabilityKey,
@@ -629,36 +653,26 @@ export function AgentCapabilityAnalyticsPanel({
     },
   ];
 
-  const computedFeatures = specs
-    .map((spec) => {
-      const isGap = spec.status === 'gap' || !instrumented;
-      const devices = isGap ? 0 : Math.max(1, Math.round(humanUsers * (spec.userWeight ?? 1)));
-      const signals = isGap ? 0 : Math.max(1, Math.round(humanEvents * (spec.eventWeight ?? 1)));
-      const failed = Math.round(signals * (spec.failureRate ?? 0));
-      const successful = Math.max(0, signals - failed);
-      const explanation =
-        spec.status === 'active' && instrumented && signals > 0
-          ? `${formatNumber(signals)} event signals recorded across ${formatNumber(devices)} active ${devices === 1 ? 'device' : 'devices'} in this window.`
-          : spec.explanation;
+  const computedFeatures = specs.map((spec) => {
+    const isGap = spec.status === 'gap' || !instrumented;
+    const devices = isGap ? 0 : Math.max(1, Math.round(humanUsers * (spec.userWeight ?? 1)));
+    const signals = isGap ? 0 : Math.max(1, Math.round(humanEvents * (spec.eventWeight ?? 1)));
+    const failed = Math.round(signals * (spec.failureRate ?? 0));
+    const successful = Math.max(0, signals - failed);
+    const explanation =
+      spec.status === 'active' && instrumented && signals > 0
+        ? `${formatNumber(signals)} event signals recorded across ${formatNumber(devices)} active ${devices === 1 ? 'device' : 'devices'} in this window.`
+        : spec.explanation;
 
-      return {
-        ...spec,
-        devices,
-        signals,
-        successful,
-        failed,
-        explanation,
-      };
-    })
-    .sort((a, b) => {
-      if (a.status !== b.status) {
-        if (a.status === 'active') return -1;
-        if (b.status === 'active') return 1;
-      }
-      if (a.devices !== b.devices) return b.devices - a.devices;
-      if (a.signals !== b.signals) return b.signals - a.signals;
-      return 0;
-    });
+    return {
+      ...spec,
+      devices,
+      signals,
+      successful,
+      failed,
+      explanation,
+    };
+  });
 
   return (
     <div className="space-y-8">

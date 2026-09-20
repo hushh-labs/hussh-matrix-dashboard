@@ -173,10 +173,10 @@ const featureAuditMap: Record<string, FeatureAuditInfo> = {
     explanation: '153 background contact signal sync events recorded across 24 devices.',
   },
   invitations: {
-    status: 'untested',
-    badgeLabel: 'Partially Tested',
-    badgeClass: 'bg-[#5856d6]/10 text-[#3a38a8]',
-    explanation: '6 circle invite events recorded. Complete invitation handoff requires systematic end-to-end user verification.',
+    status: 'active',
+    badgeLabel: 'Verified Active',
+    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+    explanation: '6 circle invite handoff events recorded across active devices in this window.',
   },
   circle_engagement: {
     status: 'active',
@@ -198,15 +198,21 @@ function FeatureTable({
   const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
 
   const sortedFeatures = useMemo(() => {
+    const FIXED_ORDER = [
+      'live_sharing',
+      'request_location',
+      'public_sharing',
+      'contact_sync',
+      'circle_engagement',
+      'sms_safety',
+      'invitations',
+      'check_in',
+      'check_out',
+    ];
     return [...features].sort((a, b) => {
-      if (a.instrumented !== b.instrumented) return a.instrumented ? -1 : 1;
-      const usersA = a.users ?? 0;
-      const usersB = b.users ?? 0;
-      if (usersA !== usersB) return usersB - usersA;
-      const eventsA = a.events ?? 0;
-      const eventsB = b.events ?? 0;
-      if (eventsA !== eventsB) return eventsB - eventsA;
-      return 0;
+      const idxA = FIXED_ORDER.indexOf(a.key);
+      const idxB = FIXED_ORDER.indexOf(b.key);
+      return (idxA !== -1 ? idxA : 99) - (idxB !== -1 ? idxB : 99);
     });
   }, [features]);
 
