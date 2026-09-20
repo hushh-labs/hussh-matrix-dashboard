@@ -1,65 +1,47 @@
+import firebaseUserMapJson from './firebase-user-map.json';
 import type { OneActiveUserIdentity } from './types';
 
-const CATALOG_NAMES = [
-  'Roopmann V',
-  'Vishal .420',
-  'Sharukhan',
-  'Rashid',
-  'Divya Rajendran',
-  'Anoushka Gehani',
-  'Kushal Trivedi',
-  'Neelesh Meena',
-  'Kenny Bins',
-  'Mektha Begam',
-  'Anurag Jaiswal',
-  'Venkatesh S',
-  'Priya Sharma',
-  'Aditya Verma',
-  'Rahul Kumar',
-  'Siddharth Nair',
-  'Aishwarya R',
-  'Deepak Patel',
-];
+interface FirebaseUserRecord {
+  displayName?: string | null;
+  email?: string | null;
+  phoneNumber?: string | null;
+}
+
+const userCatalogMap = firebaseUserMapJson as Record<string, FirebaseUserRecord>;
+
+export function findInCatalog(item: Partial<OneActiveUserIdentity>): FirebaseUserRecord | null {
+  if (item.userId && userCatalogMap[item.userId]) return userCatalogMap[item.userId];
+  if (item.userId && userCatalogMap[item.userId.toLowerCase()]) return userCatalogMap[item.userId.toLowerCase()];
+  if (item.boundEmail && userCatalogMap[item.boundEmail.toLowerCase().trim()]) return userCatalogMap[item.boundEmail.toLowerCase().trim()];
+  if (item.userPseudoId && userCatalogMap[item.userPseudoId]) return userCatalogMap[item.userPseudoId];
+  if (item.phoneNumber && userCatalogMap[item.phoneNumber.trim()]) return userCatalogMap[item.phoneNumber.trim()];
+  return null;
+}
 
 export function resolveUserPhoneNumber(
   item: Partial<OneActiveUserIdentity>,
-  index: number = 0
+  _index: number = 0
 ): string {
+  // 1. Direct phone number from telemetry
   if (item.phoneNumber && item.phoneNumber.trim() && item.phoneNumber.trim() !== '—') {
-    const raw = item.phoneNumber.trim();
-    if (raw.length <= 16) return raw;
+    return item.phoneNumber.trim();
   }
 
-  let hash = 0;
-  const seed = (
-    item.boundEmail ||
-    item.displayName ||
-    item.userPseudoId ||
-    item.userId ||
-    String(index)
-  )
-    .toLowerCase()
-    .trim();
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
+  // 2. Lookup in Firebase catalog by userId, boundEmail, or userPseudoId
+  const record = findInCatalog(item);
+  if (record?.phoneNumber && record.phoneNumber.trim() && record.phoneNumber.trim() !== '—') {
+    return record.phoneNumber.trim();
   }
-  const pos = Math.abs(hash + index * 13);
-  const isIndia = pos % 5 === 0;
 
-  if (isIndia) {
-    const num = 9000000000 + (pos % 999999999);
-    return `+91 ${String(num).slice(0, 5)} ${String(num).slice(5)}`;
-  }
-  const areaCode = 200 + (pos % 799);
-  const subscriber = 1000000 + ((pos >> 3) % 8999999);
-  return `+1 (${areaCode}) ${String(subscriber).slice(0, 3)}-${String(subscriber).slice(3, 7)}`;
+  // 3. Authentic & accurate: NO fake/hallucinated numbers! Return '—' if no phone number exists
+  return '—';
 }
 
 export function resolveUserName(
   item: Partial<OneActiveUserIdentity>,
-  index: number = 0
+  _index: number = 0
 ): string {
+  // 1. Direct display name from item (excluding generic placeholders)
   if (
     item.displayName &&
     item.displayName.trim() &&
@@ -70,8 +52,16 @@ export function resolveUserName(
     return item.displayName.trim();
   }
 
-  if (item.boundEmail && item.boundEmail.trim() && item.boundEmail.includes('@')) {
-    const namePart = item.boundEmail.split('@')[0];
+  // 2. Lookup in Firebase catalog
+  const record = findInCatalog(item);
+  if (record?.displayName && record.displayName.trim()) {
+    return record.displayName.trim();
+  }
+
+  // 3. Format from boundEmail or catalog email
+  const email = item.boundEmail || record?.email;
+  if (email && email.trim() && email.includes('@')) {
+    const namePart = email.split('@')[0];
     const words = namePart
       .split(/[._-]/)
       .filter(Boolean)
@@ -79,26 +69,23 @@ export function resolveUserName(
     if (words.length > 0) return words.join(' ');
   }
 
-  let hash = 0;
-  const seed = (item.userPseudoId || item.userId || item.boundEmail || String(index))
-    .toLowerCase()
-    .trim();
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
+  // 4. Clean anonymous fallback with ID snippet
+  if (item.userPseudoId) {
+    return `Active Device (${item.userPseudoId.slice(0, 8)})`;
   }
-  const pos = Math.abs(hash + index * 17);
-  return CATALOG_NAMES[pos % CATALOG_NAMES.length];
+  return 'Active User';
 }
 
 export function resolveUserEmail(
   item: Partial<OneActiveUserIdentity>,
-  index: number = 0
+  _index: number = 0
 ): string {
   if (item.boundEmail && item.boundEmail.trim() && item.boundEmail.includes('@')) {
     return item.boundEmail.trim();
   }
-  const name = resolveUserName(item, index);
-  const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return `${slug}@gmail.com`;
+  const record = findInCatalog(item);
+  if (record?.email && record.email.trim() && record.email.includes('@')) {
+    return record.email.trim();
+  }
+  return '—';
 }

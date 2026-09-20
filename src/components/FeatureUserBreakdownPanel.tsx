@@ -91,31 +91,6 @@ function selectFeatureSpecificIdentities(
     }
   }
 
-  // If source had fewer unique users than targetCount, generate clean, unique tester user objects
-  if (result.length < targetCount) {
-    const missing = targetCount - result.length;
-    const cleanSlug = str.replace(/[^a-z0-9]/g, '_');
-    for (let i = 1; i <= missing; i++) {
-      const idx = result.length + i;
-      const seedNum = positiveHash + idx * 37;
-      const area = 600 + (seedNum % 399);
-      const mid = 100 + ((seedNum >> 2) % 899);
-      const sub = 1000 + ((seedNum >> 5) % 8999);
-      result.push({
-        userPseudoId: `uat_${cleanSlug}_${idx}`,
-        userId: null,
-        displayName: `${featureLabel} Active User ${idx}`,
-        boundEmail: `user${idx}.${cleanSlug}@hushhtech.com`,
-        phoneNumber: `+1 (${area}) ${mid}-${sub}`,
-        platform: idx % 2 === 0 ? 'IOS' : 'WEB',
-        lastActiveTimestamp: new Date(Date.now() - idx * 1800000).toISOString(),
-        isDaily: true,
-        isWeekly: true,
-        isMonthly: true,
-      });
-    }
-  }
-
   return result;
 }
 
@@ -277,16 +252,24 @@ export function FeatureUserBreakdownPanel({
                       </div>
                     </td>
                     <td className="py-2 px-3 text-[#6e6e73]">
-                      <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/5 px-2 py-0.5 text-[11px] font-semibold text-[#007aff]">
-                        <Mail className="h-3 w-3" />
-                        {email}
-                      </span>
+                      {email && email !== '—' ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/5 px-2 py-0.5 text-[11px] font-semibold text-[#007aff]">
+                          <Mail className="h-3 w-3" />
+                          {email}
+                        </span>
+                      ) : (
+                        <span className="text-[#a1a1a6] font-medium">&mdash;</span>
+                      )}
                     </td>
                     <td className="py-2 px-3 text-[#6e6e73]">
-                      <span className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1f7a36]">
-                        <Phone className="h-3 w-3" />
-                        {phone}
-                      </span>
+                      {phone && phone !== '—' ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1f7a36]">
+                          <Phone className="h-3 w-3" />
+                          {phone}
+                        </span>
+                      ) : (
+                        <span className="text-[#a1a1a6] font-medium">&mdash;</span>
+                      )}
                     </td>
                     <td className="py-2 px-3 font-semibold text-[#86868b]">
                       <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px]">

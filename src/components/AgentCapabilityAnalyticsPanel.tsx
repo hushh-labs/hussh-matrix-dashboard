@@ -920,7 +920,16 @@ export function AgentCapabilityAnalyticsPanel({
                           </div>
                         </td>
                         <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                          <MetricValue value={feature.devices} waiting={waiting} />
+                          <button
+                            type="button"
+                            onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
+                            className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
+                            title="Click to view users who used this feature"
+                          >
+                            <Users className="h-3 w-3" />
+                            <span><MetricValue value={feature.devices} waiting={waiting} /></span>
+                            <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
+                          </button>
                         </td>
                         <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.signals} waiting={waiting} />
@@ -935,6 +944,20 @@ export function AgentCapabilityAnalyticsPanel({
                           {waiting ? '—' : ratio(feature.successful, feature.signals)}
                         </td>
                       </tr>
+
+                      {isExpanded && (
+                        <tr key={`${feature.key}-users`}>
+                          <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
+                            <FeatureUserBreakdownPanel
+                              featureLabel={feature.label}
+                              identities={activeIdentities}
+                              fallbackIdentities={one?.activeUsers?.identities || []}
+                              totalDevices={feature.devices}
+                              onClose={() => setExpandedFeatureKey(null)}
+                            />
+                          </td>
+                        </tr>
+                      )}
                     </Fragment>
                   );
                 })}
