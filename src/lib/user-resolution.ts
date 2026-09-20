@@ -109,6 +109,7 @@ export function findInCatalog(item: Partial<OneActiveUserIdentity>): FirebaseUse
   if (item.userId && userCatalogMap[item.userId]) return userCatalogMap[item.userId];
   if (item.userId && userCatalogMap[item.userId.toLowerCase()]) return userCatalogMap[item.userId.toLowerCase()];
   if (item.boundEmail && userCatalogMap[item.boundEmail.toLowerCase().trim()]) return userCatalogMap[item.boundEmail.toLowerCase().trim()];
+  if (item.displayName && userCatalogMap[item.displayName.toLowerCase().trim()]) return userCatalogMap[item.displayName.toLowerCase().trim()];
   if (item.phoneNumber && userCatalogMap[item.phoneNumber.trim()]) return userCatalogMap[item.phoneNumber.trim()];
 
   if (item.userPseudoId) {
