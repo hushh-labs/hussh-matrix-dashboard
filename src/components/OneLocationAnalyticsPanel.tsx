@@ -143,10 +143,10 @@ const featureAuditMap: Record<string, FeatureAuditInfo> = {
     explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_in_completed").',
   },
   check_out: {
-    status: 'gap',
-    badgeLabel: 'Instrumentation Gap',
-    badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
-    explanation: 'Check-Out flow is un-instrumented in hushh-webapp. Zero reflects missing GA4 event pipeline.',
+    status: 'active',
+    badgeLabel: 'Verified Active',
+    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+    explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_out_completed"). Verified active in UAT & Production.',
   },
   sms_safety: {
     status: 'active',

@@ -2030,7 +2030,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     key: 'location',
     label: 'Location',
     human: [
-      'one_location_share_confirmed', 'one_location_check_in_completed',
+      'one_location_share_confirmed', 'one_location_check_in_completed', 'one_location_check_out_completed',
       'one_location_circle_created', 'one_location_circle_invite_created',
       'one_location_public_link_created', 'one_location_request_sent',
       'one_location_sos_triggered', 'one_location_recommendation_selected',

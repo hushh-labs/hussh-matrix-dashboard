@@ -285,6 +285,7 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
 const ONE_LOCATION_EVENT_LABELS: Record<string, string> = {
   one_location_share_confirmed: 'Shared their live location',
   one_location_check_in_completed: 'Checked in somewhere',
+  one_location_check_out_completed: 'Checked out from location',
   one_location_sos_triggered: 'Sent an emergency SMS',
   one_location_request_sent: "Asked for someone's location",
   one_location_circle_created: 'Created a Circle',
@@ -308,6 +309,7 @@ const ONE_LOCATION_EVENT_LABELS: Record<string, string> = {
 const ONE_LOCATION_FEATURE_ORDER = [
   'one_location_share_confirmed',
   'one_location_check_in_completed',
+  'one_location_check_out_completed',
   'one_location_sos_triggered',
   'one_location_request_sent',
   'one_location_circle_created',
