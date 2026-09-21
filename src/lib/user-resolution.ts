@@ -171,6 +171,11 @@ export function resolveUserName(
     if (words.length > 0) return words.join(' ');
   }
 
+  const phone = item.phoneNumber || record?.phoneNumber;
+  if (phone && phone.trim() && phone !== '—') {
+    return `Phone User (${phone.trim()})`;
+  }
+
   if (item.userPseudoId) {
     return `Guest Session (${item.userPseudoId.slice(0, 8)})`;
   }

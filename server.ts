@@ -2867,7 +2867,8 @@ ${capabilitySql.isHuman}
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_share_%' THEN 'live_sharing'
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'circle_%' THEN 'circle_engagement'
           
-          WHEN eventName IN ('auth_started', 'one_auth_started', 'one_auth_login_completed') THEN 'auth_started'
+          WHEN eventName IN ('auth_started', 'one_auth_started') THEN 'auth_started'
+          WHEN eventName IN ('auth_completed', 'one_auth_login_completed', 'one_auth_google_signed_in', 'one_auth_phone_verified', 'one_phone_verified', 'auth_succeeded') THEN 'daily_signin'
           WHEN eventName IN ('phone_verification_started', 'phone_verification_completed', 'one_auth_phone_verified', 'one_phone_verified') THEN 'phone_verified'
           WHEN eventName IN ('google_sign_in_started', 'google_sign_in_completed', 'one_auth_google_signed_in') THEN 'google_signin'
           WHEN eventName IN ('profile_created', 'one_auth_profile_created') THEN 'profile_created'
@@ -3427,7 +3428,9 @@ ${capabilitySql.isHuman}
             usageCount: toNumber(row.timesUsed ?? 1),
           });
         }
-        if (result['auth_started'] && !result['daily_signin']) {
+        if (result['daily_signin'] && !result['auth_started']) {
+          result['auth_started'] = result['daily_signin'];
+        } else if (result['auth_started'] && !result['daily_signin']) {
           result['daily_signin'] = result['auth_started'];
         }
         return result;
