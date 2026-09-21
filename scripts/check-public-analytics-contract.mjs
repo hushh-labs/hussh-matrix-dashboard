@@ -64,8 +64,12 @@ function inspect(value, path, findings) {
   }
 }
 
-function assertOneSummary(summary, label, findings) {
+function assertOneSummary(summary, label, expectedWebHost, findings) {
   if (!summary || typeof summary !== 'object' || summary.available === false) return;
+  if (summary.sourceWebHost !== expectedWebHost) findings.push(`${label}.sourceWebHost: expected ${expectedWebHost}`);
+  if (summary.surfaceScope?.webHost !== expectedWebHost || summary.surfaceScope?.strictWebHost !== true) {
+    findings.push(`${label}.surfaceScope: exact web-host isolation is not declared`);
+  }
   const active = summary.activeUsers;
   if (!active || active.countingUnit !== 'device') findings.push(`${label}.activeUsers.countingUnit: expected device`);
   if (!active?.identityScope || !/device|browser/i.test(active.identityScope)) findings.push(`${label}.activeUsers.identityScope: missing device scope`);
@@ -115,8 +119,8 @@ for (const spec of [
     const findings = [];
     inspect(result.data, '$', findings);
     const one = spec.path.endsWith('/one') ? result.data?.data : result.data?.one?.data;
-    assertOneSummary(one?.production, `${spec.path}.production`, findings);
-    assertOneSummary(one?.uat, `${spec.path}.uat`, findings);
+    assertOneSummary(one?.production, `${spec.path}.production`, 'one.hushh.ai', findings);
+    assertOneSummary(one?.uat, `${spec.path}.uat`, 'uat.one.hushh.ai', findings);
     checks.push({ endpoint: spec.path, bytes: result.bytes, durationMs: result.durationMs, findings: findings.length });
     failures.push(...findings.map((finding) => `${spec.path} ${finding}`));
   } catch (error) {

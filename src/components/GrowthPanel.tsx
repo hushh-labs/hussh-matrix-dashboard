@@ -189,9 +189,9 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Figure
-          label="Devices we have picked up"
+          label="Devices first seen in the trailing year"
           value={exact(totalEverSeen)}
-          detail={`Distinct devices first seen, across ${series.length} weeks`}
+          detail={`Distinct devices first seen across ${series.length} weeks`}
         />
         <Figure
           label={`New in the last ${windowLabel}`}
@@ -328,7 +328,7 @@ const IDENTITY_PLATFORM_LABELS: Record<string, string> = {
  * because right now the gap is the more interesting number.
  */
 function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] }) {
-  const { devices, accounts, identifiedDevices, coverage, byPlatform } = identity;
+  const { devices, accounts, identifiedDevices, coverage, byPlatform, windowDays } = identity;
   const rows: OrgIdentityPlatform[] = [...byPlatform].sort((a, b) => b.devices - a.devices);
   const lowCoverage = coverage !== null && coverage < 0.25;
 
@@ -338,7 +338,7 @@ function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] })
         <Figure
           label="Devices seen"
           value={exact(devices)}
-          detail="Browsers and app installs, this window"
+          detail={`Browsers and app installs, trailing ${windowDays} days`}
         />
         <Figure
           label="Accounts we can name"
@@ -402,7 +402,8 @@ function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] })
           A device becomes identifiable only once someone signs in, so this ceiling is partly the
           sign-in rate and partly instrumentation. A platform marked{' '}
           <strong className="font-bold text-[#1d1d1f]">Binds nothing</strong> sends no account
-          identity at all, which is a bug rather than behaviour.
+          identity at all, which is a bug rather than behaviour. The headline account count is
+          globally distinct; platform account rows are diagnostic and must not be added together.
         </p>
       </div>
     </div>
@@ -818,8 +819,8 @@ export function GrowthPanel({
   const sections: Array<{ kicker: string; title: string; hint?: string; body: ReactElement }> = [
     {
       kicker: 'Audience',
-      title: 'How many devices have we picked up?',
-      hint: 'Every device that has ever opened the One app, and the rate we are adding them.',
+      title: 'How many devices have we picked up in the trailing year?',
+      hint: 'Distinct One app devices first seen in the trailing 365 days, and the rate we are adding them.',
       body: <UsersOverTime growth={growth} />,
     },
     {
