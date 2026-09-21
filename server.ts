@@ -2879,8 +2879,8 @@ ${capabilitySql.isHuman}
           WHEN eventName IN ('analysis_stream_started', 'one_finance_analysis_started') THEN 'analysis_stream'
           WHEN eventName IN ('import_parse_completed', 'import_save_completed') THEN 'receipt_parsed'
 
-          WHEN eventName IN ('consent_action_submitted', 'one_consent_preferences_updated') THEN 'preferences_updated'
-          WHEN eventName IN ('one_consent_data_unlocked', 'data_unlocked') THEN 'data_unlock'
+          WHEN eventName IN ('consent_action_submitted', 'one_consent_preferences_updated', 'consent_pending_loaded') THEN 'preferences_updated'
+          WHEN eventName IN ('one_consent_data_unlocked', 'data_unlocked', 'one_consent_data_unlock_requested', 'consent_action_result') THEN 'data_unlock'
           WHEN eventName IN ('permission_granted', 'one_consent_permission_granted') THEN 'permission_granted'
 
           WHEN eventName IN ('gmail_connect_started', 'gmail_connect_result', 'one_gmail_connected') THEN 'account_connected'

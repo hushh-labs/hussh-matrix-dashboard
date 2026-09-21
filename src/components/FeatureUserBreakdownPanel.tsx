@@ -34,8 +34,8 @@ export function FeatureUserBreakdownPanel({
     featureLabel.toLowerCase().includes('sign-in') ||
     featureLabel.toLowerCase().includes('login');
 
-  // If featureIdentities is explicitly passed, use it to show feature-specific usage.
-  const hasSpecificIdentities = Array.isArray(featureIdentities);
+  // If featureIdentities has specific user items, use it to show feature-specific usage.
+  const hasSpecificIdentities = Array.isArray(featureIdentities) && featureIdentities.length > 0;
   const baseIdentities = hasSpecificIdentities
     ? featureIdentities
     : identities.length > 0
@@ -44,7 +44,7 @@ export function FeatureUserBreakdownPanel({
 
   const isZeroCount =
     (typeof totalDevices === 'number' && totalDevices === 0) ||
-    (hasSpecificIdentities && baseIdentities.length === 0);
+    baseIdentities.length === 0;
 
   const scopedIdentities = isZeroCount ? [] : baseIdentities;
 
