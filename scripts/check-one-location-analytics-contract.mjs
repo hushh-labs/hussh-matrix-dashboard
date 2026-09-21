@@ -46,6 +46,8 @@ function parseArgs(argv) {
       if (Number.isFinite(parsed) && parsed > 0) options.days = Math.floor(parsed);
     }
   }
+  const positionalUrl = argv.find((value) => /^https?:\/\//.test(value));
+  if (positionalUrl && options.baseUrl === 'http://127.0.0.1:3001') options.baseUrl = positionalUrl.replace(/\/$/, '');
   return options;
 }
 

@@ -632,7 +632,7 @@ export interface HushhAiFreshness {
 export type ProductFreshness = HushhAiFreshness;
 
 export interface KaiProductionFeedSummary {
-  rows: FeedRow[];
+  rows?: FeedRow[];
   status: FeedStatus;
 }
 
@@ -700,14 +700,14 @@ export interface OneAgentDailyPoint {
 /**
  * One capability, reported twice.
  *
- * `humanUsers` counts people who did something deliberate. `totalUsers` counts
+ * `devices` counts GA4 device/browser identifiers that did something deliberate. `totalUsers` counts
  * everyone the old event-name-prefix bucket would have counted, including
  * retries, prefetches and health pings. Both are shown, because the drop
  * between them is the point: it is the size of the error the page used to
  * publish, and hiding it would make a correction look like a regression.
  *
  * `instrumented: false` means the capability emits no usage event at all. Then
- * `humanUsers` is null, never 0 -- "nobody used it" and "nobody can measure it"
+ * `devices` is null, never 0 -- "no device used it" and "nobody can measure it"
  * are different facts and only one of them is about the product.
  */
 export interface OneCapabilityUsage {
@@ -716,29 +716,17 @@ export interface OneCapabilityUsage {
   instrumented: boolean;
   /** Why it cannot be measured. Non-null only when `instrumented` is false. */
   note: string | null;
-  humanUsers: number | null;
-  humanEvents: number | null;
+  devices: number | null;
+  deliberateEvents: number | null;
   totalUsers: number;
   totalEvents: number;
   /** Date-spined, so every capability chart shares one x-axis. */
   daily: OneAgentDailyPoint[];
 }
 
-export interface OneActiveUserIdentity {
-  userPseudoId: string;
-  userId: string | null;
-  displayName?: string | null;
-  boundEmail?: string | null;
-  phoneNumber?: string | null;
-  platform: string;
-  lastActiveTimestamp: string;
-  isDaily: boolean;
-  isWeekly: boolean;
-  isMonthly: boolean;
-  usageCount?: number;
-}
-
 export interface OneActiveUsers {
+  countingUnit: 'device';
+  identityScope: string;
   dau: number;
   wau: number;
   mau: number;
@@ -746,7 +734,6 @@ export interface OneActiveUsers {
   stickiness: number | null;
   /** The day DAU is measured on -- the end of the selected range, not "today". */
   asOf: string;
-  identities?: OneActiveUserIdentity[];
 }
 
 /**
@@ -929,7 +916,7 @@ export interface OneAppSummary {
   surfaces: OneSurfaceRow[];
   locationFeatures: OneLocationFeatureUsage[];
   locationAnalytics: OneLocationBehaviorAnalytics;
-  featureUserIdentities?: Record<string, OneActiveUserIdentity[]>;
+  featureUsage: Record<string, { devices: number; signals: number }>;
   platforms: OnePlatformUsage[];
   acquisition: OneAcquisitionRow[];
   daily: OneDailyPoint[];

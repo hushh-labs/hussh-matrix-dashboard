@@ -1,6 +1,6 @@
-import { Fragment, useState, useEffect } from 'react';
+import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { AlertTriangle, ChevronDown, ChevronUp, Info, Mail, Phone, Search, ShieldCheck, User, UserCheck, Users } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Info, ShieldCheck, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
   Area,
@@ -21,7 +21,6 @@ import type { LocationAnalyticsRoute } from '../lib/location-analytics-route';
 import { OneLocationAnalyticsPanel } from './OneLocationAnalyticsPanel';
 import { AgentCapabilityAnalyticsPanel } from './AgentCapabilityAnalyticsPanel';
 import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
-import { resolveUserName, resolveUserEmail, resolveUserPhoneNumber } from '../lib/user-resolution';
 import type {
   BreakdownMetric,
   OneAppSummary,
@@ -86,309 +85,47 @@ function Block({
   );
 }
 
-/**
- * 1. Active people.
- *
- * DAU, WAU and MAU are anchored to the end of the selected range, not to its
- * length, so "monthly" always means thirty days. Stickiness is DAU/MAU and is
- * blank rather than 0% when there is no denominator.
- */
-function ActivePeople({ one }: { one: OneAppSummary }) {
-  const { dau, wau, mau, stickiness, asOf, identities = [] } = one.activeUsers;
-  const [selectedTier, setSelectedTier] = useState<'daily' | 'weekly' | 'monthly'>('daily');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterAccountOnly, setFilterAccountOnly] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(10);
-
-  useEffect(() => {
-    setVisibleCount(10);
-  }, [selectedTier, searchQuery, filterAccountOnly]);
-
-  const tiles: Array<{ key: 'daily' | 'weekly' | 'monthly'; label: string; value: number; detail: string }> = [
-    { key: 'daily', label: 'Daily active', value: dau, detail: asOf },
-    { key: 'weekly', label: 'Weekly active', value: wau, detail: '7 days to ' + asOf },
-    { key: 'monthly', label: 'Monthly active', value: mau, detail: '30 days to ' + asOf },
+function ActiveDevices({ one }: { one: OneAppSummary }) {
+  const { dau, wau, mau, stickiness, asOf, identityScope } = one.activeUsers;
+  const tiles = [
+    { label: 'Daily active devices', value: dau, detail: asOf },
+    { label: 'Weekly active devices', value: wau, detail: `7 days to ${asOf}` },
+    { label: 'Monthly active devices', value: mau, detail: `30 days to ${asOf}` },
   ];
-
-  const filteredIdentities = identities.filter((item) => {
-    const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
-    if (selectedTier === 'daily' && !item.isDaily) return false;
-    if (selectedTier === 'weekly' && !item.isWeekly) return false;
-    if (selectedTier === 'monthly' && !item.isMonthly) return false;
-    if (filterAccountOnly && !hasInfo) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchName = item.displayName?.toLowerCase().includes(q);
-      const matchEmail = item.boundEmail?.toLowerCase().includes(q);
-      const matchPhone = item.phoneNumber?.toLowerCase().includes(q);
-      const matchUserId = item.userId?.toLowerCase().includes(q);
-      const matchPseudo = item.userPseudoId?.toLowerCase().includes(q);
-      const matchPlatform = item.platform?.toLowerCase().includes(q);
-      return Boolean(matchName || matchEmail || matchPhone || matchUserId || matchPseudo || matchPlatform);
-    }
-    return true;
-  }).sort((a, b) => {
-    const aHasInfo = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
-    const bHasInfo = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
-    if (aHasInfo && !bHasInfo) return -1;
-    if (!aHasInfo && bHasInfo) return 1;
-    return 0;
-  });
-
-  const displayedIdentities = filteredIdentities.slice(0, visibleCount);
-
-  const registeredCount = filteredIdentities.filter(i => i.displayName || i.boundEmail || i.phoneNumber || i.userId).length;
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {tiles.map((tile, index) => {
-          const isSelected = selectedTier === tile.key;
-          return (
-            <motion.div
-              key={tile.label}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.04 }}
-              onClick={() => setSelectedTier(tile.key)}
-              className={cn(
-                appleCard,
-                'group relative cursor-pointer p-5 transition-all duration-200 hover:shadow-md',
-                isSelected
-                  ? 'bg-[#f5f9ff] ring-2 ring-[#007aff] shadow-sm'
-                  : 'hover:border-[#007aff]/30'
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
-                <span
-                  className={cn(
-                    'flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-colors',
-                    isSelected
-                      ? 'bg-[#007aff] text-white'
-                      : 'bg-black/5 text-[#6e6e73] group-hover:bg-[#007aff]/10 group-hover:text-[#007aff]'
-                  )}
-                >
-                  {isSelected ? 'Active View' : 'Click to inspect'}
-                  {isSelected ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                </span>
-              </div>
-              <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">
-                {formatNumber(tile.value)}
-              </p>
-              <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
-            </motion.div>
-          );
-        })}
+        {tiles.map((tile, index) => (
+          <motion.div
+            key={tile.label}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.04 }}
+            className={cn(appleCard, 'p-5')}
+          >
+            <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
+            <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">{formatNumber(tile.value)}</p>
+            <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
+          </motion.div>
+        ))}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.12 }}
           className={cn(appleCard, 'p-5')}
         >
-          <p className="text-sm font-semibold text-[#6e6e73]">Stickiness</p>
-          <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">
-            {percentText(stickiness, 1)}
-          </p>
-          <p className="mt-2 text-xs font-semibold text-[#86868b]">
-            Daily of monthly — how much of the month a person shows up
-          </p>
+          <p className="text-sm font-semibold text-[#6e6e73]">Device stickiness</p>
+          <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">{percentText(stickiness, 1)}</p>
+          <p className="mt-2 text-xs font-semibold text-[#86868b]">Daily active devices divided by monthly active devices</p>
         </motion.div>
       </div>
-
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className={cn(appleCard, 'p-5 sm:p-6 overflow-hidden border-2 border-[#007aff]/20')}
-      >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-black/5 pb-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-[#007aff]" />
-              <h3 className="text-base font-bold text-[#1d1d1f]">
-                Active User Breakdown (
-                {selectedTier === 'daily'
-                  ? 'Daily Active'
-                  : selectedTier === 'weekly'
-                  ? 'Weekly Active'
-                  : 'Monthly Active'}
-                )
-              </h3>
-              <span className="rounded-full bg-[#007aff]/10 px-2.5 py-0.5 text-xs font-bold text-[#007aff]">
-                {filteredIdentities.length} {filteredIdentities.length === 1 ? 'user' : 'users'}
-                {registeredCount > 0 ? ` (${registeredCount} registered resolved)` : ''}
-              </span>
-            </div>
-            <p className="mt-1 text-xs font-semibold text-[#6e6e73]">
-              Registered accounts (Name, Email & Mobile resolved via Firebase catalog) sorted at top.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setFilterAccountOnly(!filterAccountOnly)}
-              className={cn(
-                'rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors flex items-center gap-1.5',
-                filterAccountOnly
-                  ? 'bg-[#1f7a36] text-white'
-                  : 'bg-black/5 text-[#1d1d1f] hover:bg-black/10'
-              )}
-            >
-              <UserCheck className="h-3.5 w-3.5" />
-              {filterAccountOnly ? 'Showing Registered Only' : 'Filter Registered Accounts'}
-            </button>
-
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
-              <input
-                type="text"
-                placeholder="Search Name, Email, Phone..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-48 sm:w-64 rounded-lg border border-black/10 bg-white py-1.5 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
-              />
-            </div>
-          </div>
-        </div>
-
-          {filteredIdentities.length === 0 ? (
-            <div className="py-8 text-center">
-              <p className="text-sm font-semibold text-[#6e6e73]">
-                {identities.length === 0
-                  ? 'No active user identity rows exported yet for this window.'
-                  : 'No matching user identities found for this filter.'}
-              </p>
-            </div>
-          ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-black/5 text-left text-[11px] font-bold uppercase tracking-wider text-[#86868b]">
-                    <th className="py-2.5 px-3">User / Name</th>
-                    <th className="py-2.5 px-3">Email Address</th>
-                    <th className="py-2.5 px-3">Contact Number</th>
-                    <th className="py-2.5 px-3">Platform</th>
-                    <th className="py-2.5 px-3">Active Scope</th>
-                    <th className="py-2.5 px-3 text-right">Last Active</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-black/5">
-                  {displayedIdentities.map((item, idx) => {
-                    const displayName = resolveUserName(item, idx);
-                    const email = resolveUserEmail(item, idx);
-                    const phone = resolveUserPhoneNumber(item, idx);
-
-                    return (
-                      <tr key={(item.userPseudoId || 'user') + idx} className="hover:bg-black/[0.02]">
-                        <td className="py-2.5 px-3 font-semibold text-[#1d1d1f]">
-                          <div className="flex items-center gap-2">
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#007aff]/10 text-[#007aff] font-bold text-xs">
-                              {displayName ? displayName.charAt(0).toUpperCase() : <User className="h-3.5 w-3.5" />}
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="font-bold text-sm text-[#1d1d1f]">
-                                {displayName}
-                              </span>
-                              {item.userPseudoId && (
-                                <span className="font-mono text-[10px] text-[#86868b]">
-                                  {item.userPseudoId.slice(0, 16)}...
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="inline-flex items-center gap-1.5 rounded-md bg-[#007aff]/10 px-2.5 py-1 font-mono text-xs font-semibold text-[#007aff]">
-                            <Mail className="h-3.5 w-3.5 text-[#007aff]" />
-                            {email}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="inline-flex items-center gap-1.5 rounded-md bg-[#34c759]/10 px-2.5 py-1 font-mono text-xs font-bold text-[#1f7a36]">
-                            <Phone className="h-3.5 w-3.5 text-[#1f7a36]" />
-                            {phone}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="rounded bg-black/5 px-2 py-0.5 font-bold uppercase text-[#1d1d1f]">
-                            {item.platform}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <div className="flex items-center gap-1">
-                            {item.isDaily && (
-                              <span className="rounded bg-[#007aff]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#007aff]">
-                                DAU
-                              </span>
-                            )}
-                            {item.isWeekly && (
-                              <span className="rounded bg-[#34c759]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#1f7a36]">
-                                WAU
-                              </span>
-                            )}
-                            {item.isMonthly && (
-                              <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-bold text-[#6e6e73]">
-                                MAU
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-mono text-[#6e6e73]">
-                          {item.lastActiveTimestamp
-                            ? new Date(item.lastActiveTimestamp).toLocaleString()
-                            : '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {filteredIdentities.length > 0 && (
-            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-black/5 pt-3">
-              <p className="text-xs font-semibold text-[#6e6e73]">
-                Showing <strong className="text-[#1d1d1f]">{displayedIdentities.length}</strong> of{' '}
-                <strong className="text-[#1d1d1f]">{filteredIdentities.length}</strong> active users
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                {visibleCount < filteredIdentities.length && (
-                  <button
-                    type="button"
-                    onClick={() => setVisibleCount((prev) => prev + 10)}
-                    className="rounded-lg bg-[#007aff] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#0062cc] focus:outline-none focus:ring-2 focus:ring-[#007aff]/35"
-                  >
-                    Load 10 More Users
-                  </button>
-                )}
-                {visibleCount < filteredIdentities.length && (
-                  <button
-                    type="button"
-                    onClick={() => setVisibleCount(filteredIdentities.length)}
-                    className="rounded-lg bg-[#34c759]/15 px-3.5 py-2 text-xs font-bold text-[#1f7a36] transition hover:bg-[#34c759]/25"
-                  >
-                    Show All ({filteredIdentities.length})
-                  </button>
-                )}
-                {visibleCount > 10 && (
-                  <button
-                    type="button"
-                    onClick={() => setVisibleCount(10)}
-                    className="rounded-lg bg-black/5 px-3 py-2 text-xs font-semibold text-[#6e6e73] transition hover:bg-black/10"
-                  >
-                    Show Less (Top 10)
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-3 border-t border-black/5 pt-3 text-[11px] font-medium text-[#86868b]">
-            <strong>User Details:</strong> Displays registered Firebase users (Name, Email Address, Contact Number) resolved automatically via static catalog and Identity Toolkit API.
-          </div>
-        </motion.div>
+      <div className="flex items-start gap-3 rounded-2xl border border-[#c7ddff] bg-[#f5f9ff] p-4 text-[#174b8a]">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+        <p className="text-sm font-semibold leading-5">
+          Counting unit: unique GA4 device/browser identifiers. {identityScope} A signed-in person using multiple devices can appear more than once; the dashboard does not claim these are unique humans. Person-level rows are not exposed.
+        </p>
+      </div>
     </div>
   );
 }
@@ -462,7 +199,7 @@ export function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
         Rows are separate populations and <strong className="font-bold text-[#1d1d1f]">must not be added</strong>.
         Each platform has its own device ids, so one person with a phone and a laptop appears twice.
         {anyBound
-          ? ' Only platforms marked with a percentage can report people rather than devices, and only for that share of their devices.'
+          ? ' Percentages show identity coverage only; account counts are separate and are never substituted for cross-device unique people.'
           : ' No platform is currently binding an account, so every figure here is devices.'}
       </p>
     </div>
@@ -526,7 +263,7 @@ function GrowthQuality({ one }: { one: OneAppSummary }) {
         <span><span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#1f7a36]" />Returning</span>
         {unknownUsers > 0 && (
           <span>
-            {formatNumber(unknownUsers)} {plural(unknownUsers, 'person', 'people')} had no first-touch
+            {formatNumber(unknownUsers)} {plural(unknownUsers, 'device', 'devices')} had no first-touch
             date and are counted in neither
           </span>
         )}
@@ -582,7 +319,7 @@ export function Retention({ one }: { one: OneAppSummary }) {
           </p>
         </div>
         <p className="max-w-sm text-xs font-semibold leading-5 text-[#86868b]">
-          Of the people who arrived in a given week, this many opened One again in the
+          Of the devices that arrived in a given week, this many opened One again in the
           following seven days.
         </p>
       </div>
@@ -705,7 +442,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
               {hasWorst && (
                 <p className="max-w-xs text-xs font-semibold leading-5 text-[#8a5a04]">
                   Biggest drop: {formatNumber(worst.lost)}{' '}
-                  {worst.lost === 1 ? 'person' : 'people'} lost between &ldquo;
+                  {worst.lost === 1 ? 'device' : 'devices'} lost between &ldquo;
                   {funnel.stages[worst.fromIndex].label}&rdquo; and &ldquo;
                   {funnel.stages[worst.fromIndex + 1].label}&rdquo;.
                 </p>
@@ -773,7 +510,6 @@ function FunnelDropoffAgentDiagnostic({
 }) {
   const funnels = one?.installFunnel || [];
   const capabilities = one?.capabilities || [];
-  const identities = one?.activeUsers?.identities || [];
   const [expandedCapKey, setExpandedCapKey] = useState<string | null>(null);
 
   const cohortDrops = funnels
@@ -867,10 +603,10 @@ function FunnelDropoffAgentDiagnostic({
                       type="button"
                       onClick={() => setExpandedCapKey(expandedCapKey === cap.key ? null : cap.key)}
                       className="inline-flex items-center gap-1 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
-                      title="Click to view users who used this capability"
+                      title="View aggregate device definition"
                     >
                       <Users className="h-3 w-3" />
-                      <span>{formatNumber(cap.humanUsers ?? 0)} users</span>
+                      <span>{formatNumber(cap.devices ?? 0)} devices</span>
                       <ChevronDown className={cn('h-3 w-3 transition-transform', expandedCapKey === cap.key && 'rotate-180')} />
                     </button>
                   ) : (
@@ -884,8 +620,7 @@ function FunnelDropoffAgentDiagnostic({
                   <div className="mt-1">
                     <FeatureUserBreakdownPanel
                       featureLabel={`${cap.label} Agent`}
-                      identities={identities}
-                      totalDevices={cap.humanUsers ?? undefined}
+                      totalDevices={cap.devices ?? undefined}
                       onClose={() => setExpandedCapKey(null)}
                     />
                   </div>
@@ -980,10 +715,10 @@ function CapabilityCard({
   index: number;
 }): ReactElement {
   const {
-    label, instrumented, note, humanUsers, humanEvents, totalUsers, totalEvents, daily,
+    label, instrumented, note, devices, deliberateEvents, totalUsers, totalEvents, daily,
   } = capability;
-  const inflation = instrumented && (humanEvents ?? 0) > 0 && totalEvents > (humanEvents ?? 0)
-    ? totalEvents / (humanEvents ?? 1)
+  const inflation = instrumented && (deliberateEvents ?? 0) > 0 && totalEvents > (deliberateEvents ?? 0)
+    ? totalEvents / (deliberateEvents ?? 1)
     : null;
 
   return (
@@ -1005,10 +740,10 @@ function CapabilityCard({
       {instrumented ? (
         <>
           <p className="mt-3 text-4xl font-semibold leading-none text-[#1d1d1f]">
-            {formatNumber(humanUsers ?? 0)}
+            {formatNumber(devices ?? 0)}
           </p>
           <p className="mt-1.5 text-xs font-semibold text-[#6e6e73]">
-            {plural(humanUsers ?? 0, 'person', 'people')} used it deliberately
+            {plural(devices ?? 0, 'device', 'devices')} used it deliberately
           </p>
           <p className="mt-1 text-xs font-medium text-[#86868b]">
             {formatNumber(totalUsers)} seen in total
@@ -1034,7 +769,7 @@ function CapabilityCard({
                     fontWeight: 600,
                   }}
                   labelFormatter={(value) => String(value)}
-                  formatter={(value: number) => [formatNumber(value), 'People']}
+                  formatter={(value: number) => [formatNumber(value), 'Devices']}
                 />
                 <Area
                   type="monotone"
@@ -1279,12 +1014,12 @@ export function OneAppPanel({
               {environment === 'production' ? 'one.hushh.ai · production' : 'uat.one.hushh.ai · uat / test builds'} · {rangeLabel}
             </p>
             <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
-              How many people are using One?
+              How many devices are using One?
             </h2>
           </div>
         </div>
         <div className="flex flex-col gap-4">
-          <ActivePeople one={activeData} />
+          <ActiveDevices one={activeData} />
           <ActivesByPlatform rows={activeData.activeByPlatform} />
         </div>
       </section>
@@ -1292,7 +1027,7 @@ export function OneAppPanel({
       <Block
         kicker="Growth quality"
         title="Is that growth, or churn?"
-        hint="An active-user count made mostly of first-timers is not the same product story as one made of people coming back."
+        hint="An active-device count made mostly of first-timers is not the same product story as one made of devices coming back."
       >
         <GrowthQuality one={activeData} />
       </Block>
@@ -1306,8 +1041,8 @@ export function OneAppPanel({
 
       <Block
         kicker="App installs"
-        title="What happens after someone installs the app?"
-        hint="A true cohort: every stage counts the same people who installed in this window, so the percentages are real conversions. Web has no install to measure."
+        title="What happens after a device installs the app?"
+        hint="A true cohort: every stage counts the same device identifiers that installed in this window, so the percentages are real conversions. Web has no install to measure."
       >
         <InstallFunnel funnels={activeData.installFunnel} />
         <FunnelDropoffAgentDiagnostic one={activeData} />
@@ -1323,7 +1058,7 @@ export function OneAppPanel({
 
       <Block
         kicker="Agents"
-        title="Which agents do people use?"
+        title="Which agents do devices use?"
         hint="Ranked by deliberate use. Retries, prefetches, health pings and diagnostics are counted separately, not as usage."
       >
         <div className="flex flex-col gap-4">

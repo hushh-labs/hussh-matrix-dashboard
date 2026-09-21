@@ -78,13 +78,13 @@ const capabilityMetadata: Record<
     title: 'Finance Agent',
     description: 'Portfolio tracking, AI financial recommendations, analysis streaming, and transaction parsing.',
     icon: BarChart3,
-    auditExplanation: 'Human events (portfolio_viewed, recommendation_viewed, analysis_stream_started) measure deliberate user interaction.',
+    auditExplanation: 'Deliberate events (portfolio_viewed, recommendation_viewed, analysis_stream_started) measure device-level interaction.',
   },
   consent: {
     title: 'Consent Agent',
     description: 'User data consent preferences, permission grants, and data unlock requests.',
     icon: ShieldCheck,
-    auditExplanation: 'Consent action submissions are logged when users confirm or update privacy preferences.',
+    auditExplanation: 'Consent action submissions are logged when a device confirms or updates privacy preferences.',
   },
   gmail: {
     title: 'Gmail Agent',
@@ -102,13 +102,13 @@ const capabilityMetadata: Record<
     title: 'Information Marketplace Agent',
     description: 'Data marketplace browsing, profile views, and data catalog interaction.',
     icon: Layers,
-    auditExplanation: 'Marketplace profile views measure user exploration of data deals.',
+    auditExplanation: 'Marketplace profile views measure device-level exploration of data deals.',
   },
   memory: {
     title: 'Memory Agent',
     description: 'Personal Knowledge Model (PKM) context resolution and memory persistence.',
     icon: Database,
-    auditExplanation: 'PKM agent context resolution telemetry is emitted for user interactions.',
+    auditExplanation: 'PKM agent context resolution telemetry is emitted for device-level interactions.',
   },
   wallet: {
     title: 'Wallet Agent',
@@ -150,9 +150,6 @@ interface FeatureAuditSpec {
   badgeLabel: string;
   badgeClass: string;
   explanation: string;
-  userWeight?: number;
-  eventWeight?: number;
-  failureRate?: number;
 }
 
 const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
@@ -165,9 +162,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_started"). Tracks entry point & provider choice.',
-      userWeight: 1.0,
-      eventWeight: 0.35,
-      failureRate: 0.02,
     },
     {
       key: 'phone_verified',
@@ -177,9 +171,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_phone_verified"). Verifies SMS OTP handoffs.',
-      userWeight: 0.85,
-      eventWeight: 0.25,
-      failureRate: 0.04,
     },
     {
       key: 'google_signin',
@@ -189,9 +180,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_google_signed_in"). OAuth 2.0 token exchange.',
-      userWeight: 0.70,
-      eventWeight: 0.20,
-      failureRate: 0.01,
     },
     {
       key: 'profile_created',
@@ -201,9 +189,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_profile_created"). Firebase catalog binding.',
-      userWeight: 0.90,
-      eventWeight: 0.12,
-      failureRate: 0.02,
     },
     {
       key: 'onboarding_completed',
@@ -213,9 +198,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_onboarding_completed"). Full setup confirmation.',
-      userWeight: 0.88,
-      eventWeight: 0.08,
-      failureRate: 0.01,
     },
   ],
   finance: [
@@ -227,9 +209,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_finance_portfolio_viewed"). Asset summary screen.',
-      userWeight: 1.0,
-      eventWeight: 0.45,
-      failureRate: 0.01,
     },
     {
       key: 'ai_recommendation',
@@ -239,9 +218,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_finance_recommendation_viewed"). AI insights generation.',
-      userWeight: 0.75,
-      eventWeight: 0.30,
-      failureRate: 0.03,
     },
     {
       key: 'analysis_stream',
@@ -251,9 +227,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_finance_analysis_stream_started"). Streaming market metrics.',
-      userWeight: 0.50,
-      eventWeight: 0.20,
-      failureRate: 0.02,
     },
     {
       key: 'receipt_parsed',
@@ -263,9 +236,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Partially Tested',
       badgeClass: 'bg-[#5856d6]/10 text-[#3a38a8]',
       explanation: 'Parsing engine active in test builds; requires expanded transaction sample verification.',
-      userWeight: 0.25,
-      eventWeight: 0.05,
-      failureRate: 0.08,
     },
   ],
   consent: [
@@ -277,9 +247,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_consent_preferences_updated"). Privacy toggle updates.',
-      userWeight: 1.0,
-      eventWeight: 0.50,
-      failureRate: 0.01,
     },
     {
       key: 'data_unlock',
@@ -289,9 +256,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_consent_data_unlock_requested"). Vault key unlock trigger.',
-      userWeight: 0.60,
-      eventWeight: 0.30,
-      failureRate: 0.02,
     },
     {
       key: 'permission_granted',
@@ -301,9 +265,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_consent_permission_granted"). Per-agent scope approval.',
-      userWeight: 0.50,
-      eventWeight: 0.20,
-      failureRate: 0.01,
     },
     {
       key: 'revocation_submitted',
@@ -313,9 +274,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Instrumentation Gap',
       badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
       explanation: 'Consent revocation flow is un-instrumented in webapp. Zero reflects missing GA4 event pipeline.',
-      userWeight: 0,
-      eventWeight: 0,
-      failureRate: 0,
     },
   ],
   gmail: [
@@ -327,9 +285,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_gmail_account_connected"). Gmail OAuth connection.',
-      userWeight: 1.0,
-      eventWeight: 0.35,
-      failureRate: 0.02,
     },
     {
       key: 'receipt_sync',
@@ -339,9 +294,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_gmail_receipt_sync_requested"). Automated receipt scanning.',
-      userWeight: 0.80,
-      eventWeight: 0.40,
-      failureRate: 0.03,
     },
     {
       key: 'inbox_viewed',
@@ -351,9 +303,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_gmail_inbox_viewed"). Mail viewer interaction.',
-      userWeight: 0.85,
-      eventWeight: 0.20,
-      failureRate: 0.01,
     },
     {
       key: 'autocategory_applied',
@@ -363,9 +312,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Partially Tested',
       badgeClass: 'bg-[#5856d6]/10 text-[#3a38a8]',
       explanation: 'Rule-based categorization active; pending full ML classifier telemetry verification.',
-      userWeight: 0.30,
-      eventWeight: 0.05,
-      failureRate: 0.05,
     },
   ],
   ria: [
@@ -377,9 +323,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_ria_verification_checked"). CRD number lookup.',
-      userWeight: 1.0,
-      eventWeight: 0.40,
-      failureRate: 0.01,
     },
     {
       key: 'workspace_visited',
@@ -389,9 +332,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_ria_workspace_visited"). Financial advisor dashboard visit.',
-      userWeight: 0.85,
-      eventWeight: 0.35,
-      failureRate: 0.02,
     },
     {
       key: 'strategy_requested',
@@ -401,9 +341,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_ria_strategy_requested"). Portfolio strategy generation.',
-      userWeight: 0.55,
-      eventWeight: 0.25,
-      failureRate: 0.03,
     },
     {
       key: 'client_handoff',
@@ -413,9 +350,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Instrumentation Gap',
       badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
       explanation: 'Advisor-client handoff workflow is un-instrumented. Zero reflects missing GA4 event pipeline.',
-      userWeight: 0,
-      eventWeight: 0,
-      failureRate: 0,
     },
   ],
   marketplace: [
@@ -427,9 +361,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_marketplace_browsed"). Catalog search & filtering.',
-      userWeight: 1.0,
-      eventWeight: 0.60,
-      failureRate: 0.01,
     },
     {
       key: 'profile_viewed',
@@ -439,9 +370,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_marketplace_profile_viewed"). Data deal details view.',
-      userWeight: 0.70,
-      eventWeight: 0.40,
-      failureRate: 0.02,
     },
     {
       key: 'deal_subscribed',
@@ -451,9 +379,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Instrumentation Gap',
       badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
       explanation: 'Data deal subscription checkout is un-instrumented. Zero reflects missing GA4 event pipeline.',
-      userWeight: 0,
-      eventWeight: 0,
-      failureRate: 0,
     },
   ],
   memory: [
@@ -465,9 +390,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_memory_context_resolved"). Vector memory retrieval.',
-      userWeight: 1.0,
-      eventWeight: 0.80,
-      failureRate: 0.02,
     },
     {
       key: 'turn_diagnostics',
@@ -477,9 +399,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Instrumentation Gap',
       badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
       explanation: 'Agent-turn diagnostic emitter is un-instrumented. Zero reflects missing GA4 event pipeline.',
-      userWeight: 0,
-      eventWeight: 0,
-      failureRate: 0,
     },
   ],
   location: [
@@ -491,9 +410,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Confirmed live-location sharing events recorded across active devices.',
-      userWeight: 1.0,
-      eventWeight: 0.40,
-      failureRate: 0.08,
     },
     {
       key: 'check_in',
@@ -503,9 +419,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_in_completed").',
-      userWeight: 0.35,
-      eventWeight: 0.15,
-      failureRate: 0,
     },
     {
       key: 'check_out',
@@ -515,9 +428,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_out_completed"). Verified active in UAT & Production.',
-      userWeight: 0.30,
-      eventWeight: 0.12,
-      failureRate: 0,
     },
     {
       key: 'sms_safety',
@@ -527,9 +437,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Save My Soul emergency trigger events recorded.',
-      userWeight: 0.25,
-      eventWeight: 0.10,
-      failureRate: 0.37,
     },
     {
       key: 'request_location',
@@ -539,9 +446,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Location request events recorded across active devices.',
-      userWeight: 0.45,
-      eventWeight: 0.20,
-      failureRate: 0,
     },
     {
       key: 'public_sharing',
@@ -551,9 +455,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Public location link creation events recorded.',
-      userWeight: 0.40,
-      eventWeight: 0.15,
-      failureRate: 0.08,
     },
     {
       key: 'contact_sync',
@@ -563,9 +464,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: 'Background contact signal sync events recorded.',
-      userWeight: 0.80,
-      eventWeight: 0.50,
-      failureRate: 0.01,
     },
     {
       key: 'circle_engagement',
@@ -575,9 +473,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: '74 Circle engagement event signals recorded across 18 active devices in this window.',
-      userWeight: 0.38,
-      eventWeight: 0.22,
-      failureRate: 0,
     },
     {
       key: 'invitations',
@@ -587,9 +482,6 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
       explanation: '6 circle invite handoff events recorded across active devices in this window.',
-      userWeight: 0.20,
-      eventWeight: 0.10,
-      failureRate: 0,
     },
   ],
 };
@@ -601,7 +493,7 @@ function ratio(numerator: number | null, denominator: number | null): string {
 
 function MetricValue({ value, waiting = false }: { value: number | null; waiting?: boolean }) {
   if (waiting || value === null) {
-    return <span className="text-xs font-semibold text-[#86868b]">Measuring after rollout</span>;
+    return <span className="text-xs font-semibold text-[#86868b]">Not measured</span>;
   }
   return <>{formatNumber(value)}</>;
 }
@@ -629,14 +521,14 @@ export function AgentCapabilityAnalyticsPanel({
 
   const Icon = meta.icon;
 
-  const humanUsers = capability?.humanUsers ?? 0;
-  const humanEvents = capability?.humanEvents ?? 0;
+  const deviceUsers = capability?.devices ?? 0;
+  const deliberateEvents = capability?.deliberateEvents ?? 0;
   const totalEvents = capability?.totalEvents ?? 0;
   const instrumented = capability?.instrumented ?? false;
   const daily = capability?.daily ?? [];
 
-  const backgroundEvents = Math.max(0, totalEvents - humanEvents);
-  const backgroundRatio = humanEvents > 0 ? (totalEvents / humanEvents).toFixed(1) : null;
+  const backgroundEvents = Math.max(0, totalEvents - deliberateEvents);
+  const backgroundRatio = deliberateEvents > 0 ? (totalEvents / deliberateEvents).toFixed(1) : null;
 
   // Compute sub-feature telemetry breakdown in FIXED order
   const specs = featureAuditSpecs[capabilityKey] || [
@@ -648,34 +540,28 @@ export function AgentCapabilityAnalyticsPanel({
       badgeLabel: instrumented ? 'Verified Active' : 'Instrumentation Gap',
       badgeClass: instrumented ? 'bg-[#34c759]/10 text-[#1f7a36]' : 'bg-[#ff9500]/10 text-[#b36b00]',
       explanation: meta.auditExplanation,
-      userWeight: 1.0,
-      eventWeight: 1.0,
-      failureRate: 0,
     },
   ];
 
   const computedFeatures = specs.map((spec) => {
     const isGap = spec.status === 'gap' || !instrumented;
-    const featIdentities = activeSummary?.featureUserIdentities?.[spec.key];
-    const hasRealIdentities = Array.isArray(featIdentities) && featIdentities.length > 0;
-
-    const realDevices = hasRealIdentities ? featIdentities.length : 0;
-    const realSignals = hasRealIdentities
-      ? featIdentities.reduce((sum, item) => sum + (item.usageCount ?? 1), 0)
-      : 0;
-
-    const fallbackDevices = isGap ? 0 : Math.max(0, Math.round(humanUsers * (spec.userWeight ?? 1)));
-    const fallbackSignals = isGap ? 0 : Math.max(0, Math.round(humanEvents * (spec.eventWeight ?? 1)));
-
-    const devices = hasRealIdentities ? realDevices : fallbackDevices;
-    const signals = hasRealIdentities ? realSignals : fallbackSignals;
-
-    const failed = Math.round(signals * (spec.failureRate ?? 0));
-    const successful = Math.max(0, signals - failed);
+    const locationMetric = capabilityKey === 'location'
+      ? activeSummary?.locationAnalytics?.features?.find((item) => item.key === spec.key)
+      : undefined;
+    const aggregateMetric = locationMetric
+      ? { devices: locationMetric.users, signals: locationMetric.events }
+      : activeSummary?.featureUsage?.[spec.key];
+    const measured = !isGap && Boolean(aggregateMetric);
+    const devices = measured ? (aggregateMetric?.devices ?? 0) : null;
+    const signals = measured ? (aggregateMetric?.signals ?? 0) : null;
+    const successful = locationMetric?.instrumented ? locationMetric.successes : null;
+    const failed = locationMetric?.instrumented ? locationMetric.failures : null;
     const explanation =
-      spec.status === 'active' && instrumented && (signals > 0 || devices > 0)
+      measured && ((signals ?? 0) > 0 || (devices ?? 0) > 0)
         ? `${formatNumber(signals)} event signals recorded across ${formatNumber(devices)} active ${devices === 1 ? 'device' : 'devices'} in this window.`
-        : spec.explanation;
+        : isGap
+          ? spec.explanation
+          : 'This event is declared, but no matching aggregate row was observed in the selected window. No value is estimated.';
 
     return {
       ...spec,
@@ -683,6 +569,7 @@ export function AgentCapabilityAnalyticsPanel({
       signals,
       successful,
       failed,
+      measured,
       explanation,
     };
   });
@@ -767,14 +654,14 @@ export function AgentCapabilityAnalyticsPanel({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className={cn(appleCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Deliberate Users</p>
+            <p className="text-sm font-semibold text-[#6e6e73]">Deliberate Devices</p>
             <Users className="h-4 w-4 text-[#007aff]" />
           </div>
           <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
-            {instrumented ? formatNumber(humanUsers) : '—'}
+            {instrumented ? formatNumber(deviceUsers) : '—'}
           </p>
           <p className="mt-1 text-xs font-semibold text-[#86868b]">
-            {instrumented ? 'Unique people taking deliberate action' : 'Not instrumented'}
+            {instrumented ? 'Unique device/browser identifiers taking deliberate action' : 'Not instrumented'}
           </p>
         </div>
 
@@ -784,10 +671,10 @@ export function AgentCapabilityAnalyticsPanel({
             <Zap className="h-4 w-4 text-[#1f7a36]" />
           </div>
           <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
-            {instrumented ? formatNumber(humanEvents) : '—'}
+            {instrumented ? formatNumber(deliberateEvents) : '—'}
           </p>
           <p className="mt-1 text-xs font-semibold text-[#86868b]">
-            {instrumented ? 'User-initiated capability events' : 'Not instrumented'}
+            {instrumented ? 'Deliberate capability events' : 'Not instrumented'}
           </p>
         </div>
 
@@ -835,9 +722,9 @@ export function AgentCapabilityAnalyticsPanel({
       {instrumented && daily.length > 0 && (
         <div className={cn(appleCard, 'p-6')}>
           <div className="mb-4">
-            <h3 className="text-lg font-bold text-[#1d1d1f]">Daily Deliberate Active Users</h3>
+            <h3 className="text-lg font-bold text-[#1d1d1f]">Daily Deliberate Active Devices</h3>
             <p className="mt-0.5 text-xs font-semibold text-[#6e6e73]">
-              Daily count of users deliberately interacting with {meta.title} ({rangeLabel})
+              Daily count of device/browser identifiers deliberately interacting with {meta.title} ({rangeLabel})
             </p>
           </div>
           <div className="h-64 w-full">
@@ -859,7 +746,7 @@ export function AgentCapabilityAnalyticsPanel({
                     fontSize: 12,
                     fontWeight: 600,
                   }}
-                  formatter={(value: number) => [formatNumber(value), 'Active Users']}
+                  formatter={(value: number) => [formatNumber(value), 'Active Devices']}
                 />
                 <Area
                   type="monotone"
@@ -878,7 +765,7 @@ export function AgentCapabilityAnalyticsPanel({
       <div className="space-y-4">
         <div>
           <p className={appleLabel}>Feature adoption</p>
-          <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What people actually use in {meta.title}</h3>
+          <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What devices actually use in {meta.title}</h3>
         </div>
 
         <div className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs">
@@ -887,7 +774,7 @@ export function AgentCapabilityAnalyticsPanel({
             <span>Telemetry & Feature Zero Justification Audit</span>
           </div>
           <p className="mt-1 text-[#6e6e73]">
-            Features showing 0 count are audited to distinguish between actual un-emitted user activity (instrumentation gaps in app code) and verified low/zero volume.
+            Features with no measured row remain unavailable; the dashboard never estimates adoption or failure counts.
           </p>
         </div>
 
@@ -907,9 +794,8 @@ export function AgentCapabilityAnalyticsPanel({
               <tbody>
                 {computedFeatures.map((feature) => {
                   const FeatureIcon = feature.icon;
-                  const waiting = !instrumented || feature.status === 'gap';
+                  const waiting = !feature.measured;
                   const isExpanded = expandedFeatureKey === feature.key;
-                  const activeIdentities = activeSummary?.activeUsers?.identities || [];
                   return (
                     <Fragment key={feature.key}>
                       <tr className="border-b border-black/[0.05] last:border-b-0 hover:bg-black/[0.01]">
@@ -936,7 +822,7 @@ export function AgentCapabilityAnalyticsPanel({
                             type="button"
                             onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
                             className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
-                            title="Click to view users who used this feature"
+                            title="View aggregate device definition"
                           >
                             <Users className="h-3 w-3" />
                             <span><MetricValue value={feature.devices} waiting={waiting} /></span>
@@ -962,11 +848,7 @@ export function AgentCapabilityAnalyticsPanel({
                           <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
                             <FeatureUserBreakdownPanel
                               featureLabel={feature.label}
-                              featureKey={feature.key}
-                              featureIdentities={activeSummary?.featureUserIdentities?.[feature.key] || []}
-                              identities={activeIdentities}
-                              fallbackIdentities={one?.activeUsers?.identities || []}
-                              totalDevices={feature.devices}
+                              totalDevices={feature.devices ?? undefined}
                               onClose={() => setExpandedFeatureKey(null)}
                             />
                           </td>
@@ -997,7 +879,7 @@ export function AgentCapabilityAnalyticsPanel({
             )}
             {backgroundRatio && parseFloat(backgroundRatio) > 1.5 && (
               <p className="mt-2 text-xs font-medium text-[#6e6e73]">
-                💡 <strong>Background Ratio:</strong> {backgroundRatio}× total events relative to deliberate human actions. Background pings (retries, pre-fetches, diagnostics) are filtered out from DAU metrics to maintain data integrity.
+                💡 <strong>Background Ratio:</strong> {backgroundRatio}× total events relative to deliberate actions. Background pings (retries, pre-fetches, diagnostics) are filtered out from device activity metrics.
               </p>
             )}
           </div>

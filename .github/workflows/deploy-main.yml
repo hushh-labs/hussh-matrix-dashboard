@@ -100,7 +100,16 @@ jobs:
           echo "Cloud Build did not finish within the expected window."
           exit 1
 
+      - name: Capture current production revision
+        run: |
+          PREVIOUS_REVISION="$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format='value(status.latestReadyRevisionName)')"
+          echo "PREVIOUS_REVISION=${PREVIOUS_REVISION}" >> "${GITHUB_ENV}"
+
       - name: Deploy Cloud Run service
+        id: deploy
         run: |
           gcloud run deploy "${SERVICE}" \
             --project="${PROJECT_ID}" \
@@ -159,3 +168,14 @@ jobs:
 
       - name: Verify One Location production and UAT analytics
         run: npm run test:api:one-location -- --base-url "${PRODUCTION_URL}" --days 7
+
+      - name: Verify aggregate-only public analytics contract
+        run: npm run test:api:public-contract -- --base-url "${PRODUCTION_URL}" --days 7 --timeout-ms 120000
+
+      - name: Roll back traffic after failed production verification
+        if: ${{ failure() && steps.deploy.outcome == 'success' && env.PREVIOUS_REVISION != '' }}
+        run: |
+          gcloud run services update-traffic "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --to-revisions="${PREVIOUS_REVISION}=100"

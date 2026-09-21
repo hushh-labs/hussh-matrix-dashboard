@@ -16,9 +16,6 @@ import express from 'express';
 import path from 'path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'url';
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import { GoogleAuth } from 'google-auth-library';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -31,144 +28,6 @@ loadDotenvFile({ path: '.env.local', override: true });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const execFileAsync = promisify(execFile);
-
-interface CachedFirebaseUser {
-  displayName: string | null;
-  email: string | null;
-  phoneNumber: string | null;
-}
-
-const OBSERVABILITY_USER_ID_SALT = 'hushh-observability-v1';
-let firebaseUsersCacheMap: { timestamp: number; map: Map<string, CachedFirebaseUser> } | null = null;
-const FIREBASE_CACHE_TTL_MS = 5 * 60 * 1000;
-
-function loadStaticFirebaseUserMap(): Map<string, CachedFirebaseUser> {
-  const map = new Map<string, CachedFirebaseUser>();
-  try {
-    const mapPath = path.join(__dirname, 'src', 'lib', 'firebase-user-map.json');
-    if (fs.existsSync(mapPath)) {
-      const raw = fs.readFileSync(mapPath, 'utf8');
-      const parsed = JSON.parse(raw) as Record<string, CachedFirebaseUser>;
-      for (const [key, val] of Object.entries(parsed)) {
-        if (!val) continue;
-        map.set(key, val);
-        if (val.phoneNumber) {
-          const normPhone = val.phoneNumber.trim();
-          map.set(normPhone, val);
-          const digits = normPhone.replace(/\D/g, '');
-          if (digits) {
-            map.set(digits, val);
-            if (digits.length >= 10) {
-              map.set(digits.slice(-10), val);
-            }
-          }
-        }
-        if (val.email) {
-          map.set(val.email.toLowerCase().trim(), val);
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load static firebase-user-map.json:', e);
-  }
-  return map;
-}
-
-async function getFirebaseUsersMap(): Promise<Map<string, CachedFirebaseUser>> {
-  const now = Date.now();
-  if (firebaseUsersCacheMap && (now - firebaseUsersCacheMap.timestamp) < FIREBASE_CACHE_TTL_MS) {
-    return firebaseUsersCacheMap.map;
-  }
-
-  const map = loadStaticFirebaseUserMap();
-  try {
-    const auth = new GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/firebase'],
-    });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
-    if (!token.token) return map;
-
-    for (const sortBy of ['CREATED_AT', 'LAST_LOGIN_AT']) {
-      for (const order of ['ASC', 'DESC']) {
-        const res = await fetch('https://identitytoolkit.googleapis.com/v1/projects/hushh-pda/accounts:query', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token.token}`,
-            'x-goog-user-project': 'hushh-pda',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            returnUserInfo: true,
-            limit: 1000,
-            sortBy,
-            order,
-          }),
-        });
-        if (res.ok) {
-          const data = (await res.json()) as {
-            userInfo?: Array<{
-              localId: string;
-              displayName?: string;
-              email?: string;
-              phoneNumber?: string;
-              providerUserInfo?: Array<{
-                providerId?: string;
-                displayName?: string;
-                email?: string;
-                phoneNumber?: string;
-              }>;
-            }>;
-          };
-          const users = data.userInfo || [];
-          for (const u of users) {
-            const providerPhone = u.providerUserInfo?.find((p) => p.phoneNumber)?.phoneNumber || null;
-            const providerEmail = u.providerUserInfo?.find((p) => p.email)?.email || null;
-            const providerName = u.providerUserInfo?.find((p) => p.displayName)?.displayName || null;
-
-            const phoneVal = u.phoneNumber || providerPhone || null;
-            const emailVal = u.email || providerEmail || null;
-            const nameVal = u.displayName || providerName || null;
-
-            const info: CachedFirebaseUser = {
-              displayName: nameVal,
-              email: emailVal,
-              phoneNumber: phoneVal,
-            };
-            map.set(u.localId, info);
-            const raw = `${OBSERVABILITY_USER_ID_SALT}:${u.localId}`;
-            const hash = crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
-            map.set(hash, info);
-            const md5Uid = crypto.createHash('md5').update(u.localId).digest('hex');
-            map.set(md5Uid, info);
-
-            if (emailVal) {
-              const normEmail = emailVal.toLowerCase().trim();
-              map.set(normEmail, info);
-              const md5Email = crypto.createHash('md5').update(normEmail).digest('hex');
-              map.set(md5Email, info);
-            }
-            if (phoneVal) {
-              const normPhone = phoneVal.trim();
-              map.set(normPhone, info);
-              const digits = normPhone.replace(/\D/g, '');
-              if (digits) {
-                map.set(digits, info);
-                if (digits.length >= 10) {
-                  map.set(digits.slice(-10), info);
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    firebaseUsersCacheMap = { timestamp: now, map };
-  } catch (err) {
-    console.error('Firebase Auth identity enrichment lookup failed:', err);
-  }
-  return map;
-}
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -353,6 +212,41 @@ app.use('/api', (_req, res, next) => {
   next();
 });
 
+// Keep upstream analytics calls from being repeated by every browser refresh.
+// Clients still receive `no-store`; this is a short-lived, aggregate-only
+// process cache keyed by the complete URL, including the selected date range.
+const ANALYTICS_RESPONSE_CACHE_TTL_MS = 30_000;
+const ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES = 100;
+const analyticsResponseCache = new Map<string, { expiresAt: number; body: unknown }>();
+
+app.use('/api/analytics', (req, res, next) => {
+  if (req.method !== 'GET') return next();
+  const key = req.originalUrl;
+  const cached = analyticsResponseCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.set('X-Metrics-Cache', 'HIT');
+    return res.json(cached.body);
+  }
+  if (cached) analyticsResponseCache.delete(key);
+
+  const sendJson = res.json.bind(res);
+  res.json = ((body: unknown) => {
+    if (res.statusCode < 500) {
+      if (analyticsResponseCache.size >= ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES) {
+        const oldestKey = analyticsResponseCache.keys().next().value as string | undefined;
+        if (oldestKey) analyticsResponseCache.delete(oldestKey);
+      }
+      analyticsResponseCache.set(key, {
+        expiresAt: Date.now() + ANALYTICS_RESPONSE_CACHE_TTL_MS,
+        body,
+      });
+      res.set('X-Metrics-Cache', 'MISS');
+    }
+    return sendJson(body);
+  }) as typeof res.json;
+  return next();
+});
+
 const PUBLIC_OMIT_KEYS = new Set([
   'sourceProjectId',
   'sourceDataset',
@@ -365,12 +259,30 @@ const PUBLIC_OMIT_KEYS = new Set([
   'sourceDatabaseName',
   'sourceTable',
   'pageFilterRegex',
+  // Public analytics is aggregate-only. These fields must never cross the
+  // API boundary even if an upstream integration accidentally returns them.
+  'identities',
+  'featureUserIdentities',
+  'userPseudoId',
+  'user_pseudo_id',
+  'userId',
+  'user_id',
+  'displayName',
+  'boundEmail',
+  'email',
+  'phoneNumber',
+  'phone',
+  'paramName',
+  'paramPhone',
 ]);
 const PUBLIC_UNSAFE_VALUE_PATTERN = /analytics_\d+|searchconsole_|_search_console_api|hushh-ai-prod|hushh-pda(?:-uat)?|ibsisfnjxeowvdtvgzff/i;
+const PUBLIC_EMAIL_VALUE_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const PUBLIC_PHONE_VALUE_PATTERN = /(?:^|\s)\+\d[\d\s().-]{8,}\d(?:$|\s)/;
 
 function sanitizePublicPayload(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => sanitizePublicPayload(item));
   if (typeof value === 'string') {
+    if (PUBLIC_EMAIL_VALUE_PATTERN.test(value) || PUBLIC_PHONE_VALUE_PATTERN.test(value)) return '[redacted]';
     return PUBLIC_UNSAFE_VALUE_PATTERN.test(value) ? 'Internal aggregate source' : value;
   }
   if (!value || typeof value !== 'object') return value;
@@ -542,11 +454,16 @@ async function queryBigQueryWithCli(
   projectId: string,
   dataset: string,
   view: string,
+  range?: HushhAiDateRange,
 ): Promise<Record<string, unknown>[]> {
   const queryJobProject = BQ_JOB_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || projectId;
+  const dateFilter = range
+    ? `WHERE metric_date IS NULL OR DATE(metric_date) BETWEEN DATE(${sqlStringLiteral(range.startDate)}) AND DATE(${sqlStringLiteral(range.endDate)})`
+    : '';
   const query = `
     SELECT *
     FROM \`${projectId}.${dataset}.${view}\`
+    ${dateFilter}
     ORDER BY metric_group, metric_name, metric_date
   `;
   const { stdout } = await execFileAsync(
@@ -610,13 +527,18 @@ async function queryBigQuery(
   projectId: string,
   dataset: string,
   view: string,
+  range?: HushhAiDateRange,
 ): Promise<BigQueryFeedResult> {
   try {
     const { BigQuery } = await import('@google-cloud/bigquery');
     const bq = new BigQuery({ projectId: BQ_JOB_PROJECT || projectId });
+    const dateFilter = range
+      ? `WHERE metric_date IS NULL OR DATE(metric_date) BETWEEN DATE(${sqlStringLiteral(range.startDate)}) AND DATE(${sqlStringLiteral(range.endDate)})`
+      : '';
     const query = `
       SELECT *
       FROM \`${projectId}.${dataset}.${view}\`
+      ${dateFilter}
       ORDER BY metric_group, metric_name, metric_date
     `;
     const [rows] = await bq.query({ query, location: 'US' });
@@ -626,7 +548,7 @@ async function queryBigQuery(
     console.error(`BigQuery query failed for ${projectId}.${dataset}.${view}:`, message);
     if (BQ_CLI_FALLBACK) {
       try {
-        const rows = await queryBigQueryWithCli(projectId, dataset, view);
+        const rows = await queryBigQueryWithCli(projectId, dataset, view, range);
         return { rows, error: null };
       } catch (cliErr: unknown) {
         const cliMessage = cliErr instanceof Error ? cliErr.message : String(cliErr);
@@ -2006,7 +1928,7 @@ const ONE_LOCATION_JOURNEY_STEPS = [
  * failure signal; and the Kai bucket was 78% `market_insights_loaded`, a load
  * health ping.
  *
- * `human` events are deliberate actions. `background` events are the rest of
+ * `deliberate` events are user-initiated actions. `background` events are the rest of
  * the capability's traffic -- retries, prefetches, health pings, diagnostics.
  * Both are reported, so the honest number is visible next to the total the
  * dashboard used to show on its own.
@@ -2039,7 +1961,7 @@ const ONE_LOCATION_JOURNEY_STEPS = [
 interface OneCapabilitySpec {
   key: string;
   label: string;
-  human: string[];
+  deliberate: string[];
   background: string[];
   instrumented: boolean;
   /** Why a capability cannot be measured. Shown verbatim in the UI. */
@@ -2050,7 +1972,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'location',
     label: 'Location',
-    human: [
+    deliberate: [
       'one_location_share_confirmed', 'one_location_check_in_completed', 'one_location_check_out_completed',
       'one_location_circle_created', 'one_location_circle_invite_created',
       'one_location_public_link_created', 'one_location_request_sent',
@@ -2068,7 +1990,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'finance',
     label: 'Finance',
-    human: [
+    deliberate: [
       'portfolio_viewed', 'recommendation_viewed', 'analysis_stream_started',
       'analysis_stream_terminal_decision', 'import_upload_started',
       'import_save_completed', 'import_parse_completed',
@@ -2083,20 +2005,20 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'consent',
     label: 'Consent',
-    human: [
+    deliberate: [
       'consent_action_submitted', 'consent_action_result',
       'one_consent_preferences_updated', 'one_consent_data_unlocked',
     ],
     // consent_pending_loaded carries load_surface precisely to separate a real
     // screen view from the unlock warm prefetch. It is split on that parameter
-    // below rather than listed as human here.
+    // below rather than listed as deliberate here.
     background: ['consent_pending_loaded'],
     instrumented: true,
   },
   {
     key: 'gmail',
     label: 'Gmail',
-    human: [
+    deliberate: [
       'gmail_connect_started', 'gmail_connect_result', 'gmail_sync_requested',
       'gmail_disconnect_result', 'hushh_mail_signin_screen_view',
       'one_gmail_connected', 'one_gmail_receipt_synced',
@@ -2107,7 +2029,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'ria',
     label: 'RIA',
-    human: [
+    deliberate: [
       'ria_onboarding_submitted', 'ria_request_created', 'ria_workspace_opened',
       'ria_verification_status_changed', 'persona_switched',
       'one_ria_workspace_visited', 'one_ria_onboarding_completed',
@@ -2118,14 +2040,14 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'marketplace',
     label: 'Information Marketplace',
-    human: ['marketplace_profile_viewed'],
+    deliberate: ['marketplace_profile_viewed'],
     background: [],
     instrumented: true,
   },
   {
     key: 'memory',
     label: 'Memory',
-    human: [],
+    deliberate: [],
     // The PKM events are agent-turn reliability diagnostics, not somebody
     // using Memory. Counting them as usage is what made "Agent chat" look
     // like a used capability when nothing measured its use.
@@ -2134,12 +2056,12 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'agent_pkm_save_confirmation_completed',
     ],
     instrumented: false,
-    note: 'Only PKM reliability diagnostics are emitted. Nothing records a person using Memory.',
+    note: 'Only PKM reliability diagnostics are emitted. Nothing records deliberate Memory usage at device level.',
   },
   {
     key: 'wallet',
     label: 'Wallet',
-    human: [],
+    deliberate: [],
     background: [],
     instrumented: false,
     note: 'No wallet event is emitted anywhere in the app.',
@@ -2147,7 +2069,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'calendar',
     label: 'Calendar',
-    human: [],
+    deliberate: [],
     background: [],
     instrumented: false,
     note: 'No calendar event is emitted anywhere in the app.',
@@ -2155,7 +2077,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'kyc',
     label: 'KYC',
-    human: [],
+    deliberate: [],
     background: [],
     instrumented: false,
     note: 'No KYC event is emitted anywhere in the app.',
@@ -2163,7 +2085,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'connected_systems',
     label: 'CRM',
-    human: [],
+    deliberate: [],
     background: [],
     instrumented: false,
     note: 'No connected-systems event is emitted anywhere in the app.',
@@ -2171,7 +2093,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'onboarding',
     label: 'Sign-up & onboarding',
-    human: [
+    deliberate: [
       'auth_started', 'auth_succeeded', 'google_sign_in_started', 'google_sign_in_completed',
       'phone_verification_started', 'phone_verification_completed',
       'onboarding_started', 'onboarding_step_completed', 'onboarding_completed',
@@ -2204,34 +2126,34 @@ function sqlNameList(names: string[]): string {
 }
 
 /**
- * Builds `capability` and `is_human` for one event row.
+ * Builds `capability` and `is_deliberate` for one event row.
  *
  * Kept in SQL rather than post-processed in TypeScript because distinct users
  * per capability cannot be recovered by summing per-event counts after the fact.
  */
-function oneCapabilitySql(): { capability: string; isHuman: string } {
+function oneCapabilitySql(): { capability: string; isDeliberate: string } {
   const capabilityBranches = ONE_CAPABILITIES
-    .filter((spec) => spec.human.length > 0 || spec.background.length > 0)
+    .filter((spec) => spec.deliberate.length > 0 || spec.background.length > 0)
     .map((spec) => {
-      const all = [...spec.human, ...spec.background];
+      const all = [...spec.deliberate, ...spec.background];
       return `        WHEN event_name IN (${sqlNameList(all)}) THEN ${sqlStringLiteral(spec.key)}`;
     })
     .join('\n');
 
-  const humanNames = ONE_CAPABILITIES.flatMap((spec) => spec.human);
+  const deliberateNames = ONE_CAPABILITIES.flatMap((spec) => spec.deliberate);
 
   return {
     capability: `      CASE\n${capabilityBranches}\n        ELSE NULL\n      END AS capability`,
     // The consent prefetch is admitted only when the event says it was a real
     // screen. `load_surface` is NULL on events emitted before the param
-    // shipped, and those stay out rather than being assumed human.
-    isHuman: `      (
-        event_name IN (${sqlNameList(humanNames)})
+    // shipped, and those stay out rather than being assumed deliberate.
+    isDeliberate: `      (
+        event_name IN (${sqlNameList(deliberateNames)})
         OR (
           event_name = 'consent_pending_loaded'
           AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'load_surface') = 'screen'
         )
-      ) AS is_human`,
+      ) AS is_deliberate`,
   };
 }
 
@@ -2329,28 +2251,29 @@ async function fetchOneAppSummary(
 
   const capabilitySql = oneCapabilitySql();
 
-  // Two numbers per capability. `humanUsers` is people who did something
+  // Two numbers per capability. `devices` counts device/browser identifiers
+  // that did something
   // deliberate; `totalUsers` is everyone the old prefix bucket would have
   // counted. Reporting both means the drop from the previous figures reads as
   // a correction rather than as a regression.
   const agentQuery = `
     SELECT
       capability,
-      COUNT(DISTINCT IF(is_human, user_pseudo_id, NULL)) AS humanUsers,
-      COUNTIF(is_human) AS humanEvents,
+      COUNT(DISTINCT IF(is_deliberate, user_pseudo_id, NULL)) AS deliberateDevices,
+      COUNTIF(is_deliberate) AS deliberateEvents,
       COUNT(DISTINCT user_pseudo_id) AS totalUsers,
       COUNT(*) AS totalEvents
     FROM (
       SELECT
         user_pseudo_id,
 ${capabilitySql.capability},
-${capabilitySql.isHuman}
+${capabilitySql.isDeliberate}
       FROM ${table}
       WHERE ${dateFilter}
     )
     WHERE capability IS NOT NULL
     GROUP BY capability
-    ORDER BY humanUsers DESC, totalUsers DESC
+    ORDER BY deliberateDevices DESC, totalUsers DESC
   `;
 
   const locationFeatureQuery = `
@@ -2503,11 +2426,11 @@ ${capabilitySql.isHuman}
         CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
         user_pseudo_id,
 ${capabilitySql.capability},
-${capabilitySql.isHuman}
+${capabilitySql.isDeliberate}
       FROM ${table}
       WHERE ${dateFilter}
     )
-    WHERE capability IS NOT NULL AND is_human
+    WHERE capability IS NOT NULL AND is_deliberate
     GROUP BY eventDate, capability
     ORDER BY eventDate
   `;
@@ -2629,65 +2552,6 @@ ${capabilitySql.isHuman}
     FROM days
   `;
 
-  // Active user identities breakdown query (identifying accounts & devices)
-  const activeIdentitiesQuery = `
-    WITH active_devices AS (
-      SELECT
-        user_pseudo_id,
-        COALESCE(platform, 'UNKNOWN') AS platform,
-        PARSE_DATE('%Y%m%d', event_date) AS day,
-        MAX(event_timestamp) AS max_event_ts
-      FROM ${table}
-      WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
-      GROUP BY user_pseudo_id, platform, day
-    ),
-    user_identities AS (
-      SELECT
-        user_pseudo_id,
-        MAX(IF(LOWER(user_id) != LOWER(TO_HEX(MD5(user_pseudo_id))), user_id, NULL)) AS user_id,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('email', 'user_email', 'uid', 'user_id', 'phone_number', 'phone') LIMIT 1)) AS prop_email,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('name', 'display_name', 'user_name', 'username', 'full_name') LIMIT 1)) AS prop_name,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('phone', 'phone_number', 'contact', 'mobile', 'user_phone') LIMIT 1)) AS prop_phone,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail', 'uid', 'user_id', 'firebase_uid', 'sub') LIMIT 1)) AS param_email,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('display_name', 'name', 'user_name', 'username', 'full_name', 'first_name') LIMIT 1)) AS param_name,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('phone', 'phone_number', 'contact', 'contact_number', 'mobile', 'mobile_number', 'user_phone', 'caller_phone', 'telephone', 'phone_no') LIMIT 1)) AS param_phone
-      FROM ${table}
-      WHERE ${activeWindowFilter} AND ${surfaceFilter}
-      GROUP BY user_pseudo_id
-    ),
-    anchor AS (SELECT MAX(day) AS latest FROM active_devices),
-    user_summary AS (
-      SELECT
-        d.user_pseudo_id,
-        MAX(i.user_id) AS user_id,
-        MAX(COALESCE(i.prop_email, i.param_email)) AS bound_email,
-        MAX(COALESCE(i.prop_name, i.param_name)) AS param_name,
-        MAX(COALESCE(i.prop_phone, i.param_phone)) AS param_phone,
-        MAX(d.platform) AS platform,
-        MAX(d.max_event_ts) AS max_event_ts,
-        MAX(IF(d.day = (SELECT latest FROM anchor), 1, 0)) AS is_daily,
-        MAX(IF(d.day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_weekly,
-        MAX(IF(d.day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY) AND (SELECT latest FROM anchor), 1, 0)) AS is_monthly
-      FROM active_devices d
-      LEFT JOIN user_identities i ON d.user_pseudo_id = i.user_pseudo_id
-      GROUP BY d.user_pseudo_id
-    )
-    SELECT
-      user_pseudo_id AS userPseudoId,
-      user_id AS userId,
-      bound_email AS boundEmail,
-      param_name AS paramName,
-      param_phone AS paramPhone,
-      platform,
-      CAST(TIMESTAMP_MICROS(max_event_ts) AS STRING) AS lastActiveTimestamp,
-      (is_daily = 1) AS isDaily,
-      (is_weekly = 1) AS isWeekly,
-      (is_monthly = 1) AS isMonthly
-    FROM user_summary
-    ORDER BY (userId IS NOT NULL OR boundEmail IS NOT NULL OR paramName IS NOT NULL OR paramPhone IS NOT NULL) DESC, is_daily DESC, is_weekly DESC, is_monthly DESC, max_event_ts DESC
-    LIMIT 1000
-  `;
-
   // What happens to a native install.
   //
   // The activation funnel elsewhere starts at "opened the app", which quietly
@@ -2733,7 +2597,7 @@ ${capabilitySql.isHuman}
       SUM(signedIn) AS signedIn,
       SUM(onboarded) AS onboarded,
       SUM(activated) AS activated,
-      SUM(returnedW1) AS returnedW1
+      SUM(IF(activated = 1 AND returnedW1 = 1, 1, 0)) AS returnedW1
     FROM progressed
     GROUP BY platform
     ORDER BY installed DESC
@@ -2832,103 +2696,65 @@ ${capabilitySql.isHuman}
     WHERE ${dateFilter} AND ${meaningful}
   `;
 
-  const featureUsersQuery = `
-    WITH raw_events AS (
+  // Aggregate-only sub-feature adoption. This deliberately returns counts,
+  // never person or device rows, and replaces the former UI-side estimates.
+  const featureUsageQuery = `
+    WITH classified AS (
       SELECT
         user_pseudo_id,
-        COALESCE(platform, 'UNKNOWN') AS platform,
-        event_name AS eventName,
-        event_timestamp,
-        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') AS actionName
-      FROM ${table}
-      WHERE ${dateFilter}
-    ),
-    classified AS (
-      SELECT
-        user_pseudo_id,
-        platform,
-        event_timestamp,
         CASE
-          WHEN eventName = 'one_location_share_confirmed' THEN 'live_sharing'
-          WHEN eventName = 'one_location_check_in_completed' OR eventName LIKE '%check_in%' THEN 'check_in'
-          WHEN eventName LIKE '%check_out%' THEN 'check_out'
-          WHEN eventName = 'one_location_journey_action' AND actionName = 'nearby_check_in_result' THEN 'check_in'
-          WHEN eventName = 'one_location_sos_triggered' THEN 'sms_safety'
-          WHEN eventName = 'one_location_request_sent' THEN 'request_location'
-          WHEN eventName = 'one_location_public_link_created' THEN 'public_sharing'
-          WHEN eventName = 'one_location_contact_signal_synced' THEN 'contact_sync'
-          WHEN eventName = 'one_location_circle_invite_created' THEN 'invitations'
-          WHEN eventName = 'one_location_circle_created' THEN 'circle_engagement'
-          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'contact_invitation_%' THEN 'invitations'
-          WHEN eventName = 'one_location_journey_action' AND actionName = 'circle_code_shared' THEN 'invitations'
-          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'contact_sync_%' THEN 'contact_sync'
-          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'public_link_%' THEN 'public_sharing'
-          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_request_%' THEN 'request_location'
-          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_share_%' THEN 'live_sharing'
-          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'circle_%' THEN 'circle_engagement'
-          
-          WHEN eventName IN ('auth_started', 'one_auth_started') THEN 'auth_started'
-          WHEN eventName IN ('auth_completed', 'one_auth_login_completed', 'one_auth_google_signed_in', 'one_auth_phone_verified', 'one_phone_verified', 'auth_succeeded') THEN 'daily_signin'
-          WHEN eventName IN ('phone_verification_started', 'phone_verification_completed', 'one_auth_phone_verified', 'one_phone_verified') THEN 'phone_verified'
-          WHEN eventName IN ('google_sign_in_started', 'google_sign_in_completed', 'one_auth_google_signed_in') THEN 'google_signin'
-          WHEN eventName IN ('profile_created', 'one_auth_profile_created') THEN 'profile_created'
-          WHEN eventName IN ('onboarding_completed', 'one_auth_onboarding_completed', 'one_onboarding_completed') THEN 'onboarding_completed'
-
-          WHEN eventName IN ('portfolio_viewed', 'one_finance_portfolio_viewed') THEN 'portfolio_view'
-          WHEN eventName IN ('recommendation_viewed', 'one_finance_recommendation_viewed') THEN 'ai_recommendation'
-          WHEN eventName IN ('analysis_stream_started', 'one_finance_analysis_started') THEN 'analysis_stream'
-          WHEN eventName IN ('import_parse_completed', 'import_save_completed') THEN 'receipt_parsed'
-
-          WHEN eventName IN ('consent_action_submitted', 'one_consent_preferences_updated', 'consent_pending_loaded') THEN 'preferences_updated'
-          WHEN eventName IN ('one_consent_data_unlocked', 'data_unlocked', 'one_consent_data_unlock_requested', 'consent_action_result') THEN 'data_unlock'
-          WHEN eventName IN ('permission_granted', 'one_consent_permission_granted') THEN 'permission_granted'
-
-          WHEN eventName IN ('gmail_connect_started', 'gmail_connect_result', 'one_gmail_connected') THEN 'account_connected'
-          WHEN eventName IN ('gmail_sync_requested', 'one_gmail_receipt_synced') THEN 'receipt_sync'
-          WHEN eventName IN ('hushh_mail_signin_screen_view', 'one_gmail_inbox_viewed') THEN 'inbox_viewed'
-          WHEN eventName IN ('autocategory_applied', 'receipt_categorized', 'one_gmail_receipt_categorized') THEN 'autocategory_applied'
-
-          WHEN eventName IN ('ria_verification_status_changed', 'one_ria_verification_checked') THEN 'verification_checked'
-          WHEN eventName IN ('ria_workspace_opened', 'one_ria_workspace_visited') THEN 'workspace_visited'
-          WHEN eventName IN ('ria_request_created', 'one_ria_strategy_requested') THEN 'strategy_requested'
-
-          WHEN eventName IN ('marketplace_browsed', 'one_marketplace_browsed') THEN 'marketplace_browsed'
-          WHEN eventName IN ('marketplace_profile_viewed', 'one_marketplace_profile_viewed') THEN 'profile_viewed'
-
-          WHEN eventName IN ('agent_pkm_context_resolved', 'one_memory_context_resolved') THEN 'context_resolved'
+          WHEN event_name = 'one_location_share_confirmed' THEN 'live_sharing'
+          WHEN event_name = 'one_location_check_in_completed' OR event_name LIKE '%check_in%' THEN 'check_in'
+          WHEN event_name LIKE '%check_out%' THEN 'check_out'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'nearby_check_in_result' THEN 'check_in'
+          WHEN event_name = 'one_location_sos_triggered' THEN 'sms_safety'
+          WHEN event_name = 'one_location_request_sent' THEN 'request_location'
+          WHEN event_name = 'one_location_public_link_created' THEN 'public_sharing'
+          WHEN event_name = 'one_location_contact_signal_synced' THEN 'contact_sync'
+          WHEN event_name = 'one_location_circle_invite_created' THEN 'invitations'
+          WHEN event_name = 'one_location_circle_created' THEN 'circle_engagement'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'contact_invitation_%' THEN 'invitations'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'circle_code_shared' THEN 'invitations'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'contact_sync_%' THEN 'contact_sync'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'public_link_%' THEN 'public_sharing'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'location_request_%' THEN 'request_location'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'location_share_%' THEN 'live_sharing'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'circle_%' THEN 'circle_engagement'
+          WHEN event_name IN ('auth_started', 'one_auth_started') THEN 'auth_started'
+          WHEN event_name IN ('auth_completed', 'one_auth_login_completed', 'one_auth_google_signed_in', 'one_auth_phone_verified', 'one_phone_verified', 'auth_succeeded') THEN 'daily_signin'
+          WHEN event_name IN ('phone_verification_started', 'phone_verification_completed', 'one_auth_phone_verified', 'one_phone_verified') THEN 'phone_verified'
+          WHEN event_name IN ('google_sign_in_started', 'google_sign_in_completed', 'one_auth_google_signed_in') THEN 'google_signin'
+          WHEN event_name IN ('profile_created', 'one_auth_profile_created') THEN 'profile_created'
+          WHEN event_name IN ('onboarding_completed', 'one_auth_onboarding_completed', 'one_onboarding_completed') THEN 'onboarding_completed'
+          WHEN event_name IN ('portfolio_viewed', 'one_finance_portfolio_viewed') THEN 'portfolio_view'
+          WHEN event_name IN ('recommendation_viewed', 'one_finance_recommendation_viewed') THEN 'ai_recommendation'
+          WHEN event_name IN ('analysis_stream_started', 'one_finance_analysis_started') THEN 'analysis_stream'
+          WHEN event_name IN ('import_parse_completed', 'import_save_completed') THEN 'receipt_parsed'
+          WHEN event_name IN ('consent_action_submitted', 'one_consent_preferences_updated', 'consent_pending_loaded') THEN 'preferences_updated'
+          WHEN event_name IN ('one_consent_data_unlocked', 'data_unlocked', 'one_consent_data_unlock_requested', 'consent_action_result') THEN 'data_unlock'
+          WHEN event_name IN ('permission_granted', 'one_consent_permission_granted') THEN 'permission_granted'
+          WHEN event_name IN ('gmail_connect_started', 'gmail_connect_result', 'one_gmail_connected') THEN 'account_connected'
+          WHEN event_name IN ('gmail_sync_requested', 'one_gmail_receipt_synced') THEN 'receipt_sync'
+          WHEN event_name IN ('hushh_mail_signin_screen_view', 'one_gmail_inbox_viewed') THEN 'inbox_viewed'
+          WHEN event_name IN ('autocategory_applied', 'receipt_categorized', 'one_gmail_receipt_categorized') THEN 'autocategory_applied'
+          WHEN event_name IN ('ria_verification_status_changed', 'one_ria_verification_checked') THEN 'verification_checked'
+          WHEN event_name IN ('ria_workspace_opened', 'one_ria_workspace_visited') THEN 'workspace_visited'
+          WHEN event_name IN ('ria_request_created', 'one_ria_strategy_requested') THEN 'strategy_requested'
+          WHEN event_name IN ('marketplace_browsed', 'one_marketplace_browsed') THEN 'marketplace_browsed'
+          WHEN event_name IN ('marketplace_profile_viewed', 'one_marketplace_profile_viewed') THEN 'profile_viewed'
+          WHEN event_name IN ('agent_pkm_context_resolved', 'one_memory_context_resolved') THEN 'context_resolved'
           ELSE NULL
         END AS feature_key
-      FROM raw_events
-    ),
-    user_identities AS (
-      SELECT
-        user_pseudo_id,
-        MAX(IF(LOWER(user_id) != LOWER(TO_HEX(MD5(user_pseudo_id))), user_id, NULL)) AS user_id,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('email', 'user_email', 'uid', 'user_id', 'phone_number', 'phone') LIMIT 1)) AS prop_email,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('name', 'display_name', 'user_name', 'username', 'full_name') LIMIT 1)) AS prop_name,
-        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('phone', 'phone_number', 'contact', 'mobile', 'user_phone') LIMIT 1)) AS prop_phone,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail', 'uid', 'user_id', 'firebase_uid', 'sub') LIMIT 1)) AS param_email,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('display_name', 'name', 'user_name', 'username', 'full_name', 'first_name') LIMIT 1)) AS param_name,
-        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('phone', 'phone_number', 'contact', 'contact_number', 'mobile', 'mobile_number', 'user_phone', 'caller_phone', 'telephone', 'phone_no') LIMIT 1)) AS param_phone
       FROM ${table}
       WHERE ${dateFilter}
-      GROUP BY user_pseudo_id
     )
     SELECT
-      c.feature_key AS featureKey,
-      c.user_pseudo_id AS userPseudoId,
-      MAX(i.user_id) AS userId,
-      MAX(COALESCE(i.prop_email, i.param_email)) AS boundEmail,
-      MAX(COALESCE(i.prop_name, i.param_name)) AS paramName,
-      MAX(COALESCE(i.prop_phone, i.param_phone)) AS paramPhone,
-      MAX(c.platform) AS platform,
-      COUNT(*) AS timesUsed,
-      MAX(c.event_timestamp) AS max_event_ts
-    FROM classified c
-    LEFT JOIN user_identities i ON c.user_pseudo_id = i.user_pseudo_id
-    WHERE c.feature_key IS NOT NULL
-    GROUP BY c.feature_key, c.user_pseudo_id
-    ORDER BY c.feature_key, timesUsed DESC, max_event_ts DESC
+      feature_key AS featureKey,
+      COUNT(DISTINCT user_pseudo_id) AS devices,
+      COUNT(*) AS signals
+    FROM classified
+    WHERE feature_key IS NOT NULL
+    GROUP BY feature_key
   `;
 
   const queryProject = BQ_JOB_PROJECT || projectId;
@@ -2951,9 +2777,7 @@ ${capabilitySql.isHuman}
     growth,
     retention,
     activationStages,
-    activeIdentities,
-    featureUsers,
-    firebaseMap,
+    featureUsage,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
     queryBigQuerySql(queryProject, agentQuery),
@@ -2973,9 +2797,7 @@ ${capabilitySql.isHuman}
     queryBigQuerySql(queryProject, growthQuery),
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
-    queryBigQuerySql(queryProject, activeIdentitiesQuery),
-    queryBigQuerySql(queryProject, featureUsersQuery),
-    getFirebaseUsersMap(),
+    queryBigQuerySql(queryProject, featureUsageQuery),
   ]);
 
   const errors = [
@@ -2997,7 +2819,7 @@ ${capabilitySql.isHuman}
     growth.error,
     retention.error,
     activationStages.error,
-    activeIdentities.error,
+    featureUsage.error,
   ].filter(Boolean);
 
   const hasAnyRows =
@@ -3072,6 +2894,8 @@ ${capabilitySql.isHuman}
       },
       funnel: buildOneLocationFunnel(usersByStep),
       activeUsers: {
+        countingUnit: 'device',
+        identityScope: 'GA4 device/browser identifier; not cross-device deduplicated',
         dau: toNumber(activeRow.dau),
         wau: toNumber(activeRow.wau),
         mau: toNumber(activeRow.mau),
@@ -3083,111 +2907,6 @@ ${capabilitySql.isHuman}
         // The day DAU was actually measured on, which is the last day with
         // data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
-        identities: (() => {
-          const toBoolean = (val: unknown): boolean => {
-            if (typeof val === 'boolean') return val;
-            if (typeof val === 'number') return val === 1;
-            if (typeof val === 'string') return val.toLowerCase() === 'true' || val === '1';
-            return false;
-          };
-
-          const activeList = activeIdentities.rows.map((row) => {
-            const rawUserId = row.userId ?? row.user_id;
-            const rawPseudoId = row.userPseudoId ?? row.user_pseudo_id;
-            const rawBoundEmail = row.boundEmail ?? row.bound_email;
-            const rawParamName = row.paramName ?? row.param_name;
-            const rawParamPhone = row.paramPhone ?? row.param_phone;
-            const rawPlatform = row.platform;
-            const rawTimestamp = row.lastActiveTimestamp ?? row.last_active_timestamp ?? row.max_event_ts ?? row.maxEventTs;
-
-            let userIdStr = rawUserId ? String(rawUserId) : null;
-            const pseudoIdStr = rawPseudoId ? String(rawPseudoId) : null;
-            const boundEmailStr = rawBoundEmail ? String(rawBoundEmail) : null;
-            const paramNameStr = rawParamName ? String(rawParamName) : null;
-            const paramPhoneStr = rawParamPhone ? String(rawParamPhone) : null;
-
-            const phoneDigits = paramPhoneStr ? paramPhoneStr.replace(/\D/g, '') : null;
-
-            if (userIdStr && pseudoIdStr && crypto.createHash('md5').update(pseudoIdStr).digest('hex').toLowerCase() === userIdStr.toLowerCase()) {
-              userIdStr = null;
-            }
-
-            const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null)
-              || (userIdStr ? firebaseMap.get(userIdStr.toLowerCase()) : null)
-              || (boundEmailStr ? firebaseMap.get(boundEmailStr.toLowerCase().trim()) : null)
-              || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null)
-              || (paramPhoneStr ? firebaseMap.get(paramPhoneStr.trim()) : null)
-              || (phoneDigits ? firebaseMap.get(phoneDigits) : null)
-              || (phoneDigits && phoneDigits.length >= 10 ? firebaseMap.get(phoneDigits.slice(-10)) : null);
-
-            const realEmailFromStr = (boundEmailStr && boundEmailStr.includes('@')) ? boundEmailStr.toLowerCase().trim() : null;
-            const boundEmail = userMatch?.email || realEmailFromStr || null;
-            const displayName = userMatch?.displayName || paramNameStr || (boundEmail ? boundEmail.split('@')[0] : null);
-            const phoneNumber = userMatch?.phoneNumber || paramPhoneStr || null;
-
-            let formattedTimestamp = '';
-            if (rawTimestamp) {
-              const numTs = Number(rawTimestamp);
-              if (Number.isFinite(numTs) && numTs > 1000000000000000) {
-                formattedTimestamp = new Date(Math.floor(numTs / 1000)).toISOString();
-              } else if (Number.isFinite(numTs) && numTs > 1000000000) {
-                formattedTimestamp = new Date(numTs).toISOString();
-              } else {
-                formattedTimestamp = String(rawTimestamp);
-              }
-            }
-
-            return {
-              userPseudoId: String(rawPseudoId ?? ''),
-              userId: userIdStr,
-              displayName,
-              boundEmail,
-              phoneNumber,
-              platform: String(rawPlatform ?? 'UNKNOWN'),
-              lastActiveTimestamp: formattedTimestamp,
-              isDaily: toBoolean(row.isDaily ?? row.is_daily),
-              isWeekly: toBoolean(row.isWeekly ?? row.is_weekly),
-              isMonthly: toBoolean(row.isMonthly ?? row.is_monthly),
-            };
-          });
-
-          const matchedEmails = new Set<string>();
-          for (const item of activeList) {
-            if (item.boundEmail) {
-              matchedEmails.add(item.boundEmail.toLowerCase().trim());
-            }
-          }
-
-          const registeredExtras: typeof activeList = [];
-          for (const [key, val] of firebaseMap.entries()) {
-            if (val && val.email) {
-              const normEmail = val.email.toLowerCase().trim();
-              if (!matchedEmails.has(normEmail)) {
-                matchedEmails.add(normEmail);
-                registeredExtras.push({
-                  userPseudoId: `reg_${normEmail}`,
-                  userId: null,
-                  displayName: val.displayName || normEmail.split('@')[0],
-                  boundEmail: val.email,
-                  phoneNumber: val.phoneNumber || null,
-                  platform: 'WEB',
-                  lastActiveTimestamp: '',
-                  isDaily: false,
-                  isWeekly: false,
-                  isMonthly: true,
-                });
-              }
-            }
-          }
-
-          return [...activeList, ...registeredExtras].sort((a, b) => {
-            const aHasName = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
-            const bHasName = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
-            if (aHasName && !bHasName) return -1;
-            if (!aHasName && bHasName) return 1;
-            return 0;
-          });
-        })(),
       },
       // The install cohort funnel, per native platform. Stages nest because
       // every one is measured against the same devices that installed inside
@@ -3277,8 +2996,8 @@ ${capabilitySql.isHuman}
           label: spec.label,
           instrumented: spec.instrumented,
           note: spec.note ?? null,
-          humanUsers: spec.instrumented ? toNumber(row?.humanUsers) : null,
-          humanEvents: spec.instrumented ? toNumber(row?.humanEvents) : null,
+          devices: spec.instrumented ? toNumber(row?.deliberateDevices) : null,
+          deliberateEvents: spec.instrumented ? toNumber(row?.deliberateEvents) : null,
           totalUsers: toNumber(row?.totalUsers),
           totalEvents: toNumber(row?.totalEvents),
           // Spined so every capability's chart shares one x-axis and quiet days
@@ -3371,106 +3090,10 @@ ${capabilitySql.isHuman}
             ? 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.'
             : 'The detailed journey event has not reached the UAT export yet. TestFlight, Android internal and UAT web events will appear after the next GA4 export.',
       },
-      featureUserIdentities: (() => {
-        const result: Record<string, any[]> = {};
-        const rawMap: Record<string, Map<string, any>> = {};
-
-        for (const row of featureUsers.rows) {
-          const featKey = String(row.featureKey);
-          if (!featKey) continue;
-          if (!rawMap[featKey]) rawMap[featKey] = new Map();
-
-          let userIdStr = row.userId ? String(row.userId) : null;
-          const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
-          const boundEmailStr = row.boundEmail ? String(row.boundEmail) : null;
-          const paramNameStr = row.paramName ? String(row.paramName) : null;
-          const paramPhoneStr = row.paramPhone ? String(row.paramPhone) : null;
-          const phoneDigits = paramPhoneStr ? paramPhoneStr.replace(/\D/g, '') : null;
-
-          if (userIdStr && pseudoIdStr && crypto.createHash('md5').update(pseudoIdStr).digest('hex').toLowerCase() === userIdStr.toLowerCase()) {
-            userIdStr = null;
-          }
-
-          const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null)
-            || (userIdStr ? firebaseMap.get(userIdStr.toLowerCase()) : null)
-            || (boundEmailStr ? firebaseMap.get(boundEmailStr.toLowerCase().trim()) : null)
-            || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null)
-            || (paramPhoneStr ? firebaseMap.get(paramPhoneStr.trim()) : null)
-            || (phoneDigits ? firebaseMap.get(phoneDigits) : null)
-            || (phoneDigits && phoneDigits.length >= 10 ? firebaseMap.get(phoneDigits.slice(-10)) : null);
-
-          const realEmailFromStr = (boundEmailStr && boundEmailStr.includes('@')) ? boundEmailStr.toLowerCase().trim() : null;
-          const boundEmail = userMatch?.email || realEmailFromStr || null;
-          const displayName = userMatch?.displayName || paramNameStr || (boundEmail ? boundEmail.split('@')[0] : null);
-          const phoneNumber = userMatch?.phoneNumber || paramPhoneStr || null;
-
-          let formattedTimestamp = '';
-          const rawTimestamp = row.max_event_ts ?? row.maxEventTs;
-          if (rawTimestamp) {
-            const numTs = Number(rawTimestamp);
-            if (Number.isFinite(numTs) && numTs > 1000000000000000) {
-              formattedTimestamp = new Date(Math.floor(numTs / 1000)).toISOString();
-            } else if (Number.isFinite(numTs) && numTs > 1000000000) {
-              formattedTimestamp = new Date(numTs).toISOString();
-            } else {
-              formattedTimestamp = String(rawTimestamp);
-            }
-          }
-
-          const itemUsage = toNumber(row.timesUsed ?? 1);
-          const itemKey =
-            (userIdStr ? `uid:${userIdStr.toLowerCase()}` : null) ||
-            (boundEmail ? `email:${boundEmail.toLowerCase().trim()}` : null) ||
-            (phoneNumber ? `phone:${phoneNumber.replace(/\D/g, '')}` : null) ||
-            `device:${pseudoIdStr}`;
-
-          const existing = rawMap[featKey].get(itemKey);
-          if (existing) {
-            existing.usageCount += itemUsage;
-            const timeExisting = existing.lastActiveTimestamp ? new Date(existing.lastActiveTimestamp).getTime() : 0;
-            const timeItem = formattedTimestamp ? new Date(formattedTimestamp).getTime() : 0;
-            if (timeItem > timeExisting) {
-              existing.lastActiveTimestamp = formattedTimestamp;
-              existing.userPseudoId = String(pseudoIdStr ?? '');
-            }
-            if (!existing.displayName && displayName) existing.displayName = displayName;
-            if (!existing.boundEmail && boundEmail) existing.boundEmail = boundEmail;
-            if (!existing.phoneNumber && phoneNumber) existing.phoneNumber = phoneNumber;
-          } else {
-            rawMap[featKey].set(itemKey, {
-              userPseudoId: String(pseudoIdStr ?? ''),
-              userId: userIdStr,
-              displayName,
-              boundEmail,
-              phoneNumber,
-              platform: String(row.platform ?? 'UNKNOWN'),
-              lastActiveTimestamp: formattedTimestamp,
-              isDaily: true,
-              isWeekly: true,
-              isMonthly: true,
-              usageCount: itemUsage,
-            });
-          }
-        }
-
-        for (const [k, map] of Object.entries(rawMap)) {
-          result[k] = Array.from(map.values()).sort((a, b) => {
-            const timeA = a.lastActiveTimestamp ? new Date(a.lastActiveTimestamp).getTime() : 0;
-            const timeB = b.lastActiveTimestamp ? new Date(b.lastActiveTimestamp).getTime() : 0;
-            if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) {
-              return timeB - timeA;
-            }
-            return (b.usageCount ?? 1) - (a.usageCount ?? 1);
-          });
-        }
-
-        if (result['daily_signin'] && !result['auth_started']) {
-          result['auth_started'] = result['daily_signin'];
-        } else if (result['auth_started'] && !result['daily_signin']) {
-          result['daily_signin'] = result['auth_started'];
-        }
-        return result;
-      })(),
+      featureUsage: Object.fromEntries(featureUsage.rows.map((row) => [
+        String(row.featureKey),
+        { devices: toNumber(row.devices), signals: toNumber(row.signals) },
+      ])),
       platforms: platforms.rows.map((row) => ({
         platform: String(row.platform),
         users: toNumber(row.users),
@@ -6230,8 +5853,8 @@ app.get('/api/analytics/all', async (req, res) => {
     growth,
     appStoreConnect,
   ] = await Promise.all([
-    queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
-    queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
+    queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW, kaiRange),
+    queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW, kaiRange),
     fetchKaiGa4Summary(kaiRange),
     fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
@@ -6257,11 +5880,9 @@ app.get('/api/analytics/all', async (req, res) => {
         platform: 'kai.hushh.ai',
         data: {
           productionFeed: {
-            rows: production.rows,
             status: buildKaiFeedStatus(production.rows),
           },
           uatFeed: {
-            rows: uat.rows,
             status: buildKaiFeedStatus(uat.rows),
           },
           uatGa4: kaiGa4.data,

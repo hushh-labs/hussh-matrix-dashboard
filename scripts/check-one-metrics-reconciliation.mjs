@@ -120,14 +120,45 @@ async function main() {
     `sum of daily uniques ${sumDaily} vs true ${options.days}-day unique ${trueUnique}` +
     (trueUnique > 0 ? ` (naive sum overstates by ${(((sumDaily / trueUnique) - 1) * 100).toFixed(1)}%)` : ''));
 
-  // 3. Identity coverage per platform. Web User-ID is the known blocker.
+  // 3. Identity coverage per platform. A single observed User-ID is not proof
+  // of cross-device deduplication: every device in the reporting population
+  // must carry a stable account key before a unique-human claim is supportable.
   const identity = await run(`
-    SELECT platform, COUNT(DISTINCT user_pseudo_id) AS devices, COUNT(DISTINCT user_id) AS keyed
+    SELECT
+      platform,
+      COUNT(DISTINCT user_pseudo_id) AS devices,
+      COUNT(DISTINCT IF(user_id IS NOT NULL AND user_id != '', user_pseudo_id, NULL)) AS keyed_devices,
+      COUNT(DISTINCT IF(user_id IS NOT NULL AND user_id != '', user_id, NULL)) AS accounts
     FROM ${table} WHERE ${oneFilter} GROUP BY platform ORDER BY devices DESC`);
-  const web = identity.find((r) => String(r.platform).toUpperCase() === 'WEB');
-  record('web_user_id_bound', Boolean(web && Number(web.keyed) > 0),
-    identity.map((r) => `${r.platform}: ${Number(r.devices)} devices / ${Number(r.keyed)} user_id`).join('; ') || 'no rows',
+  const totalIdentityDevices = identity.reduce((sum, row) => sum + Number(row.devices ?? 0), 0);
+  const totalKeyedDevices = identity.reduce((sum, row) => sum + Number(row.keyed_devices ?? 0), 0);
+  const identityCoverage = totalIdentityDevices > 0 ? totalKeyedDevices / totalIdentityDevices : 0;
+  record('cross_device_identity_coverage', totalIdentityDevices > 0 && totalKeyedDevices === totalIdentityDevices,
+    `${totalKeyedDevices}/${totalIdentityDevices} devices carry stable user_id (${(identityCoverage * 100).toFixed(1)}%); ` +
+    (identity.map((r) => `${r.platform}: ${Number(r.devices)} devices / ${Number(r.keyed_devices)} keyed devices / ${Number(r.accounts)} accounts`).join('; ') || 'no rows'),
     true);
+
+  const [multiplicity] = await run(`
+    WITH bindings AS (
+      SELECT DISTINCT user_id, user_pseudo_id
+      FROM ${table}
+      WHERE ${oneFilter} AND user_id IS NOT NULL AND user_id != ''
+    ), per_account AS (
+      SELECT user_id, COUNT(DISTINCT user_pseudo_id) AS devices
+      FROM bindings GROUP BY user_id
+    )
+    SELECT
+      COUNT(*) AS accounts,
+      COUNTIF(devices > 1) AS multi_device_accounts,
+      SUM(GREATEST(devices - 1, 0)) AS duplicate_device_excess,
+      MAX(devices) AS max_devices_per_account
+    FROM per_account`);
+  record('account_device_multiplicity_reported', true,
+    `${Number(multiplicity?.accounts ?? 0)} distinct stable accounts; ` +
+    `${Number(multiplicity?.multi_device_accounts ?? 0)} appear on multiple devices; ` +
+    `${Number(multiplicity?.duplicate_device_excess ?? 0)} extra device bindings; ` +
+    `maximum ${Number(multiplicity?.max_devices_per_account ?? 0)} devices/account. ` +
+    'Account metrics use COUNT(DISTINCT user_id); device metrics intentionally do not claim unique people.');
 
   // 4. Active users under both bases, so the definition note stays truthful.
   const [active] = await run(`

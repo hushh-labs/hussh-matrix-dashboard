@@ -189,7 +189,7 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Figure
-          label="People we have picked up"
+          label="Devices we have picked up"
           value={exact(totalEverSeen)}
           detail={`Distinct devices first seen, across ${series.length} weeks`}
         />
@@ -446,18 +446,18 @@ function CostPerActive({
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Figure
-          label="Cost per active person"
+          label="Cost per active device"
           value={costPerActiveUser === null ? '—' : `$${costPerActiveUser.toFixed(2)}`}
           detail={
             monthlyActive
               ? `${money(cost.production)} production spend ÷ ${formatNumber(monthlyActive)} monthly active`
-              : 'Needs both a cost and an active-user count'
+              : 'Needs both a cost and an active-device count'
           }
         />
         <Figure label="Total cloud spend" value={money(cost.total)} detail="All projects, this window" />
-        <Figure label="Serving real users" value={money(cost.production)} detail="Production projects only" />
+        <Figure label="Production serving cost" value={money(cost.production)} detail="Production projects only" />
         <Figure
-          label="Not serving users"
+          label="Non-production cost"
           value={money(cost.nonProduction)}
           tone={nonProdShare !== null && nonProdShare > 0.5 ? 'warn' : 'plain'}
           detail={
@@ -473,7 +473,7 @@ function CostPerActive({
           <thead>
             <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
               <th className="border-b border-black/5 px-5 py-3">Product</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Serving users</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Production</th>
               <th className="border-b border-black/5 px-5 py-3 text-right">UAT / dev / idle</th>
               <th className="border-b border-black/5 px-5 py-3 text-right">Ratio</th>
             </tr>
@@ -591,7 +591,7 @@ function TimeToFirstValue({ growth }: { growth: GrowthSummary }) {
         <Figure
           label="Typical time to first value"
           value={duration(medianMinutes)}
-          detail={`Median across ${formatNumber(activatedUsers)} ${activatedUsers === 1 ? 'person' : 'people'}`}
+          detail={`Median across ${formatNumber(activatedUsers)} ${activatedUsers === 1 ? 'device' : 'devices'}`}
         />
         <Figure label="Fastest" value={duration(fastestMinutes)} detail="First visit to first share" />
         <Figure label="Slowest" value={duration(slowestMinutes)} detail="They came back and finished" />
@@ -617,7 +617,7 @@ function TimeToFirstValue({ growth }: { growth: GrowthSummary }) {
           })}
         </ol>
         <p className="mt-4 text-xs font-semibold leading-5 text-[#86868b]">
-          Measured from the person&rsquo;s very first visit, not from the start of the selected
+          Measured from the device&rsquo;s very first visit, not from the start of the selected
           window — so it is the whole journey they experienced.
         </p>
       </div>
@@ -648,7 +648,7 @@ function OrganicSearch({ growth }: { growth: GrowthSummary }) {
         <Figure
           label="Click-through rate"
           value={percentText(ctr, 2)}
-          detail="Of people who saw us, this many came"
+          detail="Of devices that saw us, this many came"
         />
         <Figure
           label="Average position"
@@ -818,20 +818,20 @@ export function GrowthPanel({
   const sections: Array<{ kicker: string; title: string; hint?: string; body: ReactElement }> = [
     {
       kicker: 'Audience',
-      title: 'How many people have we picked up?',
+      title: 'How many devices have we picked up?',
       hint: 'Every device that has ever opened the One app, and the rate we are adding them.',
       body: <UsersOverTime growth={growth} />,
     },
     {
       kicker: 'Identity',
-      title: 'How many of these are people we can name?',
+      title: 'How many devices are tied to accounts?',
       hint: 'Every user number on this dashboard counts devices. This is why, and by how much.',
       body: <IdentityCoverage identity={growth.identity} />,
     },
     {
       kicker: 'Unit economics',
-      title: 'What does an active person cost us?',
-      hint: 'Cloud spend divided by the people it serves, with the spend that serves nobody shown separately.',
+      title: 'What does an active device cost us?',
+      hint: 'Cloud spend divided by active devices, with the spend that serves no measured device shown separately.',
       body: (
         <CostPerActive
           growth={growth}
@@ -899,7 +899,7 @@ export function GrowthPanel({
             <p className="text-sm font-bold text-[#1d1d1f]">How to read this page</p>
           </div>
           <p className="max-w-4xl text-sm font-medium leading-6 text-[#6e6e73]">
-            People are counted as{' '}
+            Activity is counted as{' '}
             <strong className="font-bold text-[#1d1d1f]">devices and browsers</strong>, not
             individuals — the analytics identity binds on iOS but not on web, so one person on a
             phone and a laptop counts twice and app and web figures cannot be added together.

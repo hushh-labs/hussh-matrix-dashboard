@@ -336,17 +336,17 @@ function oneLocationEventLabel(eventName: string): string {
  */
 function buildOneAgentMetrics(one: OneAppSummary | null): BreakdownMetric[] {
   if (!one) return [];
-  const total = one.capabilities.reduce((sum, cap) => sum + (cap.humanUsers ?? 0), 0);
+  const total = one.capabilities.reduce((sum, cap) => sum + (cap.devices ?? 0), 0);
   return one.capabilities.map((cap) => ({
     label: cap.label,
-    value: cap.humanUsers ?? 0,
-    displayValue: cap.instrumented ? `${formatNumber(cap.humanUsers ?? 0)} people` : 'Not instrumented',
+    value: cap.devices ?? 0,
+    displayValue: cap.instrumented ? `${formatNumber(cap.devices ?? 0)} devices` : 'Not instrumented',
     detail: cap.instrumented
-      ? `${formatNumber(cap.humanEvents ?? 0)} deliberate of ${formatNumber(cap.totalEvents)} events`
+      ? `${formatNumber(cap.deliberateEvents ?? 0)} deliberate of ${formatNumber(cap.totalEvents)} events`
       : cap.note ?? 'No usage event is emitted.',
     // Share of capability-attributed people, not of all people: one person can
     // use several capabilities, so these deliberately do not sum to 100%.
-    percentage: cap.instrumented && total > 0 ? ((cap.humanUsers ?? 0) / total) * 100 : undefined,
+    percentage: cap.instrumented && total > 0 ? ((cap.devices ?? 0) / total) * 100 : undefined,
   }));
 }
 
@@ -366,7 +366,7 @@ function buildOneLocationFeatureMetrics(one: OneAppSummary | null): BreakdownMet
     return {
       label: oneLocationEventLabel(eventName),
       value: feature?.users ?? 0,
-      displayValue: feature ? `${formatNumber(feature.users)} people` : 'nobody yet',
+      displayValue: feature ? `${formatNumber(feature.users)} devices` : 'no devices yet',
       detail: feature ? `${formatNumber(feature.events)} times` : undefined,
     };
   });
@@ -378,7 +378,7 @@ function buildOneLocationFeatureMetrics(one: OneAppSummary | null): BreakdownMet
     .map((feature) => ({
       label: oneLocationEventLabel(feature.eventName),
       value: feature.users,
-      displayValue: `${formatNumber(feature.users)} people`,
+      displayValue: `${formatNumber(feature.users)} devices`,
       detail: `${formatNumber(feature.events)} times`,
     }));
 
@@ -419,18 +419,18 @@ function buildOneAcquisitionMetrics(one: OneAppSummary | null): BreakdownMetric[
 function buildOneHeadlineMetrics(one: OneAppSummary | null): BreakdownMetric[] {
   if (!one) return [];
   const locationUsers =
-    one.capabilities.find((cap) => cap.key === 'location')?.humanUsers ?? 0;
+    one.capabilities.find((cap) => cap.key === 'location')?.devices ?? 0;
   const activated = one.activation.activatedUsers || one.activation.sharingUsers;
 
   return [
     {
-      label: 'People using the One app',
+      label: 'Devices using the One app',
       value: one.rangeTotals.users,
       displayValue: formatNumber(one.rangeTotals.users),
       detail: `over ${one.windowDays} days`,
     },
     {
-      label: 'People who opened One Location',
+      label: 'Devices that opened One Location',
       value: locationUsers,
       displayValue: formatNumber(locationUsers),
       detail:
@@ -439,7 +439,7 @@ function buildOneHeadlineMetrics(one: OneAppSummary | null): BreakdownMetric[] {
           : undefined,
     },
     {
-      label: 'People who actually shared a location',
+      label: 'Devices that actually shared a location',
       value: activated,
       displayValue: formatNumber(activated),
       detail:
@@ -451,7 +451,7 @@ function buildOneHeadlineMetrics(one: OneAppSummary | null): BreakdownMetric[] {
       // Was "Progress to 1.0k". A fixed goal as a headline tile reports the
       // goal on every render and the product on none of them; this answers "is
       // it alive right now", which is the thing a stale dashboard hides.
-      label: 'People using it in the last 24 hours',
+      label: 'Devices using it in the last 24 hours',
       value: one.last24Hours.users,
       displayValue: formatNumber(one.last24Hours.users),
       detail: one.last24Hours.available
