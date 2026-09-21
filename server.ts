@@ -2867,7 +2867,8 @@ ${capabilitySql.isHuman}
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_share_%' THEN 'live_sharing'
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'circle_%' THEN 'circle_engagement'
           
-          WHEN eventName IN ('auth_started', 'one_auth_started', 'one_auth_login_completed') THEN 'auth_started'
+          WHEN eventName IN ('auth_started', 'one_auth_started') THEN 'auth_started'
+          WHEN eventName IN ('auth_completed', 'one_auth_login_completed', 'one_auth_google_signed_in', 'one_auth_phone_verified', 'one_phone_verified', 'auth_succeeded') THEN 'daily_signin'
           WHEN eventName IN ('phone_verification_started', 'phone_verification_completed', 'one_auth_phone_verified', 'one_phone_verified') THEN 'phone_verified'
           WHEN eventName IN ('google_sign_in_started', 'google_sign_in_completed', 'one_auth_google_signed_in') THEN 'google_signin'
           WHEN eventName IN ('profile_created', 'one_auth_profile_created') THEN 'profile_created'
@@ -2878,13 +2879,14 @@ ${capabilitySql.isHuman}
           WHEN eventName IN ('analysis_stream_started', 'one_finance_analysis_started') THEN 'analysis_stream'
           WHEN eventName IN ('import_parse_completed', 'import_save_completed') THEN 'receipt_parsed'
 
-          WHEN eventName IN ('consent_action_submitted', 'one_consent_preferences_updated') THEN 'preferences_updated'
-          WHEN eventName IN ('one_consent_data_unlocked', 'data_unlocked') THEN 'data_unlock'
+          WHEN eventName IN ('consent_action_submitted', 'one_consent_preferences_updated', 'consent_pending_loaded') THEN 'preferences_updated'
+          WHEN eventName IN ('one_consent_data_unlocked', 'data_unlocked', 'one_consent_data_unlock_requested', 'consent_action_result') THEN 'data_unlock'
           WHEN eventName IN ('permission_granted', 'one_consent_permission_granted') THEN 'permission_granted'
 
           WHEN eventName IN ('gmail_connect_started', 'gmail_connect_result', 'one_gmail_connected') THEN 'account_connected'
           WHEN eventName IN ('gmail_sync_requested', 'one_gmail_receipt_synced') THEN 'receipt_sync'
           WHEN eventName IN ('hushh_mail_signin_screen_view', 'one_gmail_inbox_viewed') THEN 'inbox_viewed'
+          WHEN eventName IN ('autocategory_applied', 'receipt_categorized', 'one_gmail_receipt_categorized') THEN 'autocategory_applied'
 
           WHEN eventName IN ('ria_verification_status_changed', 'one_ria_verification_checked') THEN 'verification_checked'
           WHEN eventName IN ('ria_workspace_opened', 'one_ria_workspace_visited') THEN 'workspace_visited'
@@ -3371,10 +3373,12 @@ ${capabilitySql.isHuman}
       },
       featureUserIdentities: (() => {
         const result: Record<string, any[]> = {};
+        const rawMap: Record<string, Map<string, any>> = {};
+
         for (const row of featureUsers.rows) {
           const featKey = String(row.featureKey);
           if (!featKey) continue;
-          if (!result[featKey]) result[featKey] = [];
+          if (!rawMap[featKey]) rawMap[featKey] = new Map();
 
           let userIdStr = row.userId ? String(row.userId) : null;
           const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
@@ -3413,19 +3417,57 @@ ${capabilitySql.isHuman}
             }
           }
 
-          result[featKey].push({
-            userPseudoId: String(pseudoIdStr ?? ''),
-            userId: userIdStr,
-            displayName,
-            boundEmail,
-            phoneNumber,
-            platform: String(row.platform ?? 'UNKNOWN'),
-            lastActiveTimestamp: formattedTimestamp,
-            isDaily: true,
-            isWeekly: true,
-            isMonthly: true,
-            usageCount: toNumber(row.timesUsed ?? 1),
+          const itemUsage = toNumber(row.timesUsed ?? 1);
+          const itemKey =
+            (userIdStr ? `uid:${userIdStr.toLowerCase()}` : null) ||
+            (boundEmail ? `email:${boundEmail.toLowerCase().trim()}` : null) ||
+            (phoneNumber ? `phone:${phoneNumber.replace(/\D/g, '')}` : null) ||
+            `device:${pseudoIdStr}`;
+
+          const existing = rawMap[featKey].get(itemKey);
+          if (existing) {
+            existing.usageCount += itemUsage;
+            const timeExisting = existing.lastActiveTimestamp ? new Date(existing.lastActiveTimestamp).getTime() : 0;
+            const timeItem = formattedTimestamp ? new Date(formattedTimestamp).getTime() : 0;
+            if (timeItem > timeExisting) {
+              existing.lastActiveTimestamp = formattedTimestamp;
+              existing.userPseudoId = String(pseudoIdStr ?? '');
+            }
+            if (!existing.displayName && displayName) existing.displayName = displayName;
+            if (!existing.boundEmail && boundEmail) existing.boundEmail = boundEmail;
+            if (!existing.phoneNumber && phoneNumber) existing.phoneNumber = phoneNumber;
+          } else {
+            rawMap[featKey].set(itemKey, {
+              userPseudoId: String(pseudoIdStr ?? ''),
+              userId: userIdStr,
+              displayName,
+              boundEmail,
+              phoneNumber,
+              platform: String(row.platform ?? 'UNKNOWN'),
+              lastActiveTimestamp: formattedTimestamp,
+              isDaily: true,
+              isWeekly: true,
+              isMonthly: true,
+              usageCount: itemUsage,
+            });
+          }
+        }
+
+        for (const [k, map] of Object.entries(rawMap)) {
+          result[k] = Array.from(map.values()).sort((a, b) => {
+            const timeA = a.lastActiveTimestamp ? new Date(a.lastActiveTimestamp).getTime() : 0;
+            const timeB = b.lastActiveTimestamp ? new Date(b.lastActiveTimestamp).getTime() : 0;
+            if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) {
+              return timeB - timeA;
+            }
+            return (b.usageCount ?? 1) - (a.usageCount ?? 1);
           });
+        }
+
+        if (result['daily_signin'] && !result['auth_started']) {
+          result['auth_started'] = result['daily_signin'];
+        } else if (result['auth_started'] && !result['daily_signin']) {
+          result['daily_signin'] = result['auth_started'];
         }
         return result;
       })(),

@@ -656,12 +656,24 @@ export function AgentCapabilityAnalyticsPanel({
 
   const computedFeatures = specs.map((spec) => {
     const isGap = spec.status === 'gap' || !instrumented;
-    const devices = isGap ? 0 : Math.max(1, Math.round(humanUsers * (spec.userWeight ?? 1)));
-    const signals = isGap ? 0 : Math.max(1, Math.round(humanEvents * (spec.eventWeight ?? 1)));
+    const featIdentities = activeSummary?.featureUserIdentities?.[spec.key];
+    const hasRealIdentities = Array.isArray(featIdentities) && featIdentities.length > 0;
+
+    const realDevices = hasRealIdentities ? featIdentities.length : 0;
+    const realSignals = hasRealIdentities
+      ? featIdentities.reduce((sum, item) => sum + (item.usageCount ?? 1), 0)
+      : 0;
+
+    const fallbackDevices = isGap ? 0 : Math.max(0, Math.round(humanUsers * (spec.userWeight ?? 1)));
+    const fallbackSignals = isGap ? 0 : Math.max(0, Math.round(humanEvents * (spec.eventWeight ?? 1)));
+
+    const devices = hasRealIdentities ? realDevices : fallbackDevices;
+    const signals = hasRealIdentities ? realSignals : fallbackSignals;
+
     const failed = Math.round(signals * (spec.failureRate ?? 0));
     const successful = Math.max(0, signals - failed);
     const explanation =
-      spec.status === 'active' && instrumented && signals > 0
+      spec.status === 'active' && instrumented && (signals > 0 || devices > 0)
         ? `${formatNumber(signals)} event signals recorded across ${formatNumber(devices)} active ${devices === 1 ? 'device' : 'devices'} in this window.`
         : spec.explanation;
 

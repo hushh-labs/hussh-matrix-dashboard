@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Mail, Phone, Search, User, UserCheck, Users, X, Zap } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Mail, Phone, Search, User, Users, X, Zap, LogIn } from 'lucide-react';
 
 import { cn } from '../lib/utils';
 import type { OneActiveUserIdentity } from '../lib/types';
@@ -17,7 +17,7 @@ interface FeatureUserBreakdownPanelProps {
 
 export function FeatureUserBreakdownPanel({
   featureLabel,
-  featureKey: _featureKey,
+  featureKey,
   featureIdentities,
   identities = [],
   fallbackIdentities = [],
@@ -25,32 +25,77 @@ export function FeatureUserBreakdownPanel({
   onClose,
 }: FeatureUserBreakdownPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterRegisteredOnly, setFilterRegisteredOnly] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
 
-  // If featureIdentities is explicitly passed (even if empty []), use it to show feature-specific usage.
-  const hasSpecificIdentities = Array.isArray(featureIdentities);
-  const baseIdentities = hasSpecificIdentities
+  const isSignInFeature =
+    featureKey === 'auth_started' ||
+    featureKey === 'daily_signin' ||
+    featureLabel.toLowerCase().includes('sign-in') ||
+    featureLabel.toLowerCase().includes('login');
+
+  // If featureIdentities has specific user items, use it to show feature-specific usage.
+  const hasSpecificIdentities = Array.isArray(featureIdentities) && featureIdentities.length > 0;
+  const rawIdentities = hasSpecificIdentities
     ? featureIdentities
     : identities.length > 0
     ? identities
     : fallbackIdentities;
 
+  // Deduplicate by resolved identity (UID, email, phone, or device ID)
+  const baseIdentities = useMemo(() => {
+    const map = new Map<string, OneActiveUserIdentity>();
+    for (const item of rawIdentities) {
+      const email = resolveUserEmail(item);
+      const phone = resolveUserPhoneNumber(item);
+      const name = resolveUserName(item);
+      const key =
+        (item.userId ? `uid:${item.userId.toLowerCase()}` : null) ||
+        (email !== 'Not available' ? `email:${email.toLowerCase().trim()}` : null) ||
+        (phone !== 'Not available' ? `phone:${phone.replace(/\D/g, '')}` : null) ||
+        `device:${item.userPseudoId || name}`;
+
+      if (map.has(key)) {
+        const existing = map.get(key)!;
+        existing.usageCount = (existing.usageCount ?? 1) + (item.usageCount ?? 1);
+        const timeExisting = existing.lastActiveTimestamp ? new Date(existing.lastActiveTimestamp).getTime() : 0;
+        const timeItem = item.lastActiveTimestamp ? new Date(item.lastActiveTimestamp).getTime() : 0;
+        if (timeItem > timeExisting) {
+          existing.lastActiveTimestamp = item.lastActiveTimestamp;
+        }
+      } else {
+        map.set(key, { ...item });
+      }
+    }
+    return Array.from(map.values());
+  }, [rawIdentities]);
+
   const isZeroCount =
     (typeof totalDevices === 'number' && totalDevices === 0) ||
-    (hasSpecificIdentities && baseIdentities.length === 0);
+    baseIdentities.length === 0;
 
   const scopedIdentities = isZeroCount ? [] : baseIdentities;
 
   const filteredIdentities = scopedIdentities
     .filter((item) => {
-      const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
-      if (filterRegisteredOnly && !hasInfo) return false;
+      const email = resolveUserEmail(item);
+      const phone = resolveUserPhoneNumber(item);
+      const name = resolveUserName(item);
+      const isRegistered = Boolean(
+        item.displayName ||
+        item.boundEmail ||
+        item.phoneNumber ||
+        item.userId ||
+        email !== 'Not available' ||
+        phone !== 'Not available' ||
+        (name && !name.startsWith('Guest Session') && name !== 'Not available')
+      );
+      if (filterRegisteredOnly && !isRegistered) return false;
+
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchName = item.displayName?.toLowerCase().includes(q);
-        const matchEmail = item.boundEmail?.toLowerCase().includes(q);
-        const matchPhone = item.phoneNumber?.toLowerCase().includes(q);
+        const matchName = name.toLowerCase().includes(q);
+        const matchEmail = email.toLowerCase().includes(q);
+        const matchPhone = phone.toLowerCase().includes(q);
         const matchUserId = item.userId?.toLowerCase().includes(q);
         const matchPseudo = item.userPseudoId?.toLowerCase().includes(q);
         const matchPlatform = item.platform?.toLowerCase().includes(q);
@@ -59,26 +104,16 @@ export function FeatureUserBreakdownPanel({
       return true;
     })
     .sort((a, b) => {
-      // Sort by usage count (highest usage first), then by recency
-      const countA = a.usageCount ?? 1;
-      const countB = b.usageCount ?? 1;
-      if (countA !== countB) return countB - countA;
-
-      if (a.lastActiveTimestamp && b.lastActiveTimestamp) {
-        const timeDiff = new Date(b.lastActiveTimestamp).getTime() - new Date(a.lastActiveTimestamp).getTime();
-        if (!isNaN(timeDiff) && timeDiff !== 0) return timeDiff;
+      // Rule 1: Sort strictly descending by Last Active timestamp (most recent first)
+      const timeA = a.lastActiveTimestamp ? new Date(a.lastActiveTimestamp).getTime() : 0;
+      const timeB = b.lastActiveTimestamp ? new Date(b.lastActiveTimestamp).getTime() : 0;
+      if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) {
+        return timeB - timeA;
       }
-      const aHasInfo = Boolean(a.displayName || a.boundEmail || a.phoneNumber);
-      const bHasInfo = Boolean(b.displayName || b.boundEmail || b.phoneNumber);
-      if (aHasInfo && !bHasInfo) return -1;
-      if (!aHasInfo && bHasInfo) return 1;
-      return 0;
+      return (b.usageCount ?? 1) - (a.usageCount ?? 1);
     });
 
   const displayedIdentities = filteredIdentities.slice(0, visibleCount);
-  const registeredCount = isZeroCount
-    ? 0
-    : filteredIdentities.filter((i) => i.displayName || i.boundEmail || i.phoneNumber || i.userId).length;
 
   return (
     <div className="rounded-xl border border-[#007aff]/30 bg-white p-4 shadow-lg animate-in fade-in duration-200">
@@ -90,43 +125,28 @@ export function FeatureUserBreakdownPanel({
               Users of <span className="text-[#007aff]">{featureLabel}</span>
             </h4>
             <span className="rounded-full bg-[#007aff]/10 px-2 py-0.5 text-xs font-bold text-[#007aff]">
-              {filteredIdentities.length} {filteredIdentities.length === 1 ? 'user' : 'users'}
-              {registeredCount > 0 ? ` (${registeredCount} registered resolved)` : ''}
+              {filteredIdentities.length} {filteredIdentities.length === 1 ? 'registered user' : 'registered users'}
             </span>
           </div>
           <p className="mt-0.5 text-[11px] font-semibold text-[#6e6e73]">
-            Feature-specific users who explicitly triggered event log signals for {featureLabel}.
+            {isSignInFeature
+              ? 'Distinct registered users who completed sign-in or authentication events in this window.'
+              : `Distinct registered users who explicitly triggered event logs for ${featureLabel}.`}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {!isZeroCount && filteredIdentities.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={() => setFilterRegisteredOnly(!filterRegisteredOnly)}
-                className={cn(
-                  'rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors flex items-center gap-1.5',
-                  filterRegisteredOnly
-                    ? 'bg-[#1f7a36] text-white'
-                    : 'bg-black/5 text-[#1d1d1f] hover:bg-black/10'
-                )}
-              >
-                <UserCheck className="h-3.5 w-3.5" />
-                {filterRegisteredOnly ? 'Registered Only' : 'Filter Registered'}
-              </button>
-
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
-                <input
-                  type="text"
-                  placeholder="Search Name, Email, Phone..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-44 sm:w-56 rounded-lg border border-black/10 bg-white py-1 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
-                />
-              </div>
-            </>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
+              <input
+                type="text"
+                placeholder="Search Name, Email, Phone..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-44 sm:w-56 rounded-lg border border-black/10 bg-white py-1 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
+              />
+            </div>
           )}
 
           {onClose && (
@@ -152,13 +172,12 @@ export function FeatureUserBreakdownPanel({
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-black/5 text-left text-[10px] font-bold uppercase tracking-wider text-[#86868b]">
-                <th className="py-2 px-3">User / Name</th>
+                <th className="py-2 px-3">User / Identity</th>
                 <th className="py-2 px-3">Email Address</th>
                 <th className="py-2 px-3">Contact Number</th>
-                <th className="py-2 px-3 text-center">Times Used</th>
+                <th className="py-2 px-3 text-center">{isSignInFeature ? 'Sign-ins' : 'Times Used'}</th>
                 <th className="py-2 px-3">Platform</th>
-                <th className="py-2 px-3">Active Status</th>
-                <th className="py-2 px-3 text-right">Last Active</th>
+                <th className="py-2 px-3">Session Type</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-black/5">
@@ -167,40 +186,64 @@ export function FeatureUserBreakdownPanel({
                 const email = resolveUserEmail(item, idx);
                 const phone = resolveUserPhoneNumber(item, idx);
                 const timesUsed = item.usageCount ?? 1;
+                const isRegistered = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
 
                 return (
                   <tr key={(item.boundEmail || item.userPseudoId || 'user') + idx} className="hover:bg-black/[0.02]">
                     <td className="py-2 px-3 font-semibold text-[#1d1d1f]">
                       <div className="flex items-center gap-2">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#007aff]/10 text-[#007aff] font-bold text-xs">
-                          {displayName ? displayName.charAt(0).toUpperCase() : <User className="h-3 w-3" />}
+                        <div
+                          className={cn(
+                            'flex h-6 w-6 items-center justify-center rounded-full font-bold text-xs',
+                            isRegistered ? 'bg-[#007aff]/10 text-[#007aff]' : 'bg-black/5 text-[#86868b]'
+                          )}
+                        >
+                          {isRegistered ? displayName.charAt(0).toUpperCase() : <User className="h-3 w-3" />}
                         </div>
                         <div className="flex flex-col">
                           <span className="font-bold text-xs text-[#1d1d1f]">
                             {displayName}
                           </span>
                           <span className="text-[10px] text-[#86868b]">
-                            {item.userId ? `ID: ${item.userId.slice(0, 10)}...` : (item.userPseudoId?.startsWith('reg_') ? 'Registered' : item.userPseudoId)}
+                            {item.userId
+                              ? `UID: ${item.userId.slice(0, 10)}...`
+                              : item.userPseudoId?.startsWith('reg_')
+                              ? 'Registered Catalog'
+                              : `Device: ${item.userPseudoId}`}
                           </span>
                         </div>
                       </div>
                     </td>
                     <td className="py-2 px-3 text-[#6e6e73]">
-                      <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/5 px-2 py-0.5 text-[11px] font-semibold text-[#007aff]">
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold',
+                          email !== 'Not available'
+                            ? 'bg-[#007aff]/5 text-[#007aff]'
+                            : 'bg-black/5 text-[#86868b]'
+                        )}
+                      >
                         <Mail className="h-3 w-3" />
                         {email}
                       </span>
                     </td>
                     <td className="py-2 px-3 text-[#6e6e73]">
-                      <span className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1f7a36]">
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold',
+                          phone !== 'Not available'
+                            ? 'bg-[#34c759]/10 text-[#1f7a36]'
+                            : 'bg-black/5 text-[#86868b]'
+                        )}
+                      >
                         <Phone className="h-3 w-3" />
                         {phone}
                       </span>
                     </td>
                     <td className="py-2 px-3 text-center font-semibold text-[#1d1d1f]">
                       <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/10 px-2 py-0.5 text-[11px] font-bold text-[#007aff]">
-                        <Zap className="h-3 w-3" />
-                        {timesUsed} {timesUsed === 1 ? 'time' : 'times'}
+                        {isSignInFeature ? <LogIn className="h-3 w-3" /> : <Zap className="h-3 w-3" />}
+                        {timesUsed} {isSignInFeature ? (timesUsed === 1 ? 'sign-in' : 'sign-ins') : (timesUsed === 1 ? 'time' : 'times')}
                       </span>
                     </td>
                     <td className="py-2 px-3 font-semibold text-[#86868b]">
@@ -209,24 +252,15 @@ export function FeatureUserBreakdownPanel({
                       </span>
                     </td>
                     <td className="py-2 px-3">
-                      {item.isDaily ? (
+                      {isRegistered ? (
                         <span className="rounded bg-[#34c759]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#1f7a36]">
-                          DAU Active
-                        </span>
-                      ) : item.isWeekly ? (
-                        <span className="rounded bg-[#007aff]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#007aff]">
-                          WAU
+                          Registered User
                         </span>
                       ) : (
                         <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-bold text-[#6e6e73]">
-                          MAU
+                          Guest Session
                         </span>
                       )}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono text-[11px] text-[#6e6e73]">
-                      {item.lastActiveTimestamp
-                        ? new Date(item.lastActiveTimestamp).toLocaleString()
-                        : '—'}
                     </td>
                   </tr>
                 );
