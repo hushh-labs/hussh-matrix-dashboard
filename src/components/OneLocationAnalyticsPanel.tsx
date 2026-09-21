@@ -8,6 +8,7 @@ import {
   CircleDot,
   ContactRound,
   Info,
+  LogIn,
   MapPin,
   MessageCircleMore,
   Radio,
@@ -71,6 +72,8 @@ const environments: Array<{
 ];
 
 const featureIcon: Record<string, typeof MapPin> = {
+  daily_signin: LogIn,
+  auth_started: LogIn,
   live_sharing: Radio,
   check_in: CheckCircle2,
   sms_safety: MessageCircleMore,
@@ -184,6 +187,18 @@ const featureAuditMap: Record<string, FeatureAuditInfo> = {
     badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
     explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_circle_created").',
   },
+  auth_started: {
+    status: 'active',
+    badgeLabel: 'Verified Active',
+    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+    explanation: 'Tracks daily user sign-ins, session authentication, and login events.',
+  },
+  daily_signin: {
+    status: 'active',
+    badgeLabel: 'Verified Active',
+    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+    explanation: 'Tracks daily user sign-ins, session authentication, and login events.',
+  },
 };
 
 function FeatureTable({
@@ -201,6 +216,8 @@ function FeatureTable({
 
   const sortedFeatures = useMemo(() => {
     const FIXED_ORDER = [
+      'auth_started',
+      'daily_signin',
       'live_sharing',
       'request_location',
       'public_sharing',

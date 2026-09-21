@@ -172,9 +172,9 @@ export function resolveUserName(
   }
 
   if (item.userPseudoId) {
-    return `Active Device (${item.userPseudoId.slice(0, 8)})`;
+    return `Guest Session (${item.userPseudoId.slice(0, 8)})`;
   }
-  return 'Active User';
+  return 'Not available';
 }
 
 export function resolveUserEmail(
@@ -188,7 +188,6 @@ export function resolveUserEmail(
   if (record?.email && record.email.trim() && record.email.includes('@')) {
     return record.email.trim();
   }
-  const name = resolveUserName(item, _index);
-  const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return `${slug}@gmail.com`;
+  // Strict non-fabrication rule: Return 'Not available' if no email in Firebase Auth
+  return 'Not available';
 }

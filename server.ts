@@ -3427,6 +3427,9 @@ ${capabilitySql.isHuman}
             usageCount: toNumber(row.timesUsed ?? 1),
           });
         }
+        if (result['auth_started'] && !result['daily_signin']) {
+          result['daily_signin'] = result['auth_started'];
+        }
         return result;
       })(),
       platforms: platforms.rows.map((row) => ({
