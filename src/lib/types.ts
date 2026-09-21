@@ -735,6 +735,7 @@ export interface OneActiveUserIdentity {
   isDaily: boolean;
   isWeekly: boolean;
   isMonthly: boolean;
+  usageCount?: number;
 }
 
 export interface OneActiveUsers {
@@ -928,6 +929,7 @@ export interface OneAppSummary {
   surfaces: OneSurfaceRow[];
   locationFeatures: OneLocationFeatureUsage[];
   locationAnalytics: OneLocationBehaviorAnalytics;
+  featureUserIdentities?: Record<string, OneActiveUserIdentity[]>;
   platforms: OnePlatformUsage[];
   acquisition: OneAcquisitionRow[];
   daily: OneDailyPoint[];

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Mail, Phone, Search, User, UserCheck, Users, X } from 'lucide-react';
+import { Mail, Phone, Search, User, UserCheck, Users, X, Zap } from 'lucide-react';
 
 import { cn } from '../lib/utils';
 import type { OneActiveUserIdentity } from '../lib/types';
@@ -7,85 +7,18 @@ import { resolveUserName, resolveUserEmail, resolveUserPhoneNumber } from '../li
 
 interface FeatureUserBreakdownPanelProps {
   featureLabel: string;
-  identities: OneActiveUserIdentity[];
+  featureKey?: string;
+  featureIdentities?: OneActiveUserIdentity[];
+  identities?: OneActiveUserIdentity[];
   fallbackIdentities?: OneActiveUserIdentity[];
   totalDevices?: number;
   onClose?: () => void;
 }
 
-function selectFeatureSpecificIdentities(
-  _featureLabel: string,
-  sourceIdentities: OneActiveUserIdentity[],
-  targetCount: number
-): OneActiveUserIdentity[] {
-  if (!sourceIdentities || sourceIdentities.length === 0 || targetCount <= 0) return [];
-
-  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-  const now = Date.now();
-
-  // Filter out pure fallback placeholders if we have real telemetry identities
-  const telemetryUsers = sourceIdentities.filter(
-    (item) => item.userPseudoId && !item.userPseudoId.startsWith('reg_')
-  );
-
-  const activeCatalog = telemetryUsers.length > 0 ? telemetryUsers : sourceIdentities;
-
-  // Filter strictly to trailing 7 days
-  const recentIdentities = activeCatalog.filter((item) => {
-    if (item.lastActiveTimestamp) {
-      const ts = new Date(item.lastActiveTimestamp).getTime();
-      if (!isNaN(ts) && ts > 0) {
-        if (now - ts > SEVEN_DAYS_MS && !item.isDaily && !item.isWeekly) {
-          return false;
-        }
-      }
-    }
-    return true;
-  });
-
-  const sourcePool = recentIdentities.length > 0 ? recentIdentities : activeCatalog;
-
-  // Sort strictly by recency (newest active users first)
-  const sortedSource = [...sourcePool].sort((a, b) => {
-    if (a.lastActiveTimestamp && b.lastActiveTimestamp) {
-      const diff = new Date(b.lastActiveTimestamp).getTime() - new Date(a.lastActiveTimestamp).getTime();
-      if (!isNaN(diff) && diff !== 0) return diff;
-    }
-    if (a.lastActiveTimestamp && !b.lastActiveTimestamp) return -1;
-    if (!a.lastActiveTimestamp && b.lastActiveTimestamp) return 1;
-
-    if (a.isDaily !== b.isDaily) return a.isDaily ? -1 : 1;
-    if (a.isWeekly !== b.isWeekly) return a.isWeekly ? -1 : 1;
-    return 0;
-  });
-
-  const result: OneActiveUserIdentity[] = [];
-  const usedKeys = new Set<string>();
-
-  const getKey = (item: OneActiveUserIdentity) => {
-    if (item.boundEmail) return item.boundEmail.toLowerCase().trim();
-    if (item.phoneNumber) return item.phoneNumber.trim();
-    if (item.userPseudoId) return item.userPseudoId;
-    if (item.displayName) return item.displayName.toLowerCase().trim();
-    return '';
-  };
-
-  // Select targetCount distinct unique users strictly in order of recency
-  for (let i = 0; i < sortedSource.length; i++) {
-    const item = sortedSource[i];
-    const k = getKey(item);
-    if (k && !usedKeys.has(k)) {
-      usedKeys.add(k);
-      result.push(item);
-      if (result.length >= targetCount) break;
-    }
-  }
-
-  return result;
-}
-
 export function FeatureUserBreakdownPanel({
   featureLabel,
+  featureKey: _featureKey,
+  featureIdentities,
   identities = [],
   fallbackIdentities = [],
   totalDevices,
@@ -95,15 +28,19 @@ export function FeatureUserBreakdownPanel({
   const [filterRegisteredOnly, setFilterRegisteredOnly] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
 
-  const baseIdentities = identities.length > 0 ? identities : fallbackIdentities;
-  const isZeroCount = typeof totalDevices === 'number' && totalDevices === 0;
-  const targetCount = isZeroCount
-    ? 0
-    : typeof totalDevices === 'number' && totalDevices > 0
-    ? totalDevices
-    : baseIdentities.length;
+  // If featureIdentities is explicitly passed (even if empty []), use it to show feature-specific usage.
+  const hasSpecificIdentities = Array.isArray(featureIdentities);
+  const baseIdentities = hasSpecificIdentities
+    ? featureIdentities
+    : identities.length > 0
+    ? identities
+    : fallbackIdentities;
 
-  const scopedIdentities = selectFeatureSpecificIdentities(featureLabel, baseIdentities, targetCount);
+  const isZeroCount =
+    (typeof totalDevices === 'number' && totalDevices === 0) ||
+    (hasSpecificIdentities && baseIdentities.length === 0);
+
+  const scopedIdentities = isZeroCount ? [] : baseIdentities;
 
   const filteredIdentities = scopedIdentities
     .filter((item) => {
@@ -122,6 +59,11 @@ export function FeatureUserBreakdownPanel({
       return true;
     })
     .sort((a, b) => {
+      // Sort by usage count (highest usage first), then by recency
+      const countA = a.usageCount ?? 1;
+      const countB = b.usageCount ?? 1;
+      if (countA !== countB) return countB - countA;
+
       if (a.lastActiveTimestamp && b.lastActiveTimestamp) {
         const timeDiff = new Date(b.lastActiveTimestamp).getTime() - new Date(a.lastActiveTimestamp).getTime();
         if (!isNaN(timeDiff) && timeDiff !== 0) return timeDiff;
@@ -148,18 +90,17 @@ export function FeatureUserBreakdownPanel({
               Users of <span className="text-[#007aff]">{featureLabel}</span>
             </h4>
             <span className="rounded-full bg-[#007aff]/10 px-2 py-0.5 text-xs font-bold text-[#007aff]">
-              {isZeroCount ? 0 : totalDevices !== undefined ? totalDevices : filteredIdentities.length}{' '}
-              {totalDevices === 1 || (!isZeroCount && filteredIdentities.length === 1) ? 'user' : 'users'}
+              {filteredIdentities.length} {filteredIdentities.length === 1 ? 'user' : 'users'}
               {registeredCount > 0 ? ` (${registeredCount} registered resolved)` : ''}
             </span>
           </div>
           <p className="mt-0.5 text-[11px] font-semibold text-[#6e6e73]">
-            Registered identities (Name, Email & Mobile resolved via Firebase catalog) who interacted with this feature.
+            Feature-specific users who explicitly triggered event log signals for {featureLabel}.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {!isZeroCount && (
+          {!isZeroCount && filteredIdentities.length > 0 && (
             <>
               <button
                 type="button"
@@ -214,6 +155,7 @@ export function FeatureUserBreakdownPanel({
                 <th className="py-2 px-3">User / Name</th>
                 <th className="py-2 px-3">Email Address</th>
                 <th className="py-2 px-3">Contact Number</th>
+                <th className="py-2 px-3 text-center">Times Used</th>
                 <th className="py-2 px-3">Platform</th>
                 <th className="py-2 px-3">Active Status</th>
                 <th className="py-2 px-3 text-right">Last Active</th>
@@ -224,6 +166,7 @@ export function FeatureUserBreakdownPanel({
                 const displayName = resolveUserName(item, idx);
                 const email = resolveUserEmail(item, idx);
                 const phone = resolveUserPhoneNumber(item, idx);
+                const timesUsed = item.usageCount ?? 1;
 
                 return (
                   <tr key={(item.boundEmail || item.userPseudoId || 'user') + idx} className="hover:bg-black/[0.02]">
@@ -252,6 +195,12 @@ export function FeatureUserBreakdownPanel({
                       <span className="inline-flex items-center gap-1 rounded bg-[#34c759]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1f7a36]">
                         <Phone className="h-3 w-3" />
                         {phone}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-center font-semibold text-[#1d1d1f]">
+                      <span className="inline-flex items-center gap-1 rounded bg-[#007aff]/10 px-2 py-0.5 text-[11px] font-bold text-[#007aff]">
+                        <Zap className="h-3 w-3" />
+                        {timesUsed} {timesUsed === 1 ? 'time' : 'times'}
                       </span>
                     </td>
                     <td className="py-2 px-3 font-semibold text-[#86868b]">

@@ -2832,6 +2832,103 @@ ${capabilitySql.isHuman}
     WHERE ${dateFilter} AND ${meaningful}
   `;
 
+  const featureUsersQuery = `
+    WITH raw_events AS (
+      SELECT
+        user_pseudo_id,
+        COALESCE(platform, 'UNKNOWN') AS platform,
+        event_name AS eventName,
+        event_timestamp,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') AS actionName
+      FROM ${table}
+      WHERE ${dateFilter}
+    ),
+    classified AS (
+      SELECT
+        user_pseudo_id,
+        platform,
+        event_timestamp,
+        CASE
+          WHEN eventName = 'one_location_share_confirmed' THEN 'live_sharing'
+          WHEN eventName = 'one_location_check_in_completed' OR eventName LIKE '%check_in%' THEN 'check_in'
+          WHEN eventName LIKE '%check_out%' THEN 'check_out'
+          WHEN eventName = 'one_location_journey_action' AND actionName = 'nearby_check_in_result' THEN 'check_in'
+          WHEN eventName = 'one_location_sos_triggered' THEN 'sms_safety'
+          WHEN eventName = 'one_location_request_sent' THEN 'request_location'
+          WHEN eventName = 'one_location_public_link_created' THEN 'public_sharing'
+          WHEN eventName = 'one_location_contact_signal_synced' THEN 'contact_sync'
+          WHEN eventName = 'one_location_circle_invite_created' THEN 'invitations'
+          WHEN eventName = 'one_location_circle_created' THEN 'circle_engagement'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'contact_invitation_%' THEN 'invitations'
+          WHEN eventName = 'one_location_journey_action' AND actionName = 'circle_code_shared' THEN 'invitations'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'contact_sync_%' THEN 'contact_sync'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'public_link_%' THEN 'public_sharing'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_request_%' THEN 'request_location'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_share_%' THEN 'live_sharing'
+          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'circle_%' THEN 'circle_engagement'
+          
+          WHEN eventName IN ('auth_started', 'one_auth_started', 'one_auth_login_completed') THEN 'auth_started'
+          WHEN eventName IN ('phone_verification_started', 'phone_verification_completed', 'one_auth_phone_verified', 'one_phone_verified') THEN 'phone_verified'
+          WHEN eventName IN ('google_sign_in_started', 'google_sign_in_completed', 'one_auth_google_signed_in') THEN 'google_signin'
+          WHEN eventName IN ('profile_created', 'one_auth_profile_created') THEN 'profile_created'
+          WHEN eventName IN ('onboarding_completed', 'one_auth_onboarding_completed', 'one_onboarding_completed') THEN 'onboarding_completed'
+
+          WHEN eventName IN ('portfolio_viewed', 'one_finance_portfolio_viewed') THEN 'portfolio_view'
+          WHEN eventName IN ('recommendation_viewed', 'one_finance_recommendation_viewed') THEN 'ai_recommendation'
+          WHEN eventName IN ('analysis_stream_started', 'one_finance_analysis_started') THEN 'analysis_stream'
+          WHEN eventName IN ('import_parse_completed', 'import_save_completed') THEN 'receipt_parsed'
+
+          WHEN eventName IN ('consent_action_submitted', 'one_consent_preferences_updated') THEN 'preferences_updated'
+          WHEN eventName IN ('one_consent_data_unlocked', 'data_unlocked') THEN 'data_unlock'
+          WHEN eventName IN ('permission_granted', 'one_consent_permission_granted') THEN 'permission_granted'
+
+          WHEN eventName IN ('gmail_connect_started', 'gmail_connect_result', 'one_gmail_connected') THEN 'account_connected'
+          WHEN eventName IN ('gmail_sync_requested', 'one_gmail_receipt_synced') THEN 'receipt_sync'
+          WHEN eventName IN ('hushh_mail_signin_screen_view', 'one_gmail_inbox_viewed') THEN 'inbox_viewed'
+
+          WHEN eventName IN ('ria_verification_status_changed', 'one_ria_verification_checked') THEN 'verification_checked'
+          WHEN eventName IN ('ria_workspace_opened', 'one_ria_workspace_visited') THEN 'workspace_visited'
+          WHEN eventName IN ('ria_request_created', 'one_ria_strategy_requested') THEN 'strategy_requested'
+
+          WHEN eventName IN ('marketplace_browsed', 'one_marketplace_browsed') THEN 'marketplace_browsed'
+          WHEN eventName IN ('marketplace_profile_viewed', 'one_marketplace_profile_viewed') THEN 'profile_viewed'
+
+          WHEN eventName IN ('agent_pkm_context_resolved', 'one_memory_context_resolved') THEN 'context_resolved'
+          ELSE NULL
+        END AS feature_key
+      FROM raw_events
+    ),
+    user_identities AS (
+      SELECT
+        user_pseudo_id,
+        MAX(IF(LOWER(user_id) != LOWER(TO_HEX(MD5(user_pseudo_id))), user_id, NULL)) AS user_id,
+        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('email', 'user_email', 'uid', 'user_id', 'phone_number', 'phone') LIMIT 1)) AS prop_email,
+        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('name', 'display_name', 'user_name', 'username', 'full_name') LIMIT 1)) AS prop_name,
+        MAX((SELECT value.string_value FROM UNNEST(user_properties) WHERE key IN ('phone', 'phone_number', 'contact', 'mobile', 'user_phone') LIMIT 1)) AS prop_phone,
+        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('email', 'user_email', 'account_email', 'mail', 'uid', 'user_id', 'firebase_uid', 'sub') LIMIT 1)) AS param_email,
+        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('display_name', 'name', 'user_name', 'username', 'full_name', 'first_name') LIMIT 1)) AS param_name,
+        MAX((SELECT value.string_value FROM UNNEST(event_params) WHERE key IN ('phone', 'phone_number', 'contact', 'contact_number', 'mobile', 'mobile_number', 'user_phone', 'caller_phone', 'telephone', 'phone_no') LIMIT 1)) AS param_phone
+      FROM ${table}
+      WHERE ${dateFilter}
+      GROUP BY user_pseudo_id
+    )
+    SELECT
+      c.feature_key AS featureKey,
+      c.user_pseudo_id AS userPseudoId,
+      MAX(i.user_id) AS userId,
+      MAX(COALESCE(i.prop_email, i.param_email)) AS boundEmail,
+      MAX(COALESCE(i.prop_name, i.param_name)) AS paramName,
+      MAX(COALESCE(i.prop_phone, i.param_phone)) AS paramPhone,
+      MAX(c.platform) AS platform,
+      COUNT(*) AS timesUsed,
+      MAX(c.event_timestamp) AS max_event_ts
+    FROM classified c
+    LEFT JOIN user_identities i ON c.user_pseudo_id = i.user_pseudo_id
+    WHERE c.feature_key IS NOT NULL
+    GROUP BY c.feature_key, c.user_pseudo_id
+    ORDER BY c.feature_key, timesUsed DESC, max_event_ts DESC
+  `;
+
   const queryProject = BQ_JOB_PROJECT || projectId;
   const [
     funnel,
@@ -2853,6 +2950,7 @@ ${capabilitySql.isHuman}
     retention,
     activationStages,
     activeIdentities,
+    featureUsers,
     firebaseMap,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
@@ -2874,6 +2972,7 @@ ${capabilitySql.isHuman}
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, activeIdentitiesQuery),
+    queryBigQuerySql(queryProject, featureUsersQuery),
     getFirebaseUsersMap(),
   ]);
 
@@ -3270,6 +3369,66 @@ ${capabilitySql.isHuman}
             ? 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.'
             : 'The detailed journey event has not reached the UAT export yet. TestFlight, Android internal and UAT web events will appear after the next GA4 export.',
       },
+      featureUserIdentities: (() => {
+        const result: Record<string, any[]> = {};
+        for (const row of featureUsers.rows) {
+          const featKey = String(row.featureKey);
+          if (!featKey) continue;
+          if (!result[featKey]) result[featKey] = [];
+
+          let userIdStr = row.userId ? String(row.userId) : null;
+          const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
+          const boundEmailStr = row.boundEmail ? String(row.boundEmail) : null;
+          const paramNameStr = row.paramName ? String(row.paramName) : null;
+          const paramPhoneStr = row.paramPhone ? String(row.paramPhone) : null;
+          const phoneDigits = paramPhoneStr ? paramPhoneStr.replace(/\D/g, '') : null;
+
+          if (userIdStr && pseudoIdStr && crypto.createHash('md5').update(pseudoIdStr).digest('hex').toLowerCase() === userIdStr.toLowerCase()) {
+            userIdStr = null;
+          }
+
+          const userMatch = (userIdStr ? firebaseMap.get(userIdStr) : null)
+            || (userIdStr ? firebaseMap.get(userIdStr.toLowerCase()) : null)
+            || (boundEmailStr ? firebaseMap.get(boundEmailStr.toLowerCase().trim()) : null)
+            || (pseudoIdStr ? firebaseMap.get(pseudoIdStr) : null)
+            || (paramPhoneStr ? firebaseMap.get(paramPhoneStr.trim()) : null)
+            || (phoneDigits ? firebaseMap.get(phoneDigits) : null)
+            || (phoneDigits && phoneDigits.length >= 10 ? firebaseMap.get(phoneDigits.slice(-10)) : null);
+
+          const realEmailFromStr = (boundEmailStr && boundEmailStr.includes('@')) ? boundEmailStr.toLowerCase().trim() : null;
+          const boundEmail = userMatch?.email || realEmailFromStr || null;
+          const displayName = userMatch?.displayName || paramNameStr || (boundEmail ? boundEmail.split('@')[0] : null);
+          const phoneNumber = userMatch?.phoneNumber || paramPhoneStr || null;
+
+          let formattedTimestamp = '';
+          const rawTimestamp = row.max_event_ts ?? row.maxEventTs;
+          if (rawTimestamp) {
+            const numTs = Number(rawTimestamp);
+            if (Number.isFinite(numTs) && numTs > 1000000000000000) {
+              formattedTimestamp = new Date(Math.floor(numTs / 1000)).toISOString();
+            } else if (Number.isFinite(numTs) && numTs > 1000000000) {
+              formattedTimestamp = new Date(numTs).toISOString();
+            } else {
+              formattedTimestamp = String(rawTimestamp);
+            }
+          }
+
+          result[featKey].push({
+            userPseudoId: String(pseudoIdStr ?? ''),
+            userId: userIdStr,
+            displayName,
+            boundEmail,
+            phoneNumber,
+            platform: String(row.platform ?? 'UNKNOWN'),
+            lastActiveTimestamp: formattedTimestamp,
+            isDaily: true,
+            isWeekly: true,
+            isMonthly: true,
+            usageCount: toNumber(row.timesUsed ?? 1),
+          });
+        }
+        return result;
+      })(),
       platforms: platforms.rows.map((row) => ({
         platform: String(row.platform),
         users: toNumber(row.users),

@@ -950,6 +950,8 @@ export function AgentCapabilityAnalyticsPanel({
                           <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
                             <FeatureUserBreakdownPanel
                               featureLabel={feature.label}
+                              featureKey={feature.key}
+                              featureIdentities={activeSummary?.featureUserIdentities?.[feature.key] || []}
                               identities={activeIdentities}
                               fallbackIdentities={one?.activeUsers?.identities || []}
                               totalDevices={feature.devices}

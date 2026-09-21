@@ -190,10 +190,12 @@ function FeatureTable({
   features,
   environment,
   identities = [],
+  featureUserIdentities = {},
 }: {
   features: OneLocationBehaviorMetric[];
   environment: LocationAnalyticsEnvironment;
   identities?: OneActiveUserIdentity[];
+  featureUserIdentities?: Record<string, OneActiveUserIdentity[]>;
 }) {
   const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
 
@@ -294,6 +296,8 @@ function FeatureTable({
                 <div className="mt-3 border-t border-black/5 pt-3">
                   <FeatureUserBreakdownPanel
                     featureLabel={feature.label}
+                    featureKey={feature.key}
+                    featureIdentities={featureUserIdentities[feature.key] || []}
                     identities={identities}
                     fallbackIdentities={identities}
                     totalDevices={feature.users ?? undefined}
@@ -382,6 +386,8 @@ function FeatureTable({
                       <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
                         <FeatureUserBreakdownPanel
                           featureLabel={feature.label}
+                          featureKey={feature.key}
+                          featureIdentities={featureUserIdentities[feature.key] || []}
                           identities={identities}
                           fallbackIdentities={identities}
                           totalDevices={feature.users ?? undefined}
@@ -673,7 +679,7 @@ export function OneLocationAnalyticsPanel({
             <p className={appleLabel}>Feature adoption</p>
             <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What people actually use</h3>
           </div>
-          <FeatureTable features={locationAnalytics.features} environment={environment} identities={selectedOne.activeUsers.identities} />
+          <FeatureTable features={locationAnalytics.features} environment={environment} identities={selectedOne.activeUsers.identities} featureUserIdentities={selectedOne.featureUserIdentities} />
         </section>
       )}
 
