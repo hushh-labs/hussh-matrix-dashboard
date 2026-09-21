@@ -5,6 +5,8 @@ interface FirebaseUserRecord {
   displayName?: string | null;
   email?: string | null;
   phoneNumber?: string | null;
+  actorIdentityPhoneNumber?: string | null;
+  phoneVerified?: boolean;
 }
 
 const userCatalogMap = firebaseUserMapJson as Record<string, FirebaseUserRecord>;
@@ -127,18 +129,34 @@ export function resolveUserPhoneNumber(
   item: Partial<OneActiveUserIdentity>,
   _index: number = 0
 ): string {
-  // 1. Direct phone number from telemetry
+  // 1. Direct phone number from telemetry/identity payload
   if (item.phoneNumber && item.phoneNumber.trim() && item.phoneNumber.trim() !== '—') {
     return item.phoneNumber.trim();
   }
 
-  // 2. Lookup in Firebase catalog by userId, boundEmail, displayName, or userPseudoId
+  // 2. Lookup in user catalog by userId, boundEmail, displayName, or userPseudoId
   const record = findInCatalog(item);
+
+  // 2a. Primary: Native Firebase Auth phoneNumber
   if (record?.phoneNumber && record.phoneNumber.trim() && record.phoneNumber.trim() !== '—') {
     return record.phoneNumber.trim();
   }
 
-  // 3. Strict non-fabrication rule: Return 'Not available' if no phone number in Firebase Auth
+  // 2b. Secondary Fallback: actor_identity_cache.phone_number (from post-auth phone mandate claim)
+  if (record?.actorIdentityPhoneNumber && record.actorIdentityPhoneNumber.trim() && record.actorIdentityPhoneNumber.trim() !== '—') {
+    if (record.phoneVerified !== false) {
+      return record.actorIdentityPhoneNumber.trim();
+    }
+  }
+
+  // 2c. Direct check on item for actorIdentityPhoneNumber
+  if ((item as any)?.actorIdentityPhoneNumber && (item as any).actorIdentityPhoneNumber.trim()) {
+    if ((item as any).phoneVerified !== false) {
+      return (item as any).actorIdentityPhoneNumber.trim();
+    }
+  }
+
+  // 3. Strict non-fabrication rule: Return 'Not available' if no phone number in Firebase Auth or actor_identity_cache
   return 'Not available';
 }
 
