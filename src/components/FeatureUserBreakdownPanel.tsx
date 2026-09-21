@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Mail, Phone, Search, User, UserCheck, Users, X, Zap, LogIn } from 'lucide-react';
+import { Mail, Phone, Search, User, Users, X, Zap, LogIn } from 'lucide-react';
 
 import { cn } from '../lib/utils';
 import type { OneActiveUserIdentity } from '../lib/types';
@@ -25,7 +25,6 @@ export function FeatureUserBreakdownPanel({
   onClose,
 }: FeatureUserBreakdownPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterRegisteredOnly, setFilterRegisteredOnly] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
 
   const isSignInFeature =
@@ -78,13 +77,25 @@ export function FeatureUserBreakdownPanel({
 
   const filteredIdentities = scopedIdentities
     .filter((item) => {
-      const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
-      if (filterRegisteredOnly && !hasInfo) return false;
+      const email = resolveUserEmail(item);
+      const phone = resolveUserPhoneNumber(item);
+      const name = resolveUserName(item);
+      const hasRegisteredInfo = Boolean(
+        item.displayName ||
+        item.boundEmail ||
+        item.phoneNumber ||
+        item.userId ||
+        email !== 'Not available' ||
+        phone !== 'Not available' ||
+        (name && !name.startsWith('Guest Session') && name !== 'Not available')
+      );
+      if (!hasRegisteredInfo) return false;
+
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchName = item.displayName?.toLowerCase().includes(q);
-        const matchEmail = item.boundEmail?.toLowerCase().includes(q);
-        const matchPhone = item.phoneNumber?.toLowerCase().includes(q);
+        const matchName = name.toLowerCase().includes(q);
+        const matchEmail = email.toLowerCase().includes(q);
+        const matchPhone = phone.toLowerCase().includes(q);
         const matchUserId = item.userId?.toLowerCase().includes(q);
         const matchPseudo = item.userPseudoId?.toLowerCase().includes(q);
         const matchPlatform = item.platform?.toLowerCase().includes(q);
@@ -103,10 +114,6 @@ export function FeatureUserBreakdownPanel({
     });
 
   const displayedIdentities = filteredIdentities.slice(0, visibleCount);
-  const registeredCount = isZeroCount
-    ? 0
-    : filteredIdentities.filter((i) => i.displayName || i.boundEmail || i.phoneNumber || i.userId).length;
-  const guestCount = filteredIdentities.length - registeredCount;
 
   return (
     <div className="rounded-xl border border-[#007aff]/30 bg-white p-4 shadow-lg animate-in fade-in duration-200">
@@ -118,45 +125,28 @@ export function FeatureUserBreakdownPanel({
               Users of <span className="text-[#007aff]">{featureLabel}</span>
             </h4>
             <span className="rounded-full bg-[#007aff]/10 px-2 py-0.5 text-xs font-bold text-[#007aff]">
-              {filteredIdentities.length} {filteredIdentities.length === 1 ? 'unique user' : 'unique users'}
-              {registeredCount > 0 ? ` (${registeredCount} registered resolved, ${guestCount} guest sessions)` : ''}
+              {filteredIdentities.length} {filteredIdentities.length === 1 ? 'registered user' : 'registered users'}
             </span>
           </div>
           <p className="mt-0.5 text-[11px] font-semibold text-[#6e6e73]">
             {isSignInFeature
-              ? 'Distinct users who completed daily sign-in or authentication events in this window.'
-              : `Distinct users who explicitly triggered event logs for ${featureLabel}.`}
+              ? 'Distinct registered users who completed sign-in or authentication events in this window.'
+              : `Distinct registered users who explicitly triggered event logs for ${featureLabel}.`}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {!isZeroCount && filteredIdentities.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={() => setFilterRegisteredOnly(!filterRegisteredOnly)}
-                className={cn(
-                  'rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors flex items-center gap-1.5',
-                  filterRegisteredOnly
-                    ? 'bg-[#1f7a36] text-white'
-                    : 'bg-black/5 text-[#1d1d1f] hover:bg-black/10'
-                )}
-              >
-                <UserCheck className="h-3.5 w-3.5" />
-                {filterRegisteredOnly ? 'Registered Only' : 'Filter Registered'}
-              </button>
-
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
-                <input
-                  type="text"
-                  placeholder="Search Name, Email, Phone..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-44 sm:w-56 rounded-lg border border-black/10 bg-white py-1 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
-                />
-              </div>
-            </>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868b]" />
+              <input
+                type="text"
+                placeholder="Search Name, Email, Phone..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-44 sm:w-56 rounded-lg border border-black/10 bg-white py-1 pl-8 pr-3 text-xs font-semibold text-[#1d1d1f] placeholder-[#86868b] focus:border-[#007aff] focus:outline-none"
+              />
+            </div>
           )}
 
           {onClose && (
