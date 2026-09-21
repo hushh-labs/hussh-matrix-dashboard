@@ -2886,6 +2886,7 @@ ${capabilitySql.isHuman}
           WHEN eventName IN ('gmail_connect_started', 'gmail_connect_result', 'one_gmail_connected') THEN 'account_connected'
           WHEN eventName IN ('gmail_sync_requested', 'one_gmail_receipt_synced') THEN 'receipt_sync'
           WHEN eventName IN ('hushh_mail_signin_screen_view', 'one_gmail_inbox_viewed') THEN 'inbox_viewed'
+          WHEN eventName IN ('autocategory_applied', 'receipt_categorized', 'one_gmail_receipt_categorized') THEN 'autocategory_applied'
 
           WHEN eventName IN ('ria_verification_status_changed', 'one_ria_verification_checked') THEN 'verification_checked'
           WHEN eventName IN ('ria_workspace_opened', 'one_ria_workspace_visited') THEN 'workspace_visited'
