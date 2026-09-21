@@ -12,6 +12,7 @@ interface FeatureUserBreakdownPanelProps {
   identities?: OneActiveUserIdentity[];
   fallbackIdentities?: OneActiveUserIdentity[];
   totalDevices?: number;
+  isUat?: boolean;
   onClose?: () => void;
 }
 
@@ -22,6 +23,7 @@ export function FeatureUserBreakdownPanel({
   identities = [],
   fallbackIdentities = [],
   totalDevices,
+  isUat = false,
   onClose,
 }: FeatureUserBreakdownPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -50,8 +52,9 @@ export function FeatureUserBreakdownPanel({
 
   const filteredIdentities = scopedIdentities
     .filter((item) => {
-      const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
-      if (filterRegisteredOnly && !hasInfo) return false;
+      const isRegistered = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
+      if (isUat && !isRegistered) return false;
+      if (filterRegisteredOnly && !isRegistered) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchName = item.displayName?.toLowerCase().includes(q);
@@ -91,13 +94,17 @@ export function FeatureUserBreakdownPanel({
             </h4>
             <span className="rounded-full bg-[#007aff]/10 px-2 py-0.5 text-xs font-bold text-[#007aff]">
               {filteredIdentities.length} {filteredIdentities.length === 1 ? 'unique user' : 'unique users'}
-              {registeredCount > 0 ? ` (${registeredCount} registered resolved, ${guestCount} guest sessions)` : ''}
+              {registeredCount > 0
+                ? isUat
+                  ? ` (${registeredCount} registered resolved)`
+                  : ` (${registeredCount} registered resolved, ${guestCount} guest sessions)`
+                : ''}
             </span>
           </div>
           <p className="mt-0.5 text-[11px] font-semibold text-[#6e6e73]">
             {isSignInFeature
               ? 'Distinct users who completed daily sign-in or authentication events in this window.'
-              : `Distinct users who explicitly triggered event logs for ${featureLabel}. Sorted by Last Active timestamp.`}
+              : `Distinct users who explicitly triggered event logs for ${featureLabel}.`}
           </p>
         </div>
 
@@ -160,7 +167,6 @@ export function FeatureUserBreakdownPanel({
                 <th className="py-2 px-3 text-center">{isSignInFeature ? 'Sign-ins' : 'Times Used'}</th>
                 <th className="py-2 px-3">Platform</th>
                 <th className="py-2 px-3">Session Type</th>
-                <th className="py-2 px-3 text-right">Last Active (Descending)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-black/5">
@@ -244,11 +250,6 @@ export function FeatureUserBreakdownPanel({
                           Guest Session
                         </span>
                       )}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono text-[11px] font-semibold text-[#1d1d1f]">
-                      {item.lastActiveTimestamp
-                        ? new Date(item.lastActiveTimestamp).toLocaleString()
-                        : '—'}
                     </td>
                   </tr>
                 );
