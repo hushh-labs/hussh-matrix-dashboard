@@ -888,10 +888,16 @@ export interface OneDailyPoint {
 
 export interface OneAppSummary {
   sourceLabel?: string;
+  sourceWebHost?: string;
   generatedAt?: string;
   realtimeMode?: string;
   expectedLagSeconds?: number | null;
   available: boolean;
+  surfaceScope?: {
+    webHost: string;
+    strictWebHost: boolean;
+    nativeFromSameProperty: boolean;
+  };
   windowDays: number;
   range?: { startDate: string; endDate: string; days: number };
   rangeTotals: { users: number; sessions: number; events: number };
@@ -914,6 +920,12 @@ export interface OneAppSummary {
   activationStages: OneActivationStage[];
   capabilities: OneCapabilityUsage[];
   surfaces: OneSurfaceRow[];
+  nativeEnvironments?: Array<{
+    platform: string;
+    environment: string;
+    devices: number;
+    events: number;
+  }>;
   locationFeatures: OneLocationFeatureUsage[];
   locationAnalytics: OneLocationBehaviorAnalytics;
   featureUsage: Record<string, { devices: number; signals: number }>;
@@ -966,6 +978,7 @@ export interface OrgIdentity {
   devices: number;
   accounts: number;
   identifiedDevices: number;
+  windowDays: number;
   /** Share of devices carrying any account identity. */
   coverage: number | null;
   byPlatform: OrgIdentityPlatform[];

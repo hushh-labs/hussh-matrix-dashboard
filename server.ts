@@ -2163,11 +2163,10 @@ const ONE_APP_UAT_HOST = process.env.ONE_APP_UAT_WEB_HOST || 'uat.one.hushh.ai';
 function oneAppSurfaceFilter(webHost: string): string {
   return `(
       platform IN ('IOS', 'ANDROID')
-      OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) = ${sqlStringLiteral(webHost)}
-      OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) LIKE 'localhost%'
-      OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) LIKE '%.vercel.app'
-      OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) LIKE '%.hushh.ai'
-      OR (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location') IS NULL
+      OR (
+        platform = 'WEB'
+        AND NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) = ${sqlStringLiteral(webHost)}
+      )
     )`;
 }
 
@@ -2464,6 +2463,28 @@ ${capabilitySql.isDeliberate}
     GROUP BY surface, host
     ORDER BY users DESC
     LIMIT 15
+  `;
+
+  // Native streams share the GA4 property with web. Preserve their emitted
+  // environment tag as an aggregate diagnostic: the public-store workflows
+  // currently build against the UAT backend, and silently calling those rows
+  // "production" would make the environment selector dishonest. Automatic
+  // Firebase lifecycle events have no custom `env` parameter and remain
+  // explicitly labelled as such.
+  const nativeEnvironmentQuery = `
+    SELECT
+      platform,
+      COALESCE(
+        NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env'), ''),
+        'unlabeled'
+      ) AS environment,
+      COUNT(DISTINCT user_pseudo_id) AS devices,
+      COUNT(*) AS events
+    FROM ${table}
+    WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true)}
+      AND platform IN ('IOS', 'ANDROID')
+    GROUP BY platform, environment
+    ORDER BY platform, events DESC
   `;
 
   const acquisitionQuery = `
@@ -2778,6 +2799,7 @@ ${capabilitySql.isDeliberate}
     retention,
     activationStages,
     featureUsage,
+    nativeEnvironments,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
     queryBigQuerySql(queryProject, agentQuery),
@@ -2798,6 +2820,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
+    queryBigQuerySql(queryProject, nativeEnvironmentQuery),
   ]);
 
   const errors = [
@@ -2820,6 +2843,7 @@ ${capabilitySql.isDeliberate}
     retention.error,
     activationStages.error,
     featureUsage.error,
+    nativeEnvironments.error,
   ].filter(Boolean);
 
   const hasAnyRows =
@@ -2863,6 +2887,11 @@ ${capabilitySql.isDeliberate}
       sourceDataset: dataset,
       sourceLabel: 'GA4 export',
       sourceWebHost: webHost,
+      surfaceScope: {
+        webHost,
+        strictWebHost: true,
+        nativeFromSameProperty: true,
+      },
       generatedAt,
       realtimeMode: 'streaming_export',
       expectedLagSeconds: 300,
@@ -3012,6 +3041,12 @@ ${capabilitySql.isDeliberate}
         surface: String(row.surface),
         host: String(row.host),
         users: toNumber(row.users),
+      })),
+      nativeEnvironments: nativeEnvironments.rows.map((row) => ({
+        platform: String(row.platform),
+        environment: String(row.environment),
+        devices: toNumber(row.devices),
+        events: toNumber(row.events),
       })),
       locationFeatures: locationFeatures.rows.map((row) => ({
         eventName: String(row.eventName),
@@ -4956,14 +4991,28 @@ async function fetchGrowthSummary(
   // rest, so the page reports devices and shows the shortfall here instead of
   // hiding it behind a single confident number.
   const identityQuery = `
+    WITH scoped AS (
+      SELECT
+        COALESCE(platform, 'UNKNOWN') AS platform,
+        user_pseudo_id,
+        NULLIF(user_id, '') AS user_id
+      FROM ${table}
+      WHERE ${historyFilter} AND ${surface} AND ${meaningful}
+    )
     SELECT
-      COALESCE(platform, 'UNKNOWN') AS platform,
+      platform,
       COUNT(DISTINCT user_pseudo_id) AS devices,
       COUNT(DISTINCT user_id) AS accounts,
       COUNT(DISTINCT IF(user_id IS NOT NULL, user_pseudo_id, NULL)) AS identifiedDevices
-    FROM ${table}
-    WHERE ${historyFilter} AND ${surface} AND ${meaningful}
+    FROM scoped
     GROUP BY platform
+    UNION ALL
+    SELECT
+      '__ALL__' AS platform,
+      COUNT(DISTINCT CONCAT(platform, ':', user_pseudo_id)) AS devices,
+      COUNT(DISTINCT user_id) AS accounts,
+      COUNT(DISTINCT IF(user_id IS NOT NULL, CONCAT(platform, ':', user_pseudo_id), NULL)) AS identifiedDevices
+    FROM scoped
     ORDER BY devices DESC
   `;
 
@@ -5143,24 +5192,25 @@ async function fetchGrowthSummary(
       // could be counted as people, and that slice is small enough that
       // publishing it as the headline would erase most of the audience.
       identity: (() => {
-        const rows = identity.rows.map((row) => ({
+        const allRows = identity.rows.map((row) => ({
           platform: String(row.platform ?? 'UNKNOWN'),
           devices: toNumber(row.devices),
           accounts: toNumber(row.accounts),
           identifiedDevices: toNumber(row.identifiedDevices),
         }));
-        const devices = rows.reduce((sum, r) => sum + r.devices, 0);
-        const identified = rows.reduce((sum, r) => sum + r.identifiedDevices, 0);
-        // Accounts are summed across platforms rather than counted distinctly
-        // because the same person on iOS and web resolves to the same hash --
-        // but with web binding nothing today there is no overlap to correct
-        // for. Revisit once web User-ID lands.
-        const accounts = rows.reduce((sum, r) => sum + r.accounts, 0);
+        const total = allRows.find((row) => row.platform === '__ALL__');
+        const rows = allRows.filter((row) => row.platform !== '__ALL__');
+        const devices = total?.devices ?? 0;
+        const identified = total?.identifiedDevices ?? 0;
+        // This is globally distinct, not a sum of platform account counts: a
+        // stable account used on iOS and web must still count once.
+        const accounts = total?.accounts ?? 0;
         return {
           devices,
           accounts,
           identifiedDevices: identified,
           coverage: devices > 0 ? identified / devices : null,
+          windowDays: 365,
           byPlatform: rows,
         };
       })(),

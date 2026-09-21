@@ -856,6 +856,9 @@ function Provenance({ one, rangeLabel }: { one: OneAppSummary; rangeLabel: strin
   const lagHours = typeof one.expectedLagSeconds === 'number'
     ? Math.round(one.expectedLagSeconds / 3600)
     : null;
+  const nativeUatTagged = (one.nativeEnvironments ?? []).some(
+    (row) => row.environment === 'uat' && row.events > 0,
+  );
 
   return (
     <div className={cn(applePanel, 'flex flex-col gap-2 p-5')}>
@@ -867,8 +870,10 @@ function Provenance({ one, rangeLabel }: { one: OneAppSummary; rangeLabel: strin
         Counts are <strong className="font-bold text-[#1d1d1f]">devices and browsers</strong>, not
         people. One account signed in on a phone and a laptop counts twice, because the analytics
         identity binds on iOS but not on web — so app and web figures also cannot be added together.
-        Native and <code className="rounded bg-white/70 px-1 py-0.5 text-xs">one.hushh.ai</code> only;
-        marketing pages and UAT are excluded. Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
+        Native and <code className="rounded bg-white/70 px-1 py-0.5 text-xs">{one.sourceWebHost ?? 'one.hushh.ai'}</code> only;
+        every other web host is excluded. {nativeUatTagged
+          ? 'Native custom events in this GA4 property currently carry the UAT environment tag; they are public-build traffic, not a pure production-backend cohort. '
+          : ''}Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
         {rangeLabel}
         {lagHours ? ` · data lands about ${lagHours}h behind` : ''}
         {one.generatedAt ? ` · read ${new Date(one.generatedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''}.
@@ -906,6 +911,9 @@ export function OneAppPanel({
   const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
 
   const activeData = (environment === 'production' ? one : (oneUat || one)) as OneAppSummary;
+  const nativeUatTagged = (activeData?.nativeEnvironments ?? []).filter(
+    (row) => row.environment === 'uat' && row.events > 0,
+  );
 
   if ((!one || !one.available) && !locationRoute && !selectedAgentCapability) {
     return (
@@ -1001,12 +1009,21 @@ export function OneAppPanel({
             </div>
             <p className="text-xs font-semibold leading-5 text-[#6e6e73]">
               {environment === 'production'
-                ? 'Production web plus public iOS and Android builds. Tester traffic is excluded. Counts never mix across environments.'
-                : 'UAT web plus iOS TestFlight and Android internal. Production traffic is excluded. Counts never mix across environments.'}
+                ? 'Production GA4 property: one.hushh.ai plus its native app streams. Other web hosts are excluded.'
+                : 'UAT GA4 property: uat.one.hushh.ai plus any native rows exported to that property. Other web hosts are excluded.'}
             </p>
           </div>
           <div className="shrink-0">{dateControl}</div>
         </div>
+
+        {nativeUatTagged.length > 0 && (
+          <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#ff9500]/30 bg-[#ff9500]/10 px-4 py-3 text-sm font-semibold leading-5 text-[#8a5200]">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>
+              Native environment warning: {nativeUatTagged.map((row) => `${row.platform} ${formatNumber(row.events)} events`).join(', ')} carry <code>env=uat</code> in this GA4 property. They remain visible as public native-build traffic, but are not described as production-backend users.
+            </p>
+          </div>
+        )}
 
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
