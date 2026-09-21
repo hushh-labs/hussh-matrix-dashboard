@@ -34,7 +34,6 @@ import type {
   LocationAnalyticsTab,
 } from '../lib/location-analytics-route';
 import type {
-  OneActiveUserIdentity,
   OneAppSummary,
   OneLocationBehaviorMetric,
   OneLocationJourneyMetric,
@@ -204,13 +203,9 @@ const featureAuditMap: Record<string, FeatureAuditInfo> = {
 function FeatureTable({
   features,
   environment,
-  identities = [],
-  featureUserIdentities = {},
 }: {
   features: OneLocationBehaviorMetric[];
   environment: LocationAnalyticsEnvironment;
-  identities?: OneActiveUserIdentity[];
-  featureUserIdentities?: Record<string, OneActiveUserIdentity[]>;
 }) {
   const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
 
@@ -291,7 +286,7 @@ function FeatureTable({
                   className="shrink-0 inline-flex items-center gap-1 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
                 >
                   <Users className="h-3 w-3" />
-                  <span>Users</span>
+                  <span>Devices</span>
                   <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
                 </button>
               </div>
@@ -311,13 +306,9 @@ function FeatureTable({
 
               {isExpanded && (
                 <div className="mt-3 border-t border-black/5 pt-3">
-                  <FeatureUserBreakdownPanel
-                    featureLabel={feature.label}
-                    featureKey={feature.key}
-                    featureIdentities={featureUserIdentities[feature.key] || []}
-                    identities={identities}
-                    fallbackIdentities={identities}
-                    totalDevices={feature.users ?? undefined}
+                    <FeatureUserBreakdownPanel
+                      featureLabel={feature.label}
+                      totalDevices={feature.users ?? undefined}
                     onClose={() => setExpandedFeatureKey(null)}
                   />
                 </div>
@@ -403,10 +394,6 @@ function FeatureTable({
                       <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
                         <FeatureUserBreakdownPanel
                           featureLabel={feature.label}
-                          featureKey={feature.key}
-                          featureIdentities={featureUserIdentities[feature.key] || []}
-                          identities={identities}
-                          fallbackIdentities={identities}
                           totalDevices={feature.users ?? undefined}
                           onClose={() => setExpandedFeatureKey(null)}
                         />
@@ -677,7 +664,7 @@ export function OneLocationAnalyticsPanel({
         <>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Active Location devices" value={locationCapability?.humanUsers ?? 0} detail="deliberate One Location use in this range" icon={MapPin} />
+        <StatCard label="Active Location devices" value={locationCapability?.devices ?? 0} detail="deliberate One Location use in this range" icon={MapPin} />
         <StatCard label="Successful share actions" value={byKey.get('live_sharing')?.successes ?? 0} detail="completed live-location share events" icon={Radio} />
         <StatCard label="Request fulfilment" value={requestFulfilled?.users ?? null} detail="requests answered with an encrypted update" icon={CheckCircle2} waiting={!requestFulfilled?.instrumented} />
         <StatCard label="Circle engagement" value={circleEngaged?.users ?? null} detail="devices reaching a Circle action" icon={UsersRound} waiting={!circleEngaged?.instrumented} />
@@ -694,9 +681,9 @@ export function OneLocationAnalyticsPanel({
         <section className="space-y-4">
           <div>
             <p className={appleLabel}>Feature adoption</p>
-            <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What people actually use</h3>
+            <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What devices actually use</h3>
           </div>
-          <FeatureTable features={locationAnalytics.features} environment={environment} identities={selectedOne.activeUsers.identities} featureUserIdentities={selectedOne.featureUserIdentities} />
+          <FeatureTable features={locationAnalytics.features} environment={environment} />
         </section>
       )}
 

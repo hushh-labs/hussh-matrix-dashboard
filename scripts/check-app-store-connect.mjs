@@ -17,6 +17,8 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--base-url' && argv[index + 1]) options.baseUrl = argv[++index].replace(/\/$/, '');
   }
+  const positionalUrl = argv.find((value) => /^https?:\/\//.test(value));
+  if (positionalUrl && options.baseUrl === 'http://127.0.0.1:3001') options.baseUrl = positionalUrl.replace(/\/$/, '');
   return options;
 }
 
