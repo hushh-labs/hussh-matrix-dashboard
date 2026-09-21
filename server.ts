@@ -3373,10 +3373,12 @@ ${capabilitySql.isHuman}
       },
       featureUserIdentities: (() => {
         const result: Record<string, any[]> = {};
+        const rawMap: Record<string, Map<string, any>> = {};
+
         for (const row of featureUsers.rows) {
           const featKey = String(row.featureKey);
           if (!featKey) continue;
-          if (!result[featKey]) result[featKey] = [];
+          if (!rawMap[featKey]) rawMap[featKey] = new Map();
 
           let userIdStr = row.userId ? String(row.userId) : null;
           const pseudoIdStr = row.userPseudoId ? String(row.userPseudoId) : null;
@@ -3415,20 +3417,53 @@ ${capabilitySql.isHuman}
             }
           }
 
-          result[featKey].push({
-            userPseudoId: String(pseudoIdStr ?? ''),
-            userId: userIdStr,
-            displayName,
-            boundEmail,
-            phoneNumber,
-            platform: String(row.platform ?? 'UNKNOWN'),
-            lastActiveTimestamp: formattedTimestamp,
-            isDaily: true,
-            isWeekly: true,
-            isMonthly: true,
-            usageCount: toNumber(row.timesUsed ?? 1),
+          const itemUsage = toNumber(row.timesUsed ?? 1);
+          const itemKey =
+            (userIdStr ? `uid:${userIdStr.toLowerCase()}` : null) ||
+            (boundEmail ? `email:${boundEmail.toLowerCase().trim()}` : null) ||
+            (phoneNumber ? `phone:${phoneNumber.replace(/\D/g, '')}` : null) ||
+            `device:${pseudoIdStr}`;
+
+          const existing = rawMap[featKey].get(itemKey);
+          if (existing) {
+            existing.usageCount += itemUsage;
+            const timeExisting = existing.lastActiveTimestamp ? new Date(existing.lastActiveTimestamp).getTime() : 0;
+            const timeItem = formattedTimestamp ? new Date(formattedTimestamp).getTime() : 0;
+            if (timeItem > timeExisting) {
+              existing.lastActiveTimestamp = formattedTimestamp;
+              existing.userPseudoId = String(pseudoIdStr ?? '');
+            }
+            if (!existing.displayName && displayName) existing.displayName = displayName;
+            if (!existing.boundEmail && boundEmail) existing.boundEmail = boundEmail;
+            if (!existing.phoneNumber && phoneNumber) existing.phoneNumber = phoneNumber;
+          } else {
+            rawMap[featKey].set(itemKey, {
+              userPseudoId: String(pseudoIdStr ?? ''),
+              userId: userIdStr,
+              displayName,
+              boundEmail,
+              phoneNumber,
+              platform: String(row.platform ?? 'UNKNOWN'),
+              lastActiveTimestamp: formattedTimestamp,
+              isDaily: true,
+              isWeekly: true,
+              isMonthly: true,
+              usageCount: itemUsage,
+            });
+          }
+        }
+
+        for (const [k, map] of Object.entries(rawMap)) {
+          result[k] = Array.from(map.values()).sort((a, b) => {
+            const timeA = a.lastActiveTimestamp ? new Date(a.lastActiveTimestamp).getTime() : 0;
+            const timeB = b.lastActiveTimestamp ? new Date(b.lastActiveTimestamp).getTime() : 0;
+            if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) {
+              return timeB - timeA;
+            }
+            return (b.usageCount ?? 1) - (a.usageCount ?? 1);
           });
         }
+
         if (result['daily_signin'] && !result['auth_started']) {
           result['auth_started'] = result['daily_signin'];
         } else if (result['auth_started'] && !result['daily_signin']) {

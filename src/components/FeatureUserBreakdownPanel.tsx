@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Mail, Phone, Search, User, UserCheck, Users, X, Zap, LogIn } from 'lucide-react';
 
 import { cn } from '../lib/utils';
@@ -12,7 +12,6 @@ interface FeatureUserBreakdownPanelProps {
   identities?: OneActiveUserIdentity[];
   fallbackIdentities?: OneActiveUserIdentity[];
   totalDevices?: number;
-  isUat?: boolean;
   onClose?: () => void;
 }
 
@@ -23,7 +22,6 @@ export function FeatureUserBreakdownPanel({
   identities = [],
   fallbackIdentities = [],
   totalDevices,
-  isUat = false,
   onClose,
 }: FeatureUserBreakdownPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -38,11 +36,39 @@ export function FeatureUserBreakdownPanel({
 
   // If featureIdentities has specific user items, use it to show feature-specific usage.
   const hasSpecificIdentities = Array.isArray(featureIdentities) && featureIdentities.length > 0;
-  const baseIdentities = hasSpecificIdentities
+  const rawIdentities = hasSpecificIdentities
     ? featureIdentities
     : identities.length > 0
     ? identities
     : fallbackIdentities;
+
+  // Deduplicate by resolved identity (UID, email, phone, or device ID)
+  const baseIdentities = useMemo(() => {
+    const map = new Map<string, OneActiveUserIdentity>();
+    for (const item of rawIdentities) {
+      const email = resolveUserEmail(item);
+      const phone = resolveUserPhoneNumber(item);
+      const name = resolveUserName(item);
+      const key =
+        (item.userId ? `uid:${item.userId.toLowerCase()}` : null) ||
+        (email !== 'Not available' ? `email:${email.toLowerCase().trim()}` : null) ||
+        (phone !== 'Not available' ? `phone:${phone.replace(/\D/g, '')}` : null) ||
+        `device:${item.userPseudoId || name}`;
+
+      if (map.has(key)) {
+        const existing = map.get(key)!;
+        existing.usageCount = (existing.usageCount ?? 1) + (item.usageCount ?? 1);
+        const timeExisting = existing.lastActiveTimestamp ? new Date(existing.lastActiveTimestamp).getTime() : 0;
+        const timeItem = item.lastActiveTimestamp ? new Date(item.lastActiveTimestamp).getTime() : 0;
+        if (timeItem > timeExisting) {
+          existing.lastActiveTimestamp = item.lastActiveTimestamp;
+        }
+      } else {
+        map.set(key, { ...item });
+      }
+    }
+    return Array.from(map.values());
+  }, [rawIdentities]);
 
   const isZeroCount =
     (typeof totalDevices === 'number' && totalDevices === 0) ||
@@ -52,9 +78,8 @@ export function FeatureUserBreakdownPanel({
 
   const filteredIdentities = scopedIdentities
     .filter((item) => {
-      const isRegistered = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
-      if (isUat && !isRegistered) return false;
-      if (filterRegisteredOnly && !isRegistered) return false;
+      const hasInfo = Boolean(item.displayName || item.boundEmail || item.phoneNumber || item.userId);
+      if (filterRegisteredOnly && !hasInfo) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchName = item.displayName?.toLowerCase().includes(q);
@@ -94,11 +119,7 @@ export function FeatureUserBreakdownPanel({
             </h4>
             <span className="rounded-full bg-[#007aff]/10 px-2 py-0.5 text-xs font-bold text-[#007aff]">
               {filteredIdentities.length} {filteredIdentities.length === 1 ? 'unique user' : 'unique users'}
-              {registeredCount > 0
-                ? isUat
-                  ? ` (${registeredCount} registered resolved)`
-                  : ` (${registeredCount} registered resolved, ${guestCount} guest sessions)`
-                : ''}
+              {registeredCount > 0 ? ` (${registeredCount} registered resolved, ${guestCount} guest sessions)` : ''}
             </span>
           </div>
           <p className="mt-0.5 text-[11px] font-semibold text-[#6e6e73]">
