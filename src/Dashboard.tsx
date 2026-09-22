@@ -1061,17 +1061,19 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
 }
 
 
-function FunnelCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
+function StepReachCard({ title, steps }: { title: string; steps: FunnelStep[] }) {
   const maxUsers = Math.max(...steps.map((step) => step.users), 1);
 
   return (
     <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
         <h3 className="text-lg font-semibold text-[#1d1d1f]">{title}</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">Latest feed day</p>
+        <p className="mt-1 text-sm font-medium text-[#86868b]">
+          Distinct devices per observed step · trailing 30 days · not a nested cohort
+        </p>
       </div>
       {steps.length === 0 ? (
-        <EmptyState>No funnel rows available yet.</EmptyState>
+        <EmptyState>No journey-step rows available yet.</EmptyState>
       ) : (
         <div className="space-y-4">
           {steps.map((step) => {
@@ -2397,20 +2399,20 @@ export default function Dashboard() {
             </section>
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
-              <FunnelCard title="Investor Funnel" steps={investorFunnel} />
-              <FunnelCard title="RIA Funnel" steps={riaFunnel} />
+              <StepReachCard title="Investor Journey Step Reach" steps={investorFunnel} />
+              <StepReachCard title="RIA Journey Step Reach" steps={riaFunnel} />
             </section>
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
               <MetricListCard
                 title="Activation Rates"
-                subtitle="Investor and RIA activation"
+                subtitle="Activated ÷ entered over 30 days; Waiting when the entry step is absent"
                 items={kaiActivationMetrics}
                 onItemClick={(item) => openKaiProductionDetail(`Production Activation · ${item.label}`, item)}
               />
               <MetricListCard
-                title="Platform Mix"
-                subtitle="Users by platform, latest feed day"
+                title="Monthly Active Device Mix"
+                subtitle="Distinct devices by platform · 30 days to the latest finalized export"
                 items={platformMix}
                 onItemClick={(item) => openKaiProductionDetail(`Production Platform Mix · ${item.label}`, item)}
               />
