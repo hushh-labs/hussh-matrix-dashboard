@@ -32,7 +32,7 @@ npm run lint
 npm run build
 git diff --check
 npm run test:prod:hushh-ai
-npm run test:prod:kai
+npm run test:prod:one
 ```
 
 Add a product-specific `npm run test:prod:<product>` when a new production product section is introduced.

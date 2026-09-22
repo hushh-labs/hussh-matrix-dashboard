@@ -87,7 +87,7 @@ runtime env vars are Secret Manager-backed, then runs:
 ```bash
 npm run test:prod:metrics-flow -- --dashboard-url https://metrics.hushh.ai --timeout-ms 120000
 npm run test:prod:hushh-ai -- --base-url https://metrics.hushh.ai --timeout-ms 120000
-npm run test:prod:kai -- --dashboard-url https://metrics.hushh.ai --timeout-ms 120000
+npm run test:prod:one -- --dashboard-url https://metrics.hushh.ai --timeout-ms 120000
 ```
 
 GCP IAM required by the workflow:

@@ -98,10 +98,10 @@ Run the Hushh AI production probe instead of manually clicking through the hoste
 npm run test:prod:hushh-ai
 npm run test:prod:hushhtech
 npm run test:prod:hushhtech-flow
-npm run test:prod:kai
+npm run test:prod:one
 ```
 
-The probes verify DNS, product roots, the dashboard health endpoint, product analytics endpoints, `/api/analytics/all`, no-store API cache headers, and product freshness payloads. If a dictated alias such as `matrix.hush.ai` or `kai.hush.ai` is provided, the checks report the literal DNS status and verify the canonical deployment.
+The probes verify DNS, product roots, the dashboard health endpoint, product analytics endpoints, `/api/analytics/all`, no-store API cache headers, and product freshness payloads. If a dictated alias such as `matrix.hush.ai` is provided, the checks report the literal DNS status and verify the canonical deployment.
 The HushhTech flow probe additionally verifies that `hushhtech.com` GA4 summary data, GCP Search Console fallback tables, the Cloud Run ingestion job, the Scheduler trigger, and `metrics.hushh.ai` are connected end to end.
 
 ## Data Flow

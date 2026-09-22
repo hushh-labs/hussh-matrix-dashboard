@@ -88,7 +88,7 @@ curl -I https://metrics.hushh.ai
 curl -fsS https://metrics.hushh.ai/api/health
 curl -fsS https://metrics.hushh.ai/api/analytics/all
 npm run test:prod:hushh-ai
-npm run test:prod:kai
+npm run test:prod:one
 ```
 
 Cloud Run source of truth:
