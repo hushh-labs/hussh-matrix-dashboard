@@ -2682,17 +2682,19 @@ ${capabilitySql.isDeliberate}
   // happened to see the person earlier in this window. Without this split an
   // MAU made almost entirely of first-timers reads as health.
   const growthQuery = `
-    SELECT
-      COUNT(DISTINCT IF(firstTouch IS NULL, deviceKey, NULL)) AS unknownUsers,
-      COUNT(DISTINCT IF(firstTouch >= ${sqlStringLiteral(range.startDate)}, deviceKey, NULL)) AS newUsers,
-      COUNT(DISTINCT IF(firstTouch < ${sqlStringLiteral(range.startDate)}, deviceKey, NULL)) AS returningUsers
-    FROM (
+    WITH devices AS (
       SELECT
         ${deviceKeySql} AS deviceKey,
-        CAST(DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS STRING) AS firstTouch
+        MIN(DATE(TIMESTAMP_MICROS(user_first_touch_timestamp))) AS firstTouch
       FROM ${table}
       WHERE ${dateFilter} AND ${meaningful}
+      GROUP BY deviceKey
     )
+    SELECT
+      COUNTIF(firstTouch IS NULL) AS unknownUsers,
+      COUNTIF(firstTouch >= DATE(${sqlStringLiteral(range.startDate)})) AS newUsers,
+      COUNTIF(firstTouch < DATE(${sqlStringLiteral(range.startDate)})) AS returningUsers
+    FROM devices
   `;
 
   // Week-1 retention by acquisition cohort: of the people who first appeared in
