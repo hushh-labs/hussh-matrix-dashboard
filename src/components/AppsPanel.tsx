@@ -309,7 +309,7 @@ function LocationAgentByPlatform({ rows }: { rows: OneLocationPlatformBehaviorMe
             <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
               <th className="border-b border-black/5 px-5 py-3">Platform</th>
               <th className="border-b border-black/5 px-5 py-3">Feature</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Users</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Devices</th>
               <th className="border-b border-black/5 px-5 py-3 text-right">Events</th>
             </tr>
           </thead>

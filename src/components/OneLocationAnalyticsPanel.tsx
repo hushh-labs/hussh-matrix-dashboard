@@ -368,7 +368,7 @@ function FeatureTable({
                         type="button"
                         onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
                         className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
-                        title="Click to view users who used this feature"
+                        title="View aggregate device definition"
                       >
                         <Users className="h-3 w-3" />
                         <span><MetricValue value={feature.users} waiting={waiting} /></span>

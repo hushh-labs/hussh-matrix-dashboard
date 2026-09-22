@@ -111,6 +111,13 @@ gcloud projects add-iam-policy-binding hushh-ai-prod \
   --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
   --role="roles/bigquery.dataViewer"
 
+# The post-deploy One reconciliation runs its query job in hushh-ai-prod but
+# reads only the production GA4 export dataset. Keep this dataset-scoped rather
+# than granting the deployer project-wide access to hushh-pda.
+bq add-iam-policy-binding hushh-pda:analytics_526603671 \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/bigquery.dataViewer"
+
 gcloud projects add-iam-policy-binding hushh-ai-prod \
   --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
   --role="roles/cloudscheduler.viewer"
