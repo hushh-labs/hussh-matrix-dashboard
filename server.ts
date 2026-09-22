@@ -2548,11 +2548,14 @@ ${capabilitySql.isDeliberate}
   const meaningful = `event_name NOT IN (${backgroundNames})`;
 
   // Read a few days wider than thirty so a full 30-day window is still
-  // available after anchoring back to the last day that actually exported.
+  // available after anchoring back to the last finalized daily export. Active
+  // KPIs deliberately exclude intraday_*: at the start of a UTC day that table
+  // is only a sliver, and calling it DAU makes a healthy product look dead.
+  // Streaming rows remain included in selected-range and last-24-hour totals.
   const activeWindowFilter = ga4ExportSuffixFilter(
     formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -33)),
     range.endDate,
-    true,
+    false,
   );
 
   // DAU is anchored to the last day with data, not to the end of the selected
@@ -2946,7 +2949,7 @@ ${capabilitySql.isDeliberate}
           ? toNumber(activeRow.dau) / toNumber(activeRow.mau)
           : null,
         // The day DAU was actually measured on, which is the last day with
-        // data rather than the end of the selected range.
+  // finalized daily data rather than the end of the selected range.
         asOf: String(activeRow.asOf ?? range.endDate),
       },
       // The install cohort funnel, per native platform. Stages nest because
