@@ -11,6 +11,7 @@ import {
   Globe,
   Loader2,
   MapPin,
+  LogOut,
   MousePointerClick,
   Pause,
   Play,
@@ -22,6 +23,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { useAuth } from './components/AuthProvider';
 import {
   Area,
   AreaChart,
@@ -1154,6 +1156,7 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 }
 
 export default function Dashboard() {
+  const { user, signOut } = useAuth();
   // 'one' leads because the One app is the active growth focus; the founder
   // should land on the scoreboard, not on the source matrix.
   const [locationRoute, setLocationRoute] = useState<LocationAnalyticsRoute | null>(() => (
@@ -1793,6 +1796,29 @@ export default function Dashboard() {
                 <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
                 Refresh
               </button>
+              {user && (
+                <div className="flex items-center gap-1.5 border-l border-black/10 pl-2">
+                  <div className="flex items-center gap-1.5 rounded-lg bg-[#f5f5f7] px-2.5 py-1.5 text-xs font-bold text-[#1d1d1f]">
+                    {user.picture ? (
+                      <img src={user.picture} alt="" className="h-5 w-5 rounded-full" />
+                    ) : (
+                      <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#007aff]/10 text-[10px] text-[#007aff]">
+                        {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                      </div>
+                    )}
+                    <span className="hidden sm:inline">{user.email}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={signOut}
+                    className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-[#f5f5f7] px-3 text-xs font-bold text-[#6e6e73] transition hover:bg-[#ff3b30]/10 hover:text-[#ff3b30]"
+                    title="Sign Out"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    <span className="hidden md:inline">Sign Out</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

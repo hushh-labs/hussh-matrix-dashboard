@@ -8249,7 +8249,171 @@ async function runHusshInsightsAgent(message: string, history: ChatHistoryMessag
   return { answer, usage: generated.usage };
 }
 
+// ---------------------------------------------------------------------------
+// Google OAuth & Domain Protection Layer Configuration
+// ---------------------------------------------------------------------------
+
+const GOOGLE_OAUTH_CLIENT_ID = (
+  process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || ''
+).trim();
+
+const ALLOWED_EMAIL_DOMAINS = (
+  process.env.ALLOWED_EMAIL_DOMAINS || 'hushh.ai,hushhtech.com,hushh.labs'
+)
+  .split(',')
+  .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+  .filter(Boolean);
+
+const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+const REQUIRE_AUTH = process.env.REQUIRE_AUTH !== 'false';
+
+function isEmailAuthorizedOnServer(email: string): boolean {
+  if (!email || !email.includes('@')) return false;
+  const normEmail = email.trim().toLowerCase();
+  const domain = normEmail.split('@')[1];
+
+  if (ALLOWED_EMAILS.includes(normEmail)) return true;
+  if (ALLOWED_EMAIL_DOMAINS.includes(domain)) return true;
+
+  return false;
+}
+
+async function verifyGoogleTokenOnServer(idToken: string): Promise<{
+  valid: boolean;
+  authorized: boolean;
+  user?: { email: string; name: string; picture?: string; sub: string };
+  error?: string;
+}> {
+  if (!idToken) return { valid: false, authorized: false, error: 'No token provided' };
+
+  try {
+    if (GOOGLE_OAUTH_CLIENT_ID) {
+      const { OAuth2Client } = await import('google-auth-library');
+      const oauthClient = new OAuth2Client(GOOGLE_OAUTH_CLIENT_ID);
+      const ticket = await oauthClient.verifyIdToken({
+        idToken,
+        audience: GOOGLE_OAUTH_CLIENT_ID,
+      });
+      const payload = ticket.getPayload();
+      if (!payload || !payload.email) {
+        return { valid: false, authorized: false, error: 'Invalid token payload' };
+      }
+
+      const email = payload.email;
+      const name = payload.name || email.split('@')[0];
+      const picture = payload.picture;
+      const sub = payload.sub;
+      const authorized = isEmailAuthorizedOnServer(email);
+
+      return {
+        valid: true,
+        authorized,
+        user: { email, name, picture, sub },
+      };
+    } else {
+      // Decode fallback when Client ID is unconfigured on server
+      const parts = idToken.split('.');
+      if (parts.length === 3) {
+        const payloadStr = Buffer.from(parts[1], 'base64').toString('utf8');
+        const payload = JSON.parse(payloadStr);
+        if (payload && payload.email) {
+          const email = payload.email;
+          const name = payload.name || email.split('@')[0];
+          const picture = payload.picture;
+          const sub = payload.sub;
+          const authorized = isEmailAuthorizedOnServer(email);
+          return { valid: true, authorized, user: { email, name, picture, sub } };
+        }
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { valid: false, authorized: false, error: msg };
+  }
+
+  return { valid: false, authorized: false, error: 'Token verification failed' };
+}
+
+async function authProtectionMiddleware(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  if (!REQUIRE_AUTH) return next();
+
+  // Public auth routes
+  if (req.path === '/api/auth/config' || req.path === '/api/auth/verify') {
+    return next();
+  }
+
+  const authHeader = req.headers.authorization;
+  // If Client ID is unconfigured and request has no auth header in local dev, bypass protection
+  if (!authHeader && !GOOGLE_OAUTH_CLIENT_ID) {
+    return next();
+  }
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Authentication required. Access restricted to authorized Google accounts.' });
+    return;
+  }
+
+  const token = authHeader.slice(7).trim();
+  const verification = await verifyGoogleTokenOnServer(token);
+
+  if (!verification.valid) {
+    res.status(401).json({ error: verification.error || 'Invalid authentication token.' });
+    return;
+  }
+
+  if (!verification.authorized) {
+    res.status(403).json({
+      error: `Access restricted. ${verification.user?.email} is not an authorized domain email.`,
+    });
+    return;
+  }
+
+  (req as any).authUser = verification.user;
+  next();
+}
+
 app.use(express.json({ limit: '64kb' }));
+app.use(authProtectionMiddleware);
+
+app.get('/api/auth/config', (_req, res) => {
+  res.json({
+    oauthEnabled: true,
+    clientId: GOOGLE_OAUTH_CLIENT_ID,
+    allowedDomains: ALLOWED_EMAIL_DOMAINS,
+    allowedEmails: ALLOWED_EMAILS,
+    requireAuth: REQUIRE_AUTH,
+  });
+});
+
+app.post('/api/auth/verify', async (req, res) => {
+  const { credential } = req.body as { credential?: string };
+  if (!credential) {
+    res.status(400).json({ error: 'Credential token is required' });
+    return;
+  }
+  const result = await verifyGoogleTokenOnServer(credential);
+  if (!result.valid) {
+    res.status(401).json({ error: result.error || 'Invalid token' });
+    return;
+  }
+  if (!result.authorized) {
+    res.status(403).json({
+      authorized: false,
+      message: `Access restricted. ${result.user?.email} is not an authorized domain email.`,
+      user: result.user,
+    });
+    return;
+  }
+  res.json({ authorized: true, user: result.user });
+});
 
 app.post('/api/chat', async (req, res) => {
   const body = req.body as { message?: unknown; history?: unknown };
