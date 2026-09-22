@@ -1020,7 +1020,7 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
     <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
         <h3 className="text-lg font-semibold text-[#1d1d1f]">One Production Reliability Status</h3>
-        <p className="mt-1 text-sm font-medium text-[#86868b]">Production GA4 stays Waiting until verified; request and reliability columns come from Cloud Run.</p>
+        <p className="mt-1 text-sm font-medium text-[#86868b]">Users, sessions, and events come from the delayed GA4 export when available; requests and reliability come from Cloud Run.</p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No One production daily rows available yet.</EmptyState>
