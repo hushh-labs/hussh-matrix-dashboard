@@ -589,7 +589,15 @@ function parseInstrumentationHealth(rows: FeedRow[]): BreakdownMetric[] {
 function parseActivationMetrics(rows: FeedRow[]): BreakdownMetric[] {
   return latestRowsForGroup(rows, 'activation').map((row) => {
     const value = metricNumber(row);
-    return metric(formatMetricLabel(row.metric_name), value, metricDateValue(row) ?? undefined, formatPercent(value));
+    const measured = row.metric_value != null || row.metric_count != null;
+    return metric(
+      formatMetricLabel(row.metric_name),
+      value,
+      measured
+        ? `${metricDateValue(row) ?? 'latest finalized export'} · trailing 30 days`
+        : `${metricDateValue(row) ?? 'latest finalized export'} · no entered-device denominator`,
+      measured ? formatPercent(value) : 'Waiting',
+    );
   });
 }
 

@@ -21,11 +21,11 @@
 -- every conversion rate; UAT traffic is not a production KPI. Both exclusions
 -- are reported in the status group rather than being silent.
 --
--- IDENTITY. Counts are on user_pseudo_id, which is a device/browser, not a
--- person. GA4 User-ID is bound on iOS and not at all on web, so a person-scoped
--- count is not available for the whole surface today. The status group carries
--- the basis and the measured web coverage so the dashboard can label it
--- honestly instead of calling devices "people".
+-- IDENTITY. Counts use platform:user_pseudo_id, which is a namespaced
+-- device/browser identity, not a person. GA4 User-ID is bound on iOS and not at
+-- all on web, so a person-scoped count is not available for the whole surface
+-- today. The status group carries the basis and the measured web coverage so
+-- the dashboard can label it honestly instead of calling devices "people".
 WITH params AS (
   SELECT
     -- The last day the daily export actually produced, not "yesterday". GA4
@@ -50,7 +50,11 @@ scoped AS (
     e.platform,
     e.stream_id,
     e.event_timestamp,
-    (SELECT value.int_value FROM UNNEST(e.event_params) WHERE key = 'ga_session_id') AS session_id,
+    CONCAT(COALESCE(e.platform, 'UNKNOWN'), ':', e.user_pseudo_id) AS device_key,
+    CONCAT(
+      COALESCE(e.platform, 'UNKNOWN'), ':', e.user_pseudo_id, ':',
+      CAST((SELECT value.int_value FROM UNNEST(e.event_params) WHERE key = 'ga_session_id') AS STRING)
+    ) AS session_key,
     (SELECT value.string_value FROM UNNEST(e.event_params) WHERE key = 'journey') AS journey,
     (SELECT value.string_value FROM UNNEST(e.event_params) WHERE key = 'step') AS step,
     (SELECT value.string_value FROM UNNEST(e.event_params) WHERE key = 'event_category') AS event_category,
@@ -79,8 +83,8 @@ meaningful AS (
 daily AS (
   SELECT
     d,
-    COUNT(DISTINCT user_pseudo_id) AS dau,
-    COUNT(DISTINCT session_id) AS sessions,
+    COUNT(DISTINCT device_key) AS dau,
+    COUNT(DISTINCT session_key) AS sessions,
     COUNT(*) AS total_events
   FROM meaningful
   GROUP BY d
@@ -90,10 +94,10 @@ daily AS (
 windows AS (
   SELECT
     p.latest_day,
-    (SELECT COUNT(DISTINCT user_pseudo_id) FROM meaningful WHERE d = p.latest_day) AS dau,
-    (SELECT COUNT(DISTINCT user_pseudo_id) FROM meaningful WHERE d BETWEEN DATE_SUB(p.latest_day, INTERVAL 6 DAY) AND p.latest_day) AS wau,
-    (SELECT COUNT(DISTINCT user_pseudo_id) FROM meaningful WHERE d BETWEEN DATE_SUB(p.latest_day, INTERVAL 29 DAY) AND p.latest_day) AS mau,
-    (SELECT COUNT(DISTINCT session_id) FROM meaningful WHERE d = p.latest_day) AS sessions,
+    (SELECT COUNT(DISTINCT device_key) FROM meaningful WHERE d = p.latest_day) AS dau,
+    (SELECT COUNT(DISTINCT device_key) FROM meaningful WHERE d BETWEEN DATE_SUB(p.latest_day, INTERVAL 6 DAY) AND p.latest_day) AS wau,
+    (SELECT COUNT(DISTINCT device_key) FROM meaningful WHERE d BETWEEN DATE_SUB(p.latest_day, INTERVAL 29 DAY) AND p.latest_day) AS mau,
+    (SELECT COUNT(DISTINCT session_key) FROM meaningful WHERE d = p.latest_day) AS sessions,
     (SELECT COUNT(*) FROM meaningful WHERE d = p.latest_day) AS total_events
   FROM params p
 ),
@@ -102,7 +106,7 @@ source_state AS (
     p.latest_day,
     (SELECT COUNT(*) FROM scoped) AS source_event_rows,
     (SELECT MAX(TIMESTAMP_MICROS(event_timestamp)) FROM scoped) AS latest_event_at,
-    (SELECT COUNT(DISTINCT user_pseudo_id) FROM scoped WHERE platform = 'WEB') AS web_devices,
+    (SELECT COUNT(DISTINCT device_key) FROM scoped WHERE platform = 'WEB') AS web_devices,
     (SELECT COUNT(DISTINCT user_id) FROM scoped WHERE platform = 'WEB') AS web_keyed
   FROM params p
 ),
@@ -117,9 +121,9 @@ status_rows AS (
     STRUCT('production_ready', 1.0, CAST(NULL AS INT64), 'true', CAST(NULL AS TIMESTAMP)),
     STRUCT('known_blockers', CAST(NULL AS FLOAT64), CAST(NULL AS INT64),
       CASE WHEN ss.web_keyed = 0 AND ss.web_devices > 0
-        THEN 'Counts are device-scoped (user_pseudo_id). GA4 User-ID is bound on iOS but not on web, so these are devices and browsers, not people, and web and app figures cannot be added together.'
+        THEN 'Counts are device-scoped (platform:user_pseudo_id). GA4 User-ID is bound on iOS but not on web, so these are devices and browsers, not people, and web and app figures cannot be added together.'
         ELSE NULL END, CAST(NULL AS TIMESTAMP)),
-    STRUCT('identity_basis', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), 'user_pseudo_id', CAST(NULL AS TIMESTAMP)),
+    STRUCT('identity_basis', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), 'platform:user_pseudo_id', CAST(NULL AS TIMESTAMP)),
     STRUCT('surface_scope', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), 'One app only: native iOS/Android plus one.hushh.ai. Excludes hushh.ai marketing pages and uat.hushh.ai.', CAST(NULL AS TIMESTAMP)),
     STRUCT('latest_event_at', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), CAST(NULL AS STRING), ss.latest_event_at),
     STRUCT('freshness_lag_minutes', CAST(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), ss.latest_event_at, MINUTE) AS FLOAT64), CAST(NULL AS INT64), CAST(NULL AS STRING), CAST(NULL AS TIMESTAMP)),
@@ -166,7 +170,7 @@ platform_rows AS (
     -- Scoped to the same trailing 30 days as MAU. A 90-day mix next to a
     -- 30-day MAU invites the reader to divide one by the other.
     (SELECT COALESCE(m.platform, '(not set)') AS platform,
-            COUNT(DISTINCT m.user_pseudo_id) AS users, COUNT(*) AS events
+            COUNT(DISTINCT m.device_key) AS users, COUNT(*) AS events
      FROM meaningful m, params p
      WHERE m.d BETWEEN DATE_SUB(p.latest_day, INTERVAL 29 DAY) AND p.latest_day
      GROUP BY platform) pm,
@@ -175,23 +179,24 @@ platform_rows AS (
       STRUCT('events', CAST(pm.events AS FLOAT64), pm.events)
     ]) AS m
 ),
--- Funnel steps are distinct users per step over the trailing 30 days. Steps with
--- no emitter yet return 0 rather than being absent, so a missing step reads as a
--- gap in the chart instead of shifting every later step up one position.
+-- Journey steps are independent distinct-device reach counts over the trailing
+-- 30 days, not a nested cohort. Steps with no emitter yet return 0 rather than
+-- being absent, so the UI can expose an instrumentation gap without inventing
+-- a conversion rate or shifting later steps up one position.
 funnel_base AS (
-  SELECT journey, step, COUNT(DISTINCT user_pseudo_id) AS users
+  SELECT journey, step, COUNT(DISTINCT device_key) AS users
   FROM meaningful m, params p
   WHERE m.event_name = 'growth_funnel_step_completed'
     AND m.d BETWEEN DATE_SUB(p.latest_day, INTERVAL 29 DAY) AND p.latest_day
     AND m.journey IS NOT NULL AND m.step IS NOT NULL
   GROUP BY journey, step
   UNION ALL
-  SELECT 'investor', 'activated', COUNT(DISTINCT user_pseudo_id)
+  SELECT 'investor', 'activated', COUNT(DISTINCT device_key)
   FROM meaningful m, params p
   WHERE m.event_name = 'investor_activation_completed'
     AND m.d BETWEEN DATE_SUB(p.latest_day, INTERVAL 29 DAY) AND p.latest_day
   UNION ALL
-  SELECT 'ria', 'activated', COUNT(DISTINCT user_pseudo_id)
+  SELECT 'ria', 'activated', COUNT(DISTINCT device_key)
   FROM meaningful m, params p
   WHERE m.event_name = 'ria_activation_completed'
     AND m.d BETWEEN DATE_SUB(p.latest_day, INTERVAL 29 DAY) AND p.latest_day
@@ -227,7 +232,7 @@ feature_rows AS (
   SELECT 'feature_engagement', f.event_name, f.d, CAST(NULL AS STRING), CAST(NULL AS STRING),
          CAST(f.users AS FLOAT64), f.users, CAST(NULL AS STRING), CAST(NULL AS TIMESTAMP)
   FROM (
-    SELECT m.d, m.event_name, COUNT(DISTINCT m.user_pseudo_id) AS users
+    SELECT m.d, m.event_name, COUNT(DISTINCT m.device_key) AS users
     FROM meaningful m, params p
     WHERE m.d BETWEEN DATE_SUB(p.latest_day, INTERVAL 7 DAY) AND p.latest_day
       AND m.event_category = 'feature'

@@ -2227,6 +2227,10 @@ async function fetchOneAppSummary(
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
   const surfaceFilter = oneAppSurfaceFilter(webHost);
+  // GA4 app-instance ids are scoped to a stream/platform. Always carry that
+  // namespace into cross-platform aggregates so a coincidental opaque-id
+  // collision cannot merge two devices.
+  const deviceKeySql = `CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id)`;
   // Selected-range totals must include GA4's streaming table. Without it, an
   // action completed today is already present in BigQuery but the dashboard
   // continues to show zero until the finalized daily export lands. GA4 removes
@@ -2242,17 +2246,17 @@ async function fetchOneAppSummary(
     AND ${surfaceFilter}`;
 
   const funnelQuery = `
-    SELECT step, COUNT(DISTINCT user_pseudo_id) AS users
+    SELECT step, COUNT(DISTINCT deviceKey) AS users
     FROM (
       SELECT
-        user_pseudo_id,
+        ${deviceKeySql} AS deviceKey,
         (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'step') AS step
       FROM ${table}
       WHERE ${dateFilter}
         AND event_name = 'growth_funnel_step_completed'
         AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'journey') = 'location'
       UNION ALL
-      SELECT user_pseudo_id, 'activated' AS step
+      SELECT ${deviceKeySql} AS deviceKey, 'activated' AS step
       FROM ${table}
       WHERE ${dateFilter} AND event_name = 'one_location_activation_completed'
     )
@@ -2270,13 +2274,13 @@ async function fetchOneAppSummary(
   const agentQuery = `
     SELECT
       capability,
-      COUNT(DISTINCT IF(is_deliberate, user_pseudo_id, NULL)) AS deliberateDevices,
+      COUNT(DISTINCT IF(is_deliberate, deviceKey, NULL)) AS deliberateDevices,
       COUNTIF(is_deliberate) AS deliberateEvents,
-      COUNT(DISTINCT user_pseudo_id) AS totalUsers,
+      COUNT(DISTINCT deviceKey) AS totalUsers,
       COUNT(*) AS totalEvents
     FROM (
       SELECT
-        user_pseudo_id,
+        ${deviceKeySql} AS deviceKey,
 ${capabilitySql.capability},
 ${capabilitySql.isDeliberate}
       FROM ${table}
@@ -2288,7 +2292,7 @@ ${capabilitySql.isDeliberate}
   `;
 
   const locationFeatureQuery = `
-    SELECT event_name AS eventName, COUNT(DISTINCT user_pseudo_id) AS users, COUNT(*) AS events
+    SELECT event_name AS eventName, COUNT(DISTINCT ${deviceKeySql}) AS users, COUNT(*) AS events
     FROM ${table}
     WHERE ${dateFilter} AND event_name LIKE 'one_location%'
     GROUP BY eventName
@@ -2304,7 +2308,7 @@ ${capabilitySql.isDeliberate}
     WITH raw AS (
       SELECT
         CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
-        user_pseudo_id,
+        ${deviceKeySql} AS deviceKey,
         COALESCE(platform, 'UNKNOWN') AS platform,
         event_name AS eventName,
         (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') AS actionName,
@@ -2368,7 +2372,7 @@ ${capabilitySql.isDeliberate}
       featureKey AS metricKey,
       CAST(NULL AS STRING) AS eventDate,
       CAST(NULL AS STRING) AS dimension,
-      COUNT(DISTINCT user_pseudo_id) AS users,
+      COUNT(DISTINCT deviceKey) AS users,
       COUNT(*) AS events,
       COUNTIF(result = 'success') AS successes,
       COUNTIF(result IN ('expected_error', 'error')) AS failures
@@ -2378,7 +2382,7 @@ ${capabilitySql.isDeliberate}
     UNION ALL
     SELECT
       'feature_daily', featureKey, eventDate, NULL,
-      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNT(DISTINCT deviceKey), COUNT(*),
       COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
     FROM classified
     WHERE featureKey IS NOT NULL
@@ -2386,7 +2390,7 @@ ${capabilitySql.isDeliberate}
     UNION ALL
     SELECT
       'feature_platform', featureKey, NULL, platform,
-      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNT(DISTINCT deviceKey), COUNT(*),
       COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
     FROM classified
     WHERE featureKey IS NOT NULL
@@ -2394,7 +2398,7 @@ ${capabilitySql.isDeliberate}
     UNION ALL
     SELECT
       'journey', journeyKey, NULL, NULL,
-      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNT(DISTINCT deviceKey), COUNT(*),
       COUNTIF(result = 'success' OR eventName = 'page_view'),
       COUNTIF(result IN ('expected_error', 'error'))
     FROM classified
@@ -2403,7 +2407,7 @@ ${capabilitySql.isDeliberate}
     UNION ALL
     SELECT
       'circle_kind', COALESCE(NULLIF(circleKind, ''), 'unknown'), NULL, NULL,
-      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNT(DISTINCT deviceKey), COUNT(*),
       COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
     FROM classified
     WHERE eventName = 'one_location_circle_created'
@@ -2411,7 +2415,7 @@ ${capabilitySql.isDeliberate}
     UNION ALL
     SELECT
       'instrumentation', 'journey_action', MIN(eventDate), NULL,
-      COUNT(DISTINCT user_pseudo_id), COUNT(*),
+      COUNT(DISTINCT deviceKey), COUNT(*),
       COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
     FROM classified
     WHERE eventName = 'one_location_journey_action'
@@ -2431,11 +2435,11 @@ ${capabilitySql.isDeliberate}
   // Per-capability, per-day deliberate users. Drives the trend on each card: a
   // total alone cannot tell you whether a capability is growing or dying.
   const agentDailyQuery = `
-    SELECT eventDate, capability, COUNT(DISTINCT user_pseudo_id) AS users
+    SELECT eventDate, capability, COUNT(DISTINCT deviceKey) AS users
     FROM (
       SELECT
         CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
-        user_pseudo_id,
+        ${deviceKeySql} AS deviceKey,
 ${capabilitySql.capability},
 ${capabilitySql.isDeliberate}
       FROM ${table}
@@ -2469,7 +2473,7 @@ ${capabilitySql.isDeliberate}
         -- otherwise read as an unhelpful "Internal aggregate source".
         ELSE 'Sign-in redirect or local'
       END AS host,
-      COUNT(DISTINCT user_pseudo_id) AS users
+      COUNT(DISTINCT ${deviceKeySql}) AS users
     FROM ${table}
     WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true)}
     GROUP BY surface, host
@@ -2503,7 +2507,7 @@ ${capabilitySql.isDeliberate}
     SELECT
       COALESCE(NULLIF(traffic_source.source, ''), '(direct)') AS source,
       COALESCE(NULLIF(traffic_source.medium, ''), '(none)') AS medium,
-      COUNT(DISTINCT user_pseudo_id) AS users
+      COUNT(DISTINCT ${deviceKeySql}) AS users
     FROM ${table}
     WHERE ${dateFilter}
     GROUP BY source, medium
@@ -2514,8 +2518,8 @@ ${capabilitySql.isDeliberate}
   const dailyQuery = `
     SELECT
       CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
-      COUNT(DISTINCT user_pseudo_id) AS users,
-      COUNT(DISTINCT IF(event_name LIKE 'one_location%', user_pseudo_id, NULL)) AS locationUsers,
+      COUNT(DISTINCT ${deviceKeySql}) AS users,
+      COUNT(DISTINCT IF(event_name LIKE 'one_location%', ${deviceKeySql}, NULL)) AS locationUsers,
       COUNT(*) AS events
     FROM ${table}
     WHERE ${dateFilter}
@@ -2528,8 +2532,8 @@ ${capabilitySql.isDeliberate}
   const reliabilityQuery = `
     SELECT
       COUNTIF(event_name = 'one_location_foreground_retry') AS locationRetries,
-      COUNT(DISTINCT IF(event_name = 'one_location_foreground_retry', user_pseudo_id, NULL)) AS locationRetryUsers,
-      COUNT(DISTINCT IF(event_name = 'one_location_share_confirmed', user_pseudo_id, NULL)) AS sharingUsers
+      COUNT(DISTINCT IF(event_name = 'one_location_foreground_retry', ${deviceKeySql}, NULL)) AS locationRetryUsers,
+      COUNT(DISTINCT IF(event_name = 'one_location_share_confirmed', ${deviceKeySql}, NULL)) AS sharingUsers
     FROM ${table}
     WHERE ${dateFilter}
   `;
@@ -2571,20 +2575,20 @@ ${capabilitySql.isDeliberate}
   // DAU anchor to a handful of spillover events instead of to the real last day.
   const activeQuery = `
     WITH days AS (
-      SELECT user_pseudo_id, PARSE_DATE('%Y%m%d', event_date) AS day
+      SELECT ${deviceKeySql} AS deviceKey, PARSE_DATE('%Y%m%d', event_date) AS day
       FROM ${table}
       WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
     ),
     anchor AS (SELECT MAX(day) AS latest FROM days)
     SELECT
       CAST((SELECT latest FROM anchor) AS STRING) AS asOf,
-      COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS dau,
+      COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), deviceKey, NULL)) AS dau,
       COUNT(DISTINCT IF(
         day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
-                AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS wau,
+                AND (SELECT latest FROM anchor), deviceKey, NULL)) AS wau,
       COUNT(DISTINCT IF(
         day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
-                AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS mau
+                AND (SELECT latest FROM anchor), deviceKey, NULL)) AS mau
     FROM days
   `;
 
@@ -2679,12 +2683,12 @@ ${capabilitySql.isDeliberate}
   // MAU made almost entirely of first-timers reads as health.
   const growthQuery = `
     SELECT
-      COUNT(DISTINCT IF(firstTouch IS NULL, user_pseudo_id, NULL)) AS unknownUsers,
-      COUNT(DISTINCT IF(firstTouch >= ${sqlStringLiteral(range.startDate)}, user_pseudo_id, NULL)) AS newUsers,
-      COUNT(DISTINCT IF(firstTouch < ${sqlStringLiteral(range.startDate)}, user_pseudo_id, NULL)) AS returningUsers
+      COUNT(DISTINCT IF(firstTouch IS NULL, deviceKey, NULL)) AS unknownUsers,
+      COUNT(DISTINCT IF(firstTouch >= ${sqlStringLiteral(range.startDate)}, deviceKey, NULL)) AS newUsers,
+      COUNT(DISTINCT IF(firstTouch < ${sqlStringLiteral(range.startDate)}, deviceKey, NULL)) AS returningUsers
     FROM (
       SELECT
-        user_pseudo_id,
+        ${deviceKeySql} AS deviceKey,
         CAST(DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS STRING) AS firstTouch
       FROM ${table}
       WHERE ${dateFilter} AND ${meaningful}
@@ -2699,13 +2703,13 @@ ${capabilitySql.isDeliberate}
   const retentionQuery = `
     SELECT
       CAST(DATE_TRUNC(firstDay, WEEK) AS STRING) AS cohortWeek,
-      COUNT(DISTINCT user_pseudo_id) AS cohortSize,
+      COUNT(DISTINCT deviceKey) AS cohortSize,
       COUNT(DISTINCT IF(
         day BETWEEN DATE_ADD(firstDay, INTERVAL 1 DAY) AND DATE_ADD(firstDay, INTERVAL 7 DAY),
-        user_pseudo_id, NULL)) AS returnedW1
+        deviceKey, NULL)) AS returnedW1
     FROM (
       SELECT
-        user_pseudo_id,
+        ${deviceKeySql} AS deviceKey,
         PARSE_DATE('%Y%m%d', event_date) AS day,
         DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
       FROM ${table}
@@ -2725,9 +2729,9 @@ ${capabilitySql.isDeliberate}
   // a funnel that goes back up teaches the reader to distrust the whole chart.
   const activationQuery = `
     SELECT
-      COUNT(DISTINCT user_pseudo_id) AS reachedApp,
-      COUNT(DISTINCT IF(event_name = 'one_location_onboarding_completed', user_pseudo_id, NULL)) AS onboarded,
-      COUNT(DISTINCT IF(event_name = 'one_location_activation_completed', user_pseudo_id, NULL)) AS activated
+      COUNT(DISTINCT ${deviceKeySql}) AS reachedApp,
+      COUNT(DISTINCT IF(event_name = 'one_location_onboarding_completed', ${deviceKeySql}, NULL)) AS onboarded,
+      COUNT(DISTINCT IF(event_name = 'one_location_activation_completed', ${deviceKeySql}, NULL)) AS activated
     FROM ${table}
     WHERE ${dateFilter} AND ${meaningful}
   `;
@@ -2737,7 +2741,7 @@ ${capabilitySql.isDeliberate}
   const featureUsageQuery = `
     WITH classified AS (
       SELECT
-        user_pseudo_id,
+        ${deviceKeySql} AS deviceKey,
         CASE
           WHEN event_name = 'one_location_share_confirmed' THEN 'live_sharing'
           WHEN event_name = 'one_location_check_in_completed' OR event_name LIKE '%check_in%' THEN 'check_in'
@@ -2786,7 +2790,7 @@ ${capabilitySql.isDeliberate}
     )
     SELECT
       feature_key AS featureKey,
-      COUNT(DISTINCT user_pseudo_id) AS devices,
+      COUNT(DISTINCT deviceKey) AS devices,
       COUNT(*) AS signals
     FROM classified
     WHERE feature_key IS NOT NULL
