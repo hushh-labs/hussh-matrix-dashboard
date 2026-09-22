@@ -339,6 +339,19 @@ async function main() {
       `API DAU/WAU/MAU ${Number(actualActive?.dau ?? 0)}/${Number(actualActive?.wau ?? 0)}/${Number(actualActive?.mau ?? 0)} as of ${String(actualActive?.asOf ?? 'none')}; ` +
       `BigQuery ${Number(expectedActive?.dau ?? 0)}/${Number(expectedActive?.wau ?? 0)}/${Number(expectedActive?.mau ?? 0)} as of ${String(expectedActive?.asOf ?? 'none')}`);
 
+    // The normal dashboard range ends today. Its active KPI must still anchor
+    // to the finalized daily export, never the partially accumulated intraday
+    // table. This catches the "DAU=2 at midnight" regression that a historical
+    // stable-window comparison cannot see.
+    const defaultEndpoint = new URL('/api/analytics/one', `${options.dashboardUrl.replace(/\/$/, '')}/`);
+    const defaultPayload = await fetchJson(defaultEndpoint.toString());
+    const defaultActive = defaultPayload?.data?.production?.activeUsers;
+    record('dashboard_active_devices_use_finalized_day',
+      sameNumbers(defaultActive, expectedActive, ['dau', 'wau', 'mau'])
+        && String(defaultActive?.asOf ?? '') === String(expectedActive?.asOf ?? ''),
+      `default API DAU/WAU/MAU ${Number(defaultActive?.dau ?? 0)}/${Number(defaultActive?.wau ?? 0)}/${Number(defaultActive?.mau ?? 0)} ` +
+      `as of ${String(defaultActive?.asOf ?? 'none')}; finalized BigQuery day ${String(expectedActive?.asOf ?? 'none')}`);
+
     const actualPlatformMap = new Map((production?.activeByPlatform ?? []).map((row) => [String(row.platform), row]));
     const platformMismatches = stablePlatforms.filter((expected) => {
       const actual = actualPlatformMap.get(String(expected.platform));
