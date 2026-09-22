@@ -5,14 +5,13 @@ const DEFAULT_DASHBOARD_URL = 'https://metrics.hushh.ai';
 const DEFAULT_PRODUCT_URL = 'https://one.hushh.ai';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const HOST_ALIASES = new Map([
-  ['kai.hush.ai', 'one.hushh.ai'],
   ['prod.one.hushh.ai', 'one.hushh.ai'],
 ]);
 
 function parseArgs(argv) {
   const options = {
     dashboardUrl: process.env.METRICS_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
-    productUrl: process.env.ONE_PRODUCTION_URL || process.env.KAI_PRODUCTION_URL || DEFAULT_PRODUCT_URL,
+    productUrl: process.env.ONE_PRODUCTION_URL || DEFAULT_PRODUCT_URL,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
 
@@ -139,14 +138,14 @@ async function main() {
   assert(health.body?.status === 'ok', 'dashboard health endpoint did not return status ok', JSON.stringify(health.body));
   results.push({ check: 'dashboard-health', status: 'ok', detail: health.body.status });
 
-  const kai = await checkJsonEndpoint(dashboard.url, '/api/analytics/one?window_days=7', options.timeoutMs);
-  const cacheControl = kai.response.headers.get('cache-control') || '';
+  const oneResponse = await checkJsonEndpoint(dashboard.url, '/api/analytics/one?window_days=7', options.timeoutMs);
+  const cacheControl = oneResponse.response.headers.get('cache-control') || '';
   assert(cacheControl.includes('no-store'), 'One analytics endpoint is cacheable', cacheControl);
-  assert(kai.body?.platform === 'one.hushh.ai', 'One analytics platform mismatch');
-  assert(Array.isArray(kai.body?.data?.freshness?.sources), 'One freshness sources missing');
-  assert(kai.body?.data?.gcp, 'One production Cloud Run metrics missing');
-  assertPublicSafePayload(kai.body, 'One analytics');
-  const data = kai.body?.data || {};
+  assert(oneResponse.body?.platform === 'one.hushh.ai', 'One analytics platform mismatch');
+  assert(Array.isArray(oneResponse.body?.data?.freshness?.sources), 'One freshness sources missing');
+  assert(oneResponse.body?.data?.gcp, 'One production Cloud Run metrics missing');
+  assertPublicSafePayload(oneResponse.body, 'One analytics');
+  const data = oneResponse.body?.data || {};
   const productionFreshnessKeys = data.freshness.sources.map((source) => source.key);
   assert(!productionFreshnessKeys.includes('uat_validation'), 'One production freshness mixes UAT validation into production sources');
   const search = data.searchConsole;
@@ -171,13 +170,32 @@ async function main() {
   results.push({
     check: 'one-analytics',
     status: 'ok',
-    detail: `freshness=${kai.body.data.freshness.sources.map((source) => `${source.key}:${source.state}`).join(',')}`,
+    detail: `freshness=${oneResponse.body.data.freshness.sources.map((source) => `${source.key}:${source.state}`).join(',')}`,
+  });
+
+  const oneApp = await checkJsonEndpoint(dashboard.url, '/api/analytics/one/app?one_window_days=7', options.timeoutMs);
+  assertPublicSafePayload(oneApp.body, 'One app analytics');
+  for (const environment of ['production', 'uat']) {
+    const summary = oneApp.body?.data?.[environment];
+    assert(summary?.rangeTotals, `One app ${environment} range totals missing`);
+    assert(summary?.activeUsers, `One app ${environment} active users missing`);
+    for (const key of ['users', 'sessions', 'events']) {
+      assert(Number.isFinite(Number(summary.rangeTotals[key])), `One app ${environment} ${key} not numeric`);
+    }
+    for (const key of ['dau', 'wau', 'mau']) {
+      assert(Number.isFinite(Number(summary.activeUsers[key])), `One app ${environment} ${key} not numeric`);
+    }
+  }
+  results.push({
+    check: 'one-app-analytics',
+    status: 'ok',
+    detail: 'production and UAT totals plus active-user windows are present',
   });
 
   const all = await checkJsonEndpoint(dashboard.url, '/api/analytics/all?window_days=7', options.timeoutMs);
   assert(all.body?.kai?.productionProduct?.data?.freshness, 'aggregate analytics missing One production freshness block');
-  const aggregateKai = all.body.kai.productionProduct.data;
-  assert(Array.isArray(aggregateKai.uatSourceCards) && aggregateKai.uatSourceCards.length >= 3, 'aggregate analytics missing One UAT source cards');
+  const aggregateOne = all.body.kai.productionProduct.data;
+  assert(Array.isArray(aggregateOne.uatSourceCards) && aggregateOne.uatSourceCards.length >= 3, 'aggregate analytics missing One UAT source cards');
   results.push({ check: 'aggregate-analytics', status: 'ok', detail: 'contains One production freshness and UAT source cards' });
 
   console.log(JSON.stringify({

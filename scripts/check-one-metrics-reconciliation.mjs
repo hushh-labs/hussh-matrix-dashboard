@@ -319,7 +319,7 @@ async function main() {
         FROM days GROUP BY platform`),
     ]);
 
-    const endpoint = new URL('/api/analytics/one', `${options.dashboardUrl.replace(/\/$/, '')}/`);
+    const endpoint = new URL('/api/analytics/one/app', `${options.dashboardUrl.replace(/\/$/, '')}/`);
     endpoint.searchParams.set('one_start_date', suffixToIso(stableStart));
     endpoint.searchParams.set('one_end_date', suffixToIso(stableEnd));
     const payload = await fetchJson(endpoint.toString());
@@ -343,7 +343,7 @@ async function main() {
     // to the finalized daily export, never the partially accumulated intraday
     // table. This catches the "DAU=2 at midnight" regression that a historical
     // stable-window comparison cannot see.
-    const defaultEndpoint = new URL('/api/analytics/one', `${options.dashboardUrl.replace(/\/$/, '')}/`);
+    const defaultEndpoint = new URL('/api/analytics/one/app', `${options.dashboardUrl.replace(/\/$/, '')}/`);
     const defaultPayload = await fetchJson(defaultEndpoint.toString());
     const defaultActive = defaultPayload?.data?.production?.activeUsers;
     record('dashboard_active_devices_use_finalized_day',

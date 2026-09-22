@@ -187,13 +187,13 @@ const KAI_SEARCH_FALLBACK_DATASET =
 const KAI_SEARCH_CONSOLE_SITE_URL =
   process.env.ONE_SEARCH_CONSOLE_SITE_URL || process.env.KAI_SEARCH_CONSOLE_SITE_URL || 'sc-domain:hushh.ai';
 const KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX =
-  process.env.ONE_SEARCH_CONSOLE_PAGE_FILTER_REGEX
-  || process.env.KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX
+  process.env.ONE_SEARCH_CONSOLE_PAGE_FILTER_REGEX?.trim()
+  || process.env.KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX?.trim()
   || '^https://(uat\\.)?one\\.hushh\\.ai(/|$)';
 const KAI_PROD_SEARCH_CONSOLE_PAGE_FILTER_REGEX =
-  process.env.ONE_PROD_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://one\\.hushh\\.ai(/|$)';
+  process.env.ONE_PROD_SEARCH_CONSOLE_PAGE_FILTER_REGEX?.trim() || '^https://one\\.hushh\\.ai(/|$)';
 const KAI_UAT_SEARCH_CONSOLE_PAGE_FILTER_REGEX =
-  process.env.ONE_UAT_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://uat\\.one\\.hushh\\.ai(/|$)';
+  process.env.ONE_UAT_SEARCH_CONSOLE_PAGE_FILTER_REGEX?.trim() || '^https://uat\\.one\\.hushh\\.ai(/|$)';
 const KAI_SEARCH_CONSOLE_TYPE = process.env.ONE_SEARCH_CONSOLE_TYPE || process.env.KAI_SEARCH_CONSOLE_TYPE || 'web';
 const KAI_SEARCH_CONSOLE_DATA_STATE = process.env.ONE_SEARCH_CONSOLE_DATA_STATE || process.env.KAI_SEARCH_CONSOLE_DATA_STATE || 'all';
 const KAI_SEARCH_CONSOLE_ROW_LIMIT = Math.max(
@@ -4922,11 +4922,9 @@ app.get(['/api/analytics/one', '/api/analytics/kai'], async (req, res) => {
     platform: 'one.hushh.ai',
     data: {
       productionFeed: {
-        rows: production.rows,
         status: buildKaiFeedStatus(production.rows),
       },
       uatFeed: {
-        rows: uat.rows,
         status: buildKaiFeedStatus(uat.rows),
       },
       uatGa4: uatGa4.data,
@@ -5878,7 +5876,7 @@ app.get('/api/analytics/app-store-connect', async (req, res) => {
   }));
 });
 
-app.get('/api/analytics/one', async (req, res) => {
+app.get('/api/analytics/one/app', async (req, res) => {
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
   const [production, uat] = await Promise.all([
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),

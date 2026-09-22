@@ -75,7 +75,7 @@ function finiteOrNull(value) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const endpoint = `${options.baseUrl}/api/analytics/one?one_window_days=${options.days}`;
+  const endpoint = `${options.baseUrl}/api/analytics/one/app?one_window_days=${options.days}`;
   const response = await fetch(endpoint, { headers: { accept: 'application/json' } });
   const payload = await response.json();
   const production = payload?.data?.production;

@@ -209,10 +209,10 @@ jobs:
           HUSHH_AI_PRODUCTION_URL: ${{ env.PRODUCTION_URL }}
         run: npm run test:prod:hushh-ai -- --base-url "${PRODUCTION_URL}" --timeout-ms 120000
 
-      - name: Verify Kai production
+      - name: Verify One production
         env:
           METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-        run: npm run test:prod:kai -- --dashboard-url "${PRODUCTION_URL}" --timeout-ms 120000
+        run: npm run test:prod:one -- --dashboard-url "${PRODUCTION_URL}" --timeout-ms 120000
 
       - name: Verify One Location production and UAT analytics
         run: npm run test:api:one-location -- --base-url "${PRODUCTION_URL}" --days 7

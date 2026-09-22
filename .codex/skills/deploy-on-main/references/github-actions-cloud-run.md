@@ -10,7 +10,7 @@ Use this pattern when adding deploy-on-main automation for a Cloud Run service.
 - `ARTIFACT_REGISTRY_REPOSITORY`
 - `RUNTIME_SERVICE_ACCOUNT`
 - Workload Identity Federation provider and deploy service account, or an existing approved auth method
-- Production probe command, for example `npm run test:prod:kai`
+- Production probe command, for example `npm run test:prod:one`
 
 ## Workflow Shape
 

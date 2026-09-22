@@ -112,13 +112,14 @@ const checks = [];
 const failures = [];
 for (const spec of [
   { path: '/api/analytics/one', maxBytes: maxOneBytes },
+  { path: '/api/analytics/one/app', maxBytes: maxOneBytes },
   { path: '/api/analytics/all', maxBytes: maxAllBytes },
 ]) {
   try {
     const result = await fetchJson(spec.path, spec.maxBytes);
     const findings = [];
     inspect(result.data, '$', findings);
-    const one = spec.path.endsWith('/one') ? result.data?.data : result.data?.one?.data;
+    const one = spec.path === '/api/analytics/all' ? result.data?.one?.data : result.data?.data;
     assertOneSummary(one?.production, `${spec.path}.production`, 'one.hushh.ai', findings);
     assertOneSummary(one?.uat, `${spec.path}.uat`, 'uat.one.hushh.ai', findings);
     checks.push({ endpoint: spec.path, bytes: result.bytes, durationMs: result.durationMs, findings: findings.length });

@@ -45,7 +45,7 @@ Give Codex the production and development context needed to safely change, deplo
    - Preserve the runtime service account and Secret Manager bindings.
 
 5. Verify production automatically.
-   - Run `npm run test:prod:hushh-ai` and `npm run test:prod:kai` when dashboard behavior changes.
+   - Run `npm run test:prod:hushh-ai` and `npm run test:prod:one` when dashboard behavior changes.
    - Also check `https://metrics.hushh.ai/api/health` and `https://metrics.hushh.ai/api/analytics/all`.
    - Verify DNS/domain mapping when routing or certificate behavior changes.
 
