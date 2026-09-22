@@ -180,6 +180,18 @@ async function main() {
     assert(summary?.rangeTotals, `One app ${environment} range totals missing`);
     assert(summary?.activeUsers, `One app ${environment} active users missing`);
     assert(summary?.identifiedUsers, `One app ${environment} identified users missing`);
+    assert(summary?.registeredAccounts?.available === true, `One app ${environment} authoritative registered users unavailable`);
+    assert(Number.isInteger(Number(summary.registeredAccounts.totalAccounts))
+      && Number(summary.registeredAccounts.totalAccounts) >= 0,
+    `One app ${environment} total registered users invalid`);
+    assert(Number.isInteger(Number(summary.registeredAccounts.newAccounts))
+      && Number(summary.registeredAccounts.newAccounts) >= 0
+      && Number(summary.registeredAccounts.newAccounts) <= Number(summary.registeredAccounts.accountsCreatedByRangeEnd)
+      && Number(summary.registeredAccounts.accountsCreatedByRangeEnd) <= Number(summary.registeredAccounts.totalAccounts),
+    `One app ${environment} new registered users invalid`);
+    assert((summary.registeredAccounts.daily || []).reduce((total, row) => total + Number(row.newAccounts || 0), 0)
+      === Number(summary.registeredAccounts.newAccounts),
+    `One app ${environment} daily registrations do not reconcile`);
     const selectedUsers = summary?.identifiedUsers?.selectedRange;
     assert(selectedUsers, `One app ${environment} selected-range unique users missing`);
     assert(Number(selectedUsers.newUsers) + Number(selectedUsers.returningUsers) === Number(selectedUsers.totalUsers),
@@ -194,10 +206,16 @@ async function main() {
       assert(coverage === null || (Number(coverage) >= 0 && Number(coverage) <= 1), `One app ${environment} ${key} identity coverage invalid`);
     }
   }
+  assert(oneApp.body?.data?.production?.registeredAccounts?.totalAccounts
+    === oneApp.body?.data?.uat?.registeredAccounts?.totalAccounts,
+  'One app production and UAT shared registered-account totals differ');
+  assert(oneApp.body?.data?.production?.registeredAccounts?.newAccounts
+    === oneApp.body?.data?.uat?.registeredAccounts?.newAccounts,
+  'One app production and UAT shared new-account totals differ');
   results.push({
     check: 'one-app-analytics',
     status: 'ok',
-    detail: 'production and UAT device windows plus cross-device identified-user windows are present',
+    detail: 'authoritative registered users, device windows and cross-device identified-user windows are present',
   });
 
   const all = await checkJsonEndpoint(dashboard.url, '/api/analytics/all?window_days=7', options.timeoutMs);

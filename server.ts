@@ -89,6 +89,14 @@ const ONE_APP_GA4_DATASET = process.env.ONE_APP_GA4_DATASET || KAI_PROD_GA4_DATA
 const ONE_APP_GA4_WINDOW_DAYS = parseInt(process.env.ONE_APP_GA4_WINDOW_DAYS || '30', 10);
 const ONE_APP_UAT_GA4_PROJECT = process.env.ONE_APP_UAT_GA4_PROJECT || KAI_GA4_PROJECT;
 const ONE_APP_UAT_GA4_DATASET = process.env.ONE_APP_UAT_GA4_DATASET || KAI_GA4_DATASET;
+// Production and UAT One builds intentionally share the same Firebase
+// Authentication realm. Backend routing and GA4 properties remain separate;
+// this project is used only as the authoritative registered-account source.
+const ONE_FIREBASE_AUTH_PROJECT = process.env.ONE_FIREBASE_AUTH_PROJECT || KAI_PROD_GCP_PROJECT;
+const ONE_FIREBASE_AUTH_CACHE_TTL_MS = Math.max(
+  60_000,
+  Math.min(parseInt(process.env.ONE_FIREBASE_AUTH_CACHE_TTL_MS || '60000', 10) || 60_000, 3_600_000),
+);
 const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod';
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
@@ -2236,6 +2244,200 @@ function oneAppSurfaceFilter(webHost: string): string {
     )`;
 }
 
+interface FirebaseAuthAccountRecord {
+  localId?: string;
+  createdAt?: string;
+  disabled?: boolean;
+}
+
+interface FirebaseAuthBatchResponse {
+  users?: FirebaseAuthAccountRecord[];
+  nextPageToken?: string;
+}
+
+interface OneRegisteredAccountsSummary {
+  available: boolean;
+  sourceLabel: string;
+  identityRealm: string;
+  sharedAcrossEnvironments: boolean;
+  countingUnit: 'account';
+  deduplication: string;
+  totalAccounts: number | null;
+  newAccounts: number | null;
+  accountsCreatedByRangeEnd: number | null;
+  disabledAccounts: number | null;
+  startDate: string;
+  endDate: string;
+  generatedAt: string;
+  daily: Array<{ date: string; newAccounts: number }>;
+  note: string;
+}
+
+const oneRegisteredAccountsCache = new Map<
+  string,
+  { expiresAt: number; result: DataResult<OneRegisteredAccountsSummary> }
+>();
+const oneRegisteredAccountsInflight = new Map<
+  string,
+  Promise<DataResult<OneRegisteredAccountsSummary>>
+>();
+
+function unavailableOneRegisteredAccounts(
+  range: HushhAiDateRange,
+  note: string,
+): OneRegisteredAccountsSummary {
+  return {
+    available: false,
+    sourceLabel: 'Firebase Authentication',
+    identityRealm: 'Shared One production and UAT identity realm',
+    sharedAcrossEnvironments: true,
+    countingUnit: 'account',
+    deduplication: 'One immutable Firebase account ID counted once',
+    totalAccounts: null,
+    newAccounts: null,
+    accountsCreatedByRangeEnd: null,
+    disabledAccounts: null,
+    startDate: range.startDate,
+    endDate: range.endDate,
+    generatedAt: new Date().toISOString(),
+    daily: dateSpine(range).map((date) => ({ date, newAccounts: 0 })),
+    note,
+  };
+}
+
+/**
+ * Aggregate the authoritative Firebase Authentication account registry.
+ *
+ * Identity Toolkit returns account records because signup timestamps are not
+ * exposed by its count-only query. The response is reduced in memory to
+ * aggregate counts immediately: emails, phone numbers and provider identities
+ * are never retained, logged, cached or returned. Only immutable account IDs
+ * are held in a short-lived Set so pagination cannot double-count a record.
+ */
+async function fetchOneRegisteredAccountsUncached(
+  range: HushhAiDateRange,
+): Promise<DataResult<OneRegisteredAccountsSummary>> {
+  try {
+    const { GoogleAuth } = await import('google-auth-library');
+    const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+    const client = await auth.getClient();
+    const seenAccountIds = new Set<string>();
+    const newAccountsByDate = new Map<string, number>();
+    let nextPageToken = '';
+    let previousPageToken = '';
+    let disabledAccounts = 0;
+    let newAccounts = 0;
+    let accountsCreatedByRangeEnd = 0;
+    let pageCount = 0;
+
+    do {
+      const response = await (client as any).request({
+        url: `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(ONE_FIREBASE_AUTH_PROJECT)}/accounts:batchGet`,
+        method: 'GET',
+        params: {
+          maxResults: 1000,
+          ...(nextPageToken ? { nextPageToken } : {}),
+        },
+        timeout: 30_000,
+      });
+      const body = (response.data ?? {}) as FirebaseAuthBatchResponse;
+      for (const account of body.users ?? []) {
+        const accountId = typeof account.localId === 'string' ? account.localId : '';
+        if (!accountId || seenAccountIds.has(accountId)) continue;
+        seenAccountIds.add(accountId);
+        if (account.disabled === true) disabledAccounts += 1;
+
+        const createdAtMs = Number(account.createdAt);
+        if (!Number.isFinite(createdAtMs) || createdAtMs < 0) continue;
+        const createdDate = new Date(createdAtMs).toISOString().slice(0, 10);
+        if (createdDate <= range.endDate) accountsCreatedByRangeEnd += 1;
+        if (createdDate >= range.startDate && createdDate <= range.endDate) {
+          newAccounts += 1;
+          newAccountsByDate.set(createdDate, (newAccountsByDate.get(createdDate) ?? 0) + 1);
+        }
+      }
+
+      previousPageToken = nextPageToken;
+      nextPageToken = typeof body.nextPageToken === 'string' ? body.nextPageToken : '';
+      pageCount += 1;
+      if (nextPageToken && nextPageToken === previousPageToken) {
+        throw new Error('Identity Toolkit returned a repeated pagination token');
+      }
+      if (pageCount > 10_000) {
+        throw new Error('Identity Toolkit pagination exceeded the safety limit');
+      }
+    } while (nextPageToken);
+
+    const generatedAt = new Date().toISOString();
+    return {
+      data: {
+        available: true,
+        sourceLabel: 'Firebase Authentication',
+        identityRealm: 'Shared One production and UAT identity realm',
+        sharedAcrossEnvironments: true,
+        countingUnit: 'account',
+        deduplication: 'One immutable Firebase account ID counted once',
+        totalAccounts: seenAccountIds.size,
+        newAccounts,
+        accountsCreatedByRangeEnd,
+        disabledAccounts,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        generatedAt,
+        daily: dateSpine(range).map((date) => ({
+          date,
+          newAccounts: newAccountsByDate.get(date) ?? 0,
+        })),
+        note: 'Current Firebase Authentication account records; deleted accounts are not present. Disabled accounts are included and reported separately.',
+      },
+      error: null,
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`One Firebase Authentication aggregate failed: ${message}`);
+    const note = /permission|denied|forbidden|unauthorized|insufficient|403|401/i.test(message)
+      ? 'Registered-user aggregate is waiting for Firebase Authentication Viewer access for the metrics runtime identity.'
+      : 'Registered-user aggregate is temporarily unavailable from Firebase Authentication.';
+    return {
+      data: unavailableOneRegisteredAccounts(range, note),
+      error: note,
+    };
+  }
+}
+
+function fetchOneRegisteredAccounts(
+  range: HushhAiDateRange,
+): Promise<DataResult<OneRegisteredAccountsSummary>> {
+  const now = Date.now();
+  for (const [cacheKey, entry] of oneRegisteredAccountsCache) {
+    if (entry.expiresAt <= now) oneRegisteredAccountsCache.delete(cacheKey);
+  }
+  const key = `${range.startDate}:${range.endDate}`;
+  const cached = oneRegisteredAccountsCache.get(key);
+  if (cached) return Promise.resolve(cached.result);
+  const inflight = oneRegisteredAccountsInflight.get(key);
+  if (inflight) return inflight;
+
+  const request = fetchOneRegisteredAccountsUncached(range)
+    .then((result) => {
+      if (!result.error) {
+        while (oneRegisteredAccountsCache.size >= 64) {
+          const oldestKey = oneRegisteredAccountsCache.keys().next().value;
+          if (typeof oldestKey !== 'string') break;
+          oneRegisteredAccountsCache.delete(oldestKey);
+        }
+        oneRegisteredAccountsCache.set(key, {
+          expiresAt: Date.now() + ONE_FIREBASE_AUTH_CACHE_TTL_MS,
+          result,
+        });
+      }
+      return result;
+    })
+    .finally(() => oneRegisteredAccountsInflight.delete(key));
+  oneRegisteredAccountsInflight.set(key, request);
+  return request;
+}
+
 interface OneAppFunnelStepRow {
   step: string;
   label: string;
@@ -2412,7 +2614,9 @@ ${capabilitySql.isDeliberate}
           WHEN eventName = 'one_location_circle_created' AND result = 'success' THEN 'circle_engaged'
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'circle_%' AND result = 'success' THEN 'circle_engaged'
           WHEN eventName = 'one_location_request_sent' AND result = 'success' AND successCount > 0 THEN 'request_sent'
-          WHEN eventName = 'one_location_journey_action' AND actionName = 'location_request_fulfilled' AND result = 'success' THEN 'request_fulfilled'
+          -- Keep failed attempts in the same aggregate row so the dashboard can
+          -- distinguish a confirmed zero-success outcome from no telemetry.
+          WHEN eventName = 'one_location_journey_action' AND actionName = 'location_request_fulfilled' THEN 'request_fulfilled'
           WHEN eventName = 'one_location_share_confirmed' AND result = 'success' AND successCount > 0 THEN 'live_shared'
           WHEN eventName = 'one_location_check_in_completed' AND result = 'success' AND successCount > 0 THEN 'check_in'
           WHEN eventName = 'one_location_journey_action' AND actionName = 'nearby_check_in_result' AND result = 'success' THEN 'check_in'
@@ -2452,7 +2656,8 @@ ${capabilitySql.isDeliberate}
     UNION ALL
     SELECT
       'journey', journeyKey, NULL, NULL,
-      COUNT(DISTINCT deviceKey), COUNT(*),
+      COUNT(DISTINCT IF(result = 'success' OR eventName = 'page_view', deviceKey, NULL)),
+      COUNTIF(result = 'success' OR eventName = 'page_view'),
       COUNTIF(result = 'success' OR eventName = 'page_view'),
       COUNTIF(result IN ('expected_error', 'error'))
     FROM classified
@@ -2947,6 +3152,7 @@ ${capabilitySql.isDeliberate}
     activationStages,
     featureUsage,
     nativeEnvironments,
+    registeredAccounts,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
     queryBigQuerySql(queryProject, agentQuery),
@@ -2969,6 +3175,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
     queryBigQuerySql(queryProject, nativeEnvironmentQuery),
+    fetchOneRegisteredAccounts(range),
   ]);
 
   const errors = [
@@ -2993,6 +3200,7 @@ ${capabilitySql.isDeliberate}
     activationStages.error,
     featureUsage.error,
     nativeEnvironments.error,
+    registeredAccounts.error,
   ].filter(Boolean);
 
   const hasAnyRows =
@@ -3121,6 +3329,7 @@ ${capabilitySql.isDeliberate}
         complete: activeMauDevices > 0 && mauIdentifiedDevices === activeMauDevices,
         asOf: activeAsOf,
       },
+      registeredAccounts: registeredAccounts.data,
       // The install cohort funnel, per native platform. Stages nest because
       // every one is measured against the same devices that installed inside
       // the window, so the ratios are real conversions rather than unrelated
@@ -3277,8 +3486,11 @@ ${capabilitySql.isDeliberate}
             key: spec.key,
             label: spec.label,
             instrumented,
+            observed: Boolean(row),
             users: instrumented ? toNumber(row?.users) : null,
             events: instrumented ? toNumber(row?.events) : null,
+            successes: instrumented ? toNumber(row?.successes) : null,
+            failures: instrumented ? toNumber(row?.failures) : null,
           };
         }),
         circleKinds: [

@@ -50,6 +50,11 @@ function percentText(value: number | null | undefined, decimals = 0): string {
   return `${(value * 100).toFixed(decimals)}%`;
 }
 
+/** Account KPIs stay exact on screen; compact notation is reserved for device/event diagnostics. */
+function exactAccountCount(value: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+}
+
 function plural(count: number, one: string, many: string): string {
   return count === 1 ? one : many;
 }
@@ -136,9 +141,9 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
 
   const range = users.selectedRange;
   const primaryTiles = [
-    { label: 'Total unique users', value: range.totalUsers, detail: 'Distinct signed-in accounts in selected range' },
-    { label: 'New unique users', value: range.newUsers, detail: 'First-ever observed account activity in selected range' },
-    { label: 'Returning unique users', value: range.returningUsers, detail: 'First observed before selected range' },
+    { label: 'Identified active users', value: range.totalUsers, detail: 'Distinct signed-in accounts active in selected range' },
+    { label: 'Newly observed active users', value: range.newUsers, detail: 'First-ever observed account activity in selected range' },
+    { label: 'Returning active users', value: range.returningUsers, detail: 'First observed before selected range' },
   ];
   const activityTiles = [
     { label: 'Daily active users', value: users.dau, detail: users.asOf },
@@ -163,7 +168,7 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
               <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
             </div>
             <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">
-              {typeof tile.value === 'number' ? formatNumber(tile.value) : tile.value}
+              {typeof tile.value === 'number' ? exactAccountCount(tile.value) : tile.value}
             </p>
             <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
           </motion.div>
@@ -174,7 +179,7 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
           <div key={tile.label} className={cn(appleCard, 'p-5')}>
             <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
             <p className="mt-2 text-3xl font-semibold leading-none text-[#1d1d1f]">
-              {typeof tile.value === 'number' ? formatNumber(tile.value) : tile.value}
+              {typeof tile.value === 'number' ? exactAccountCount(tile.value) : tile.value}
             </p>
             <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
           </div>
@@ -188,6 +193,69 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
           It de-duplicates the same signed-in account across devices. Anonymous devices and platforms that do not bind
           a stable account ID are excluded, so this is exact for the identified slice—not an estimate of unknown people.
           {' '}{users.identityScope}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function RegisteredUsers({ one }: { one: OneAppSummary }) {
+  const accounts = one.registeredAccounts;
+  if (!accounts) return null;
+
+  if (!accounts.available || accounts.totalAccounts === null || accounts.newAccounts === null) {
+    return (
+      <div className="flex items-start gap-3 rounded-2xl border border-[#d8c48b] bg-[#fffaf0] p-4 text-[#72510b]">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <p className="text-sm font-semibold leading-5">{accounts.note}</p>
+      </div>
+    );
+  }
+
+  const disabled = accounts.disabledAccounts ?? 0;
+  const snapshotAt = new Date(accounts.generatedAt).toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const tiles = [
+    {
+      label: 'Total registered users',
+      value: accounts.totalAccounts,
+      detail: `Current unique account records · ${exactAccountCount(disabled)} disabled · ${snapshotAt}`,
+    },
+    {
+      label: 'New registered users',
+      value: accounts.newAccounts,
+      detail: `${accounts.startDate} to ${accounts.endDate}`,
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {tiles.map((tile, index) => (
+          <motion.div
+            key={tile.label}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 + index * 0.04 }}
+            className={cn(appleCard, 'border-[#34c759]/20 bg-[#f6fff8] p-5')}
+          >
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-[#248a3d]" />
+              <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
+            </div>
+            <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">{exactAccountCount(tile.value)}</p>
+            <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
+          </motion.div>
+        ))}
+      </div>
+      <div className="flex items-start gap-3 rounded-2xl border border-[#b8e6c2] bg-[#f2fff5] p-4 text-[#1f6d32]">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+        <p className="text-sm font-semibold leading-5">
+          System of record: {accounts.sourceLabel}. Production and UAT share this One identity realm, while their backend routing and GA4 reporting stay separate.
+          Each immutable Firebase account ID is counted once, so repeat sign-ins, sessions, events and devices cannot inflate these values.
+          New means the account creation timestamp falls inside the selected range. Separately created accounts cannot be proven to belong to different humans, and deleted accounts are not present in the current registry snapshot.
         </p>
       </div>
     </div>
@@ -1103,11 +1171,12 @@ export function OneAppPanel({
               {environment === 'production' ? 'one.hushh.ai · production' : 'uat.one.hushh.ai · uat / test builds'} · {rangeLabel}
             </p>
             <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
-              How many devices and identified users are using One?
+              How many registered and active users does One have?
             </h2>
           </div>
         </div>
         <div className="flex flex-col gap-4">
+          <RegisteredUsers one={activeData} />
           <IdentifiedUsers one={activeData} />
           <ActiveDevices one={activeData} />
           <ActivesByPlatform rows={activeData.activeByPlatform} />

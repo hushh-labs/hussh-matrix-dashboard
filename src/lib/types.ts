@@ -767,6 +767,33 @@ export interface OneIdentifiedUsers {
 }
 
 /**
+ * Authoritative registered-account counts from Firebase Authentication.
+ * Production and UAT builds share this identity realm even though their
+ * backend routing and GA4 properties remain separate.
+ */
+export interface OneRegisteredAccounts {
+  available: boolean;
+  sourceLabel: string;
+  identityRealm: string;
+  sharedAcrossEnvironments: boolean;
+  countingUnit: 'account';
+  deduplication: string;
+  /** Current unique account records in Firebase Authentication. */
+  totalAccounts: number | null;
+  /** Current account records created inside the selected date range. */
+  newAccounts: number | null;
+  /** Current account records whose creation date is on or before the range end. */
+  accountsCreatedByRangeEnd: number | null;
+  /** Included in totalAccounts, but surfaced so the scope stays auditable. */
+  disabledAccounts: number | null;
+  startDate: string;
+  endDate: string;
+  generatedAt: string;
+  daily: Array<{ date: string; newAccounts: number }>;
+  note: string;
+}
+
+/**
  * Actives for one platform. Deliberately has no "total" sibling: web, iOS and
  * Android are separate device-id spaces and the account key that would join
  * them is bound on iOS only, so the rows must not be added.
@@ -872,8 +899,12 @@ export interface OneLocationJourneyMetric {
   key: string;
   label: string;
   instrumented: boolean;
+  /** Whether this exact action has emitted in the selected environment/range. */
+  observed: boolean;
   users: number | null;
   events: number | null;
+  successes: number | null;
+  failures: number | null;
 }
 
 export interface OneLocationCircleKindMetric {
@@ -948,6 +979,7 @@ export interface OneAppSummary {
   funnel: OneLocationFunnelStep[];
   activeUsers: OneActiveUsers;
   identifiedUsers: OneIdentifiedUsers;
+  registeredAccounts: OneRegisteredAccounts;
   activeByPlatform: OnePlatformActives[];
   installFunnel: OneInstallFunnel[];
   growth: OneGrowthSplit;

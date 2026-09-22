@@ -39,6 +39,31 @@ function checkOneEnvironment(label, one) {
     `reported=${active.stickiness}; calculated=${active.mau ? active.dau / active.mau : 'null'}`,
   );
 
+  const registered = one.registeredAccounts ?? {};
+  const registeredDaily = Array.isArray(registered.daily) ? registered.daily : [];
+  check(
+    `${label}_registered_accounts_authoritative`,
+    registered.available === true
+      && registered.countingUnit === 'account'
+      && registered.sharedAcrossEnvironments === true,
+    `available=${String(registered.available)}; source=${registered.sourceLabel}`,
+  );
+  check(
+    `${label}_registered_accounts_range_valid`,
+    number(registered.totalAccounts)
+      && registered.totalAccounts >= 0
+      && number(registered.newAccounts)
+      && registered.newAccounts >= 0
+      && registered.newAccounts <= registered.accountsCreatedByRangeEnd
+      && registered.accountsCreatedByRangeEnd <= registered.totalAccounts,
+    `new=${registered.newAccounts}; through end=${registered.accountsCreatedByRangeEnd}; total=${registered.totalAccounts}`,
+  );
+  check(
+    `${label}_registered_daily_reconciles`,
+    sum(registeredDaily, 'newAccounts') === registered.newAccounts,
+    `daily=${sum(registeredDaily, 'newAccounts')}; headline=${registered.newAccounts}`,
+  );
+
   const identified = one.identifiedUsers ?? {};
   const selectedUsers = identified.selectedRange ?? {};
   check(
@@ -223,6 +248,15 @@ try {
 
   checkOneEnvironment('one_production', payload.one?.data?.production);
   checkOneEnvironment('one_uat', payload.one?.data?.uat);
+  check(
+    'one_shared_registered_accounts_match',
+    payload.one?.data?.production?.registeredAccounts?.totalAccounts
+      === payload.one?.data?.uat?.registeredAccounts?.totalAccounts
+      && payload.one?.data?.production?.registeredAccounts?.newAccounts
+      === payload.one?.data?.uat?.registeredAccounts?.newAccounts,
+    `production=${payload.one?.data?.production?.registeredAccounts?.totalAccounts}/${payload.one?.data?.production?.registeredAccounts?.newAccounts}; `
+      + `uat=${payload.one?.data?.uat?.registeredAccounts?.totalAccounts}/${payload.one?.data?.uat?.registeredAccounts?.newAccounts}`,
+  );
   checkGrowth(payload.growth?.data);
   checkKai(payload.kai?.production?.rows);
 
