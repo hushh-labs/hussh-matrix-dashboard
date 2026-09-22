@@ -1645,8 +1645,17 @@ function ga4ExportTotalsSql(table: string, whereClause: string): string {
   return `
     SELECT
       COUNT(*) AS events,
-      COUNT(DISTINCT user_pseudo_id) AS users,
-      COUNT(DISTINCT (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')) AS sessions
+      -- GA4 app-instance ids belong to a platform/stream namespace. Prefixing
+      -- prevents an opaque id collision between web, iOS and Android from
+      -- silently collapsing two devices into one.
+      COUNT(DISTINCT CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id)) AS users,
+      -- ga_session_id is a session start timestamp, not a globally unique id.
+      -- Counting it alone merges unrelated devices that started in the same
+      -- second. A session is the compound device + ga_session_id identity.
+      COUNT(DISTINCT CONCAT(
+        COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id, ':',
+        CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING)
+      )) AS sessions
     FROM ${table}
     WHERE ${whereClause}
   `;
@@ -1671,8 +1680,11 @@ async function fetchKaiGa4ExportSummary(
     SELECT
       CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
       COUNT(*) AS events,
-      COUNT(DISTINCT user_pseudo_id) AS users,
-      COUNT(DISTINCT (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')) AS sessions
+      COUNT(DISTINCT CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id)) AS users,
+      COUNT(DISTINCT CONCAT(
+        COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id, ':',
+        CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS STRING)
+      )) AS sessions
     FROM ${table}
     WHERE ${dateFilter}
     GROUP BY eventDate
@@ -1685,7 +1697,7 @@ async function fetchKaiGa4ExportSummary(
     SELECT
       event_name AS eventName,
       COUNT(*) AS events,
-      COUNT(DISTINCT user_pseudo_id) AS users
+      COUNT(DISTINCT CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id)) AS users
     FROM ${table}
     WHERE ${dateFilter}
     GROUP BY eventName
@@ -1698,7 +1710,7 @@ async function fetchKaiGa4ExportSummary(
       device.category AS deviceCategory,
       geo.country AS country,
       COUNT(*) AS events,
-      COUNT(DISTINCT user_pseudo_id) AS users
+      COUNT(DISTINCT CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id)) AS users
     FROM ${table}
     WHERE ${dateFilter}
     GROUP BY platform, deviceCategory, country

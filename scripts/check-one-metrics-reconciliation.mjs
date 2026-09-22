@@ -25,11 +25,13 @@ function parseArgs(argv) {
     dataset: DEFAULT_DATASET,
     webHost: DEFAULT_WEB_HOST,
     jobProject: process.env.BQ_JOB_PROJECT || '',
+    dashboardUrl: process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai',
     days: 30,
     // GA4's daily export lands a day or more after the day closes. Asserting
     // "latest table == yesterday" is red on a perfectly healthy pipeline.
     freshnessToleranceDays: 2,
     strictGaps: false,
+    skipDashboard: false,
     json: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -38,6 +40,7 @@ function parseArgs(argv) {
     else if (arg === '--dataset' && argv[i + 1]) { options.dataset = argv[++i]; }
     else if (arg === '--web-host' && argv[i + 1]) { options.webHost = argv[++i]; }
     else if (arg === '--job-project' && argv[i + 1]) { options.jobProject = argv[++i]; }
+    else if (arg === '--dashboard-url' && argv[i + 1]) { options.dashboardUrl = argv[++i]; }
     else if (arg === '--days' && argv[i + 1]) {
       const parsed = Number(argv[++i]);
       if (Number.isFinite(parsed) && parsed > 0) options.days = Math.floor(parsed);
@@ -47,6 +50,7 @@ function parseArgs(argv) {
       if (Number.isFinite(parsed) && parsed >= 0) options.freshnessToleranceDays = Math.floor(parsed);
     }
     else if (arg === '--strict-gaps') { options.strictGaps = true; }
+    else if (arg === '--skip-dashboard') { options.skipDashboard = true; }
     else if (arg === '--json') { options.json = true; }
   }
   return options;
@@ -55,6 +59,28 @@ function parseArgs(argv) {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const utcSuffix = (date) => date.toISOString().slice(0, 10).replace(/-/g, '');
 const suffixToIso = (suffix) => `${suffix.slice(0, 4)}-${suffix.slice(4, 6)}-${suffix.slice(6, 8)}`;
+const addSuffixDays = (suffix, days) => utcSuffix(new Date(Date.parse(`${suffixToIso(suffix)}T00:00:00Z`) + days * DAY_MS));
+
+function sameNumbers(actual, expected, keys) {
+  return keys.every((key) => Number(actual?.[key] ?? 0) === Number(expected?.[key] ?? 0));
+}
+
+async function fetchJson(url, timeoutMs = 120_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json' } });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`${url} returned invalid JSON`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Last N *complete* UTC days. The current UTC day is excluded: it is still accumulating. */
 function completeUtcWindow(days) {
@@ -160,6 +186,70 @@ async function main() {
     `maximum ${Number(multiplicity?.max_devices_per_account ?? 0)} devices/account. ` +
     'Account metrics use COUNT(DISTINCT user_id); device metrics intentionally do not claim unique people.');
 
+  // A GA4 app-instance identifier belongs to a stream/platform namespace. A
+  // coincidental value collision between web and native must never silently
+  // collapse two devices into one. The production query currently counts the
+  // raw identifier, so this enforced assertion protects that equivalence. If
+  // it ever fails, the dashboard query must switch to the namespaced key.
+  const [namespace] = await run(`
+    WITH devices AS (
+      SELECT
+        COALESCE(platform, 'UNKNOWN') AS platform,
+        user_pseudo_id
+      FROM ${table}
+      WHERE ${oneFilter} AND user_pseudo_id IS NOT NULL AND user_pseudo_id != ''
+    ), pseudo_platforms AS (
+      SELECT user_pseudo_id, COUNT(DISTINCT platform) AS platforms
+      FROM devices GROUP BY user_pseudo_id
+    )
+    SELECT
+      (SELECT COUNT(DISTINCT user_pseudo_id) FROM devices) AS raw_devices,
+      (SELECT COUNT(DISTINCT CONCAT(platform, ':', user_pseudo_id)) FROM devices) AS namespaced_devices,
+      (SELECT COUNTIF(platforms > 1) FROM pseudo_platforms) AS cross_platform_collisions`);
+  const rawDevices = Number(namespace?.raw_devices ?? 0);
+  const namespacedDevices = Number(namespace?.namespaced_devices ?? 0);
+  const crossPlatformCollisions = Number(namespace?.cross_platform_collisions ?? 0);
+  record('device_identifier_namespace_safe',
+    rawDevices === namespacedDevices && crossPlatformCollisions === 0,
+    `${rawDevices} raw device ids vs ${namespacedDevices} platform-namespaced device ids; ` +
+    `${crossPlatformCollisions} identifiers collide across platforms`);
+
+  // Stable account IDs are expected to be the 32-character salted digest
+  // emitted by the One clients. Only aggregate validation leaves this probe;
+  // a malformed or raw identifier is counted but never printed.
+  const [identityShape] = await run(`
+    WITH scoped AS (
+      SELECT
+        COALESCE(platform, 'UNKNOWN') AS platform,
+        user_pseudo_id,
+        NULLIF(user_id, '') AS user_id
+      FROM ${table}
+      WHERE ${oneFilter}
+    ), device_accounts AS (
+      SELECT platform, user_pseudo_id, COUNT(DISTINCT user_id) AS accounts
+      FROM scoped
+      WHERE user_pseudo_id IS NOT NULL AND user_id IS NOT NULL
+      GROUP BY platform, user_pseudo_id
+    ), account_platforms AS (
+      SELECT user_id, COUNT(DISTINCT platform) AS platforms
+      FROM scoped WHERE user_id IS NOT NULL GROUP BY user_id
+    )
+    SELECT
+      COUNT(DISTINCT IF(user_id IS NOT NULL, user_id, NULL)) AS global_accounts,
+      COUNT(DISTINCT IF(user_id IS NOT NULL AND NOT REGEXP_CONTAINS(user_id, r'^[0-9a-f]{32}$'), user_id, NULL)) AS malformed_account_ids,
+      (SELECT COUNTIF(accounts > 1) FROM device_accounts) AS multi_account_devices,
+      (SELECT MAX(accounts) FROM device_accounts) AS max_accounts_per_device,
+      (SELECT COUNTIF(platforms > 1) FROM account_platforms) AS cross_platform_accounts
+    FROM scoped`);
+  record('stable_account_id_shape_valid', Number(identityShape?.malformed_account_ids ?? 0) === 0,
+    `${Number(identityShape?.global_accounts ?? 0)} distinct account ids; ` +
+    `${Number(identityShape?.malformed_account_ids ?? 0)} do not match the salted 32-hex contract`);
+  record('device_account_reuse_reported', true,
+    `${Number(identityShape?.multi_account_devices ?? 0)} devices carried more than one account id; ` +
+    `maximum ${Number(identityShape?.max_accounts_per_device ?? 0)} accounts/device; ` +
+    `${Number(identityShape?.cross_platform_accounts ?? 0)} accounts were observed on multiple platforms. ` +
+    'This does not duplicate COUNT(DISTINCT user_id), but proves a device is not interchangeable with a person.');
+
   // 4. Active users under both bases, so the definition note stays truthful.
   const [active] = await run(`
     SELECT
@@ -169,6 +259,97 @@ async function main() {
     FROM ${table} WHERE ${oneFilter}`);
   record('active_users_reported', Number(active?.mau_all ?? 0) > 0,
     `MAU-${options.days} all=${Number(active?.mau_all ?? 0)} meaningful=${Number(active?.mau_meaningful ?? 0)}, DAU(${suffixToIso(latestSuffix)})=${Number(active?.dau_all ?? 0)}`);
+
+  // Reconcile the public dashboard against a stable, finalized 30-day slice.
+  // This is intentionally not the current intraday table: a streaming table
+  // can receive another event between the API request and the oracle query,
+  // producing a false mismatch even when both are correct.
+  if (!options.skipDashboard && latestDay) {
+    const stableEnd = latestSuffix;
+    const stableStart = addSuffixDays(stableEnd, -(options.days - 1));
+    const stableActiveStart = addSuffixDays(stableEnd, -33);
+    const stableDateFilter = `_TABLE_SUFFIX BETWEEN '${stableStart}' AND '${stableEnd}'`;
+    const stableActiveDateFilter = `_TABLE_SUFFIX BETWEEN '${stableActiveStart}' AND '${stableEnd}'`;
+    const stableOneFilter = `${stableDateFilter} AND ${surfaceFilter(options.webHost)}`;
+    const stableActiveOneFilter = `${stableActiveDateFilter} AND ${surfaceFilter(options.webHost)}`;
+
+    const [stableTotals, stableActive, stablePlatforms] = await Promise.all([
+      run(`
+        SELECT
+          COUNT(*) AS events,
+          COUNT(DISTINCT CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id)) AS users,
+          COUNT(DISTINCT CONCAT(
+            COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id, ':',
+            CAST((SELECT value.int_value FROM UNNEST(event_params) WHERE key='ga_session_id') AS STRING)
+          )) AS sessions
+        FROM ${table} WHERE ${stableOneFilter}`),
+      run(`
+        WITH days AS (
+          SELECT user_pseudo_id, PARSE_DATE('%Y%m%d', event_date) AS day
+          FROM ${table}
+          WHERE ${stableActiveOneFilter} AND event_name NOT IN (${excluded})
+        ), anchor AS (SELECT MAX(day) AS latest FROM days)
+        SELECT
+          CAST((SELECT latest FROM anchor) AS STRING) AS asOf,
+          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS dau,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+            AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS wau,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+            AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS mau
+        FROM days`),
+      run(`
+        WITH days AS (
+          SELECT
+            COALESCE(platform, 'UNKNOWN') AS platform,
+            user_pseudo_id,
+            NULLIF(user_id, '') AS user_id,
+            PARSE_DATE('%Y%m%d', event_date) AS day
+          FROM ${table}
+          WHERE ${stableActiveOneFilter} AND event_name NOT IN (${excluded})
+        ), anchor AS (SELECT MAX(day) AS latest FROM days)
+        SELECT
+          platform,
+          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS dauDevices,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+            AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS wauDevices,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+            AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS mauDevices,
+          COUNT(DISTINCT user_id) AS accounts,
+          COUNT(DISTINCT IF(user_id IS NOT NULL, user_pseudo_id, NULL)) AS devicesWithAccount
+        FROM days GROUP BY platform`),
+    ]);
+
+    const endpoint = new URL('/api/analytics/one', `${options.dashboardUrl.replace(/\/$/, '')}/`);
+    endpoint.searchParams.set('one_start_date', suffixToIso(stableStart));
+    endpoint.searchParams.set('one_end_date', suffixToIso(stableEnd));
+    const payload = await fetchJson(endpoint.toString());
+    const production = payload?.data?.production;
+    const expectedTotals = stableTotals[0] ?? {};
+    const expectedActive = stableActive[0] ?? {};
+    const actualTotals = production?.rangeTotals;
+    const actualActive = production?.activeUsers;
+
+    record('dashboard_range_totals_match_bigquery',
+      sameNumbers(actualTotals, expectedTotals, ['users', 'sessions', 'events']),
+      `stable ${suffixToIso(stableStart)} to ${suffixToIso(stableEnd)}: ` +
+      `API users/sessions/events ${Number(actualTotals?.users ?? 0)}/${Number(actualTotals?.sessions ?? 0)}/${Number(actualTotals?.events ?? 0)}; ` +
+      `BigQuery ${Number(expectedTotals?.users ?? 0)}/${Number(expectedTotals?.sessions ?? 0)}/${Number(expectedTotals?.events ?? 0)}`);
+    record('dashboard_active_devices_match_bigquery',
+      sameNumbers(actualActive, expectedActive, ['dau', 'wau', 'mau']) && String(actualActive?.asOf ?? '') === String(expectedActive?.asOf ?? ''),
+      `API DAU/WAU/MAU ${Number(actualActive?.dau ?? 0)}/${Number(actualActive?.wau ?? 0)}/${Number(actualActive?.mau ?? 0)} as of ${String(actualActive?.asOf ?? 'none')}; ` +
+      `BigQuery ${Number(expectedActive?.dau ?? 0)}/${Number(expectedActive?.wau ?? 0)}/${Number(expectedActive?.mau ?? 0)} as of ${String(expectedActive?.asOf ?? 'none')}`);
+
+    const actualPlatformMap = new Map((production?.activeByPlatform ?? []).map((row) => [String(row.platform), row]));
+    const platformMismatches = stablePlatforms.filter((expected) => {
+      const actual = actualPlatformMap.get(String(expected.platform));
+      const expectedAccounts = Number(expected.devicesWithAccount ?? 0) > 0 ? Number(expected.accounts ?? 0) : null;
+      return !actual
+        || !sameNumbers(actual, expected, ['dauDevices', 'wauDevices', 'mauDevices'])
+        || (actual.accounts ?? null) !== expectedAccounts;
+    });
+    record('dashboard_platform_rows_match_bigquery', platformMismatches.length === 0,
+      `${stablePlatforms.length} BigQuery platform rows checked; ${platformMismatches.length} mismatch(es)`);
+  }
 
   // 5. Agents used. An agent invocation event is the missing emitter; until it
   //    exists "agent chat" usage is a PKM diagnostic wearing a product label.
