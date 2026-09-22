@@ -223,6 +223,9 @@ jobs:
           BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
         run: npm run test:metrics:one-reconciliation -- --dashboard-url "${PRODUCTION_URL}"
 
+      - name: Verify dashboard KPI invariants
+        run: npm run test:metrics:kpi-invariants -- --base-url "${PRODUCTION_URL}" --timeout-ms 120000
+
       - name: Verify aggregate-only public analytics contract
         run: npm run test:api:public-contract -- --base-url "${PRODUCTION_URL}" --days 7 --timeout-ms 120000
 
