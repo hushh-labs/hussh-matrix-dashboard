@@ -169,6 +169,11 @@ jobs:
       - name: Verify One Location production and UAT analytics
         run: npm run test:api:one-location -- --base-url "${PRODUCTION_URL}" --days 7
 
+      - name: Reconcile One unique-device and account metrics
+        env:
+          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
+        run: npm run test:metrics:one-reconciliation -- --dashboard-url "${PRODUCTION_URL}"
+
       - name: Verify aggregate-only public analytics contract
         run: npm run test:api:public-contract -- --base-url "${PRODUCTION_URL}" --days 7 --timeout-ms 120000
 
