@@ -223,6 +223,11 @@ jobs:
           BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
         run: npm run test:metrics:one-reconciliation -- --dashboard-url "${PRODUCTION_URL}"
 
+      - name: Reconcile One registered accounts with Firebase Authentication
+        env:
+          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
+        run: npm run test:metrics:one-registered-accounts -- --dashboard-url "${PRODUCTION_URL}" --days 30
+
       - name: Verify dashboard KPI invariants
         run: npm run test:metrics:kpi-invariants -- --base-url "${PRODUCTION_URL}" --timeout-ms 120000
 

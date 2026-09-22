@@ -423,7 +423,8 @@ function JourneyReach({ rows }: { rows: OneLocationJourneyMetric[] }) {
       </div>
       <ol className="space-y-3">
         {rows.map((row, index) => {
-          const width = row.instrumented ? Math.max(2, ((row.users ?? 0) / max) * 100) : 0;
+          const waiting = !row.instrumented || (row.key === 'request_fulfilled' && !row.observed);
+          const width = waiting ? 0 : Math.max(2, ((row.users ?? 0) / max) * 100);
           return (
             <li key={row.key} className="grid grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-3">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#f2f2f7] text-[11px] font-bold text-[#6e6e73]">
@@ -432,7 +433,7 @@ function JourneyReach({ rows }: { rows: OneLocationJourneyMetric[] }) {
               <div className="min-w-0">
                 <div className="mb-1.5 flex items-center justify-between gap-3">
                   <p className="truncate text-sm font-semibold text-[#1d1d1f]">{row.label}</p>
-                  {!row.instrumented && (
+                  {waiting && (
                     <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-[#8a5a04]">Rolling out</span>
                   )}
                 </div>
@@ -441,7 +442,7 @@ function JourneyReach({ rows }: { rows: OneLocationJourneyMetric[] }) {
                 </div>
               </div>
               <p className="min-w-12 text-right text-sm font-bold text-[#1d1d1f]">
-                <MetricValue value={row.users} waiting={!row.instrumented} />
+                <MetricValue value={row.users} waiting={waiting} />
               </p>
             </li>
           );
@@ -666,7 +667,15 @@ export function OneLocationAnalyticsPanel({
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Active Location devices" value={locationCapability?.devices ?? 0} detail="deliberate One Location use in this range" icon={MapPin} />
         <StatCard label="Successful share actions" value={byKey.get('live_sharing')?.successes ?? 0} detail="completed live-location share events" icon={Radio} />
-        <StatCard label="Request fulfilment" value={requestFulfilled?.users ?? null} detail="requests answered with an encrypted update" icon={CheckCircle2} waiting={!requestFulfilled?.instrumented} />
+        <StatCard
+          label="Fulfilled request actions"
+          value={requestFulfilled?.successes ?? null}
+          detail={requestFulfilled?.observed
+            ? `encrypted updates published · ${formatNumber(requestFulfilled.users ?? 0)} devices · ${formatNumber(requestFulfilled.failures ?? 0)} failed attempts`
+            : 'no fulfilment telemetry observed in this environment and range'}
+          icon={CheckCircle2}
+          waiting={!requestFulfilled?.observed}
+        />
         <StatCard label="Circle engagement" value={circleEngaged?.users ?? null} detail="devices reaching a Circle action" icon={UsersRound} waiting={!circleEngaged?.instrumented} />
       </div>
 

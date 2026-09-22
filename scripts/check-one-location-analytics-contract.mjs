@@ -126,6 +126,14 @@ async function main() {
     record(`${environment}_aggregate_numbers_valid`, invalidNumbers.length === 0,
       invalidNumbers.length ? `invalid=${invalidNumbers.join(',')}` : `${metricRows.length} aggregate rows validated`);
 
+    const fulfilled = (location?.journey ?? []).find((row) => row.key === 'request_fulfilled');
+    record(`${environment}_request_fulfilment_semantics_explicit`,
+      typeof fulfilled?.observed === 'boolean'
+        && finiteOrNull(fulfilled?.successes)
+        && finiteOrNull(fulfilled?.failures)
+        && (!fulfilled.observed || Number(fulfilled.successes) + Number(fulfilled.failures) > 0),
+    `observed=${String(fulfilled?.observed)}; successes=${String(fulfilled?.successes)}; failures=${String(fulfilled?.failures)}`);
+
     const piiKeys = forbiddenKeys(location);
     record(`${environment}_no_sensitive_dimensions`, piiKeys.length === 0,
       piiKeys.length ? `forbidden keys=${piiKeys.join(',')}` : 'no identifier, contact, coordinate, token or free-text keys');
