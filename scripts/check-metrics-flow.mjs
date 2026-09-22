@@ -20,17 +20,17 @@ function parseArgs(argv) {
     skipGcp: process.env.METRICS_FLOW_SKIP_GCP === 'true',
     fallbackDatasets: [
       process.env.HUSHH_AI_SEARCH_FALLBACK_DATASET || 'hushh_ai_search_console_api',
-      process.env.KAI_SEARCH_FALLBACK_DATASET || 'kai_search_console_api',
+      process.env.ONE_SEARCH_FALLBACK_DATASET || process.env.KAI_SEARCH_FALLBACK_DATASET || 'kai_search_console_api',
       process.env.HUSHHTECH_SEARCH_FALLBACK_DATASET || 'hushhtech_search_console_api',
     ],
     jobs: [
       process.env.HUSHH_AI_SEARCH_INGEST_JOB || 'hushh-ai-search-console-ingest',
-      process.env.KAI_SEARCH_INGEST_JOB || 'kai-search-console-ingest',
+      process.env.ONE_SEARCH_INGEST_JOB || process.env.KAI_SEARCH_INGEST_JOB || 'kai-search-console-ingest',
       process.env.HUSHHTECH_SEARCH_INGEST_JOB || 'hushhtech-search-console-ingest',
     ],
     schedulers: [
       process.env.HUSHH_AI_SEARCH_SCHEDULER_JOB || 'hushh-ai-search-console-ingest-daily',
-      process.env.KAI_SEARCH_SCHEDULER_JOB || 'kai-search-console-ingest-daily',
+      process.env.ONE_SEARCH_SCHEDULER_JOB || process.env.KAI_SEARCH_SCHEDULER_JOB || 'kai-search-console-ingest-daily',
       process.env.HUSHHTECH_SEARCH_SCHEDULER_JOB || 'hushhtech-search-console-ingest-daily',
     ],
     oauthSecret: process.env.SEARCH_CONSOLE_OAUTH_SECRET || 'metrics-dashboard-search-console-oauth',
@@ -207,44 +207,44 @@ async function checkApiFlow(options) {
   const health = await fetchJson(`${options.dashboardUrl}/api/health`, options.timeoutMs);
   assert(health.body?.status === 'ok', 'dashboard health is not ok');
   assert(health.body?.config?.hushhAiSearchConsoleFallback, 'health missing Hushh AI fallback config');
-  assert(health.body?.config?.kaiSearchConsoleFallback, 'health missing Kai fallback config');
+  assert(health.body?.config?.oneSearchConsoleFallback, 'health missing One fallback config');
   assertPublicSafePayload(health.body, 'health');
   results.push(result('health-source-config', 'ok', 'fallback configs present'));
 
   const [hushhAi, kai, hushhTech, all] = await Promise.all([
     fetchJson(`${options.dashboardUrl}/api/analytics/hushhai?window_days=7`, options.timeoutMs),
-    fetchJson(`${options.dashboardUrl}/api/analytics/kai?window_days=7`, options.timeoutMs),
+    fetchJson(`${options.dashboardUrl}/api/analytics/one?window_days=7`, options.timeoutMs),
     fetchJson(`${options.dashboardUrl}/api/analytics/hushhtech?window_days=7`, options.timeoutMs),
     fetchJson(`${options.dashboardUrl}/api/analytics/all?window_days=7`, options.timeoutMs),
   ]);
 
   assert(hasNoStore(hushhAi.response), 'Hushh AI analytics endpoint is cacheable');
-  assert(hasNoStore(kai.response), 'Kai analytics endpoint is cacheable');
+  assert(hasNoStore(kai.response), 'One analytics endpoint is cacheable');
   assert(hasNoStore(hushhTech.response), 'HushhTech analytics endpoint is cacheable');
   assertNoSensitivePayload(all.body, 'aggregate analytics');
   assertPublicSafePayload(hushhAi.body, 'Hushh AI analytics');
-  assertPublicSafePayload(kai.body, 'Kai analytics');
+  assertPublicSafePayload(kai.body, 'One analytics');
   assertPublicSafePayload(hushhTech.body, 'HushhTech analytics');
   assertPublicSafePayload(all.body, 'aggregate analytics');
 
   assertSourceCards(hushhAi.body?.data?.sourceCards, 'Hushh AI');
-  assertSourceCards(kai.body?.data?.sourceCards, 'Kai');
+  assertSourceCards(kai.body?.data?.sourceCards, 'One');
   assertSourceCards(hushhTech.body?.data?.sourceCards, 'HushhTech');
   assertSourceCards(all.body?.hushhAi?.data?.sourceCards, 'aggregate Hushh AI');
-  assertSourceCards(all.body?.kai?.productionProduct?.data?.sourceCards, 'aggregate Kai');
+  assertSourceCards(all.body?.kai?.productionProduct?.data?.sourceCards, 'aggregate One');
   assertSourceCards(all.body?.hushhTech?.data?.sourceCards, 'aggregate HushhTech');
   assert(!all.body?.hushhAi?.data?.supabase, 'aggregate Hushh AI incorrectly includes Supabase data');
 
   const kaiCards = kai.body.data.sourceCards;
   const kaiGa4 = kaiCards.find((card) => card.key === 'ga4');
   const kaiEvents = kaiCards.find((card) => card.key === 'product_events');
-  assertGa4Sections(kaiGa4, 'Kai');
+  assertGa4Sections(kaiGa4, 'One');
   for (const key of ['users', 'sessions', 'events']) assertSourceCardMetric(kaiGa4, key);
   for (const key of ['dau', 'wau', 'sessions', 'events']) assertSourceCardMetric(kaiEvents, key);
 
   for (const [label, body] of [
     ['Hushh AI', hushhAi.body?.data],
-    ['Kai', kai.body?.data],
+    ['One', kai.body?.data],
     ['HushhTech', hushhTech.body?.data],
   ]) {
     const searchCard = body?.sourceCards?.find((card) => card.key === 'search_console');
@@ -284,7 +284,7 @@ async function checkApiFlow(options) {
 
   results.push(result('three-source-api-contract', 'ok', 'all products expose search_console, ga4, product_events'));
   results.push(result('source-timeline-contract', 'ok', 'GA4 and Search Console expose required timeline sections'));
-  results.push(result('source-boundaries', 'ok', 'Hushh AI has no Supabase; Kai uses UAT primary sources'));
+  results.push(result('source-boundaries', 'ok', 'Hushh AI has no Supabase; One keeps UAT and production sources separate'));
   return results;
 }
 

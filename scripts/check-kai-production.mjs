@@ -2,17 +2,17 @@
 import { resolve4, resolveCname } from 'node:dns/promises';
 
 const DEFAULT_DASHBOARD_URL = 'https://metrics.hushh.ai';
-const DEFAULT_PRODUCT_URL = 'https://kai.hushh.ai';
+const DEFAULT_PRODUCT_URL = 'https://one.hushh.ai';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const HOST_ALIASES = new Map([
-  ['kai.hush.ai', 'kai.hushh.ai'],
-  ['prod.kai.hushh.ai', 'kai.hushh.ai'],
+  ['kai.hush.ai', 'one.hushh.ai'],
+  ['prod.one.hushh.ai', 'one.hushh.ai'],
 ]);
 
 function parseArgs(argv) {
   const options = {
     dashboardUrl: process.env.METRICS_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
-    productUrl: process.env.KAI_PRODUCTION_URL || DEFAULT_PRODUCT_URL,
+    productUrl: process.env.ONE_PRODUCTION_URL || process.env.KAI_PRODUCTION_URL || DEFAULT_PRODUCT_URL,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
 
@@ -116,7 +116,7 @@ async function main() {
   }
 
   const productDns = await checkDns(product.canonicalHost);
-  assert(productDns.cnames.length || productDns.addresses.length, 'Kai production domain does not resolve', product.canonicalHost);
+  assert(productDns.cnames.length || productDns.addresses.length, 'One production domain does not resolve', product.canonicalHost);
   results.push({
     check: 'product-domain-dns',
     status: 'ok',
@@ -124,7 +124,7 @@ async function main() {
   });
 
   const productRoot = await fetchWithTimeout(`${product.url}/`, options.timeoutMs, 'text/html');
-  assert(productRoot.ok, `Kai production root returned HTTP ${productRoot.status}`);
+  assert(productRoot.ok, `One production root returned HTTP ${productRoot.status}`);
   results.push({ check: 'product-root', status: 'ok', detail: String(productRoot.status) });
 
   const dashboardDns = await checkDns(dashboard.canonicalHost);
@@ -139,46 +139,46 @@ async function main() {
   assert(health.body?.status === 'ok', 'dashboard health endpoint did not return status ok', JSON.stringify(health.body));
   results.push({ check: 'dashboard-health', status: 'ok', detail: health.body.status });
 
-  const kai = await checkJsonEndpoint(dashboard.url, '/api/analytics/kai?window_days=7', options.timeoutMs);
+  const kai = await checkJsonEndpoint(dashboard.url, '/api/analytics/one?window_days=7', options.timeoutMs);
   const cacheControl = kai.response.headers.get('cache-control') || '';
-  assert(cacheControl.includes('no-store'), 'Kai analytics endpoint is cacheable', cacheControl);
-  assert(kai.body?.platform === 'kai.hushh.ai', 'Kai analytics platform mismatch');
-  assert(Array.isArray(kai.body?.data?.freshness?.sources), 'Kai freshness sources missing');
-  assert(kai.body?.data?.gcp, 'Kai production Cloud Run metrics missing');
-  assertPublicSafePayload(kai.body, 'Kai analytics');
+  assert(cacheControl.includes('no-store'), 'One analytics endpoint is cacheable', cacheControl);
+  assert(kai.body?.platform === 'one.hushh.ai', 'One analytics platform mismatch');
+  assert(Array.isArray(kai.body?.data?.freshness?.sources), 'One freshness sources missing');
+  assert(kai.body?.data?.gcp, 'One production Cloud Run metrics missing');
+  assertPublicSafePayload(kai.body, 'One analytics');
   const data = kai.body?.data || {};
   const productionFreshnessKeys = data.freshness.sources.map((source) => source.key);
-  assert(!productionFreshnessKeys.includes('uat_validation'), 'Kai production freshness mixes UAT validation into production sources');
+  assert(!productionFreshnessKeys.includes('uat_validation'), 'One production freshness mixes UAT validation into production sources');
   const search = data.searchConsole;
-  assert(search, 'Kai Search Console block missing');
-  assert(Number.isFinite(Number(search.clicks)), 'Kai Search Console clicks not numeric');
-  assert(Number.isFinite(Number(search.impressions)), 'Kai Search Console impressions not numeric');
-  assert(Array.isArray(search.daily), 'Kai Search Console daily timeline missing');
+  assert(search, 'One Search Console block missing');
+  assert(Number.isFinite(Number(search.clicks)), 'One Search Console clicks not numeric');
+  assert(Number.isFinite(Number(search.impressions)), 'One Search Console impressions not numeric');
+  assert(Array.isArray(search.daily), 'One Search Console daily timeline missing');
   const searchCard = data.sourceCards?.find((card) => card.key === 'search_console');
   const ga4Card = data.sourceCards?.find((card) => card.key === 'ga4');
   const eventsCard = data.sourceCards?.find((card) => card.key === 'product_events');
   const uatSearchCard = data.uatSourceCards?.find((card) => card.key === 'search_console');
   const uatGa4Card = data.uatSourceCards?.find((card) => card.key === 'ga4');
   const uatEventsCard = data.uatSourceCards?.find((card) => card.key === 'product_events');
-  assertSourceSections(searchCard, 'Kai Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
-  assert(Array.isArray(ga4Card?.sections) && ga4Card.sections.length >= 4, 'Kai GA4 sections missing');
-  assertSourceSections(ga4Card, 'Kai GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
+  assertSourceSections(searchCard, 'One Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
+  assert(Array.isArray(ga4Card?.sections) && ga4Card.sections.length >= 4, 'One GA4 sections missing');
+  assertSourceSections(ga4Card, 'One GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
   for (const key of ['users', 'sessions', 'events']) assertCardMetricPresent(ga4Card, key);
   for (const key of ['dau', 'wau', 'sessions', 'events']) assertCardMetricPresent(eventsCard, key);
-  assertSourceSections(uatSearchCard, 'Kai UAT Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
-  assertSourceSections(uatGa4Card, 'Kai UAT GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
+  assertSourceSections(uatSearchCard, 'One UAT Search Console', ['last_24_hours', 'last_7_days', 'selected_total']);
+  assertSourceSections(uatGa4Card, 'One UAT GA4', ['realtime', 'last_24_hours', 'last_7_days', 'selected_total']);
   for (const key of ['dau', 'wau', 'sessions', 'events']) assertCardMetricPresent(uatEventsCard, key);
   results.push({
-    check: 'kai-analytics',
+    check: 'one-analytics',
     status: 'ok',
     detail: `freshness=${kai.body.data.freshness.sources.map((source) => `${source.key}:${source.state}`).join(',')}`,
   });
 
   const all = await checkJsonEndpoint(dashboard.url, '/api/analytics/all?window_days=7', options.timeoutMs);
-  assert(all.body?.kai?.productionProduct?.data?.freshness, 'aggregate analytics missing Kai production freshness block');
+  assert(all.body?.kai?.productionProduct?.data?.freshness, 'aggregate analytics missing One production freshness block');
   const aggregateKai = all.body.kai.productionProduct.data;
-  assert(Array.isArray(aggregateKai.uatSourceCards) && aggregateKai.uatSourceCards.length >= 3, 'aggregate analytics missing Kai UAT source cards');
-  results.push({ check: 'aggregate-analytics', status: 'ok', detail: 'contains Kai production freshness and UAT source cards' });
+  assert(Array.isArray(aggregateKai.uatSourceCards) && aggregateKai.uatSourceCards.length >= 3, 'aggregate analytics missing One UAT source cards');
+  results.push({ check: 'aggregate-analytics', status: 'ok', detail: 'contains One production freshness and UAT source cards' });
 
   console.log(JSON.stringify({
     ok: true,

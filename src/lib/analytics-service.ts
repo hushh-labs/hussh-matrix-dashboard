@@ -4,7 +4,7 @@
  *
  * Client-side analytics service for the Hussh Matrix Dashboard.
  * Fetches modeled aggregate analytics from the Express proxy and normalizes
- * Kai BigQuery rows plus hushhtech.com public metrics into one UI model.
+ * One BigQuery rows plus hushhtech.com public metrics into one UI model.
  */
 
 import type {
@@ -884,8 +884,8 @@ function buildPlatforms(
       bounceRate: formatPercent(aiGcp?.errorRate),
     },
     {
-      name: 'kai.hushh.ai',
-      url: 'kai.hushh.ai',
+      name: 'one.hushh.ai',
+      url: 'one.hushh.ai',
       color: '#12b5cb',
       available: Boolean(kaiProdGcp),
       environment: 'production',
@@ -897,8 +897,8 @@ function buildPlatforms(
       bounceRate: kaiProdGcp ? formatPercent(kaiProdGcp.errorRate) : '—',
     },
     {
-      name: 'uat.kai.hushh.ai',
-      url: 'uat.kai.hushh.ai',
+      name: 'uat.one.hushh.ai',
+      url: 'uat.one.hushh.ai',
       color: '#34c759',
       available: Boolean(kaiUsage),
       environment: 'uat',
@@ -961,19 +961,19 @@ function buildKpiStats(
 
   return [
     {
-      label: 'Kai Prod Requests',
+      label: 'One Prod Requests',
       value: kaiProdGcp ? formatNumber(kaiProdGcp.requestCount) : '—',
       icon: 'Users',
       change: kaiProdGcp?.p95LatencyMs != null ? `${formatLatency(kaiProdGcp.p95LatencyMs)} p95` : undefined,
     },
     {
-      label: 'Kai Prod GA4 Events',
+      label: 'One Prod GA4 Events',
       value: kaiProdGa4?.available ? formatNumber(kaiProdGa4.rangeTotals?.events ?? 0) : '—',
       icon: 'Activity',
       change: kaiProdGa4?.available ? `${formatNumber(kaiProdGa4.rangeTotals?.users ?? 0)} users` : 'GA4 waiting',
     },
     {
-      label: 'Kai UAT Top Event',
+      label: 'One UAT Top Event',
       value: kaiTopEvent ? formatNumber(kaiTopEvent.events) : '—',
       icon: 'BarChart3',
       change: kaiTopEvent ? formatMetricLabel(kaiTopEvent.eventName) : undefined,
@@ -1021,7 +1021,7 @@ function buildKpiStats(
       change: search ? `${formatNumber(search.impressions)} impressions` : undefined,
     },
     {
-      label: 'Kai UAT Freshness',
+      label: 'One UAT Freshness',
       value: kaiUsage?.freshnessLagMinutes != null
         ? `${Math.floor(kaiUsage.freshnessLagMinutes / 60)}h ${kaiUsage.freshnessLagMinutes % 60}m`
         : '—',
@@ -1046,15 +1046,15 @@ function buildSourceGroups(
     },
     {
       productKey: 'kai_production',
-      productName: 'Kai Production',
-      domain: 'kai.hushh.ai',
+      productName: 'One Production',
+      domain: 'one.hushh.ai',
       primaryEnvironment: 'production',
       sourceCards: kaiProduction?.sourceCards ?? [],
     },
     {
       productKey: 'kai_uat',
-      productName: 'Kai UAT',
-      domain: 'uat.kai.hushh.ai',
+      productName: 'One UAT',
+      domain: 'uat.one.hushh.ai',
       primaryEnvironment: 'uat',
       sourceCards: kaiProduction?.uatSourceCards ?? [],
     },

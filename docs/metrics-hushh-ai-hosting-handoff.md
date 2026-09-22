@@ -64,11 +64,11 @@ Current platform sources:
 | Hushh AI | GA4 | Reads aggregate GA4 Data API reports from property `458078330` / measurement ID `G-PPEF1CSJ5H`; includes users, sessions, events, engaged sessions, engagement rate, average session duration, top pages/screens, top events, session channel/source attribution, landing pages, geo/device mix, and hourly session timing. Cloud Run impersonates the GA-authorized `646258530541-compute@developer.gserviceaccount.com` service account |
 | Hushh AI | DB / Product Events | Normalized card shows `not_configured` until a real Hushh AI DB aggregate source is provided. Future event placeholders are signup started, signup completed, login, CTA clicked, demo requested, contact submitted, and product page viewed; do not wire HushhTech Supabase into Hushh AI |
 | Hushh AI | Live refresh layer | API responses are no-store, the UI auto-refreshes every 30 seconds, and source freshness labels distinguish near-live, delayed, and pending analytics sources |
-| Kai | BigQuery public feed | UAT dashboard metrics, funnel, usage, engagement, geo, and instrumentation health |
-| Kai | GA4 BigQuery export | UAT GA4 aggregates from `hushh-pda-uat.analytics_533362555` |
-| Kai | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.kai_search_console_api`; populated by Cloud Run Job `kai-search-console-ingest` for `kai.hushh.ai` and `uat.kai.hushh.ai` URLs |
-| Kai | Production feed | Status-only until the production GA4 export dataset materializes |
-| Kai | Production Cloud Run Monitoring | `kai.hushh.ai` requests, 5xx responses, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp` |
+| One | BigQuery public feed | UAT dashboard metrics, funnel, usage, engagement, geo, and instrumentation health |
+| One | GA4 BigQuery export | UAT GA4 aggregates from `hushh-pda-uat.analytics_533362555` |
+| One | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.kai_search_console_api`; populated by Cloud Run Job `kai-search-console-ingest` for `one.hushh.ai` and `uat.one.hushh.ai` URLs |
+| One | Production feed | Live aggregate feed backed by `hushh-pda.analytics_526603671`, scoped to One web plus native app streams |
+| One | Production Cloud Run Monitoring | `one.hushh.ai` requests, 5xx responses, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp` |
 | HushhTech | Public summary endpoint | `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic; all-zero processed GA4 traffic is shown as unverified until the HushhTech web tag/property is confirmed |
 | HushhTech | Supabase Management API | Top aggregate database metrics plus date-range daily status for new users, active users, sessions, exit signals, product usage, and analytics events |
 | HushhTech | Cloud Run Monitoring | `metrics.hushh.ai` reads `hushh-tech-prod/hushh-tech-website` directly through Google Cloud Monitoring |
@@ -146,13 +146,13 @@ why some sections may show neutral empty states:
 
 | Area | Gap | Required action |
 | --- | --- | --- |
-| Kai production | `hushh-pda.analytics_526603671` is not materialized | Enable or repair the production GA4 BigQuery export; Cloud Run production metrics are still available |
-| Kai production | Hosted frontend still needs production web tag redeploy | Redeploy Kai with the production measurement ID already configured in secrets |
+| One production | Historical identity coverage remains device/browser scoped for many events | Release `hushh-research` PR #6960, then monitor stable signed-in identity coverage before calling the result unique people |
+| One GA4 realtime | BigQuery exports are live, but the GA4 Data API denies properties `526603671` and `533362555` to the metrics identity | Grant Viewer or Analyst in GA Admin to `646258530541-compute@developer.gserviceaccount.com` |
 | HushhTech Search Console | Official bulk export tables have not materialized yet | GCP-only fallback is active in `hushh-ai-prod.hushhtech_search_console_api`; Scheduler job `hushhtech-search-console-ingest-daily` refreshes the last 16 days every 6 hours |
 | Hushh AI Search Console | Official export dataset exists, but export tables may not be present yet | GCP-only fallback is active in `hushh-ai-prod.hushh_ai_search_console_api`; Scheduler refreshes the last 16 days every 6 hours |
 | Hushh AI GA4 | GA4 Data API must use numeric property `458078330`; measurement ID `G-PPEF1CSJ5H` is not a Data API property identifier. GA4 UI rejects the custom `metrics-dashboard-runtime` service account, but the property can authorize `646258530541-compute@developer.gserviceaccount.com` | Keep `roles/iam.serviceAccountTokenCreator` on the target service account for `metrics-dashboard-runtime`; grant Viewer or Analyst on GA4 property `458078330` to `646258530541-compute@developer.gserviceaccount.com`; validate with `npm run test:ga4:hushh-ai` |
 | Hushh AI DB / product events | No Hushh AI DB aggregate source is confirmed in metrics runtime config | Keep the product events card and future event placeholders in `not_configured`; do not use HushhTech Supabase |
-| Kai Search Console | Official domain export is shared with `sc-domain:hushh.ai` and may not have tables yet | GCP-only fallback is active in `hushh-ai-prod.kai_search_console_api` with Kai URL filters; Scheduler refreshes the last 16 days every 6 hours |
+| One Search Console | Official export is live through `hushh-pda.searchconsole_searchconsole_hushh_ai`; the fallback retains a historical internal dataset name | `hushh-ai-prod.kai_search_console_api` is backfilled with One URL filters and refreshes the last 16 days every 6 hours |
 
 ## Operational Commands
 
@@ -209,7 +209,7 @@ UNION ALL SELECT "device_daily", COUNT(*) FROM `hushh-ai-prod.hushhtech_search_c
 '
 ```
 
-Check Hushh AI and Kai Search Console fallback tables:
+Check Hushh AI and One Search Console fallback tables:
 
 ```bash
 bq query --project_id=hushh-ai-prod --use_legacy_sql=false '
@@ -250,15 +250,15 @@ This probe checks the public HushhTech summary endpoint, the
 Cloud Run Job readiness, the latest completed ingestion execution, the
 Scheduler target, and the OAuth secret version without printing secret values.
 
-Run the unified three-source probe after changing Hushh AI, Kai, HushhTech,
+Run the unified three-source probe after changing Hushh AI, One, HushhTech,
 Search Console ingestion, source cards, or dashboard wiring:
 
 ```bash
 npm run test:prod:metrics-flow
 ```
 
-This probe checks that Hushh AI, Kai, and HushhTech each expose
-`search_console`, `ga4`, and `product_events`, that Kai is driven primarily by
+This probe checks that Hushh AI, One, and HushhTech each expose
+`search_console`, `ga4`, and `product_events`, that One is driven primarily by
 UAT, and that Hushh AI does not expose Supabase data.
 
 Check that runtime config is still Secret Manager-backed:

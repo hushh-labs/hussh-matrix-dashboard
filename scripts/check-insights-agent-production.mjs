@@ -118,15 +118,15 @@ function assertAnalystShape(body, label) {
 
 function cloudRunFromAnalytics(all, product) {
   if (product === 'hushh.ai') return all?.hushhAi?.data?.gcp ?? {};
-  if (product === 'kai.hushh.ai') return all?.kai?.productionProduct?.data?.gcp ?? {};
+  if (product === 'one.hushh.ai') return all?.kai?.productionProduct?.data?.gcp ?? {};
   if (product === 'hushhtech.com') return all?.hushhTech?.data?.gcp ?? {};
   return {};
 }
 
 function ga4FromAnalytics(all, product) {
   if (product === 'hushh.ai') return all?.hushhAi?.data?.ga4?.rangeTotals ?? {};
-  if (product === 'kai.hushh.ai') return all?.kai?.productionProduct?.data?.productionGa4?.rangeTotals ?? {};
-  if (product === 'uat.kai.hushh.ai') return all?.kai?.productionProduct?.data?.uatGa4?.rangeTotals ?? {};
+  if (product === 'one.hushh.ai') return all?.kai?.productionProduct?.data?.productionGa4?.rangeTotals ?? {};
+  if (product === 'uat.one.hushh.ai') return all?.kai?.productionProduct?.data?.uatGa4?.rangeTotals ?? {};
   return {};
 }
 
@@ -294,7 +294,7 @@ async function main() {
     const followUp = await fetchJson(`${base}/api/chat`, {
       method: 'POST',
       body: {
-        message: 'And what about kai.hushh.ai?',
+        message: 'And what about one.hushh.ai?',
         history: [
           { role: 'user', content: 'How many Cloud Run requests did hushh.ai receive?' },
           { role: 'assistant', content: liveChat.body.reply },
@@ -305,8 +305,8 @@ async function main() {
     assert(followUp.response.ok, `follow-up chat returned HTTP ${followUp.response.status}`);
     assertAnalystShape(followUp.body, 'follow-up chat');
     const followUpSource = await fetchJson(`${base}/api/analytics/all`, { timeoutMs: options.timeoutMs });
-    const expectedKaiRequests = Number(cloudRunFromAnalytics(followUpSource.body, 'kai.hushh.ai').requestCount);
-    assertClaimMatches(followUp.body, 'kai.hushh.ai', 'cloud_run.request_count', expectedKaiRequests, { tolerance: 100 });
+    const expectedKaiRequests = Number(cloudRunFromAnalytics(followUpSource.body, 'one.hushh.ai').requestCount);
+    assertClaimMatches(followUp.body, 'one.hushh.ai', 'cloud_run.request_count', expectedKaiRequests, { tolerance: 100 });
     results.push({
       check: 'chat-conversation-continuity',
       status: 'ok',
@@ -314,23 +314,23 @@ async function main() {
     });
 
     // -----------------------------------------------------------------------
-    // 12. Regression — Kai production and UAT must stay separated
+    // 12. Regression — One production and UAT must stay separated
     // -----------------------------------------------------------------------
     const kaiSplit = await fetchJson(`${base}/api/chat`, {
       method: 'POST',
       body: {
-        message: 'Compare kai.hushh.ai production and uat.kai.hushh.ai UAT. Keep them separate.',
+        message: 'Compare one.hushh.ai production and uat.one.hushh.ai UAT. Keep them separate.',
       },
       timeoutMs: CHAT_TIMEOUT_MS,
     });
-    assert(kaiSplit.response.ok, `Kai split query returned HTTP ${kaiSplit.response.status}`);
-    assertAnalystShape(kaiSplit.body, 'Kai split query');
-    assert(/production/i.test(kaiSplit.body.reply) && /uat/i.test(kaiSplit.body.reply), 'Kai split should mention both production and UAT', kaiSplit.body.reply);
+    assert(kaiSplit.response.ok, `One split query returned HTTP ${kaiSplit.response.status}`);
+    assertAnalystShape(kaiSplit.body, 'One split query');
+    assert(/production/i.test(kaiSplit.body.reply) && /uat/i.test(kaiSplit.body.reply), 'One split should mention both production and UAT', kaiSplit.body.reply);
     const kaiSplitSource = await fetchJson(`${base}/api/analytics/all`, { timeoutMs: options.timeoutMs });
-    const expectedKaiUatUsers = Number(ga4FromAnalytics(kaiSplitSource.body, 'uat.kai.hushh.ai').users);
-    assert(Number.isFinite(expectedKaiUatUsers), 'analytics source missing Kai UAT GA4 users');
-    assertClaimMatches(kaiSplit.body, 'uat.kai.hushh.ai', 'ga4.users', expectedKaiUatUsers);
-    assert(kaiSplit.body.sources.some((source) => source.product === 'uat.kai.hushh.ai'), 'Kai split response missing UAT source chip');
+    const expectedKaiUatUsers = Number(ga4FromAnalytics(kaiSplitSource.body, 'uat.one.hushh.ai').users);
+    assert(Number.isFinite(expectedKaiUatUsers), 'analytics source missing One UAT GA4 users');
+    assertClaimMatches(kaiSplit.body, 'uat.one.hushh.ai', 'ga4.users', expectedKaiUatUsers);
+    assert(kaiSplit.body.sources.some((source) => source.product === 'uat.one.hushh.ai'), 'One split response missing UAT source chip');
     results.push({
       check: 'chat-kai-prod-uat-separated',
       status: 'ok',
@@ -350,7 +350,7 @@ async function main() {
     assert(crossProduct.response.ok, `cross-product chat returned HTTP ${crossProduct.response.status}`);
     assertAnalystShape(crossProduct.body, 'cross-product chat');
     const crossProductSource = await fetchJson(`${base}/api/analytics/all`, { timeoutMs: options.timeoutMs });
-    for (const product of ['hushh.ai', 'kai.hushh.ai', 'hushhtech.com']) {
+    for (const product of ['hushh.ai', 'one.hushh.ai', 'hushhtech.com']) {
       const expectedErrorRate = Number(cloudRunFromAnalytics(crossProductSource.body, product).errorRate ?? 0);
       assertClaimMatches(crossProduct.body, product, 'cloud_run.error_rate', expectedErrorRate, { percent: true, tolerance: 1 });
     }
@@ -434,7 +434,7 @@ async function main() {
     assert(/24-hour|24 hours|last 24/i.test(last24Report.body.reply), 'last 24-hour report should name the time window', last24Report.body.reply);
     assert(/reliability|cloud run|traffic/i.test(last24Report.body.reply), 'last 24-hour report should include operational sections', last24Report.body.reply);
     assert(findClaim(last24Report.body, 'hushh.ai', 'cloud_run.request_count')
-      || findClaim(last24Report.body, 'kai.hushh.ai', 'cloud_run.request_count'),
+      || findClaim(last24Report.body, 'one.hushh.ai', 'cloud_run.request_count'),
     'last 24-hour report missing Cloud Run request claim');
     const hushhAiTwoDay = await fetchJson(`${base}/api/analytics/hushhai?window_days=2`, { timeoutMs: options.timeoutMs });
     assert(hushhAiTwoDay.response.ok, `hushh.ai two-day analytics returned HTTP ${hushhAiTwoDay.response.status}`);

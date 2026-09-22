@@ -872,7 +872,7 @@ function Provenance({ one, rangeLabel }: { one: OneAppSummary; rangeLabel: strin
         identity binds on iOS but not on web — so app and web figures also cannot be added together.
         Native and <code className="rounded bg-white/70 px-1 py-0.5 text-xs">{one.sourceWebHost ?? 'one.hushh.ai'}</code> only;
         every other web host is excluded. {nativeUatTagged
-          ? 'Native custom events in this GA4 property currently carry the UAT environment tag; they are public-build traffic, not a pure production-backend cohort. '
+          ? 'Public mobile-build events tagged for the UAT backend remain visible, but backend environment and GA4 property are reported separately. '
           : ''}Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
         {rangeLabel}
         {lagHours ? ` · data lands about ${lagHours}h behind` : ''}
@@ -1017,10 +1017,10 @@ export function OneAppPanel({
         </div>
 
         {nativeUatTagged.length > 0 && (
-          <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#ff9500]/30 bg-[#ff9500]/10 px-4 py-3 text-sm font-semibold leading-5 text-[#8a5200]">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#007aff]/20 bg-[#007aff]/[0.06] px-4 py-3 text-sm font-semibold leading-5 text-[#245b88]">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
-              Native environment warning: {nativeUatTagged.map((row) => `${row.platform} ${formatNumber(row.events)} events`).join(', ')} carry <code>env=uat</code> in this GA4 property. They remain visible as public native-build traffic, but are not described as production-backend users.
+              Mobile backend routing: {nativeUatTagged.map((row) => `${row.platform} ${formatNumber(row.events)} events`).join(', ')} are tagged <code>env=uat</code>. This is expected while those public mobile builds use the UAT backend. They stay included in app analytics and are classified separately from production-backend activity.
             </p>
           </div>
         )}

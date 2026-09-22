@@ -339,9 +339,9 @@ function sourceCardSections(cards: ProductSourceCard[] | undefined, titlePrefix 
 function sourceCardDetail(payload: SourceMetricClickPayload): MetricDetailState {
   const { productKey, card, section, metric } = payload;
   const productLabel = productKey === 'kai_production'
-    ? 'Kai Production'
+    ? 'One Production'
     : productKey === 'kai_uat'
-      ? 'Kai UAT'
+      ? 'One UAT'
       : productKey === 'hushhtech'
         ? 'HushhTech'
         : 'Hushh AI';
@@ -1019,11 +1019,11 @@ function KaiDailyStatusTable({ rows }: { rows: KaiDailyStatusPoint[] }) {
   return (
     <div className={cn(appleCard, 'p-5')}>
       <div className="mb-5">
-        <h3 className="text-lg font-semibold text-[#1d1d1f]">Kai Production Reliability Status</h3>
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">One Production Reliability Status</h3>
         <p className="mt-1 text-sm font-medium text-[#86868b]">Production GA4 stays Waiting until verified; request and reliability columns come from Cloud Run.</p>
       </div>
       {rows.length === 0 ? (
-        <EmptyState>No Kai production daily rows available yet.</EmptyState>
+        <EmptyState>No One production daily rows available yet.</EmptyState>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
@@ -1612,11 +1612,11 @@ export default function Dashboard() {
     });
   };
 
-  const openKaiProductionDetail = (label = 'Kai Production Details', focus?: BreakdownMetric) => {
+  const openKaiProductionDetail = (label = 'One Production Details', focus?: BreakdownMetric) => {
     const ga4Warnings = data?.kaiProduction?.productionGa4?.warnings ?? [];
     setMetricDetail({
       title: label,
-      subtitle: `kai.hushh.ai production aggregate details for ${kaiRange.startDate} to ${kaiRange.endDate}.`,
+      subtitle: `one.hushh.ai production aggregate details for ${kaiRange.startDate} to ${kaiRange.endDate}.`,
       badge: 'Production',
       summary: focusMetricSummary(kaiProductionDailySummaryMetrics, focus),
       sections: [
@@ -1635,10 +1635,10 @@ export default function Dashboard() {
           subtitle: 'Production feed and GA4 export status only. UAT is intentionally separate.',
           rows: metricRows(kaiProductionReadinessMetrics),
         },
-        ...sourceCardSections(data?.kaiProduction?.sourceCards, 'Kai Production Source'),
+        ...sourceCardSections(data?.kaiProduction?.sourceCards, 'One Production Source'),
       ],
       caveats: [
-        'Kai production GA4 users/sessions/events stay Waiting until the production GA4 export is verified.',
+        'One production GA4 users/sessions/events stay Waiting until the production GA4 export is verified.',
         'Request and reliability values come from Cloud Run aggregate monitoring and use 5xx response counts.',
         'UAT validation traffic is not mixed into production truth.',
         ...ga4Warnings,
@@ -1807,7 +1807,7 @@ export default function Dashboard() {
               Analytics control center
             </h1>
             <p className="mt-4 max-w-2xl text-base font-medium leading-7 text-[#6e6e73] sm:text-lg">
-              Live aggregate metrics for kai.hushh.ai, hushhtech.com, and hushh.ai with provider health surfaced inline.
+              Live aggregate metrics for one.hushh.ai, hushhtech.com, and hushh.ai with provider health surfaced inline.
             </p>
           </div>
         </header>}
@@ -1898,7 +1898,7 @@ export default function Dashboard() {
 
             <section className={dashboardBand}>
               <SectionHeader
-                kicker="kai.hushh.ai · production"
+                kicker="one.hushh.ai · production"
                 title="Production traffic + readiness"
                 action={(
                   <DateRangeControl
@@ -1906,15 +1906,15 @@ export default function Dashboard() {
                     refreshing={isRefreshing}
                     onPreset={(days) => setKaiRange(rangeForPreset(days))}
                     onCustomRange={setKaiRange}
-                    ariaLabelPrefix="Kai production"
+                    ariaLabelPrefix="One production"
                   />
                 )}
               />
               <div className="mb-4">
                 <ProductLivePanel
-                  kicker="Kai production live mode"
+                  kicker="One production live mode"
                   title="Production sources"
-                  refreshingLabel="Refreshing Kai production sources"
+                  refreshingLabel="Refreshing One production sources"
                   freshness={kaiProductionFreshness}
                   lastUpdated={data?.lastUpdated}
                   autoRefresh={autoRefresh}
@@ -1927,12 +1927,12 @@ export default function Dashboard() {
                   title="Production Range Summary"
                   subtitle={`${kaiRange.startDate} to ${kaiRange.endDate}`}
                   items={kaiProductionDailySummaryMetrics}
-                  onItemClick={(item) => openKaiProductionDetail(`Kai Production · ${item.label}`, item)}
+                  onItemClick={(item) => openKaiProductionDetail(`One Production · ${item.label}`, item)}
                 />
                 <ChartShell
                   title="Users, Sessions, Events"
-                  subtitle="Production GA4 export; shows waiting until analytics_526603671 materializes"
-                  action={<DetailActionButton onClick={() => openKaiProductionDetail('Kai Production GA4 Details')} />}
+                  subtitle="Production GA4 daily export; provider data may arrive with normal processing delay"
+                  action={<DetailActionButton onClick={() => openKaiProductionDetail('One Production GA4 Details')} />}
                 >
                   {!kaiProductionGa4Available ? (
                     <EmptyState>Production GA4 export is not ready yet. Cloud Run production traffic is shown below.</EmptyState>
@@ -1953,10 +1953,10 @@ export default function Dashboard() {
                 <ChartShell
                   title="Production Traffic + Reliability"
                   subtitle="Cloud Run requests, 5xx responses, and latency context"
-                  action={<DetailActionButton onClick={() => openKaiProductionDetail('Kai Production Reliability Details')} />}
+                  action={<DetailActionButton onClick={() => openKaiProductionDetail('One Production Reliability Details')} />}
                 >
                   {kaiProductionDailyStatus.length === 0 ? (
-                    <EmptyState>No Kai production traffic rows available yet.</EmptyState>
+                    <EmptyState>No One production traffic rows available yet.</EmptyState>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={kaiProductionDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
@@ -1984,7 +1984,7 @@ export default function Dashboard() {
                   title="Production Readiness"
                   subtitle="Production feed and GA4 export only."
                   items={kaiProductionReadinessMetrics}
-                  onItemClick={(item) => openKaiProductionDetail(`Kai Production Readiness · ${item.label}`, item)}
+                  onItemClick={(item) => openKaiProductionDetail(`One Production Readiness · ${item.label}`, item)}
                 />
                 <div className="xl:col-span-2">
                   <KaiDailyStatusTable rows={kaiProductionDailyStatus} />
@@ -2240,7 +2240,7 @@ export default function Dashboard() {
                         <YAxis stroke="#86868b" fontSize={12} fontWeight={700} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} dx={-10} />
                         <Tooltip content={<CustomTooltip />} />
                         <Area type="monotone" dataKey="ai" name="hushh.ai" stroke="#007aff" strokeWidth={2.5} fill="url(#colorAi)" />
-                        <Area type="monotone" dataKey="kaiProd" name="kai.hushh.ai prod events" stroke="#12b5cb" strokeWidth={2.5} fill="url(#colorKaiProd)" />
+                        <Area type="monotone" dataKey="kaiProd" name="one.hushh.ai prod events" stroke="#12b5cb" strokeWidth={2.5} fill="url(#colorKaiProd)" />
                         <Area type="monotone" dataKey="tech" name="hushhtech.com" stroke="#af52de" strokeWidth={2.5} fill="url(#colorTech)" />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -2330,7 +2330,7 @@ export default function Dashboard() {
                 <p className="mt-1 text-sm font-medium text-[#86868b]">Production public feed, past 7 days</p>
                 <div className="mt-5 h-[250px]">
                   {dailyActiveUsers.length === 0 ? (
-                    <EmptyState>No Kai daily active user rows available yet.</EmptyState>
+                    <EmptyState>No One daily active user rows available yet.</EmptyState>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={dailyActiveUsers} margin={{ top: 12, right: 6, left: -22, bottom: 0 }}>

@@ -68,16 +68,20 @@ const HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT = Math.max(
   1,
   Math.min(parseInt(process.env.HUSHHTECH_SEARCH_CONSOLE_ROW_LIMIT || '10', 10) || 10, 25),
 );
-const KAI_GA4_PROJECT = process.env.KAI_GA4_PROJECT || BQ_UAT_PROJECT;
-const KAI_GA4_DATASET = process.env.KAI_GA4_DATASET || 'analytics_533362555';
-const KAI_GA4_WINDOW_DAYS = parseInt(process.env.KAI_GA4_WINDOW_DAYS || '14', 10);
-const KAI_PROD_GA4_PROJECT = process.env.KAI_PROD_GA4_PROJECT || BQ_PROD_PROJECT;
-const KAI_PROD_GA4_DATASET = process.env.KAI_PROD_GA4_DATASET || 'analytics_526603671';
-const KAI_PROD_GCP_PROJECT = process.env.KAI_PROD_GCP_PROJECT || BQ_PROD_PROJECT;
-const KAI_PROD_CLOUD_RUN_SERVICE = process.env.KAI_PROD_CLOUD_RUN_SERVICE || 'hushh-webapp';
-const KAI_PROD_METRICS_WINDOW_DAYS = parseInt(process.env.KAI_PROD_METRICS_WINDOW_DAYS || '7', 10);
+const KAI_GA4_PROJECT = process.env.ONE_UAT_GA4_PROJECT || process.env.KAI_GA4_PROJECT || BQ_UAT_PROJECT;
+const KAI_GA4_DATASET = process.env.ONE_UAT_GA4_DATASET || process.env.KAI_GA4_DATASET || 'analytics_533362555';
+const KAI_GA4_WINDOW_DAYS = parseInt(process.env.ONE_GA4_WINDOW_DAYS || process.env.KAI_GA4_WINDOW_DAYS || '14', 10);
+const KAI_PROD_GA4_PROJECT = process.env.ONE_PROD_GA4_PROJECT || process.env.KAI_PROD_GA4_PROJECT || BQ_PROD_PROJECT;
+const KAI_PROD_GA4_DATASET = process.env.ONE_PROD_GA4_DATASET || process.env.KAI_PROD_GA4_DATASET || 'analytics_526603671';
+// ONE_* is the current public/runtime contract. KAI_* remains a read-only
+// fallback while older Cloud Run revisions and historical resources migrate.
+const ONE_PROD_GA4_PROPERTY_ID = process.env.ONE_PROD_GA4_PROPERTY_ID || '526603671';
+const ONE_UAT_GA4_PROPERTY_ID = process.env.ONE_UAT_GA4_PROPERTY_ID || '533362555';
+const KAI_PROD_GCP_PROJECT = process.env.ONE_PROD_GCP_PROJECT || process.env.KAI_PROD_GCP_PROJECT || BQ_PROD_PROJECT;
+const KAI_PROD_CLOUD_RUN_SERVICE = process.env.ONE_PROD_CLOUD_RUN_SERVICE || process.env.KAI_PROD_CLOUD_RUN_SERVICE || 'hushh-webapp';
+const KAI_PROD_METRICS_WINDOW_DAYS = parseInt(process.env.ONE_PROD_METRICS_WINDOW_DAYS || process.env.KAI_PROD_METRICS_WINDOW_DAYS || '7', 10);
 // one.hushh.ai reports into the same GA4 property as the rest of the webapp, so
-// it defaults to the Kai production export rather than introducing a second
+// it defaults to the One production export rather than introducing a second
 // dataset. Overridable purely so a One-specific property can be split out later
 // without a code change.
 const ONE_APP_GA4_PROJECT = process.env.ONE_APP_GA4_PROJECT || KAI_PROD_GA4_PROJECT;
@@ -174,25 +178,27 @@ const HUSHH_AI_GA4_MEASUREMENT_ID = process.env.HUSHH_AI_GA4_MEASUREMENT_ID || '
 const HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT =
   process.env.HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT || '';
 const HUSHH_AI_GA4_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_GA4_WINDOW_DAYS || '7', 10);
-const KAI_SEARCH_PROJECT = process.env.KAI_SEARCH_PROJECT || HUSHH_AI_SEARCH_PROJECT;
-const KAI_SEARCH_DATASET = process.env.KAI_SEARCH_DATASET || HUSHH_AI_SEARCH_DATASET;
+const KAI_SEARCH_PROJECT = process.env.ONE_SEARCH_PROJECT || process.env.KAI_SEARCH_PROJECT || HUSHH_AI_SEARCH_PROJECT;
+const KAI_SEARCH_DATASET = process.env.ONE_SEARCH_DATASET || process.env.KAI_SEARCH_DATASET || HUSHH_AI_SEARCH_DATASET;
 const KAI_SEARCH_FALLBACK_PROJECT =
-  process.env.KAI_SEARCH_FALLBACK_PROJECT || 'hushh-ai-prod';
+  process.env.ONE_SEARCH_FALLBACK_PROJECT || process.env.KAI_SEARCH_FALLBACK_PROJECT || 'hushh-ai-prod';
 const KAI_SEARCH_FALLBACK_DATASET =
-  process.env.KAI_SEARCH_FALLBACK_DATASET || 'kai_search_console_api';
+  process.env.ONE_SEARCH_FALLBACK_DATASET || process.env.KAI_SEARCH_FALLBACK_DATASET || 'kai_search_console_api';
 const KAI_SEARCH_CONSOLE_SITE_URL =
-  process.env.KAI_SEARCH_CONSOLE_SITE_URL || 'sc-domain:hushh.ai';
+  process.env.ONE_SEARCH_CONSOLE_SITE_URL || process.env.KAI_SEARCH_CONSOLE_SITE_URL || 'sc-domain:hushh.ai';
 const KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX =
-  process.env.KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://(uat\\.)?kai\\.hushh\\.ai(/|$)';
+  process.env.ONE_SEARCH_CONSOLE_PAGE_FILTER_REGEX
+  || process.env.KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX
+  || '^https://(uat\\.)?one\\.hushh\\.ai(/|$)';
 const KAI_PROD_SEARCH_CONSOLE_PAGE_FILTER_REGEX =
-  process.env.KAI_PROD_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://kai\\.hushh\\.ai(/|$)';
+  process.env.ONE_PROD_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://one\\.hushh\\.ai(/|$)';
 const KAI_UAT_SEARCH_CONSOLE_PAGE_FILTER_REGEX =
-  process.env.KAI_UAT_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://uat\\.kai\\.hushh\\.ai(/|$)';
-const KAI_SEARCH_CONSOLE_TYPE = process.env.KAI_SEARCH_CONSOLE_TYPE || 'web';
-const KAI_SEARCH_CONSOLE_DATA_STATE = process.env.KAI_SEARCH_CONSOLE_DATA_STATE || 'all';
+  process.env.ONE_UAT_SEARCH_CONSOLE_PAGE_FILTER_REGEX || '^https://uat\\.one\\.hushh\\.ai(/|$)';
+const KAI_SEARCH_CONSOLE_TYPE = process.env.ONE_SEARCH_CONSOLE_TYPE || process.env.KAI_SEARCH_CONSOLE_TYPE || 'web';
+const KAI_SEARCH_CONSOLE_DATA_STATE = process.env.ONE_SEARCH_CONSOLE_DATA_STATE || process.env.KAI_SEARCH_CONSOLE_DATA_STATE || 'all';
 const KAI_SEARCH_CONSOLE_ROW_LIMIT = Math.max(
   1,
-  Math.min(parseInt(process.env.KAI_SEARCH_CONSOLE_ROW_LIMIT || '10', 10) || 10, 25),
+  Math.min(parseInt(process.env.ONE_SEARCH_CONSOLE_ROW_LIMIT || process.env.KAI_SEARCH_CONSOLE_ROW_LIMIT || '10', 10) || 10, 25),
 );
 const HUSHHTECH_SUPABASE_PROJECT_REF =
   process.env.HUSHHTECH_SUPABASE_PROJECT_REF || 'ibsisfnjxeowvdtvgzff';
@@ -1585,7 +1591,7 @@ async function fetchHushhTechAnalytics(range: HushhAiDateRange): Promise<{ data:
 }
 
 // ---------------------------------------------------------------------------
-// Kai GA4 raw export summary
+// One GA4 raw export summary
 // ---------------------------------------------------------------------------
 
 function toNumber(value: unknown): number {
@@ -1622,7 +1628,13 @@ function last24HourUtcRange(now = new Date()): HushhAiDateRange {
 async function fetchKaiGa4Summary(range?: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   const windowDays = Number.isFinite(KAI_GA4_WINDOW_DAYS) ? KAI_GA4_WINDOW_DAYS : 14;
   const effectiveRange = range ?? defaultUtcRange(windowDays);
-  return fetchKaiGa4ExportSummary(KAI_GA4_PROJECT, KAI_GA4_DATASET, effectiveRange, false);
+  return fetchKaiGa4ExportSummary(
+    KAI_GA4_PROJECT,
+    KAI_GA4_DATASET,
+    effectiveRange,
+    false,
+    ONE_UAT_GA4_PROPERTY_ID,
+  );
 }
 
 function ga4ExportSuffixFilter(startDate: string, endDate: string, includeIntraday = false): string {
@@ -1666,6 +1678,7 @@ async function fetchKaiGa4ExportSummary(
   dataset: string,
   range: HushhAiDateRange,
   tolerateMissingDataset: boolean,
+  propertyId = '',
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
@@ -1719,13 +1732,41 @@ async function fetchKaiGa4ExportSummary(
   `;
 
   const queryProject = BQ_JOB_PROJECT || projectId;
-  const [daily, totals, last7, last24, topEvents, geo] = await Promise.all([
+  const realtimePromise: Promise<Ga4SectionTotals> = propertyId
+    ? runGa4RealtimeReport(propertyId, {
+      minuteRanges: [{ name: 'last_30_minutes', startMinutesAgo: 29, endMinutesAgo: 0 }],
+      metrics: [{ name: 'activeUsers' }, { name: 'eventCount' }],
+      limit: '10',
+    }).then((report) => ({
+      users: ga4Metric(report.rows?.[0], 0),
+      sessions: null,
+      events: ga4Metric(report.rows?.[0], 1),
+      available: true,
+      source: 'GA4 Realtime Data API',
+      expectedLagSeconds: 60,
+    })).catch(() => ({
+      users: null,
+      sessions: null,
+      events: null,
+      available: false,
+      note: 'GA4 realtime access is awaiting Viewer or Analyst permission for the metrics service account.',
+    }))
+    : Promise.resolve({
+      users: null,
+      sessions: null,
+      events: null,
+      available: false,
+      note: 'GA4 realtime needs a numeric GA4 property ID.',
+    });
+
+  const [daily, totals, last7, last24, topEvents, geo, realtime] = await Promise.all([
     queryBigQuerySql(queryProject, dailyQuery),
     queryBigQuerySql(queryProject, totalsQuery),
     queryBigQuerySql(queryProject, last7Query),
     queryBigQuerySql(queryProject, last24Query),
     queryBigQuerySql(queryProject, eventsQuery),
     queryBigQuerySql(queryProject, geoQuery),
+    realtimePromise,
   ]);
   const errors = [daily.error, totals.error, last7.error, last24.error, topEvents.error, geo.error].filter(Boolean);
 
@@ -1751,13 +1792,7 @@ async function fetchKaiGa4ExportSummary(
           },
           sections: buildGa4Sections({
             generatedAt,
-            realtime: {
-              users: null,
-              sessions: null,
-              events: null,
-              available: false,
-              note: 'Realtime GA4 needs a GA4 Data API property ID; BigQuery export is delayed.',
-            },
+            realtime,
             last24Hours: {
               users: null,
               sessions: null,
@@ -1815,13 +1850,7 @@ async function fetchKaiGa4ExportSummary(
       },
       sections: buildGa4Sections({
         generatedAt,
-        realtime: {
-          users: null,
-          sessions: null,
-          events: null,
-          available: false,
-          note: 'Realtime GA4 needs a GA4 Data API property ID; BigQuery export is delayed.',
-        },
+        realtime,
         last24Hours: {
           users: toNumber(last24Row.users),
           sessions: toNumber(last24Row.sessions),
@@ -1868,9 +1897,9 @@ async function fetchKaiGa4ExportSummary(
 // ---------------------------------------------------------------------------
 // one.hushh.ai — the One app: per-agent user behaviour + the One Location funnel
 //
-// This product is a different lens on the SAME GA4 property as kai.hushh.ai
+// This product is a different lens on the SAME GA4 property as one.hushh.ai
 // (the whole webapp reports into one property), not a new data source. So there
-// is no new dataset, no new export, and no new grant beyond what Kai already
+// is no new dataset, no new export, and no new grant beyond what One already
 // uses — what is new is the segmentation: which agent a person actually used,
 // and how far they got in One Location.
 // ---------------------------------------------------------------------------
@@ -1937,7 +1966,7 @@ const ONE_LOCATION_JOURNEY_STEPS = [
  * `agent_%` matched only the three `agent_pkm_*` reliability events, so "people
  * using Agent chat" was really "devices whose PKM context resolved"; the One
  * Location bucket was 71% `one_location_foreground_retry`, a geolocation
- * failure signal; and the Kai bucket was 78% `market_insights_loaded`, a load
+ * failure signal; and the One bucket was 78% `market_insights_loaded`, a load
  * health ping.
  *
  * `deliberate` events are user-initiated actions. `background` events are the rest of
@@ -1953,7 +1982,7 @@ const ONE_LOCATION_JOURNEY_STEPS = [
  * The rows mirror the product's own catalogue in
  * hushh-webapp/lib/onboarding/one-capabilities.ts, using its ids and titles,
  * so this list is what the team calls these agents rather than a parallel
- * naming invented here. "Kai" is gone: that agent is Finance.
+ * naming invented here. The retired product label is gone: that agent is Finance.
  *
  * Event membership is maintained against
  * hushh-webapp/lib/observability/events.ts. An event in neither list is
@@ -3958,15 +3987,15 @@ async function fetchKaiSearchConsoleFor(
 }
 
 async function fetchKaiSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
-  return fetchKaiSearchConsoleFor(range, 'Kai', KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX);
+  return fetchKaiSearchConsoleFor(range, 'One', KAI_SEARCH_CONSOLE_PAGE_FILTER_REGEX);
 }
 
 async function fetchKaiProductionSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
-  return fetchKaiSearchConsoleFor(range, 'Kai production', KAI_PROD_SEARCH_CONSOLE_PAGE_FILTER_REGEX);
+  return fetchKaiSearchConsoleFor(range, 'One production', KAI_PROD_SEARCH_CONSOLE_PAGE_FILTER_REGEX);
 }
 
 async function fetchKaiUatSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
-  return fetchKaiSearchConsoleFor(range, 'Kai UAT', KAI_UAT_SEARCH_CONSOLE_PAGE_FILTER_REGEX);
+  return fetchKaiSearchConsoleFor(range, 'One UAT', KAI_UAT_SEARCH_CONSOLE_PAGE_FILTER_REGEX);
 }
 
 function parseJsonField<T>(value: unknown, fallback: T): T {
@@ -4029,7 +4058,7 @@ function buildKaiFreshness(
         realtimeLevel: gcp ? 'monitoring_lag' : 'unavailable',
         generatedAt: typeof gcp?.generatedAt === 'string' ? gcp.generatedAt : fetchedAt,
         expectedLagSeconds: 300,
-        detail: gcp ? 'kai.hushh.ai Cloud Run metrics can lag by a few minutes' : 'Kai Cloud Run Monitoring unavailable',
+        detail: gcp ? 'one.hushh.ai Cloud Run metrics can lag by a few minutes' : 'One Cloud Run Monitoring unavailable',
       },
       {
         key: 'production_feed',
@@ -4038,7 +4067,7 @@ function buildKaiFreshness(
         realtimeLevel: feedStatus.productionReady ? 'public_feed' : 'status_only',
         generatedAt: feedStatus.asOfTimestamp ?? fetchedAt,
         expectedLagSeconds: feedStatus.productionReady ? null : 86_400,
-        detail: feedStatus.productionReady ? 'production public feed is ready' : 'production feed is status-only until GA4 export materializes',
+        detail: feedStatus.productionReady ? 'production public feed is ready' : 'production public feed is waiting for verified aggregate rows',
       },
       {
         key: 'production_ga4',
@@ -4047,7 +4076,7 @@ function buildKaiFreshness(
         realtimeLevel: 'delayed_export',
         generatedAt: typeof productionGa4?.generatedAt === 'string' ? productionGa4.generatedAt : fetchedAt,
         expectedLagSeconds: 86_400,
-        detail: ga4Available ? 'production GA4 export is available with daily export lag' : 'hushh-pda.analytics_526603671 is not visible/materialized yet',
+        detail: ga4Available ? 'production GA4 export is available with daily export lag' : 'production GA4 export is waiting for verified rows',
       },
     ],
   };
@@ -4546,7 +4575,7 @@ function buildKaiFeedSourceCard(rows: Record<string, unknown>[], environment: 'p
   const status = buildKaiFeedStatus(rows);
   const hasSummaryRows = rows.some((row) => row.metric_group === 'summary');
   const available = rows.length > 0 && hasSummaryRows;
-  const label = environment === 'production' ? 'Kai Production' : 'Kai UAT';
+  const label = environment === 'production' ? 'One Production' : 'One UAT';
   return {
     key: 'product_events',
     label: 'DB / Product Events',
@@ -4574,11 +4603,11 @@ function buildKaiProductionSourceCards(
   fetchedAt: string,
 ) {
   return [
-    buildSearchConsoleSourceCard(searchConsole, 'Kai Production Search Console'),
+    buildSearchConsoleSourceCard(searchConsole, 'One Production Search Console'),
     buildGa4SourceCard(
       productionGa4,
       `${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`,
-      'Kai production GA4 export is waiting or unavailable.',
+      'One production GA4 export is waiting or unavailable.',
     ),
     buildKaiFeedSourceCard(productionRows, 'production', fetchedAt),
   ];
@@ -4591,11 +4620,11 @@ function buildKaiUatSourceCards(
   fetchedAt: string,
 ) {
   return [
-    buildSearchConsoleSourceCard(searchConsole, 'Kai UAT Search Console'),
+    buildSearchConsoleSourceCard(searchConsole, 'One UAT Search Console'),
     buildGa4SourceCard(
       uatGa4,
       `${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`,
-      'Kai UAT GA4 export is waiting or unavailable.',
+      'One UAT GA4 export is waiting or unavailable.',
     ),
     buildKaiFeedSourceCard(uatRows, 'uat', fetchedAt),
   ];
@@ -4827,7 +4856,7 @@ async function fetchHushhTechSupabaseSummary(range: HushhAiDateRange): Promise<D
 // API routes
 // ---------------------------------------------------------------------------
 
-app.get('/api/analytics/kai/uat', async (_req, res) => {
+app.get(['/api/analytics/one/uat', '/api/analytics/kai/uat'], async (_req, res) => {
   const result = await queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW);
   res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
     environment: 'uat',
@@ -4837,7 +4866,7 @@ app.get('/api/analytics/kai/uat', async (_req, res) => {
   }));
 });
 
-app.get('/api/analytics/kai/production', async (_req, res) => {
+app.get(['/api/analytics/one/production', '/api/analytics/kai/production'], async (_req, res) => {
   const result = await queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW);
   res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
     environment: 'production',
@@ -4858,24 +4887,24 @@ app.get('/api/analytics/hushhtech', async (req, res) => {
   }));
 });
 
-app.get('/api/analytics/kai/ga4', async (_req, res) => {
+app.get(['/api/analytics/one/ga4', '/api/analytics/kai/ga4'], async (_req, res) => {
   const result = await fetchKaiGa4Summary();
   res.status(result.error && !result.data ? 502 : 200).json(sanitizePublicPayload({
-    platform: 'kai.hushh.ai',
+    platform: 'one.hushh.ai',
     data: result.data,
     error: result.error,
     fetchedAt: new Date().toISOString(),
   }));
 });
 
-app.get('/api/analytics/kai', async (req, res) => {
+app.get(['/api/analytics/one', '/api/analytics/kai'], async (req, res) => {
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
   const [production, uat, uatGa4, productionGa4, gcp, productionSearchConsole, uatSearchConsole] = await Promise.all([
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     fetchKaiGa4Summary(kaiRange),
-    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
-    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
+    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true, ONE_PROD_GA4_PROPERTY_ID),
+    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'One production'),
     fetchKaiProductionSearchConsole(kaiRange),
     fetchKaiUatSearchConsole(kaiRange),
   ]);
@@ -4890,7 +4919,7 @@ app.get('/api/analytics/kai', async (req, res) => {
     uatSearchConsole.error,
   ].filter(Boolean).join('; ') || null;
   res.status(error && production.rows.length === 0 && !gcp.data && !productionGa4.data ? 502 : 200).json(sanitizePublicPayload({
-    platform: 'kai.hushh.ai',
+    platform: 'one.hushh.ai',
     data: {
       productionFeed: {
         rows: production.rows,
@@ -5927,8 +5956,8 @@ app.get('/api/analytics/all', async (req, res) => {
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW, kaiRange),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW, kaiRange),
     fetchKaiGa4Summary(kaiRange),
-    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true),
-    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'Kai production'),
+    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true, ONE_PROD_GA4_PROPERTY_ID),
+    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'One production'),
     fetchKaiProductionSearchConsole(kaiRange),
     fetchKaiUatSearchConsole(kaiRange),
     fetchHushhAiCloudRun(hushhAiRange),
@@ -5946,9 +5975,9 @@ app.get('/api/analytics/all', async (req, res) => {
     kai: {
       uat: { environment: 'uat', rows: uat.rows, error: uat.error },
       production: { environment: 'production', rows: production.rows, error: production.error },
-      ga4: { platform: 'kai.hushh.ai', data: kaiGa4.data, error: kaiGa4.error },
+      ga4: { platform: 'one.hushh.ai', data: kaiGa4.data, error: kaiGa4.error },
       productionProduct: {
-        platform: 'kai.hushh.ai',
+        platform: 'one.hushh.ai',
         data: {
           productionFeed: {
             status: buildKaiFeedStatus(production.rows),
@@ -6009,12 +6038,12 @@ app.get('/api/health', (_req, res) => {
       bqUat: `${BQ_UAT_PROJECT}.${BQ_UAT_DATASET}.${BQ_UAT_VIEW}`,
       bqProd: `${BQ_PROD_PROJECT}.${BQ_PROD_DATASET}.${BQ_PROD_VIEW}`,
       bqJobProject: BQ_JOB_PROJECT || '(feed project)',
-      kaiGa4: `${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`,
-      kaiProductionGa4: `${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`,
-      kaiProductionCloudRun: `${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`,
-      kaiSearchConsole: `${KAI_SEARCH_PROJECT}.${KAI_SEARCH_DATASET}`,
-      kaiSearchConsoleFallback: `${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`,
-      kaiSearchConsoleSiteUrl: KAI_SEARCH_CONSOLE_SITE_URL,
+      oneUatGa4: `${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`,
+      oneProductionGa4: `${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`,
+      oneProductionCloudRun: `${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`,
+      oneSearchConsole: `${KAI_SEARCH_PROJECT}.${KAI_SEARCH_DATASET}`,
+      oneSearchConsoleFallback: `${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`,
+      oneSearchConsoleSiteUrl: KAI_SEARCH_CONSOLE_SITE_URL,
       hushhAiCloudRun: `${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`,
       hushhAiSearchConsole: `${HUSHH_AI_SEARCH_PROJECT}.${HUSHH_AI_SEARCH_DATASET}`,
       hushhAiSearchConsoleFallback: `${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`,
@@ -6038,7 +6067,7 @@ app.get('/api/health', (_req, res) => {
 // Hussh Insights AI — production analyst agent
 // ---------------------------------------------------------------------------
 
-type ProductKey = 'hushh.ai' | 'kai.hushh.ai' | 'uat.kai.hushh.ai' | 'hushhtech.com';
+type ProductKey = 'hushh.ai' | 'one.hushh.ai' | 'uat.one.hushh.ai' | 'hushhtech.com';
 type AgentConfidence = 'high' | 'medium' | 'low';
 type AgentWindow = 'calendar_days' | 'last_24_hours';
 
@@ -6143,7 +6172,7 @@ const METRICS_CHAT_MAX_OUTPUT_TOKENS = 2048;
 const chatRateBuckets = new Map<string, { hourly: number; daily: number; hourReset: number; dayReset: number }>();
 let metricsSnapshotCache: { key: string; expiresAt: number; promise: Promise<MetricsSnapshot> } | null = null;
 
-const PRODUCT_KEYS = ['hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'] as const;
+const PRODUCT_KEYS = ['hushh.ai', 'one.hushh.ai', 'uat.one.hushh.ai', 'hushhtech.com'] as const;
 
 const METRIC_FIELD_CATALOG: MetricFieldCatalogEntry[] = [
   {
@@ -6180,57 +6209,57 @@ const METRIC_FIELD_CATALOG: MetricFieldCatalogEntry[] = [
   },
   {
     id: 'cloud_run.request_count',
-    product: 'kai.hushh.ai',
+    product: 'one.hushh.ai',
     source: 'cloud_run',
     label: 'Production Cloud Run requests',
     unit: 'requests',
-    description: 'Near-live server request volume for the production kai.hushh.ai Cloud Run service.',
+    description: 'Near-live server request volume for the production one.hushh.ai Cloud Run service.',
     synonyms: ['kai production traffic', 'prod requests', 'server requests', 'cloud run traffic'],
     caveat: 'Production request volume should not be interpreted as users.',
-    exampleQuestions: ['How many production requests did kai.hushh.ai receive?', 'Show Kai production reliability.'],
+    exampleQuestions: ['How many production requests did one.hushh.ai receive?', 'Show One production reliability.'],
   },
   {
     id: 'ga4.users',
-    product: 'kai.hushh.ai',
+    product: 'one.hushh.ai',
     source: 'production_ga4',
     label: 'Production GA4 users',
     unit: 'users',
-    description: 'Production kai.hushh.ai GA4 web-user aggregate when the production export is available.',
+    description: 'Production one.hushh.ai GA4 web-user aggregate when the production export is available.',
     synonyms: ['kai production users', 'prod ga4 users', 'production visitors'],
     caveat: 'If production GA4 is waiting, do not substitute UAT values.',
-    exampleQuestions: ['How many users does Kai production have?', 'Is Kai production GA4 ready?'],
+    exampleQuestions: ['How many users does One production have?', 'Is One production GA4 ready?'],
   },
   {
     id: 'ga4.users',
-    product: 'uat.kai.hushh.ai',
+    product: 'uat.one.hushh.ai',
     source: 'uat_ga4',
     label: 'UAT GA4 users',
     unit: 'users',
-    description: 'UAT kai.hushh.ai GA4 web-user aggregate used for validation and UAT behavior analysis.',
+    description: 'UAT one.hushh.ai GA4 web-user aggregate used for validation and UAT behavior analysis.',
     synonyms: ['kai uat users', 'uat visitors', 'testing users', 'uat ga4 users'],
-    caveat: 'UAT values must remain separate from production Kai truth.',
-    exampleQuestions: ['How many users are on Kai UAT?', 'Compare Kai production and UAT users.'],
+    caveat: 'UAT values must remain separate from production One truth.',
+    exampleQuestions: ['How many users are on One UAT?', 'Compare One production and UAT users.'],
   },
   {
     id: 'product_events.dau',
-    product: 'uat.kai.hushh.ai',
+    product: 'uat.one.hushh.ai',
     source: 'uat_feed',
     label: 'UAT DB DAU',
     unit: 'users',
-    description: 'Daily active users from the Kai UAT public DB aggregate feed.',
+    description: 'Daily active users from the One UAT public DB aggregate feed.',
     synonyms: ['uat dau', 'daily active users', 'active users', 'kai uat db users'],
     caveat: 'This is a UAT aggregate feed and is not production product-account truth.',
-    exampleQuestions: ['What is Kai UAT DAU?', 'Show Kai UAT DB activity.'],
+    exampleQuestions: ['What is One UAT DAU?', 'Show One UAT DB activity.'],
   },
   {
     id: 'product_events.total_events',
-    product: 'uat.kai.hushh.ai',
+    product: 'uat.one.hushh.ai',
     source: 'uat_feed',
     label: 'UAT DB events',
     unit: 'events',
-    description: 'Total aggregate product events from the Kai UAT public DB feed.',
+    description: 'Total aggregate product events from the One UAT public DB feed.',
     synonyms: ['uat events', 'db events', 'product events', 'kai uat activity'],
-    exampleQuestions: ['How many Kai UAT events happened?', 'Compare UAT GA4 events with UAT DB events.'],
+    exampleQuestions: ['How many One UAT events happened?', 'Compare UAT GA4 events with UAT DB events.'],
   },
   {
     id: 'supabase.total_users',
@@ -6304,7 +6333,7 @@ const METRICS_TOOL_DECLARATIONS = [
       properties: {
         product: {
           type: 'string',
-          enum: ['all', 'hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'],
+          enum: ['all', 'hushh.ai', 'one.hushh.ai', 'uat.one.hushh.ai', 'hushhtech.com'],
           description: 'Product to retrieve. Use all for cross-product comparisons.',
         },
         rangeDays: {
@@ -6331,7 +6360,7 @@ const METRICS_TOOL_DECLARATIONS = [
       properties: {
         product: {
           type: 'string',
-          enum: ['all', 'hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'],
+          enum: ['all', 'hushh.ai', 'one.hushh.ai', 'uat.one.hushh.ai', 'hushhtech.com'],
           description: 'Product to inspect. Use all for the full source matrix.',
         },
         source: {
@@ -6371,7 +6400,7 @@ const AGENT_ANSWER_SCHEMA = {
         required: ['product', 'metric', 'label', 'value', 'unit', 'source', 'range'],
         additionalProperties: false,
         properties: {
-          product: { type: 'string', enum: ['hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'] },
+          product: { type: 'string', enum: ['hushh.ai', 'one.hushh.ai', 'uat.one.hushh.ai', 'hushhtech.com'] },
           metric: { type: 'string' },
           label: { type: 'string' },
           value: { anyOf: [{ type: 'number' }, { type: 'string' }, { type: 'null' }] },
@@ -6397,7 +6426,7 @@ const AGENT_ANSWER_SCHEMA = {
         required: ['product', 'source', 'status', 'available'],
         additionalProperties: false,
         properties: {
-          product: { type: 'string', enum: ['hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai', 'hushhtech.com'] },
+          product: { type: 'string', enum: ['hushh.ai', 'one.hushh.ai', 'uat.one.hushh.ai', 'hushhtech.com'] },
           source: { type: 'string' },
           status: { type: 'string' },
           available: { type: 'boolean' },
@@ -6471,9 +6500,9 @@ function sanitizeAgentText(value: string): string {
 function productFromValue(value: unknown): ProductKey | 'all' {
   const raw = String(value ?? 'all').toLowerCase();
   if (raw === 'all') return 'all';
-  if (raw.includes('uat.kai') || (raw.includes('kai') && raw.includes('uat'))) return 'uat.kai.hushh.ai';
+  if (raw.includes('uat.kai') || (raw.includes('kai') && raw.includes('uat'))) return 'uat.one.hushh.ai';
   if (raw.includes('hushhtech') || raw.includes('hushhtech.com')) return 'hushhtech.com';
-  if (raw.includes('kai')) return 'kai.hushh.ai';
+  if (raw.includes('kai')) return 'one.hushh.ai';
   if (raw.includes('hushh.ai') || raw.includes('hushhai') || raw.includes('hushh ai')) return 'hushh.ai';
   return 'all';
 }
@@ -6750,8 +6779,8 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     fetchKaiGa4Summary(range),
-    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, range, true),
-    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, range, 'Kai production'),
+    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, range, true, ONE_PROD_GA4_PROPERTY_ID),
+    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, range, 'One production'),
     fetchKaiProductionSearchConsole(range),
     fetchKaiUatSearchConsole(range),
     fetchHushhAiCloudRun(range),
@@ -6769,10 +6798,10 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
   ).map((source) => sourceFromFreshness('hushh.ai', source));
   const kaiSources = recordArray(
     buildKaiFreshness(fetchedAt, production.rows, kaiProductionGcp.data, kaiProductionGa4.data).sources,
-  ).map((source) => sourceFromFreshness('kai.hushh.ai', source));
+  ).map((source) => sourceFromFreshness('one.hushh.ai', source));
   const kaiUatSources = recordArray(
     buildKaiUatSourceCards(kaiUatSearchConsole.data, kaiUatGa4.data, uat.rows, fetchedAt),
-  ).map((source) => sourceFromCard('uat.kai.hushh.ai', source));
+  ).map((source) => sourceFromCard('uat.one.hushh.ai', source));
   const hushhTechSources = [
     ...hushhTechSourceCards.map((source) => sourceFromCard('hushhtech.com', source)),
     ...(['business_funnel', 'cloud_run', 'supabase'] as const).map((source) => {
@@ -6810,22 +6839,22 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
         sourceStatuses: hushhAiSources,
         warnings: warningList(hushhAiGcp.error, hushhAiSearchConsole.error, hushhAiGa4.error, hushhAiProductEvents.note),
       },
-      'kai.hushh.ai': {
-        product: 'kai.hushh.ai',
+      'one.hushh.ai': {
+        product: 'one.hushh.ai',
         range: compactRange,
         cloudRun: compactCloudRun(kaiProductionGcp.data, compactRange),
         ga4: compactGa4(kaiProductionGa4.data, compactRange),
         searchConsole: compactSearchConsole(kaiProductionSearchConsole.data, compactRange),
-        productEvents: compactKaiFeedRows(production.rows, compactRange, 'Kai production'),
+        productEvents: compactKaiFeedRows(production.rows, compactRange, 'One production'),
         sourceStatuses: kaiSources,
         warnings: warningList(production.error, kaiProductionGcp.error, kaiProductionGa4.error, kaiProductionSearchConsole.error),
       },
-      'uat.kai.hushh.ai': {
-        product: 'uat.kai.hushh.ai',
+      'uat.one.hushh.ai': {
+        product: 'uat.one.hushh.ai',
         range: compactRange,
         ga4: compactGa4(kaiUatGa4.data, compactRange),
         searchConsole: compactSearchConsole(kaiUatSearchConsole.data, compactRange),
-        productEvents: compactKaiFeedRows(uat.rows, compactRange, 'Kai UAT'),
+        productEvents: compactKaiFeedRows(uat.rows, compactRange, 'One UAT'),
         sourceStatuses: kaiUatSources,
         warnings: warningList(uat.error, kaiUatGa4.error, kaiUatSearchConsole.error),
       },
@@ -6943,9 +6972,9 @@ const HUSSH_ANALYST_SYNTHESIS_PROMPT = `You are Hussh Insights AI, a detailed an
 Answer only from the provided aggregate tool results. Do not invent data.
 Return JSON matching the schema exactly.
 Every numeric claim in reply must appear in claims with a canonical metric id from the catalog when possible.
-Use product names exactly: hushh.ai, kai.hushh.ai, uat.kai.hushh.ai, hushhtech.com.
+Use product names exactly: hushh.ai, one.hushh.ai, uat.one.hushh.ai, hushhtech.com.
 When tool results have window="last_24_hours", call Cloud Run reliability rolling 24-hour data. For GA4 or traffic sections, use the section label/source/note exactly; if a section says it is date-based or not exact rolling, state that caveat instead of calling it exact rolling 24-hour users.
-Never blend kai.hushh.ai production with uat.kai.hushh.ai. If the user says "Kai UAT", use uat.kai.hushh.ai; if they say "Kai production" or "kai.hushh.ai", use kai.hushh.ai.
+Never blend one.hushh.ai production with uat.one.hushh.ai. If the user says "One UAT", use uat.one.hushh.ai; if they say "One production" or "one.hushh.ai", use one.hushh.ai.
 Use complete sentences. Never end mid-sentence, after a comma, after an open parenthesis, or after words such as "of", "for", "with", "and", "DAU", or "DA".
 For "top 3 issues" or "act on" requests, return exactly three numbered action items in the reply.
 Mention missing or delayed sources in warnings instead of treating unavailable data as zero.
@@ -7218,7 +7247,7 @@ function deterministicClaim(
 function inferProductFromQuestion(text: string): ProductKey | 'all' {
   const lower = text.toLowerCase();
   if (lower.includes('hushhtech')) return 'hushhtech.com';
-  if (lower.includes('kai')) return 'kai.hushh.ai';
+  if (lower.includes('kai')) return 'one.hushh.ai';
   if (lower.includes('hushh.ai') || lower.includes('hushh ai')) return 'hushh.ai';
   return 'all';
 }
@@ -7257,8 +7286,8 @@ function inferAgentWindow(message: string, history: ChatHistoryMessage[] = []): 
 
 function buildCrossProductUsersAnswer(snapshot: MetricsSnapshot): AgentAnswer {
   const hushhAiGa4 = asRecord(snapshot.products['hushh.ai'].ga4);
-  const kaiGa4 = asRecord(snapshot.products['kai.hushh.ai'].ga4);
-  const kaiUatGa4 = asRecord(snapshot.products['uat.kai.hushh.ai'].ga4);
+  const kaiGa4 = asRecord(snapshot.products['one.hushh.ai'].ga4);
+  const kaiUatGa4 = asRecord(snapshot.products['uat.one.hushh.ai'].ga4);
   const hushhTechSupabase = asRecord(snapshot.products['hushhtech.com'].supabase);
   const hushhTechTotalUsers = optionalNumber(hushhTechSupabase?.totalUsers);
   const hushhTechActiveUsers = optionalNumber(hushhTechSupabase?.activeUsers);
@@ -7289,18 +7318,18 @@ function buildCrossProductUsersAnswer(snapshot: MetricsSnapshot): AgentAnswer {
     claims.push(deterministicClaim(snapshot, 'hushh.ai', 'ga4.users', 'GA4 web users', hushhAiUsers, 'users', 'GA4 Data API'));
   }
   if (kaiGa4Available && kaiUsers != null) {
-    claims.push(deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.users', 'GA4 web users', kaiUsers, 'users', 'GA4 export'));
+    claims.push(deterministicClaim(snapshot, 'one.hushh.ai', 'ga4.users', 'GA4 web users', kaiUsers, 'users', 'GA4 export'));
   }
   if (kaiUatGa4Available && kaiUatUsers != null) {
-    claims.push(deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.users', 'UAT GA4 web users', kaiUatUsers, 'users', 'Kai UAT GA4 export'));
+    claims.push(deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.users', 'UAT GA4 web users', kaiUatUsers, 'users', 'One UAT GA4 export'));
   }
 
   const kaiLine = kaiGa4Available && kaiUsers != null
-    ? `kai.hushh.ai has ${formatInteger(kaiUsers)} GA4 web users.`
-    : 'kai.hushh.ai production user analytics is not currently available, so I am not counting it as zero users.';
+    ? `one.hushh.ai has ${formatInteger(kaiUsers)} GA4 web users.`
+    : 'one.hushh.ai production user analytics is not currently available, so I am not counting it as zero users.';
   const kaiUatLine = kaiUatGa4Available && kaiUatUsers != null
-    ? `Kai UAT separately has ${formatInteger(kaiUatUsers)} GA4 web users for validation, but I am not mixing UAT into production totals.`
-    : 'Kai UAT user analytics is not available in this range.';
+    ? `One UAT separately has ${formatInteger(kaiUatUsers)} GA4 web users for validation, but I am not mixing UAT into production totals.`
+    : 'One UAT user analytics is not available in this range.';
 
   return {
     reply: [
@@ -7311,20 +7340,20 @@ function buildCrossProductUsersAnswer(snapshot: MetricsSnapshot): AgentAnswer {
       'I am deliberately not using server request volume as a user count, because traffic/reliability events are not people or accounts.',
     ].join('\n'),
     claims,
-    sources: sourceSubset(snapshot, ['hushhtech.com', 'hushh.ai', 'kai.hushh.ai', 'uat.kai.hushh.ai']),
+    sources: sourceSubset(snapshot, ['hushhtech.com', 'hushh.ai', 'one.hushh.ai', 'uat.one.hushh.ai']),
     warnings: warningList(
       'A single cross-product de-duplicated user identity source is not configured yet.',
       hushhTechTotalUsers == null ? 'hushhtech.com product-account totals are unavailable in this runtime.' : null,
       hushhAiUsers == null ? 'hushh.ai GA4 web-user totals are unavailable in this runtime.' : null,
-      kaiGa4Available ? null : 'kai.hushh.ai production user analytics is waiting or unavailable.',
-      kaiUatGa4Available ? 'Kai UAT is reported separately and must not be blended into Kai production.' : 'Kai UAT user analytics is waiting or unavailable.',
+      kaiGa4Available ? null : 'one.hushh.ai production user analytics is waiting or unavailable.',
+      kaiUatGa4Available ? 'One UAT is reported separately and must not be blended into One production.' : 'One UAT user analytics is waiting or unavailable.',
       snapshot.products['hushh.ai'].warnings,
-      snapshot.products['kai.hushh.ai'].warnings,
-      snapshot.products['uat.kai.hushh.ai'].warnings,
+      snapshot.products['one.hushh.ai'].warnings,
+      snapshot.products['uat.one.hushh.ai'].warnings,
     ),
     confidence: 'medium',
     suggestedQuestions: [
-      'Compare Kai production and Kai UAT without mixing the numbers.',
+      'Compare One production and One UAT without mixing the numbers.',
       'Which user numbers are account truth versus web audience estimates?',
       'What should we configure to get de-duplicated users across products?',
     ],
@@ -7332,8 +7361,8 @@ function buildCrossProductUsersAnswer(snapshot: MetricsSnapshot): AgentAnswer {
 }
 
 function buildKaiEnvironmentSplitAnswer(snapshot: MetricsSnapshot): AgentAnswer {
-  const prod = snapshot.products['kai.hushh.ai'];
-  const uat = snapshot.products['uat.kai.hushh.ai'];
+  const prod = snapshot.products['one.hushh.ai'];
+  const uat = snapshot.products['uat.one.hushh.ai'];
   const prodCloudRun = asRecord(prod.cloudRun);
   const prodGa4 = asRecord(prod.ga4);
   const prodEvents = asRecord(prod.productEvents);
@@ -7344,34 +7373,34 @@ function buildKaiEnvironmentSplitAnswer(snapshot: MetricsSnapshot): AgentAnswer 
 
   return {
     reply: [
-      `Kai production and Kai UAT are now separate in the analyst model for ${snapshot.range.startDate} to ${snapshot.range.endDate}.`,
-      `Production kai.hushh.ai: ${formatInteger(prodCloudRun?.requestCount)} Cloud Run requests, ${formatInteger(prodCloudRun?.errorCount)} 5xx responses, and ${formatPercent(prodCloudRun?.errorRate)} error rate. Production GA4 users are ${prodGa4Available ? formatInteger(prodGa4?.users) : 'waiting'}, and production DB/product events are ${prodEvents?.available ? 'available' : 'waiting'}.`,
-      `UAT uat.kai.hushh.ai: GA4 users are ${uatGa4Available ? formatInteger(uatGa4?.users) : 'waiting'}, GA4 sessions are ${uatGa4Available ? formatInteger(uatGa4?.sessions) : 'waiting'}, and UAT DB events are ${formatOptionalInteger(uatEvents?.totalEvents)} with DAU ${formatOptionalInteger(uatEvents?.dau)}.`,
+      `One production and One UAT are now separate in the analyst model for ${snapshot.range.startDate} to ${snapshot.range.endDate}.`,
+      `Production one.hushh.ai: ${formatInteger(prodCloudRun?.requestCount)} Cloud Run requests, ${formatInteger(prodCloudRun?.errorCount)} 5xx responses, and ${formatPercent(prodCloudRun?.errorRate)} error rate. Production GA4 users are ${prodGa4Available ? formatInteger(prodGa4?.users) : 'waiting'}, and production DB/product events are ${prodEvents?.available ? 'available' : 'waiting'}.`,
+      `UAT uat.one.hushh.ai: GA4 users are ${uatGa4Available ? formatInteger(uatGa4?.users) : 'waiting'}, GA4 sessions are ${uatGa4Available ? formatInteger(uatGa4?.sessions) : 'waiting'}, and UAT DB events are ${formatOptionalInteger(uatEvents?.totalEvents)} with DAU ${formatOptionalInteger(uatEvents?.dau)}.`,
       'Do not use UAT values as production truth; UAT is validation and test-environment behavior.',
     ].join('\n'),
     claims: [
-      deterministicClaim(snapshot, 'kai.hushh.ai', 'cloud_run.request_count', 'Production Cloud Run requests', toNumber(prodCloudRun?.requestCount), 'requests', 'Cloud Run Monitoring'),
-      deterministicClaim(snapshot, 'kai.hushh.ai', 'cloud_run.error_rate', 'Production Cloud Run error rate', Number((toNumber(prodCloudRun?.errorRate) * 100).toFixed(2)), '%', 'Cloud Run Monitoring'),
-      ...(prodGa4Available ? [deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.users', 'Production GA4 users', toNumber(prodGa4?.users), 'users', 'Kai production GA4 export')] : []),
+      deterministicClaim(snapshot, 'one.hushh.ai', 'cloud_run.request_count', 'Production Cloud Run requests', toNumber(prodCloudRun?.requestCount), 'requests', 'Cloud Run Monitoring'),
+      deterministicClaim(snapshot, 'one.hushh.ai', 'cloud_run.error_rate', 'Production Cloud Run error rate', Number((toNumber(prodCloudRun?.errorRate) * 100).toFixed(2)), '%', 'Cloud Run Monitoring'),
+      ...(prodGa4Available ? [deterministicClaim(snapshot, 'one.hushh.ai', 'ga4.users', 'Production GA4 users', toNumber(prodGa4?.users), 'users', 'One production GA4 export')] : []),
       ...(uatGa4Available ? [
-        deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.users', 'UAT GA4 users', toNumber(uatGa4?.users), 'users', 'Kai UAT GA4 export'),
-        deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.sessions', 'UAT GA4 sessions', toNumber(uatGa4?.sessions), 'sessions', 'Kai UAT GA4 export'),
+        deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.users', 'UAT GA4 users', toNumber(uatGa4?.users), 'users', 'One UAT GA4 export'),
+        deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.sessions', 'UAT GA4 sessions', toNumber(uatGa4?.sessions), 'sessions', 'One UAT GA4 export'),
       ] : []),
-      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'product_events.dau', 'UAT DB DAU', optionalNumber(uatEvents?.dau), 'users', 'Kai UAT DB aggregate feed'),
-      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'product_events.total_events', 'UAT DB events', optionalNumber(uatEvents?.totalEvents), 'events', 'Kai UAT DB aggregate feed'),
+      deterministicClaim(snapshot, 'uat.one.hushh.ai', 'product_events.dau', 'UAT DB DAU', optionalNumber(uatEvents?.dau), 'users', 'One UAT DB aggregate feed'),
+      deterministicClaim(snapshot, 'uat.one.hushh.ai', 'product_events.total_events', 'UAT DB events', optionalNumber(uatEvents?.totalEvents), 'events', 'One UAT DB aggregate feed'),
     ],
-    sources: sourceSubset(snapshot, ['kai.hushh.ai', 'uat.kai.hushh.ai']),
+    sources: sourceSubset(snapshot, ['one.hushh.ai', 'uat.one.hushh.ai']),
     warnings: warningList(
-      prodGa4Available ? null : 'Kai production GA4 is waiting or unavailable.',
-      prodEvents?.available ? null : 'Kai production DB/product events are waiting for summary rows.',
+      prodGa4Available ? null : 'One production GA4 is waiting or unavailable.',
+      prodEvents?.available ? null : 'One production DB/product events are waiting for summary rows.',
       uat.warnings,
       prod.warnings,
     ),
     confidence: 'high',
     suggestedQuestions: [
-      'Show Kai production reliability trend by day.',
-      'Show Kai UAT GA4 versus UAT DB event mismatch.',
-      'What must be configured for Kai production user analytics?',
+      'Show One production reliability trend by day.',
+      'Show One UAT GA4 versus UAT DB event mismatch.',
+      'What must be configured for One production user analytics?',
     ],
   };
 }
@@ -7412,7 +7441,7 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
   const end = new Date(snapshot.generatedAt);
   const start = new Date(end.getTime() - 86_400_000);
   const windowText = `${start.toISOString()} to ${end.toISOString()}`;
-  const reliabilityProducts: ProductKey[] = ['hushh.ai', 'kai.hushh.ai', 'hushhtech.com'];
+  const reliabilityProducts: ProductKey[] = ['hushh.ai', 'one.hushh.ai', 'hushhtech.com'];
   const reliabilityRows = reliabilityProducts
     .map((product) => {
       const cloudRun = asRecord(snapshot.products[product].cloudRun);
@@ -7431,13 +7460,13 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
     : 'Cloud Run reliability metrics are not available for this window.';
 
   const hushhAiLast24 = ga4Last24(snapshot.products['hushh.ai'].ga4);
-  const kaiProdLast24 = ga4Last24(snapshot.products['kai.hushh.ai'].ga4);
-  const kaiUatLast24 = ga4Last24(snapshot.products['uat.kai.hushh.ai'].ga4);
+  const kaiProdLast24 = ga4Last24(snapshot.products['one.hushh.ai'].ga4);
+  const kaiUatLast24 = ga4Last24(snapshot.products['uat.one.hushh.ai'].ga4);
   const hushhTechTraffic = asRecord(snapshot.products['hushhtech.com'].traffic);
   const activityLines = [
     ga4ActivityLine('hushh.ai', hushhAiLast24, 'hushh.ai GA4 last-day data is waiting or unavailable'),
-    ga4ActivityLine('kai.hushh.ai production', kaiProdLast24, 'kai.hushh.ai production GA4 last-24h data is waiting or unavailable'),
-    ga4ActivityLine('uat.kai.hushh.ai UAT', kaiUatLast24, 'uat.kai.hushh.ai UAT GA4 last-24h data is waiting or unavailable'),
+    ga4ActivityLine('one.hushh.ai production', kaiProdLast24, 'one.hushh.ai production GA4 last-24h data is waiting or unavailable'),
+    ga4ActivityLine('uat.one.hushh.ai UAT', kaiUatLast24, 'uat.one.hushh.ai UAT GA4 last-24h data is waiting or unavailable'),
     hasAnyNumber(hushhTechTraffic?.active1DayUsers, hushhTechTraffic?.sessions, hushhTechTraffic?.pageViews)
       ? `hushhtech.com traffic: ${formatOptionalInteger(hushhTechTraffic?.active1DayUsers)} 1-day active users, ${formatOptionalInteger(hushhTechTraffic?.sessions)} sessions, ${formatOptionalInteger(hushhTechTraffic?.pageViews)} page views`
       : 'hushhtech.com 1-day traffic data is waiting or unavailable',
@@ -7458,18 +7487,18 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
   }
   if (hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events)) {
     const label = ga4WindowLabel(kaiProdLast24);
-    const source = ga4WindowSource(kaiProdLast24, 'Kai production GA4');
+    const source = ga4WindowSource(kaiProdLast24, 'One production GA4');
     claims.push(
-      deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.last_24_hours.users', `Production GA4 ${label} users`, optionalNumber(kaiProdLast24?.users), 'users', source),
-      deterministicClaim(snapshot, 'kai.hushh.ai', 'ga4.last_24_hours.events', `Production GA4 ${label} events`, optionalNumber(kaiProdLast24?.events), 'events', source),
+      deterministicClaim(snapshot, 'one.hushh.ai', 'ga4.last_24_hours.users', `Production GA4 ${label} users`, optionalNumber(kaiProdLast24?.users), 'users', source),
+      deterministicClaim(snapshot, 'one.hushh.ai', 'ga4.last_24_hours.events', `Production GA4 ${label} events`, optionalNumber(kaiProdLast24?.events), 'events', source),
     );
   }
   if (hasAnyNumber(kaiUatLast24?.users, kaiUatLast24?.sessions, kaiUatLast24?.events)) {
     const label = ga4WindowLabel(kaiUatLast24);
-    const source = ga4WindowSource(kaiUatLast24, 'Kai UAT GA4');
+    const source = ga4WindowSource(kaiUatLast24, 'One UAT GA4');
     claims.push(
-      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.last_24_hours.users', `UAT GA4 ${label} users`, optionalNumber(kaiUatLast24?.users), 'users', source),
-      deterministicClaim(snapshot, 'uat.kai.hushh.ai', 'ga4.last_24_hours.events', `UAT GA4 ${label} events`, optionalNumber(kaiUatLast24?.events), 'events', source),
+      deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.last_24_hours.users', `UAT GA4 ${label} users`, optionalNumber(kaiUatLast24?.users), 'users', source),
+      deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.last_24_hours.events', `UAT GA4 ${label} events`, optionalNumber(kaiUatLast24?.events), 'events', source),
     );
   }
   if (hasAnyNumber(hushhTechTraffic?.active1DayUsers, hushhTechTraffic?.sessions, hushhTechTraffic?.pageViews)) {
@@ -7485,10 +7514,10 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
     ga4WindowNote(hushhAiLast24),
     ga4WindowNote(kaiProdLast24),
     ga4WindowNote(kaiUatLast24),
-    !hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events) ? 'kai.hushh.ai production GA4 last-24h data is waiting or unavailable.' : null,
+    !hasAnyNumber(kaiProdLast24?.users, kaiProdLast24?.sessions, kaiProdLast24?.events) ? 'one.hushh.ai production GA4 last-24h data is waiting or unavailable.' : null,
     snapshot.products['hushh.ai'].warnings,
-    snapshot.products['kai.hushh.ai'].warnings,
-    snapshot.products['uat.kai.hushh.ai'].warnings,
+    snapshot.products['one.hushh.ai'].warnings,
+    snapshot.products['uat.one.hushh.ai'].warnings,
     snapshot.products['hushhtech.com'].warnings,
   );
 
@@ -7500,7 +7529,7 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
       highestError
         ? `Primary watch item: ${highestError.product} has the highest Cloud Run error rate in this window at ${formatPercent(highestError.errorRate)}.`
         : 'Primary watch item: source availability is the main issue because reliability data is incomplete.',
-      'Keep production kai.hushh.ai and UAT uat.kai.hushh.ai separate; UAT activity is validation behavior, not production truth.',
+      'Keep production one.hushh.ai and UAT uat.one.hushh.ai separate; UAT activity is validation behavior, not production truth.',
     ].join('\n'),
     claims,
     sources: sourceSubset(snapshot, [...PRODUCT_KEYS]),
@@ -7509,7 +7538,7 @@ function buildLast24HourReportAnswer(snapshot: MetricsSnapshot): AgentAnswer {
     suggestedQuestions: [
       'Turn this 24-hour report into priority actions.',
       'Show only last-24-hour reliability by product.',
-      'Compare Kai production and Kai UAT for the last 24 hours.',
+      'Compare One production and One UAT for the last 24 hours.',
       'What data sources are missing from this 24-hour report?',
     ],
   };
@@ -7519,14 +7548,14 @@ function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMess
   const contextText = `${history.map((item) => item.content).join('\n')}\n${message}`.toLowerCase();
   if (/^(ping|hello|hi|say hello)$/i.test(message.trim())) {
     return {
-      reply: `Hussh Insights AI is online. I can analyze aggregate metrics for hushh.ai, kai.hushh.ai, and hushhtech.com from ${snapshot.range.startDate} to ${snapshot.range.endDate}.`,
+      reply: `Hussh Insights AI is online. I can analyze aggregate metrics for hushh.ai, one.hushh.ai, and hushhtech.com from ${snapshot.range.startDate} to ${snapshot.range.endDate}.`,
       claims: [],
       sources: sourceSubset(snapshot, [...PRODUCT_KEYS]),
       warnings: [],
       confidence: 'high',
       suggestedQuestions: [
         'Review the full dashboard like an operator.',
-        'Compare Kai production and Kai UAT.',
+        'Compare One production and One UAT.',
         'What are the top 3 issues today?',
       ],
     };
@@ -7589,7 +7618,7 @@ function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMess
   }
 
   if (/error rate|healthiest|compare/.test(contextText)) {
-    const rows = (['hushh.ai', 'kai.hushh.ai', 'hushhtech.com'] as ProductKey[]).map((product) => {
+    const rows = (['hushh.ai', 'one.hushh.ai', 'hushhtech.com'] as ProductKey[]).map((product) => {
       const cloudRun = asRecord(snapshot.products[product].cloudRun);
       return { product, errorRate: optionalNumber(cloudRun?.errorRate), requests: toNumber(cloudRun?.requestCount) };
     }).sort((a, b) => (a.errorRate ?? 1) - (b.errorRate ?? 1));
@@ -7879,10 +7908,10 @@ app.listen(PORT, () => {
   console.log(`Hussh Matrix Dashboard server listening on http://localhost:${PORT}`);
   console.log(`  BigQuery UAT:  ${BQ_UAT_PROJECT}.${BQ_UAT_DATASET}.${BQ_UAT_VIEW}`);
   console.log(`  BigQuery Prod: ${BQ_PROD_PROJECT}.${BQ_PROD_DATASET}.${BQ_PROD_VIEW}`);
-  console.log(`  Kai GA4:       ${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`);
-  console.log(`  Kai Prod GA4:  ${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`);
-  console.log(`  Kai GCP:       ${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`);
-  console.log(`  Kai GSC Fallback: ${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`);
+  console.log(`  One GA4:       ${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`);
+  console.log(`  One Prod GA4:  ${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`);
+  console.log(`  One GCP:       ${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`);
+  console.log(`  One GSC Fallback: ${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`);
   console.log(`  Hush AI GCP:   ${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`);
   console.log(`  Hush AI GA4:   ${hushhAiGa4SourceLabel()} (${HUSHH_AI_GA4_MEASUREMENT_ID})`);
   console.log(`  Hush AI GA4 SA:${HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT || '(direct runtime service account)'}`);

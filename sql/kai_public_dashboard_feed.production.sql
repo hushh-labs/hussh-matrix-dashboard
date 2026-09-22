@@ -16,7 +16,7 @@
 -- identifier, page path, query, prompt or free-text value is emitted.
 --
 -- SCOPE. The property carries three things: the One app (native + one.hushh.ai),
--- hushh.ai marketing pages, and uat.hushh.ai. This feed is the *app* surface
+-- hushh.ai marketing pages, and historical test-host traffic. This feed is the *app* surface
 -- only. Marketing traffic would more than double the denominator and flatter
 -- every conversion rate; UAT traffic is not a production KPI. Both exclusions
 -- are reported in the status group rather than being silent.
@@ -124,7 +124,7 @@ status_rows AS (
         THEN 'Counts are device-scoped (platform:user_pseudo_id). GA4 User-ID is bound on iOS but not on web, so these are devices and browsers, not people, and web and app figures cannot be added together.'
         ELSE NULL END, CAST(NULL AS TIMESTAMP)),
     STRUCT('identity_basis', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), 'platform:user_pseudo_id', CAST(NULL AS TIMESTAMP)),
-    STRUCT('surface_scope', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), 'One app only: native iOS/Android plus one.hushh.ai. Excludes hushh.ai marketing pages and uat.hushh.ai.', CAST(NULL AS TIMESTAMP)),
+    STRUCT('surface_scope', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), 'One app only: native iOS/Android plus one.hushh.ai. Excludes hushh.ai marketing pages and test web hosts.', CAST(NULL AS TIMESTAMP)),
     STRUCT('latest_event_at', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), CAST(NULL AS STRING), ss.latest_event_at),
     STRUCT('freshness_lag_minutes', CAST(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), ss.latest_event_at, MINUTE) AS FLOAT64), CAST(NULL AS INT64), CAST(NULL AS STRING), CAST(NULL AS TIMESTAMP)),
     STRUCT('source_event_rows', CAST(ss.source_event_rows AS FLOAT64), ss.source_event_rows, CAST(NULL AS STRING), CAST(NULL AS TIMESTAMP)),
