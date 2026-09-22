@@ -130,6 +130,70 @@ function ActiveDevices({ one }: { one: OneAppSummary }) {
   );
 }
 
+function IdentifiedUsers({ one }: { one: OneAppSummary }) {
+  const users = one.identifiedUsers;
+  if (!users) return null;
+
+  const range = users.selectedRange;
+  const primaryTiles = [
+    { label: 'Total unique users', value: range.totalUsers, detail: 'Distinct signed-in accounts in selected range' },
+    { label: 'New unique users', value: range.newUsers, detail: 'First-ever observed account activity in selected range' },
+    { label: 'Returning unique users', value: range.returningUsers, detail: 'First observed before selected range' },
+  ];
+  const activityTiles = [
+    { label: 'Daily active users', value: users.dau, detail: users.asOf },
+    { label: 'Weekly active users', value: users.wau, detail: `7 days to ${users.asOf}` },
+    { label: 'Monthly active users', value: users.mau, detail: `30 days to ${users.asOf}` },
+    { label: 'Monthly identity coverage', value: percentText(users.deviceCoverage.mau, 1), detail: `${formatNumber(users.identifiedDevices.mau)} active devices carried an account ID` },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {primaryTiles.map((tile, index) => (
+          <motion.div
+            key={tile.label}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.16 + index * 0.04 }}
+            className={cn(appleCard, 'border-[#007aff]/15 bg-[#f7fbff] p-5')}
+          >
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-[#007aff]" />
+              <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
+            </div>
+            <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">
+              {typeof tile.value === 'number' ? formatNumber(tile.value) : tile.value}
+            </p>
+            <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
+          </motion.div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {activityTiles.map((tile, index) => (
+          <div key={tile.label} className={cn(appleCard, 'p-5')}>
+            <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
+            <p className="mt-2 text-3xl font-semibold leading-none text-[#1d1d1f]">
+              {typeof tile.value === 'number' ? formatNumber(tile.value) : tile.value}
+            </p>
+            <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-start gap-3 rounded-2xl border border-[#d8c48b] bg-[#fffaf0] p-4 text-[#72510b]">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+        <p className="text-sm font-semibold leading-5">
+          Exact identified-user count: <code className="rounded bg-white/70 px-1 py-0.5 text-xs">COUNT(DISTINCT user_id)</code>.
+          Total, new and returning users each count the same stable account at most once, across every event, session and device.
+          It de-duplicates the same signed-in account across devices. Anonymous devices and platforms that do not bind
+          a stable account ID are excluded, so this is exact for the identified slice—not an estimate of unknown people.
+          {' '}{users.identityScope}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 const PLATFORM_LABELS: Record<string, string> = {
   IOS: 'iOS app',
   ANDROID: 'Android app',
@@ -146,8 +210,8 @@ export function platformLabel(platform: string): string {
  *
  * These rows are the honest form of the tiles above. GA4 gives web, iOS and
  * Android separate device-id spaces, and the account key that would stitch a
- * person across them is bound on iOS only -- so a person with a phone and a
- * laptop is two rows here and nothing can collapse them.
+ * person across them is not consistently bound on every platform -- so device
+ * rows still cannot be collapsed into people.
  *
  * Splitting does not fix that. What it fixes is the page implying an addition
  * that is not valid, and it puts the identity gap where you cannot miss it:
@@ -164,10 +228,12 @@ export function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
           <thead>
             <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
               <th className="border-b border-black/5 px-5 py-3">Platform</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Daily</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Weekly</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Monthly</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Accounts</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Device DAU</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Device WAU</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Device MAU</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">User DAU</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">User WAU</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">User MAU</th>
               <th className="border-b border-black/5 px-5 py-3">Identity</th>
             </tr>
           </thead>
@@ -179,7 +245,13 @@ export function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
                 <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">{formatNumber(row.wauDevices)}</td>
                 <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">{formatNumber(row.mauDevices)}</td>
                 <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
-                  {row.accounts === null ? <span className="text-[#c7c7cc]">&mdash;</span> : formatNumber(row.accounts)}
+                  {row.dauAccounts === null ? <span className="text-[#c7c7cc]">&mdash;</span> : formatNumber(row.dauAccounts)}
+                </td>
+                <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                  {row.wauAccounts === null ? <span className="text-[#c7c7cc]">&mdash;</span> : formatNumber(row.wauAccounts)}
+                </td>
+                <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                  {row.mauAccounts === null ? <span className="text-[#c7c7cc]">&mdash;</span> : formatNumber(row.mauAccounts)}
                 </td>
                 <td className="border-b border-black/5 px-5 py-3 text-xs font-semibold">
                   {row.identityBound ? (
@@ -222,13 +294,13 @@ function GrowthQuality({ one }: { one: OneAppSummary }) {
     <div className={cn(appleCard, 'p-6 sm:p-7')}>
       <div className="flex flex-wrap items-end gap-x-10 gap-y-5">
         <div>
-          <p className="text-sm font-semibold text-[#6e6e73]">New to One</p>
+          <p className="text-sm font-semibold text-[#6e6e73]">New devices</p>
           <p className="mt-1 text-5xl font-semibold leading-none text-[#1d1d1f]">
             {formatNumber(newUsers)}
           </p>
         </div>
         <div>
-          <p className="text-sm font-semibold text-[#6e6e73]">Came back</p>
+          <p className="text-sm font-semibold text-[#6e6e73]">Returning devices</p>
           <p className="mt-1 text-5xl font-semibold leading-none text-[#1d1d1f]">
             {formatNumber(returningUsers)}
           </p>
@@ -259,8 +331,8 @@ function GrowthQuality({ one }: { one: OneAppSummary }) {
       )}
 
       <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold text-[#86868b]">
-        <span><span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#007aff]" />First time</span>
-        <span><span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#1f7a36]" />Returning</span>
+        <span><span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#007aff]" />First-seen device</span>
+        <span><span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#1f7a36]" />Returning device</span>
         {unknownUsers > 0 && (
           <span>
             {formatNumber(unknownUsers)} {plural(unknownUsers, 'device', 'devices')} had no first-touch
@@ -867,9 +939,9 @@ function Provenance({ one, rangeLabel }: { one: OneAppSummary; rangeLabel: strin
         <p className="text-sm font-bold text-[#1d1d1f]">How to read these numbers</p>
       </div>
       <p className="max-w-4xl text-sm font-medium leading-6 text-[#6e6e73]">
-        Counts are <strong className="font-bold text-[#1d1d1f]">devices and browsers</strong>, not
-        people. One account signed in on a phone and a laptop counts twice, because the analytics
-        identity binds on iOS but not on web — so app and web figures also cannot be added together.
+        Device counts are <strong className="font-bold text-[#1d1d1f]">devices and browsers</strong>, not
+        people. The signed-in-user cards separately count distinct stable account IDs and collapse the
+        same account across devices, while clearly showing how much device traffic has no bound identity.
         Native and <code className="rounded bg-white/70 px-1 py-0.5 text-xs">{one.sourceWebHost ?? 'one.hushh.ai'}</code> only;
         every other web host is excluded. {nativeUatTagged
           ? 'Public mobile-build events tagged for the UAT backend remain visible, but backend environment and GA4 property are reported separately. '
@@ -1031,20 +1103,21 @@ export function OneAppPanel({
               {environment === 'production' ? 'one.hushh.ai · production' : 'uat.one.hushh.ai · uat / test builds'} · {rangeLabel}
             </p>
             <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
-              How many devices are using One?
+              How many devices and identified users are using One?
             </h2>
           </div>
         </div>
         <div className="flex flex-col gap-4">
+          <IdentifiedUsers one={activeData} />
           <ActiveDevices one={activeData} />
           <ActivesByPlatform rows={activeData.activeByPlatform} />
         </div>
       </section>
 
       <Block
-        kicker="Growth quality"
-        title="Is that growth, or churn?"
-        hint="An active-device count made mostly of first-timers is not the same product story as one made of devices coming back."
+        kicker="Device growth diagnostic"
+        title="Are devices coming back?"
+        hint="This secondary diagnostic uses device identifiers. The exact account-based New and Total user KPIs stay at the top of the page."
       >
         <GrowthQuality one={activeData} />
       </Block>

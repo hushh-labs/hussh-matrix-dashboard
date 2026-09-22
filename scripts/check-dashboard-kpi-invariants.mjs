@@ -39,6 +39,40 @@ function checkOneEnvironment(label, one) {
     `reported=${active.stickiness}; calculated=${active.mau ? active.dau / active.mau : 'null'}`,
   );
 
+  const identified = one.identifiedUsers ?? {};
+  const selectedUsers = identified.selectedRange ?? {};
+  check(
+    `${label}_identified_total_partitions_exactly`,
+    Number(selectedUsers.newUsers ?? -1) >= 0
+      && Number(selectedUsers.returningUsers ?? -1) >= 0
+      && Number(selectedUsers.newUsers) + Number(selectedUsers.returningUsers) === Number(selectedUsers.totalUsers),
+    `new=${selectedUsers.newUsers}; returning=${selectedUsers.returningUsers}; total=${selectedUsers.totalUsers}`,
+  );
+  check(
+    `${label}_identified_user_windows_nested`,
+    number(identified.dau) && identified.dau <= identified.wau && identified.wau <= identified.mau,
+    `DAU/WAU/MAU=${identified.dau}/${identified.wau}/${identified.mau}`,
+  );
+  for (const key of ['dau', 'wau', 'mau']) {
+    const activeDevices = Number(active[key] ?? 0);
+    const identifiedDevices = Number(identified.identifiedDevices?.[key] ?? 0);
+    const expectedCoverage = activeDevices > 0 ? identifiedDevices / activeDevices : null;
+    check(
+      `${label}_${key}_identity_coverage_exact`,
+      identifiedDevices <= activeDevices
+        && (expectedCoverage === null
+          ? identified.deviceCoverage?.[key] == null
+          : close(identified.deviceCoverage?.[key], expectedCoverage)),
+      `reported=${identified.deviceCoverage?.[key]}; identified devices=${identifiedDevices}; active devices=${activeDevices}`,
+    );
+  }
+  check(
+    `${label}_identity_completeness_exact`,
+    identified.complete === (Number(active.mau ?? 0) > 0
+      && Number(identified.identifiedDevices?.mau ?? 0) === Number(active.mau ?? 0)),
+    `complete=${String(identified.complete)}`,
+  );
+
   const platforms = Array.isArray(one.activeByPlatform) ? one.activeByPlatform : [];
   for (const [key, field] of [['dau', 'dauDevices'], ['wau', 'wauDevices'], ['mau', 'mauDevices']]) {
     const platformTotal = sum(platforms, field);
