@@ -105,7 +105,18 @@ jobs:
           PREVIOUS_REVISION="$(gcloud run services describe "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
-            --format='value(status.latestReadyRevisionName)')"
+            --format=json | node -e '
+              let input = "";
+              process.stdin.on("data", (chunk) => { input += chunk; });
+              process.stdin.on("end", () => {
+                const service = JSON.parse(input);
+                const traffic = service.status?.traffic ?? [];
+                const live = traffic.find((entry) => Number(entry.percent) === 100)
+                  ?? traffic.toSorted((a, b) => Number(b.percent ?? 0) - Number(a.percent ?? 0))[0];
+                if (!live?.revisionName) process.exit(1);
+                process.stdout.write(live.revisionName);
+              });
+            ')"
           echo "PREVIOUS_REVISION=${PREVIOUS_REVISION}" >> "${GITHUB_ENV}"
 
       - name: Deploy Cloud Run service
@@ -122,6 +133,43 @@ jobs:
             --cpu=1 \
             --min-instances=0 \
             --max-instances=3
+
+          CANDIDATE_REVISION="$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format='value(status.latestCreatedRevisionName)')"
+          if [[ -z "${CANDIDATE_REVISION}" ]]; then
+            echo "Cloud Run did not report the newly created revision."
+            exit 1
+          fi
+          echo "CANDIDATE_REVISION=${CANDIDATE_REVISION}" >> "${GITHUB_ENV}"
+
+          # A rollback pins Cloud Run traffic to a named revision. Subsequent
+          # deploys then create healthy revisions at 0% unless traffic is moved
+          # explicitly. Route to the exact revision we just created so every
+          # production probe below exercises the candidate, never stale code.
+          gcloud run services update-traffic "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --to-revisions="${CANDIDATE_REVISION}=100"
+
+          LIVE_REVISION="$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format=json | node -e '
+              let input = "";
+              process.stdin.on("data", (chunk) => { input += chunk; });
+              process.stdin.on("end", () => {
+                const service = JSON.parse(input);
+                const live = (service.status?.traffic ?? [])
+                  .find((entry) => Number(entry.percent) === 100);
+                if (live?.revisionName) process.stdout.write(live.revisionName);
+              });
+            ')"
+          if [[ "${LIVE_REVISION}" != "${CANDIDATE_REVISION}" ]]; then
+            echo "Expected ${CANDIDATE_REVISION} at 100% traffic, found ${LIVE_REVISION:-none}."
+            exit 1
+          fi
 
       - name: Verify runtime secret bindings
         run: |
