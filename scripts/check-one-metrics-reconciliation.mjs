@@ -387,7 +387,7 @@ async function main() {
 
   // 7. Production/UAT bleed. UAT hosts inside the production property mean any
   //    unfiltered query over this dataset publishes UAT activity as a prod KPI.
-  const uatHost = process.env.ONE_APP_UAT_WEB_HOST || 'uat.hushh.ai';
+  const uatHost = process.env.ONE_APP_UAT_WEB_HOST || 'uat.one.hushh.ai';
   const [bleed] = await run(`
     SELECT COUNT(*) AS events, COUNT(DISTINCT user_pseudo_id) AS devices
     FROM ${table} WHERE ${dateFilter}

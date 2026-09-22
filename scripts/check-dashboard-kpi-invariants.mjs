@@ -157,21 +157,21 @@ function checkKai(rows) {
   const dau = value('summary', 'current_dau');
   const wau = value('summary', 'current_wau');
   const mau = value('summary', 'current_mau');
-  check('kai_active_windows_nested', number(dau) && dau <= wau && wau <= mau, `DAU/WAU/MAU=${dau}/${wau}/${mau}`);
-  check('kai_stickiness_exact', mau === 0 ? value('summary', 'current_dau_mau_stickiness') == null
+  check('one_feed_active_windows_nested', number(dau) && dau <= wau && wau <= mau, `DAU/WAU/MAU=${dau}/${wau}/${mau}`);
+  check('one_feed_stickiness_exact', mau === 0 ? value('summary', 'current_dau_mau_stickiness') == null
     : close(value('summary', 'current_dau_mau_stickiness'), dau / mau),
   `reported=${value('summary', 'current_dau_mau_stickiness')}; calculated=${mau ? dau / mau : 'null'}`);
   const platformMau = feedRows
     .filter((row) => row.metric_group === 'platform_mix' && row.metric_name === 'users')
     .reduce((total, row) => total + Number(row.metric_value ?? 0), 0);
-  check('kai_mau_equals_platform_total', platformMau === mau, `MAU=${mau}; platform total=${platformMau}`);
+  check('one_feed_mau_equals_platform_total', platformMau === mau, `MAU=${mau}; platform total=${platformMau}`);
 
   for (const journey of ['investor', 'ria']) {
     const entered = value(`${journey}_funnel`, 'entered');
     const activated = value(`${journey}_funnel`, 'activated');
     const rate = value('activation', `${journey}_activation_rate`);
     check(
-      `kai_${journey}_activation_denominator_safe`,
+      `one_feed_${journey}_activation_denominator_safe`,
       entered > 0 ? close(rate, activated / entered) : rate == null,
       `entered=${entered}; activated=${activated}; rate=${rate}`,
     );

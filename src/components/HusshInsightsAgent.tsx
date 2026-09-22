@@ -79,12 +79,12 @@ const STARTER_PROMPTS: PromptOption[] = [
     prompt: 'What are the top 3 issues across the dashboard right now? Give complete items with source evidence.',
   },
   {
-    label: 'Kai prod vs UAT',
-    prompt: 'Compare kai.hushh.ai production and uat.kai.hushh.ai UAT. Keep production and UAT separate.',
+    label: 'One prod vs UAT',
+    prompt: 'Compare one.hushh.ai production and uat.one.hushh.ai UAT. Keep production and UAT separate.',
   },
   {
     label: 'Growth summary',
-    prompt: 'Give me a growth summary for hushh.ai, hushhtech.com, kai production, and Kai UAT for the selected range.',
+    prompt: 'Give me a growth summary for hushh.ai, hushhtech.com, kai production, and One UAT for the selected range.',
   },
 ];
 
@@ -197,8 +197,8 @@ function buildContextualPrompts(message: ChatMessage | undefined): PromptOption[
 
   if (sourceText.includes('kai') || message.content.toLowerCase().includes('kai')) {
     prompts.push({
-      label: 'Kai split',
-      prompt: 'Break this down separately for kai.hushh.ai production and uat.kai.hushh.ai UAT.',
+      label: 'One split',
+      prompt: 'Break this down separately for one.hushh.ai production and uat.one.hushh.ai UAT.',
       tone: 'priority',
     });
   }

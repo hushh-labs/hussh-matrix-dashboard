@@ -315,7 +315,7 @@ npm run test:ga4:hushh-ai
 That probe validates `runReport` and `runRealtimeReport` without printing raw
 GA4 provider payloads.
 
-The reusable Hushh AI and Kai Search Console ingestion jobs use
+The reusable Hushh AI and One Search Console ingestion jobs use
 `metrics-dashboard-search-console-oauth`. Seed or rotate it from an owner/full
 Search Console authorized-user JSON for `sc-domain:hushh.ai`:
 
@@ -426,9 +426,9 @@ gcloud scheduler jobs pause hushhtech-search-console-ingest-daily \
   --location="$REGION"
 ```
 
-## Hushh AI and Kai Search Console Fallbacks
+## Hushh AI and One Search Console Fallbacks
 
-Use the same aggregate-only ingestion script for Hushh AI and Kai. Both read
+Use the same aggregate-only ingestion script for Hushh AI and One. Both read
 from the `sc-domain:hushh.ai` domain property and separate products through
 page URL regex filters:
 
@@ -442,7 +442,7 @@ npm run ingest:search-console -- --ensure-only
 SEARCH_CONSOLE_FALLBACK_PROJECT="$PROJECT" \
 SEARCH_CONSOLE_FALLBACK_DATASET="$KAI_SEARCH_FALLBACK_DATASET" \
 SEARCH_CONSOLE_SITE_URL="sc-domain:hushh.ai" \
-SEARCH_CONSOLE_PAGE_FILTER_REGEX='^https://(uat\.)?kai\.hushh\.ai(/|$)' \
+SEARCH_CONSOLE_PAGE_FILTER_REGEX='^https://(uat\.)?one\.hushh\.ai(/|$)' \
 npm run ingest:search-console -- --ensure-only
 ```
 
@@ -476,7 +476,7 @@ gcloud run jobs deploy "$KAI_SEARCH_INGEST_JOB" \
   --task-timeout=1800s \
   --command=node \
   --args=scripts/ingest-hushhtech-search-console.mjs,--days,16 \
-  --set-env-vars="SEARCH_CONSOLE_QUOTA_PROJECT=$PROJECT,SEARCH_CONSOLE_FALLBACK_PROJECT=$PROJECT,SEARCH_CONSOLE_FALLBACK_DATASET=$KAI_SEARCH_FALLBACK_DATASET,SEARCH_CONSOLE_SITE_URL=sc-domain:hushh.ai,SEARCH_CONSOLE_PAGE_FILTER_REGEX=^https://(uat\\.)?kai\\.hushh\\.ai(/|$),SEARCH_CONSOLE_TYPE=web,SEARCH_CONSOLE_DATA_STATE=all" \
+  --set-env-vars="SEARCH_CONSOLE_QUOTA_PROJECT=$PROJECT,SEARCH_CONSOLE_FALLBACK_PROJECT=$PROJECT,SEARCH_CONSOLE_FALLBACK_DATASET=$KAI_SEARCH_FALLBACK_DATASET,SEARCH_CONSOLE_SITE_URL=sc-domain:hushh.ai,SEARCH_CONSOLE_PAGE_FILTER_REGEX=^https://(uat\\.)?one\\.hushh\\.ai(/|$),SEARCH_CONSOLE_TYPE=web,SEARCH_CONSOLE_DATA_STATE=all" \
   --set-secrets="SEARCH_CONSOLE_OAUTH_JSON=$SEARCH_CONSOLE_OAUTH_SECRET:latest"
 ```
 
@@ -585,6 +585,6 @@ Acceptance checks:
   API is reachable but every processed traffic metric is zero for the selected
   window; do not present those zeros as confirmed traffic truth.
 - `/api/analytics/all` returns a normalized three-source matrix for Hushh AI,
-  Kai, and HushhTech with `search_console`, `ga4`, and `product_events` cards.
+  One, and HushhTech with `search_console`, `ga4`, and `product_events` cards.
 - OTP rows, emails, raw diagnostics, and tokens are not visible.
 - Cloud Run revision logs show no auth or IAM failures.
