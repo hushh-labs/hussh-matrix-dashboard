@@ -273,7 +273,7 @@ async function main() {
     const stableOneFilter = `${stableDateFilter} AND ${surfaceFilter(options.webHost)}`;
     const stableActiveOneFilter = `${stableActiveDateFilter} AND ${surfaceFilter(options.webHost)}`;
 
-    const [stableTotals, stableActive, stablePlatforms] = await Promise.all([
+    const [stableTotals, stableActive, stablePlatforms, stableIdentifiedRange] = await Promise.all([
       run(`
         SELECT
           COUNT(*) AS events,
@@ -285,38 +285,84 @@ async function main() {
         FROM ${table} WHERE ${stableOneFilter}`),
       run(`
         WITH days AS (
-          SELECT user_pseudo_id, PARSE_DATE('%Y%m%d', event_date) AS day
+          SELECT
+            CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id) AS deviceKey,
+            NULLIF(user_id, '') AS accountId,
+            PARSE_DATE('%Y%m%d', event_date) AS day
           FROM ${table}
           WHERE ${stableActiveOneFilter} AND event_name NOT IN (${excluded})
         ), anchor AS (SELECT MAX(day) AS latest FROM days)
         SELECT
           CAST((SELECT latest FROM anchor) AS STRING) AS asOf,
-          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS dau,
+          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), deviceKey, NULL)) AS dau,
           COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
-            AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS wau,
+            AND (SELECT latest FROM anchor), deviceKey, NULL)) AS wau,
           COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
-            AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS mau
+            AND (SELECT latest FROM anchor), deviceKey, NULL)) AS mau,
+          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), accountId, NULL)) AS dauAccounts,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+            AND (SELECT latest FROM anchor), accountId, NULL)) AS wauAccounts,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+            AND (SELECT latest FROM anchor), accountId, NULL)) AS mauAccounts,
+          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor) AND accountId IS NOT NULL, deviceKey, NULL)) AS dauIdentifiedDevices,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+            AND (SELECT latest FROM anchor) AND accountId IS NOT NULL, deviceKey, NULL)) AS wauIdentifiedDevices,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+            AND (SELECT latest FROM anchor) AND accountId IS NOT NULL, deviceKey, NULL)) AS mauIdentifiedDevices
         FROM days`),
       run(`
         WITH days AS (
           SELECT
             COALESCE(platform, 'UNKNOWN') AS platform,
-            user_pseudo_id,
-            NULLIF(user_id, '') AS user_id,
+            CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id) AS deviceKey,
+            NULLIF(user_id, '') AS accountId,
             PARSE_DATE('%Y%m%d', event_date) AS day
           FROM ${table}
           WHERE ${stableActiveOneFilter} AND event_name NOT IN (${excluded})
         ), anchor AS (SELECT MAX(day) AS latest FROM days)
         SELECT
           platform,
-          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS dauDevices,
+          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), deviceKey, NULL)) AS dauDevices,
           COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
-            AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS wauDevices,
+            AND (SELECT latest FROM anchor), deviceKey, NULL)) AS wauDevices,
           COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
-            AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS mauDevices,
-          COUNT(DISTINCT user_id) AS accounts,
-          COUNT(DISTINCT IF(user_id IS NOT NULL, user_pseudo_id, NULL)) AS devicesWithAccount
+            AND (SELECT latest FROM anchor), deviceKey, NULL)) AS mauDevices,
+          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), accountId, NULL)) AS dauAccounts,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+            AND (SELECT latest FROM anchor), accountId, NULL)) AS wauAccounts,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+            AND (SELECT latest FROM anchor), accountId, NULL)) AS mauAccounts,
+          COUNT(DISTINCT IF(day = (SELECT latest FROM anchor) AND accountId IS NOT NULL, deviceKey, NULL)) AS dauIdentifiedDevices,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+            AND (SELECT latest FROM anchor) AND accountId IS NOT NULL, deviceKey, NULL)) AS wauIdentifiedDevices,
+          COUNT(DISTINCT IF(day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+            AND (SELECT latest FROM anchor) AND accountId IS NOT NULL, deviceKey, NULL)) AS mauIdentifiedDevices
         FROM days GROUP BY platform`),
+      run(`
+        WITH account_history AS (
+          SELECT
+            NULLIF(user_id, '') AS accountId,
+            MIN(PARSE_DATE('%Y%m%d', event_date)) AS firstSeen
+          FROM ${table}
+          WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^[0-9]{8}$')
+            AND _TABLE_SUFFIX <= '${stableEnd}'
+            AND ${surfaceFilter(options.webHost)}
+            AND event_name NOT IN (${excluded})
+            AND NULLIF(user_id, '') IS NOT NULL
+          GROUP BY accountId
+        ),
+        range_accounts AS (
+          SELECT DISTINCT NULLIF(user_id, '') AS accountId
+          FROM ${table}
+          WHERE ${stableOneFilter}
+            AND event_name NOT IN (${excluded})
+            AND NULLIF(user_id, '') IS NOT NULL
+        )
+        SELECT
+          COUNT(*) AS totalUsers,
+          COUNTIF(firstSeen BETWEEN PARSE_DATE('%Y%m%d', '${stableStart}') AND PARSE_DATE('%Y%m%d', '${stableEnd}')) AS newUsers,
+          COUNTIF(firstSeen < PARSE_DATE('%Y%m%d', '${stableStart}')) AS returningUsers
+        FROM range_accounts JOIN account_history USING (accountId)`),
     ]);
 
     const endpoint = new URL('/api/analytics/one/app', `${options.dashboardUrl.replace(/\/$/, '')}/`);
@@ -328,6 +374,8 @@ async function main() {
     const expectedActive = stableActive[0] ?? {};
     const actualTotals = production?.rangeTotals;
     const actualActive = production?.activeUsers;
+    const actualIdentified = production?.identifiedUsers;
+    const expectedIdentifiedRange = stableIdentifiedRange[0] ?? {};
 
     record('dashboard_range_totals_match_bigquery',
       sameNumbers(actualTotals, expectedTotals, ['users', 'sessions', 'events']),
@@ -338,6 +386,27 @@ async function main() {
       sameNumbers(actualActive, expectedActive, ['dau', 'wau', 'mau']) && String(actualActive?.asOf ?? '') === String(expectedActive?.asOf ?? ''),
       `API DAU/WAU/MAU ${Number(actualActive?.dau ?? 0)}/${Number(actualActive?.wau ?? 0)}/${Number(actualActive?.mau ?? 0)} as of ${String(actualActive?.asOf ?? 'none')}; ` +
       `BigQuery ${Number(expectedActive?.dau ?? 0)}/${Number(expectedActive?.wau ?? 0)}/${Number(expectedActive?.mau ?? 0)} as of ${String(expectedActive?.asOf ?? 'none')}`);
+    record('dashboard_identified_users_match_bigquery',
+      sameNumbers(actualIdentified, {
+        dau: expectedActive.dauAccounts,
+        wau: expectedActive.wauAccounts,
+        mau: expectedActive.mauAccounts,
+      }, ['dau', 'wau', 'mau'])
+        && sameNumbers(actualIdentified?.identifiedDevices, {
+          dau: expectedActive.dauIdentifiedDevices,
+          wau: expectedActive.wauIdentifiedDevices,
+          mau: expectedActive.mauIdentifiedDevices,
+        }, ['dau', 'wau', 'mau'])
+        && String(actualIdentified?.asOf ?? '') === String(expectedActive?.asOf ?? ''),
+      `API user DAU/WAU/MAU ${Number(actualIdentified?.dau ?? 0)}/${Number(actualIdentified?.wau ?? 0)}/${Number(actualIdentified?.mau ?? 0)}; ` +
+      `BigQuery ${Number(expectedActive?.dauAccounts ?? 0)}/${Number(expectedActive?.wauAccounts ?? 0)}/${Number(expectedActive?.mauAccounts ?? 0)}`);
+    record('dashboard_unique_user_growth_matches_bigquery',
+      sameNumbers(actualIdentified?.selectedRange, expectedIdentifiedRange, ['totalUsers', 'newUsers', 'returningUsers'])
+        && Number(actualIdentified?.selectedRange?.newUsers ?? 0)
+          + Number(actualIdentified?.selectedRange?.returningUsers ?? 0)
+          === Number(actualIdentified?.selectedRange?.totalUsers ?? 0),
+      `API total/new/returning ${Number(actualIdentified?.selectedRange?.totalUsers ?? 0)}/${Number(actualIdentified?.selectedRange?.newUsers ?? 0)}/${Number(actualIdentified?.selectedRange?.returningUsers ?? 0)}; ` +
+      `BigQuery ${Number(expectedIdentifiedRange?.totalUsers ?? 0)}/${Number(expectedIdentifiedRange?.newUsers ?? 0)}/${Number(expectedIdentifiedRange?.returningUsers ?? 0)}`);
 
     // The normal dashboard range ends today. Its active KPI must still anchor
     // to the finalized daily export, never the partially accumulated intraday
@@ -355,10 +424,13 @@ async function main() {
     const actualPlatformMap = new Map((production?.activeByPlatform ?? []).map((row) => [String(row.platform), row]));
     const platformMismatches = stablePlatforms.filter((expected) => {
       const actual = actualPlatformMap.get(String(expected.platform));
-      const expectedAccounts = Number(expected.devicesWithAccount ?? 0) > 0 ? Number(expected.accounts ?? 0) : null;
+      const expectedAccounts = Number(expected.mauIdentifiedDevices ?? 0) > 0 ? Number(expected.mauAccounts ?? 0) : null;
       return !actual
         || !sameNumbers(actual, expected, ['dauDevices', 'wauDevices', 'mauDevices'])
-        || (actual.accounts ?? null) !== expectedAccounts;
+        || (actual.accounts ?? null) !== expectedAccounts
+        || (actual.dauAccounts ?? null) !== (Number(expected.dauIdentifiedDevices ?? 0) > 0 ? Number(expected.dauAccounts ?? 0) : null)
+        || (actual.wauAccounts ?? null) !== (Number(expected.wauIdentifiedDevices ?? 0) > 0 ? Number(expected.wauAccounts ?? 0) : null)
+        || (actual.mauAccounts ?? null) !== expectedAccounts;
     });
     record('dashboard_platform_rows_match_bigquery', platformMismatches.length === 0,
       `${stablePlatforms.length} BigQuery platform rows checked; ${platformMismatches.length} mismatch(es)`);

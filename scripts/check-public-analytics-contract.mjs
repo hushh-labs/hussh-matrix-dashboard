@@ -77,6 +77,40 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
   const wau = Number(active?.wau ?? 0);
   const mau = Number(active?.mau ?? 0);
   if (!(dau <= wau && wau <= mau)) findings.push(`${label}.activeUsers: expected DAU <= WAU <= MAU, got ${dau}/${wau}/${mau}`);
+  const identified = summary.identifiedUsers;
+  if (!identified || identified.countingUnit !== 'account') findings.push(`${label}.identifiedUsers.countingUnit: expected account`);
+  if (!identified?.identityScope || !/distinct|account|user_id/i.test(identified.identityScope)) {
+    findings.push(`${label}.identifiedUsers.identityScope: missing stable-account scope`);
+  }
+  const identifiedDau = Number(identified?.dau ?? 0);
+  const identifiedWau = Number(identified?.wau ?? 0);
+  const identifiedMau = Number(identified?.mau ?? 0);
+  const selectedUsers = identified?.selectedRange;
+  const totalUsers = Number(selectedUsers?.totalUsers ?? -1);
+  const newUsers = Number(selectedUsers?.newUsers ?? -1);
+  const returningUsers = Number(selectedUsers?.returningUsers ?? -1);
+  if (totalUsers < 0 || newUsers < 0 || returningUsers < 0) {
+    findings.push(`${label}.identifiedUsers.selectedRange: total/new/returning users must be non-negative`);
+  }
+  if (newUsers + returningUsers !== totalUsers) {
+    findings.push(`${label}.identifiedUsers.selectedRange: new + returning must equal total, got ${newUsers} + ${returningUsers} != ${totalUsers}`);
+  }
+  if (!selectedUsers?.newUserDefinition || !/first observed/i.test(selectedUsers.newUserDefinition)) {
+    findings.push(`${label}.identifiedUsers.selectedRange.newUserDefinition: missing first-observed definition`);
+  }
+  if (!(identifiedDau <= identifiedWau && identifiedWau <= identifiedMau)) {
+    findings.push(`${label}.identifiedUsers: expected DAU <= WAU <= MAU, got ${identifiedDau}/${identifiedWau}/${identifiedMau}`);
+  }
+  for (const window of ['dau', 'wau', 'mau']) {
+    const devices = Number(active?.[window] ?? 0);
+    const identifiedDevices = Number(identified?.identifiedDevices?.[window] ?? 0);
+    const coverage = identified?.deviceCoverage?.[window];
+    const expected = devices > 0 ? identifiedDevices / devices : null;
+    if (identifiedDevices > devices) findings.push(`${label}.identifiedUsers.${window}: identified devices exceed active devices`);
+    if (expected === null ? coverage !== null : Math.abs(Number(coverage) - expected) > 1e-9) {
+      findings.push(`${label}.identifiedUsers.${window}: identity coverage is not exact`);
+    }
+  }
   for (const [index, capability] of (summary.capabilities || []).entries()) {
     if (!Object.hasOwn(capability, 'devices')) findings.push(`${label}.capabilities[${index}].devices: missing device count`);
     if (!Object.hasOwn(capability, 'deliberateEvents')) findings.push(`${label}.capabilities[${index}].deliberateEvents: missing event count`);

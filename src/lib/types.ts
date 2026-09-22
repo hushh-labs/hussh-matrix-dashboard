@@ -737,6 +737,36 @@ export interface OneActiveUsers {
 }
 
 /**
+ * Cross-device unique signed-in accounts observed in GA4.
+ *
+ * These are exact distinct stable account identifiers for the identified
+ * slice. `deviceCoverage` keeps anonymous/unbound devices visible so this can
+ * never be mistaken for a complete unique-human count.
+ */
+export interface OneIdentifiedUsers {
+  countingUnit: 'account';
+  identityScope: string;
+  selectedRange: {
+    /** Every distinct stable account active in the selected range, counted once. */
+    totalUsers: number;
+    /** Accounts whose first observed One event falls inside the selected range. */
+    newUsers: number;
+    /** Selected-range accounts first observed before the selected range. */
+    returningUsers: number;
+    startDate: string;
+    endDate: string;
+    newUserDefinition: string;
+  };
+  dau: number;
+  wau: number;
+  mau: number;
+  identifiedDevices: { dau: number; wau: number; mau: number };
+  deviceCoverage: { dau: number | null; wau: number | null; mau: number | null };
+  complete: boolean;
+  asOf: string;
+}
+
+/**
  * Actives for one platform. Deliberately has no "total" sibling: web, iOS and
  * Android are separate device-id spaces and the account key that would join
  * them is bound on iOS only, so the rows must not be added.
@@ -748,6 +778,10 @@ export interface OnePlatformActives {
   mauDevices: number;
   /** Null when this platform never binds an account, rather than 0. */
   accounts: number | null;
+  /** Distinct stable accounts active inside each fixed window. */
+  dauAccounts: number | null;
+  wauAccounts: number | null;
+  mauAccounts: number | null;
   /** Share of this platform's devices that ever bound an account. */
   signedInShare: number | null;
   identityBound: boolean;
@@ -913,6 +947,7 @@ export interface OneAppSummary {
   };
   funnel: OneLocationFunnelStep[];
   activeUsers: OneActiveUsers;
+  identifiedUsers: OneIdentifiedUsers;
   activeByPlatform: OnePlatformActives[];
   installFunnel: OneInstallFunnel[];
   growth: OneGrowthSplit;

@@ -1637,7 +1637,13 @@ async function fetchKaiGa4Summary(range?: HushhAiDateRange): Promise<DataResult<
   );
 }
 
-function ga4ExportSuffixFilter(startDate: string, endDate: string, includeIntraday = false): string {
+function ga4ExportSuffixFilter(
+  startDate: string,
+  endDate: string,
+  includeIntraday = false,
+  projectId = '',
+  dataset = '',
+): string {
   const start = startDate.replaceAll('-', '');
   const end = endDate.replaceAll('-', '');
   if (!includeIntraday) return `_TABLE_SUFFIX BETWEEN '${start}' AND '${end}'`;
@@ -1650,7 +1656,26 @@ function ga4ExportSuffixFilter(startDate: string, endDate: string, includeIntrad
     suffixes.push(`'${suffix}'`, `'intraday_${suffix}'`);
     cursor = addUtcDays(cursor, 1);
   }
-  return `_TABLE_SUFFIX IN (${suffixes.join(', ')})`;
+  const candidateFilter = `_TABLE_SUFFIX IN (${suffixes.join(', ')})`;
+  if (!projectId || !dataset) return candidateFilter;
+
+  // GA4 normally removes an intraday table after the finalized daily table
+  // lands, but there can be an overlap window where both exist. Reading both
+  // double-counts every repeated event (and previously inflated the public
+  // One event total by the whole overlapping intraday partition). Prefer the
+  // finalized table for a date and use intraday only while no daily table for
+  // that date exists.
+  const tables = `\`${projectId}.${dataset}.INFORMATION_SCHEMA.TABLES\``;
+  return `(${candidateFilter}
+    AND (
+      NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
+      OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (
+        SELECT REGEXP_REPLACE(table_name, r'^events_', '')
+        FROM ${tables}
+        WHERE STARTS_WITH(table_name, 'events_')
+          AND NOT STARTS_WITH(table_name, 'events_intraday_')
+      )
+    ))`;
 }
 
 function ga4ExportTotalsSql(table: string, whereClause: string): string {
@@ -1686,7 +1711,7 @@ async function fetchKaiGa4ExportSummary(
   const last7Range = defaultUtcRange(7);
   const last24Range = defaultUtcRange(2);
   const last7Filter = ga4ExportSuffixFilter(last7Range.startDate, last7Range.endDate);
-  const last24Filter = `${ga4ExportSuffixFilter(last24Range.startDate, last24Range.endDate, true)}
+  const last24Filter = `${ga4ExportSuffixFilter(last24Range.startDate, last24Range.endDate, true, projectId, dataset)}
     AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`;
 
   const dailyQuery = `
@@ -2266,11 +2291,11 @@ async function fetchOneAppSummary(
   // an intraday table when that day's daily table is finalized, so selecting
   // both suffix forms keeps historical totals intact while making the current
   // day visible within the streaming-export delay.
-  const dateFilter = `${ga4ExportSuffixFilter(range.startDate, range.endDate, true)} AND ${surfaceFilter}`;
+  const dateFilter = `${ga4ExportSuffixFilter(range.startDate, range.endDate, true, projectId, dataset)} AND ${surfaceFilter}`;
   const last24Range = defaultUtcRange(2);
   // Intraday tables are what make the last-24h tile meaningful during a launch;
   // the finalized daily table lands a day late.
-  const last24Filter = `${ga4ExportSuffixFilter(last24Range.startDate, last24Range.endDate, true)}
+  const last24Filter = `${ga4ExportSuffixFilter(last24Range.startDate, last24Range.endDate, true, projectId, dataset)}
     AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
     AND ${surfaceFilter}`;
 
@@ -2504,7 +2529,7 @@ ${capabilitySql.isDeliberate}
       END AS host,
       COUNT(DISTINCT ${deviceKeySql}) AS users
     FROM ${table}
-    WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true)}
+    WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true, projectId, dataset)}
     GROUP BY surface, host
     ORDER BY users DESC
     LIMIT 15
@@ -2526,7 +2551,7 @@ ${capabilitySql.isDeliberate}
       COUNT(DISTINCT user_pseudo_id) AS devices,
       COUNT(*) AS events
     FROM ${table}
-    WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true)}
+    WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true, projectId, dataset)}
       AND platform IN ('IOS', 'ANDROID')
     GROUP BY platform, environment
     ORDER BY platform, events DESC
@@ -2604,7 +2629,10 @@ ${capabilitySql.isDeliberate}
   // DAU anchor to a handful of spillover events instead of to the real last day.
   const activeQuery = `
     WITH days AS (
-      SELECT ${deviceKeySql} AS deviceKey, PARSE_DATE('%Y%m%d', event_date) AS day
+      SELECT
+        ${deviceKeySql} AS deviceKey,
+        NULLIF(user_id, '') AS accountId,
+        PARSE_DATE('%Y%m%d', event_date) AS day
       FROM ${table}
       WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
     ),
@@ -2617,7 +2645,25 @@ ${capabilitySql.isDeliberate}
                 AND (SELECT latest FROM anchor), deviceKey, NULL)) AS wau,
       COUNT(DISTINCT IF(
         day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
-                AND (SELECT latest FROM anchor), deviceKey, NULL)) AS mau
+                AND (SELECT latest FROM anchor), deviceKey, NULL)) AS mau,
+      COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), accountId, NULL)) AS dauAccounts,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+                AND (SELECT latest FROM anchor), accountId, NULL)) AS wauAccounts,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+                AND (SELECT latest FROM anchor), accountId, NULL)) AS mauAccounts,
+      COUNT(DISTINCT IF(
+        day = (SELECT latest FROM anchor) AND accountId IS NOT NULL,
+        deviceKey, NULL)) AS dauIdentifiedDevices,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+                AND (SELECT latest FROM anchor) AND accountId IS NOT NULL,
+        deviceKey, NULL)) AS wauIdentifiedDevices,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+                AND (SELECT latest FROM anchor) AND accountId IS NOT NULL,
+        deviceKey, NULL)) AS mauIdentifiedDevices
     FROM days
   `;
 
@@ -2675,17 +2721,17 @@ ${capabilitySql.isDeliberate}
   // Per-platform actives, reported separately because they cannot be summed.
   //
   // GA4 keeps web, iOS and Android on separate streams with separate device
-  // ids, and the account key that would stitch them (`user_id`) is bound on
-  // iOS only. So the same person on a phone and a laptop is two rows here and
-  // there is no way to collapse them. Splitting does not fix that -- it stops
-  // the page implying an addition that is not valid, and shows exactly where
-  // the identity gap is instead of averaging it away.
+  // ids, and the account key that would stitch them (`user_id`) is not bound
+  // consistently on every platform. Device rows therefore cannot be added as
+  // people. The separate account-window columns below are the safe exception:
+  // they count stable account ids and the global identifiedUsers block
+  // de-duplicates those ids across platforms.
   const activeByPlatformQuery = `
     WITH days AS (
       SELECT
         COALESCE(platform, 'UNKNOWN') AS platform,
-        user_pseudo_id,
-        user_id,
+        ${deviceKeySql} AS deviceKey,
+        NULLIF(user_id, '') AS accountId,
         PARSE_DATE('%Y%m%d', event_date) AS day
       FROM ${table}
       WHERE ${activeWindowFilter} AND ${surfaceFilter} AND ${meaningful}
@@ -2693,15 +2739,31 @@ ${capabilitySql.isDeliberate}
     anchor AS (SELECT MAX(day) AS latest FROM days)
     SELECT
       platform,
-      COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS dauDevices,
+      COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), deviceKey, NULL)) AS dauDevices,
       COUNT(DISTINCT IF(
         day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
-                AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS wauDevices,
+                AND (SELECT latest FROM anchor), deviceKey, NULL)) AS wauDevices,
       COUNT(DISTINCT IF(
         day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
-                AND (SELECT latest FROM anchor), user_pseudo_id, NULL)) AS mauDevices,
-      COUNT(DISTINCT user_id) AS accounts,
-      COUNT(DISTINCT IF(user_id IS NOT NULL, user_pseudo_id, NULL)) AS devicesWithAccount
+                AND (SELECT latest FROM anchor), deviceKey, NULL)) AS mauDevices,
+      COUNT(DISTINCT IF(day = (SELECT latest FROM anchor), accountId, NULL)) AS dauAccounts,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+                AND (SELECT latest FROM anchor), accountId, NULL)) AS wauAccounts,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+                AND (SELECT latest FROM anchor), accountId, NULL)) AS mauAccounts,
+      COUNT(DISTINCT IF(
+        day = (SELECT latest FROM anchor) AND accountId IS NOT NULL,
+        deviceKey, NULL)) AS dauIdentifiedDevices,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 6 DAY)
+                AND (SELECT latest FROM anchor) AND accountId IS NOT NULL,
+        deviceKey, NULL)) AS wauIdentifiedDevices,
+      COUNT(DISTINCT IF(
+        day BETWEEN DATE_SUB((SELECT latest FROM anchor), INTERVAL 29 DAY)
+                AND (SELECT latest FROM anchor) AND accountId IS NOT NULL,
+        deviceKey, NULL)) AS mauIdentifiedDevices
     FROM days
     GROUP BY platform
     ORDER BY mauDevices DESC
@@ -2726,6 +2788,40 @@ ${capabilitySql.isDeliberate}
     FROM devices
   `;
 
+  // Exact selected-range account growth. `user_first_touch_timestamp` belongs
+  // to a GA4 device and would count an existing person as new when they sign in
+  // on another phone or browser. Instead, find each stable account id's first
+  // observed One event across all available history, then join that once to the
+  // distinct accounts active in the selected range. Repeat events, sessions and
+  // devices therefore never increase either total or new-user counts.
+  const identifiedGrowthQuery = `
+    WITH account_history AS (
+      SELECT
+        NULLIF(user_id, '') AS accountId,
+        MIN(PARSE_DATE('%Y%m%d', event_date)) AS firstSeen
+      FROM ${table}
+      WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
+        AND REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') <= ${sqlStringLiteral(range.endDate.replaceAll('-', ''))}
+        AND ${surfaceFilter}
+        AND ${meaningful}
+        AND NULLIF(user_id, '') IS NOT NULL
+      GROUP BY accountId
+    ),
+    range_accounts AS (
+      SELECT DISTINCT NULLIF(user_id, '') AS accountId
+      FROM ${table}
+      WHERE ${dateFilter}
+        AND ${meaningful}
+        AND NULLIF(user_id, '') IS NOT NULL
+    )
+    SELECT
+      COUNT(*) AS totalUsers,
+      COUNTIF(firstSeen BETWEEN DATE(${sqlStringLiteral(range.startDate)}) AND DATE(${sqlStringLiteral(range.endDate)})) AS newUsers,
+      COUNTIF(firstSeen < DATE(${sqlStringLiteral(range.startDate)})) AS returningUsers
+    FROM range_accounts
+    JOIN account_history USING (accountId)
+  `;
+
   // Week-1 retention by acquisition cohort: of the people who first appeared in
   // a given week, how many came back in the following seven days. Cohorts are
   // read from a wider window than the selected range because a cohort has to be
@@ -2744,7 +2840,7 @@ ${capabilitySql.isDeliberate}
         PARSE_DATE('%Y%m%d', event_date) AS day,
         DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
       FROM ${table}
-      WHERE ${ga4ExportSuffixFilter(retentionStart, range.endDate, true)} AND ${surfaceFilter} AND ${meaningful}
+      WHERE ${ga4ExportSuffixFilter(retentionStart, range.endDate, true, projectId, dataset)} AND ${surfaceFilter} AND ${meaningful}
     )
     WHERE firstDay IS NOT NULL
     GROUP BY cohortWeek
@@ -2846,6 +2942,7 @@ ${capabilitySql.isDeliberate}
     activeByPlatform,
     installFunnel,
     growth,
+    identifiedGrowth,
     retention,
     activationStages,
     featureUsage,
@@ -2867,6 +2964,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, activeByPlatformQuery),
     queryBigQuerySql(queryProject, installFunnelQuery),
     queryBigQuerySql(queryProject, growthQuery),
+    queryBigQuerySql(queryProject, identifiedGrowthQuery),
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
@@ -2890,6 +2988,7 @@ ${capabilitySql.isDeliberate}
     activeByPlatform.error,
     installFunnel.error,
     growth.error,
+    identifiedGrowth.error,
     retention.error,
     activationStages.error,
     featureUsage.error,
@@ -2912,6 +3011,7 @@ ${capabilitySql.isDeliberate}
   const reliabilityRow = reliability.rows[0] ?? {};
   const activeRow = active.rows[0] ?? {};
   const growthRow = growth.rows[0] ?? {};
+  const identifiedGrowthRow = identifiedGrowth.rows[0] ?? {};
   const activationRow = activationStages.rows[0] ?? {};
   const capabilityRows = new Map(
     agents.rows.map((row) => [String(row.capability), row]),
@@ -2930,6 +3030,13 @@ ${capabilitySql.isDeliberate}
   const activatedUsers = usersByStep.get('activated') ?? 0;
   const locationRetries = toNumber(reliabilityRow.locationRetries);
   const locationRetryUsers = toNumber(reliabilityRow.locationRetryUsers);
+  const activeDauDevices = toNumber(activeRow.dau);
+  const activeWauDevices = toNumber(activeRow.wau);
+  const activeMauDevices = toNumber(activeRow.mau);
+  const dauIdentifiedDevices = toNumber(activeRow.dauIdentifiedDevices);
+  const wauIdentifiedDevices = toNumber(activeRow.wauIdentifiedDevices);
+  const mauIdentifiedDevices = toNumber(activeRow.mauIdentifiedDevices);
+  const activeAsOf = String(activeRow.asOf ?? range.endDate);
 
   return {
     data: {
@@ -2975,17 +3082,44 @@ ${capabilitySql.isDeliberate}
       activeUsers: {
         countingUnit: 'device',
         identityScope: 'GA4 device/browser identifier; not cross-device deduplicated',
-        dau: toNumber(activeRow.dau),
-        wau: toNumber(activeRow.wau),
-        mau: toNumber(activeRow.mau),
+        dau: activeDauDevices,
+        wau: activeWauDevices,
+        mau: activeMauDevices,
         // Stickiness is only meaningful against a non-zero denominator, and a
         // fabricated 0% would read as a product collapse rather than as no data.
-        stickiness: toNumber(activeRow.mau) > 0
-          ? toNumber(activeRow.dau) / toNumber(activeRow.mau)
+        stickiness: activeMauDevices > 0
+          ? activeDauDevices / activeMauDevices
           : null,
         // The day DAU was actually measured on, which is the last day with
   // finalized daily data rather than the end of the selected range.
-        asOf: String(activeRow.asOf ?? range.endDate),
+        asOf: activeAsOf,
+      },
+      identifiedUsers: {
+        countingUnit: 'account',
+        identityScope: 'Distinct stable salted One account identifier (GA4 user_id); cross-device deduplicated where bound',
+        selectedRange: {
+          totalUsers: toNumber(identifiedGrowthRow.totalUsers),
+          newUsers: toNumber(identifiedGrowthRow.newUsers),
+          returningUsers: toNumber(identifiedGrowthRow.returningUsers),
+          startDate: range.startDate,
+          endDate: range.endDate,
+          newUserDefinition: 'First observed One event for this stable account ID is inside the selected range',
+        },
+        dau: toNumber(activeRow.dauAccounts),
+        wau: toNumber(activeRow.wauAccounts),
+        mau: toNumber(activeRow.mauAccounts),
+        identifiedDevices: {
+          dau: dauIdentifiedDevices,
+          wau: wauIdentifiedDevices,
+          mau: mauIdentifiedDevices,
+        },
+        deviceCoverage: {
+          dau: activeDauDevices > 0 ? dauIdentifiedDevices / activeDauDevices : null,
+          wau: activeWauDevices > 0 ? wauIdentifiedDevices / activeWauDevices : null,
+          mau: activeMauDevices > 0 ? mauIdentifiedDevices / activeMauDevices : null,
+        },
+        complete: activeMauDevices > 0 && mauIdentifiedDevices === activeMauDevices,
+        asOf: activeAsOf,
       },
       // The install cohort funnel, per native platform. Stages nest because
       // every one is measured against the same devices that installed inside
@@ -3020,7 +3154,7 @@ ${capabilitySql.isDeliberate}
       // nothing here can collapse them.
       activeByPlatform: activeByPlatform.rows.map((row) => {
         const devices = toNumber(row.mauDevices);
-        const withAccount = toNumber(row.devicesWithAccount);
+        const withAccount = toNumber(row.mauIdentifiedDevices);
         return {
           platform: String(row.platform ?? 'UNKNOWN'),
           dauDevices: toNumber(row.dauDevices),
@@ -3029,7 +3163,10 @@ ${capabilitySql.isDeliberate}
           // Null, not zero, when nothing on this platform ever bound an
           // account: "no accounts signed in" and "this platform cannot report
           // accounts" are different facts and only one is about behaviour.
-          accounts: withAccount > 0 ? toNumber(row.accounts) : null,
+          accounts: withAccount > 0 ? toNumber(row.mauAccounts) : null,
+          dauAccounts: toNumber(row.dauIdentifiedDevices) > 0 ? toNumber(row.dauAccounts) : null,
+          wauAccounts: toNumber(row.wauIdentifiedDevices) > 0 ? toNumber(row.wauAccounts) : null,
+          mauAccounts: withAccount > 0 ? toNumber(row.mauAccounts) : null,
           signedInShare: devices > 0 && withAccount > 0 ? withAccount / devices : null,
           identityBound: withAccount > 0,
         };

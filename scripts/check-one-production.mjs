@@ -179,17 +179,25 @@ async function main() {
     const summary = oneApp.body?.data?.[environment];
     assert(summary?.rangeTotals, `One app ${environment} range totals missing`);
     assert(summary?.activeUsers, `One app ${environment} active users missing`);
+    assert(summary?.identifiedUsers, `One app ${environment} identified users missing`);
+    const selectedUsers = summary?.identifiedUsers?.selectedRange;
+    assert(selectedUsers, `One app ${environment} selected-range unique users missing`);
+    assert(Number(selectedUsers.newUsers) + Number(selectedUsers.returningUsers) === Number(selectedUsers.totalUsers),
+      `One app ${environment} unique-user partition is inconsistent`);
     for (const key of ['users', 'sessions', 'events']) {
       assert(Number.isFinite(Number(summary.rangeTotals[key])), `One app ${environment} ${key} not numeric`);
     }
     for (const key of ['dau', 'wau', 'mau']) {
       assert(Number.isFinite(Number(summary.activeUsers[key])), `One app ${environment} ${key} not numeric`);
+      assert(Number.isFinite(Number(summary.identifiedUsers[key])), `One app ${environment} identified ${key} not numeric`);
+      const coverage = summary.identifiedUsers?.deviceCoverage?.[key];
+      assert(coverage === null || (Number(coverage) >= 0 && Number(coverage) <= 1), `One app ${environment} ${key} identity coverage invalid`);
     }
   }
   results.push({
     check: 'one-app-analytics',
     status: 'ok',
-    detail: 'production and UAT totals plus active-user windows are present',
+    detail: 'production and UAT device windows plus cross-device identified-user windows are present',
   });
 
   const all = await checkJsonEndpoint(dashboard.url, '/api/analytics/all?window_days=7', options.timeoutMs);
