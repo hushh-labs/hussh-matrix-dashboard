@@ -34,7 +34,7 @@ import type { GrowthSummary, OrgIdentityPlatform } from '../lib/types';
  * it. No section is allowed a number without saying what the number is of.
  */
 
-type TimeGranularity = 'daily' | 'weekly' | 'monthly';
+type TimeGranularity = 'weekly' | 'monthly';
 
 function percentText(value: number | null | undefined, decimals = 1): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -126,7 +126,7 @@ const chartTooltip = {
 } as const;
 
 /**
- * 1. Users picked up over time (Daily / Weekly / Monthly toggle).
+ * 1. Devices first seen over time (Weekly / Monthly toggle).
  *
  * The cumulative line is the "how big are we" number; the bars are the pace.
  * Both are on one chart because either alone misleads — a rising total looks
@@ -144,7 +144,7 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
         cumulative: item.cumulative,
         tooltipLabel: 'New that week',
       }));
-    } else if (granularity === 'monthly') {
+    } else {
       const monthlyMap = new Map<string, { newUsers: number; cumulative: number }>();
       for (const item of series) {
         const monthKey = item.week.slice(0, 7);
@@ -159,19 +159,6 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
         cumulative: data.cumulative,
         tooltipLabel: 'New that month',
       }));
-    } else {
-      // Daily estimation / breakdown from weekly intake
-      return series.slice(-4).flatMap((item) => {
-        const dailyAvg = Math.round(item.newUsers / 7);
-        return [
-          {
-            label: item.week.slice(5),
-            newUsers: dailyAvg,
-            cumulative: item.cumulative,
-            tooltipLabel: 'Est. daily avg',
-          },
-        ];
-      });
     }
   }, [series, granularity]);
 
@@ -215,16 +202,6 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
             Time aggregation: <span className="capitalize font-bold text-[#1d1d1f]">{granularity}</span>
           </p>
           <div className="flex items-center gap-1 rounded-lg bg-[#f0f0f2] p-1 text-xs font-semibold text-[#6e6e73]">
-            <button
-              type="button"
-              onClick={() => setGranularity('daily')}
-              className={cn(
-                'rounded-md px-2.5 py-1 transition-all',
-                granularity === 'daily' ? 'bg-white text-[#1d1d1f] shadow-sm' : 'hover:text-[#1d1d1f]'
-              )}
-            >
-              Daily
-            </button>
             <button
               type="button"
               onClick={() => setGranularity('weekly')}
@@ -273,7 +250,7 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
                 cursor={{ fill: 'rgba(0,0,0,0.03)' }}
                 formatter={(value: number, name, item) => [
                   formatNumber(value),
-                  name === 'newUsers' ? (item?.payload?.tooltipLabel ?? 'New users') : 'Running total',
+                  name === 'newUsers' ? (item?.payload?.tooltipLabel ?? 'New devices') : 'Running device total',
                 ]}
               />
               <Bar
@@ -302,7 +279,7 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
           </span>
           <span>
             <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#1f7a36]" />
-            Running total (right)
+            Running device total (right)
           </span>
           <span>{note}</span>
         </div>
@@ -826,7 +803,7 @@ export function GrowthPanel({
     {
       kicker: 'Identity',
       title: 'How many devices are tied to accounts?',
-      hint: 'Every user number on this dashboard counts devices. This is why, and by how much.',
+      hint: 'Every audience number in this One growth view counts devices. This is why, and by how much.',
       body: <IdentityCoverage identity={growth.identity} />,
     },
     {

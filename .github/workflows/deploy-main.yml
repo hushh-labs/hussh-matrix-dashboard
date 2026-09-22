@@ -172,6 +172,7 @@ jobs:
       - name: Reconcile One unique-device and account metrics
         env:
           METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
+          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
         run: npm run test:metrics:one-reconciliation -- --dashboard-url "${PRODUCTION_URL}"
 
       - name: Verify aggregate-only public analytics contract
