@@ -814,6 +814,21 @@ export interface OnePlatformActives {
   identityBound: boolean;
 }
 
+/** Signed-in accounts observed in the shipped One iOS bundle, not registrations. */
+export interface OneIosIdentifiedUsers {
+  available: boolean;
+  countingUnit: 'account';
+  bundleId: string;
+  totalUsers: number | null;
+  firstObservedUsers: number | null;
+  previouslyObservedUsers: number | null;
+  /** Earliest account-tagged iOS export date; limits first-observed interpretation. */
+  identityObservedSince: string | null;
+  startDate: string;
+  endDate: string;
+  note: string;
+}
+
 export interface OneInstallStage {
   key: string;
   label: string;
@@ -979,6 +994,7 @@ export interface OneAppSummary {
   funnel: OneLocationFunnelStep[];
   activeUsers: OneActiveUsers;
   identifiedUsers: OneIdentifiedUsers;
+  iosIdentifiedUsers?: OneIosIdentifiedUsers;
   registeredAccounts: OneRegisteredAccounts;
   activeByPlatform: OnePlatformActives[];
   installFunnel: OneInstallFunnel[];
