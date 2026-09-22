@@ -20,6 +20,7 @@
     "test:prod:hushhtech": "node scripts/check-hushhtech-production.mjs",
     "test:prod:one": "node scripts/check-one-production.mjs",
     "test:metrics:one-reconciliation": "node scripts/check-one-metrics-reconciliation.mjs",
+    "test:metrics:ios-accounts": "node scripts/check-one-ios-account-kpis.mjs",
     "test:metrics:one-registered-accounts": "node scripts/check-one-registered-accounts-reconciliation.mjs",
     "test:metrics:kpi-invariants": "node scripts/check-dashboard-kpi-invariants.mjs",
     "test:api:one-location": "node scripts/check-one-location-analytics-contract.mjs",

@@ -262,6 +262,43 @@ function RegisteredUsers({ one }: { one: OneAppSummary }) {
   );
 }
 
+function IosIdentifiedUsers({ one }: { one: OneAppSummary }) {
+  const ios = one.iosIdentifiedUsers;
+  if (!ios) return null;
+
+  return (
+    <div className={cn(appleCard, 'border-[#007aff]/15 bg-[#f7fbff] p-5')}>
+      <div className="flex items-center gap-2">
+        <Users className="h-4 w-4 text-[#007aff]" />
+        <h3 className="text-base font-semibold text-[#1d1d1f]">One iOS · signed-in accounts</h3>
+      </div>
+      {ios.available ? (
+        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+          {[
+            { label: 'Active iOS accounts', value: ios.totalUsers },
+            { label: 'First observed on iOS', value: ios.firstObservedUsers },
+            { label: 'Previously observed on iOS', value: ios.previouslyObservedUsers },
+          ].map((tile) => (
+            <div key={tile.label} className="rounded-xl bg-white p-4">
+              <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
+              <p className="mt-2 text-3xl font-semibold tabular-nums text-[#1d1d1f]">
+                {tile.value === null ? 'Waiting' : exactAccountCount(tile.value)}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm font-semibold text-[#8a5a04]">iOS account counts unavailable for this selection.</p>
+      )}
+      <p className="mt-3 text-xs font-semibold leading-5 text-[#6e6e73]">
+        {ios.startDate} to {ios.endDate} · {ios.note}
+        {ios.identityObservedSince && ` Account tagging is visible in this export from ${ios.identityObservedSince}; earlier iOS users may appear first-observed after tagging began.`}
+        {' '}These are not iOS-only new registrations or a count of unique humans; anonymous use is excluded.
+      </p>
+    </div>
+  );
+}
+
 const PLATFORM_LABELS: Record<string, string> = {
   IOS: 'iOS app',
   ANDROID: 'Android app',
@@ -1177,6 +1214,7 @@ export function OneAppPanel({
         </div>
         <div className="flex flex-col gap-4">
           <RegisteredUsers one={activeData} />
+          <IosIdentifiedUsers one={activeData} />
           <IdentifiedUsers one={activeData} />
           <ActiveDevices one={activeData} />
           <ActivesByPlatform rows={activeData.activeByPlatform} />

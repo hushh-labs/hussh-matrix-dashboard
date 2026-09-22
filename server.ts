@@ -3027,6 +3027,39 @@ ${capabilitySql.isDeliberate}
     JOIN account_history USING (accountId)
   `;
 
+  // iOS is a separate product surface, not a fraction of the shared
+  // registered-account total. Scope to the shipped One bundle ID so another
+  // iOS stream added to this GA4 property cannot inflate these account KPIs.
+  // "New" here means first observed *on iOS*, never a new registration.
+  const iosIdentifiedGrowthQuery = `
+    WITH ios_events AS (
+      SELECT NULLIF(user_id, '') AS accountId
+      FROM ${table}
+      WHERE ${dateFilter} AND platform = 'IOS'
+        AND app_info.id = 'com.hushh.app' AND ${meaningful}
+    ),
+    account_history AS (
+      SELECT NULLIF(user_id, '') AS accountId,
+        MIN(PARSE_DATE('%Y%m%d', event_date)) AS firstSeen
+      FROM ${table}
+      WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
+        AND REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') <= ${sqlStringLiteral(range.endDate.replaceAll('-', ''))}
+        AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
+        AND ${meaningful} AND NULLIF(user_id, '') IS NOT NULL
+      GROUP BY accountId
+    ),
+    range_accounts AS (
+      SELECT DISTINCT accountId FROM ios_events WHERE accountId IS NOT NULL
+    )
+    SELECT
+      (SELECT COUNT(*) FROM ios_events) AS scopedEvents,
+      (SELECT CAST(MIN(firstSeen) AS STRING) FROM account_history) AS identityObservedSince,
+      COUNT(*) AS totalUsers,
+      COUNTIF(firstSeen BETWEEN DATE(${sqlStringLiteral(range.startDate)}) AND DATE(${sqlStringLiteral(range.endDate)})) AS firstObservedUsers,
+      COUNTIF(firstSeen < DATE(${sqlStringLiteral(range.startDate)})) AS previouslyObservedUsers
+    FROM range_accounts JOIN account_history USING (accountId)
+  `;
+
   // Week-1 retention by acquisition cohort: of the people who first appeared in
   // a given week, how many came back in the following seven days. Cohorts are
   // read from a wider window than the selected range because a cohort has to be
@@ -3148,6 +3181,7 @@ ${capabilitySql.isDeliberate}
     installFunnel,
     growth,
     identifiedGrowth,
+    iosIdentifiedGrowth,
     retention,
     activationStages,
     featureUsage,
@@ -3171,6 +3205,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, installFunnelQuery),
     queryBigQuerySql(queryProject, growthQuery),
     queryBigQuerySql(queryProject, identifiedGrowthQuery),
+    queryBigQuerySql(queryProject, iosIdentifiedGrowthQuery),
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
@@ -3196,6 +3231,7 @@ ${capabilitySql.isDeliberate}
     installFunnel.error,
     growth.error,
     identifiedGrowth.error,
+    iosIdentifiedGrowth.error,
     retention.error,
     activationStages.error,
     featureUsage.error,
@@ -3220,6 +3256,8 @@ ${capabilitySql.isDeliberate}
   const activeRow = active.rows[0] ?? {};
   const growthRow = growth.rows[0] ?? {};
   const identifiedGrowthRow = identifiedGrowth.rows[0] ?? {};
+  const iosIdentifiedGrowthRow = iosIdentifiedGrowth.rows[0] ?? {};
+  const iosHasEvents = !iosIdentifiedGrowth.error && toNumber(iosIdentifiedGrowthRow.scopedEvents) > 0;
   const activationRow = activationStages.rows[0] ?? {};
   const capabilityRows = new Map(
     agents.rows.map((row) => [String(row.capability), row]),
@@ -3328,6 +3366,22 @@ ${capabilitySql.isDeliberate}
         },
         complete: activeMauDevices > 0 && mauIdentifiedDevices === activeMauDevices,
         asOf: activeAsOf,
+      },
+      iosIdentifiedUsers: {
+        available: iosHasEvents,
+        countingUnit: 'account',
+        bundleId: 'com.hushh.app',
+        totalUsers: iosHasEvents ? toNumber(iosIdentifiedGrowthRow.totalUsers) : null,
+        firstObservedUsers: iosHasEvents ? toNumber(iosIdentifiedGrowthRow.firstObservedUsers) : null,
+        previouslyObservedUsers: iosHasEvents ? toNumber(iosIdentifiedGrowthRow.previouslyObservedUsers) : null,
+        identityObservedSince: iosIdentifiedGrowthRow.identityObservedSince ?? null,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        note: iosIdentifiedGrowth.error
+          ? 'iOS account export is temporarily unavailable; no zero is inferred.'
+          : iosHasEvents
+            ? 'Distinct signed-in One iOS accounts with meaningful activity. First observed means first account-tagged meaningful iOS event in available GA4 export history, not a new Firebase registration.'
+            : 'No meaningful One iOS app events are available in this GA4 property and selected range.',
       },
       registeredAccounts: registeredAccounts.data,
       // The install cohort funnel, per native platform. Stages nest because

@@ -126,6 +126,24 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
   if (!(identifiedDau <= identifiedWau && identifiedWau <= identifiedMau)) {
     findings.push(`${label}.identifiedUsers: expected DAU <= WAU <= MAU, got ${identifiedDau}/${identifiedWau}/${identifiedMau}`);
   }
+  // Optional during the dashboard rollout; once present it must never turn a
+  // missing iOS export into fabricated zero-account KPIs.
+  const ios = summary.iosIdentifiedUsers;
+  if (ios) {
+    if (ios.countingUnit !== 'account' || ios.bundleId !== 'com.hushh.app') {
+      findings.push(`${label}.iosIdentifiedUsers: expected One iOS account scope`);
+    }
+    if (ios.available) {
+      const total = Number(ios.totalUsers);
+      const first = Number(ios.firstObservedUsers);
+      const previous = Number(ios.previouslyObservedUsers);
+      if (![total, first, previous].every((value) => Number.isSafeInteger(value) && value >= 0) || first + previous !== total) {
+        findings.push(`${label}.iosIdentifiedUsers: first + previous must equal distinct active iOS accounts`);
+      }
+    } else if (ios.totalUsers !== null || ios.firstObservedUsers !== null || ios.previouslyObservedUsers !== null) {
+      findings.push(`${label}.iosIdentifiedUsers: unavailable counts must be null, not zero`);
+    }
+  }
   for (const window of ['dau', 'wau', 'mau']) {
     const devices = Number(active?.[window] ?? 0);
     const identifiedDevices = Number(identified?.identifiedDevices?.[window] ?? 0);
