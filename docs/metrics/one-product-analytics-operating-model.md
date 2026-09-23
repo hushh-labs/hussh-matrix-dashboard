@@ -80,7 +80,13 @@ that test builds do not enter public acquisition KPIs.
 
 The dashboard release gate independently reconciles its account, app-instance
 and route aggregates against the GA4/Firebase sources, including web/iOS/Android
-platform rows and screen rankings. Once store connections
+production platform rows and screen rankings. The UAT source can be reconciled
+by an authorized operator with
+`node scripts/check-one-platform-kpis.mjs --environment uat`; GitHub's deploy
+identity currently cannot read the UAT dataset metadata, so UAT source
+reconciliation is not an automatic release gate. The public UAT response is
+still checked for availability, invariants and aggregate-only privacy.
+Once store connections
 are available, add separate store-versus-dashboard contract checks; store and
 GA4 totals are different populations and need not be numerically equal.
 

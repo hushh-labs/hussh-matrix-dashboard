@@ -239,9 +239,10 @@ jobs:
         env:
           METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
           BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        run: |
-          npm run test:metrics:one-platforms
-          npm run test:metrics:one-platforms -- --environment uat
+        # The deploy identity can read the production export but not the UAT
+        # project's INFORMATION_SCHEMA. UAT remains a separate operator audit
+        # until a deliberately scoped cross-project grant is approved.
+        run: npm run test:metrics:one-platforms
 
       - name: Reconcile One registered accounts with Firebase Authentication
         env:
