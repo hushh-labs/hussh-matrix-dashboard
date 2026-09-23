@@ -23,16 +23,6 @@ export interface AuthConfig {
 /** Default fallback allowed domains */
 export const DEFAULT_ALLOWED_DOMAINS = ['hushh.ai', 'hushhtech.com', 'hushh.labs', 'hush1one.com'];
 
-/** Default explicit email whitelist */
-export const DEFAULT_ALLOWED_EMAILS = [
-  'i-akshat@hush1one.com',
-  '23ad052@kpriet.ac.in',
-  'roopmannvaradharaj@gmail.com',
-  'sharukhansharukhan926@gmail.com',
-  'smirthidharmaiit@gmail.com',
-  'divya.rajendranps@gmail.com',
-];
-
 /** Check current user session from server endpoint /api/auth/me */
 export async function fetchCurrentUser(): Promise<AuthUser | null> {
   try {
@@ -41,12 +31,12 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
     });
     if (res.ok) {
       const data = await res.json();
-      if (data && data.email) {
+      const user = data?.authenticated === true ? data.user : null;
+      if (user && typeof user.email === 'string' && user.email) {
         return {
-          email: data.email,
-          name: data.name || data.email.split('@')[0],
-          picture: data.picture,
-          sub: data.sub,
+          email: user.email,
+          name: user.name || user.email.split('@')[0],
+          picture: user.picture,
           domainAuthorized: true,
         };
       }

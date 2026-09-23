@@ -23,6 +23,8 @@ env:
   DEPLOY_SERVICE_ACCOUNT: github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com
   WORKLOAD_IDENTITY_PROVIDER: projects/1072839345524/locations/global/workloadIdentityPools/github-actions/providers/github-hussh-matrix-dashboard
   PRODUCTION_URL: https://metrics.hushh.ai
+  GOOGLE_CLIENT_ID: 1072839345524-h2puhcg3e5uj7g2j1752lr9s19pbbmg9.apps.googleusercontent.com
+  GOOGLE_REDIRECT_URI: https://metrics.hushh.ai/auth/callback
 
 jobs:
   deploy:
@@ -45,6 +47,9 @@ jobs:
 
       - name: Typecheck
         run: npm run lint
+
+      - name: Verify authentication and browser session contracts
+        run: npm test
 
       - name: Verify One Location routes
         run: npm run test:routes:one-location
@@ -80,6 +85,8 @@ jobs:
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: bq
 
       - name: Build container image
         run: |
@@ -125,12 +132,16 @@ jobs:
             --region="${REGION}" \
             --image="${IMAGE}" \
             --service-account="${RUNTIME_SERVICE_ACCOUNT}" \
+            --update-env-vars="^@^GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}@GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}@ALLOWED_EMAIL_DOMAINS=hushh.ai,hushhtech.com,hushh.labs,hush1one.com@REQUIRE_AUTH=true" \
+            --update-secrets="GOOGLE_CLIENT_SECRET=metrics-dashboard-google-client-secret:latest,SESSION_SECRET=metrics-dashboard-session-secret:latest,ALLOWED_EMAILS=metrics-dashboard-allowed-emails:latest" \
             --allow-unauthenticated \
             --port=8080 \
             --memory=1Gi \
             --cpu=1 \
             --min-instances=0 \
-            --max-instances=3
+            --max-instances=3 \
+            --no-traffic \
+            --tag=release-candidate
 
           CANDIDATE_REVISION="$(gcloud run services describe "${SERVICE}" \
             --project="${PROJECT_ID}" \
@@ -142,16 +153,7 @@ jobs:
           fi
           echo "CANDIDATE_REVISION=${CANDIDATE_REVISION}" >> "${GITHUB_ENV}"
 
-          # A rollback pins Cloud Run traffic to a named revision. Subsequent
-          # deploys then create healthy revisions at 0% unless traffic is moved
-          # explicitly. Route to the exact revision we just created so every
-          # production probe below exercises the candidate, never stale code.
-          gcloud run services update-traffic "${SERVICE}" \
-            --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --to-revisions="${CANDIDATE_REVISION}=100"
-
-          LIVE_REVISION="$(gcloud run services describe "${SERVICE}" \
+          CANDIDATE_URL="$(gcloud run services describe "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --format=json | node -e '
@@ -159,15 +161,16 @@ jobs:
               process.stdin.on("data", (chunk) => { input += chunk; });
               process.stdin.on("end", () => {
                 const service = JSON.parse(input);
-                const live = (service.status?.traffic ?? [])
-                  .find((entry) => Number(entry.percent) === 100);
-                if (live?.revisionName) process.stdout.write(live.revisionName);
+                const candidate = (service.status?.traffic ?? [])
+                  .find((entry) => entry.tag === "release-candidate");
+                if (candidate?.url) process.stdout.write(candidate.url);
               });
             ')"
-          if [[ "${LIVE_REVISION}" != "${CANDIDATE_REVISION}" ]]; then
-            echo "Expected ${CANDIDATE_REVISION} at 100% traffic, found ${LIVE_REVISION:-none}."
+          if [[ -z "${CANDIDATE_URL}" ]]; then
+            echo "The tagged, zero-traffic candidate URL is unavailable."
             exit 1
           fi
+          echo "CANDIDATE_URL=${CANDIDATE_URL}" >> "${GITHUB_ENV}"
 
       - name: Verify runtime secret bindings
         run: |
@@ -188,11 +191,8 @@ jobs:
             'METRICS_CHAT_REQUEST_TIMEOUT_MS',
             'METRICS_CHAT_CONTEXT_CACHE_SECONDS',
             'GOOGLE_CLIENT_ID',
-            'GOOGLE_CLIENT_SECRET',
             'GOOGLE_REDIRECT_URI',
-            'SESSION_SECRET',
             'ALLOWED_EMAIL_DOMAINS',
-            'ALLOWED_EMAILS',
             'REQUIRE_AUTH',
             'ALLOW_PUBLIC_DASHBOARD',
           ]);
@@ -201,65 +201,77 @@ jobs:
             console.error(`Runtime env vars are not Secret Manager-backed: ${plain.join(', ')}`);
             process.exit(1);
           }
+          const byName = new Map(env.map((entry) => [entry.name, entry]));
+          const requiredSecrets = {
+            GOOGLE_CLIENT_SECRET: 'metrics-dashboard-google-client-secret',
+            SESSION_SECRET: 'metrics-dashboard-session-secret',
+            ALLOWED_EMAILS: 'metrics-dashboard-allowed-emails',
+          };
+          for (const [name, secretName] of Object.entries(requiredSecrets)) {
+            if (byName.get(name)?.valueFrom?.secretKeyRef?.name !== secretName) {
+              console.error(`${name} is not bound to the expected Secret Manager secret.`);
+              process.exit(1);
+            }
+          }
+          if (byName.get('REQUIRE_AUTH')?.value !== 'true' ||
+              byName.get('GOOGLE_CLIENT_ID')?.value !== process.env.GOOGLE_CLIENT_ID ||
+              byName.get('GOOGLE_REDIRECT_URI')?.value !== process.env.GOOGLE_REDIRECT_URI) {
+            console.error('Production Google sign-in settings do not match the release configuration.');
+            process.exit(1);
+          }
           console.log(`Latest ready revision: ${service.status?.latestReadyRevisionName || 'unknown'}`);
           NODE
 
-      - name: Verify production metrics flow
+      # Anonymous API probes must no longer expect public 200 responses after
+      # Google sign-in is enforced. Check the access boundary, then independently
+      # audit the source export without bypassing the live sign-in requirement.
+      - name: Verify production Google sign-in boundary
         env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-          METRICS_FLOW_TIMEOUT_MS: "120000"
-        run: npm run test:prod:metrics-flow -- --dashboard-url "${PRODUCTION_URL}" --timeout-ms 120000
+          METRICS_DASHBOARD_URL: ${{ env.CANDIDATE_URL }}
+        run: npm run test:prod:auth
 
-      - name: Verify Hushh AI production
+      - name: Verify authenticated product APIs and KPI reconciliations
         env:
-          HUSHH_AI_PRODUCTION_URL: ${{ env.PRODUCTION_URL }}
-        run: npm run test:prod:hushh-ai -- --base-url "${PRODUCTION_URL}" --timeout-ms 120000
-
-      - name: Verify One production
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-        run: npm run test:prod:one -- --dashboard-url "${PRODUCTION_URL}" --timeout-ms 120000
-
-      - name: Verify One Location production and UAT analytics
-        run: npm run test:api:one-location -- --base-url "${PRODUCTION_URL}" --days 7
-
-      - name: Reconcile One unique-device and account metrics
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
           BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        run: npm run test:metrics:one-reconciliation -- --dashboard-url "${PRODUCTION_URL}"
+          METRICS_DASHBOARD_URL: ${{ env.CANDIDATE_URL }}
+          HUSHH_AI_PRODUCTION_URL: ${{ env.CANDIDATE_URL }}
+        run: |
+          # This synthetic, short-lived session checks protected APIs and KPI
+          # correctness. It does NOT prove that Google's interactive callback
+          # works; therefore this workflow never promotes production traffic.
+          export SESSION_SECRET="$(gcloud secrets versions access latest --secret=metrics-dashboard-session-secret --project="${PROJECT_ID}")"
+          export METRICS_AUTH_COOKIE="$(node scripts/create-release-session.mjs)"
+          unset SESSION_SECRET
+          export NODE_OPTIONS="--import=$(pwd)/scripts/release-auth-fetch.mjs"
+          node scripts/check-metrics-flow.mjs --dashboard-url "${CANDIDATE_URL}" --timeout-ms 120000
+          node scripts/check-hushh-ai-production.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
+          node scripts/check-one-production.mjs --dashboard-url "${CANDIDATE_URL}" --timeout-ms 120000
+          node scripts/check-one-location-analytics-contract.mjs --base-url "${CANDIDATE_URL}" --days 7
+          node scripts/check-one-metrics-reconciliation.mjs --dashboard-url "${CANDIDATE_URL}"
+          node scripts/check-one-ios-account-kpis.mjs --dashboard-url "${CANDIDATE_URL}"
+          node scripts/check-one-ios-usage-kpis.mjs --dashboard-url "${CANDIDATE_URL}"
+          node scripts/check-one-platform-kpis.mjs --dashboard-url "${CANDIDATE_URL}"
+          node scripts/check-one-registered-accounts-reconciliation.mjs --dashboard-url "${CANDIDATE_URL}" --days 30
+          node scripts/check-dashboard-kpi-invariants.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
+          node scripts/check-public-analytics-contract.mjs --base-url "${CANDIDATE_URL}" --days 7 --timeout-ms 120000
+          unset METRICS_AUTH_COOKIE NODE_OPTIONS
 
-      - name: Reconcile One iOS identified accounts
+      - name: Reconcile One source data without dashboard access
         env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
           BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        run: npm run test:metrics:ios-accounts
+        run: node scripts/check-one-metrics-reconciliation.mjs --skip-dashboard
 
-      - name: Reconcile One iOS installation and screen KPIs
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        run: npm run test:metrics:ios-usage
-
-      - name: Reconcile One web, iOS and Android activity KPIs
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        # The deploy identity can read the production export but not the UAT
-        # project's INFORMATION_SCHEMA. UAT remains a separate operator audit
-        # until a deliberately scoped cross-project grant is approved.
-        run: npm run test:metrics:one-platforms
-
-      - name: Reconcile One registered accounts with Firebase Authentication
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-        run: npm run test:metrics:one-registered-accounts -- --dashboard-url "${PRODUCTION_URL}" --days 30
-
-      - name: Verify dashboard KPI invariants
-        run: npm run test:metrics:kpi-invariants -- --base-url "${PRODUCTION_URL}" --timeout-ms 120000
-
-      - name: Verify aggregate-only public analytics contract
-        run: npm run test:api:public-contract -- --base-url "${PRODUCTION_URL}" --days 7 --timeout-ms 120000
+      - name: Confirm live traffic was not changed
+        run: |
+          CURRENT_TRAFFIC="$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" --region="${REGION}" \
+            --format=json | node scripts/capture-cloud-run-traffic.mjs)"
+          if [[ "${CURRENT_TRAFFIC}" != "${PREVIOUS_TRAFFIC}" ]]; then
+            echo "Traffic changed during zero-traffic candidate verification."
+            exit 1
+          fi
+          echo "Candidate ${CANDIDATE_REVISION} passed automated gates at 0% traffic."
+          echo "Interactive Google sign-in must be verified before manual promotion."
 
       - name: Roll back traffic after failed production verification
         # Deploy itself may change traffic before failing. Restoring the exact

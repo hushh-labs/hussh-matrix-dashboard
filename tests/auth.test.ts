@@ -232,6 +232,18 @@ describe('Google OAuth 2.0 & Domain Protection Layer', () => {
   // 4. Authorization Denial Scenarios
   // -------------------------------------------------------------------------
   describe('Authorization Denials (HTTP 403 Forbidden & No Session Cookie)', () => {
+    it('does not write account emails into authentication logs', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      checkUserAuthorization({ email: 'outside@example.com', email_verified: true }, testConfig.allowedDomains, []);
+      checkUserAuthorization({ email: 'teammate@hushh.ai', hd: 'hushh.ai', email_verified: true }, testConfig.allowedDomains, []);
+
+      expect(warn).toHaveBeenCalled();
+      expect(log).toHaveBeenCalled();
+      expect(JSON.stringify([...warn.mock.calls, ...log.mock.calls])).not.toMatch(/outside@example\.com|teammate@hushh\.ai/);
+    });
+
     it('denies non-whitelisted personal Gmail account (HTTP 403 & no session cookie)', async () => {
       const { pkceCookie, state, nonce } = await initiateOAuth();
 

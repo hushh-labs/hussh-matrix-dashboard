@@ -23,6 +23,13 @@ function AppContent() {
     );
   }
 
+  // The OAuth callback returns this marker with a 403 response. Show the
+  // denial instead of silently presenting the sign-in screen again.
+  const deniedEmail = document.getElementById('access-denied-box')?.getAttribute('data-email');
+  if (deniedEmail !== null && deniedEmail !== undefined) {
+    return <AccessDeniedPage user={deniedEmail ? { email: deniedEmail, domainAuthorized: false } : null} />;
+  }
+
   // 1. If auth is required and user is not signed in -> show Login Gate
   if (authConfig.requireAuth && !isAuthenticated) {
     return (

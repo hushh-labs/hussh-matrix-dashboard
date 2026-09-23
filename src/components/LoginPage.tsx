@@ -47,7 +47,7 @@ export function LoginPage({ error, loading = false }: LoginPageProps) {
           Welcome to Hussh Matrix.
         </h1>
         <p className="mt-2 text-xs font-medium text-[#86868b]">
-          Use your Hushh work account
+          Use your Hushh work account or an approved Google account
         </p>
 
         {/* Error Notification */}
@@ -97,7 +97,7 @@ export function LoginPage({ error, loading = false }: LoginPageProps) {
 
         {/* Footer Terms Line */}
         <p className="mt-10 text-[10px] text-[#86868b]">
-          By continuing you agree to our <a href="#" className="underline hover:text-white transition">Terms</a> and <a href="#" className="underline hover:text-white transition">Privacy Policy</a>
+          Read our <a href="https://www.hushh.ai/terms" className="underline hover:text-white transition">Terms</a> and <a href="https://www.hushh.ai/privacy" className="underline hover:text-white transition">Privacy Policy</a>
         </p>
       </div>
     </div>
