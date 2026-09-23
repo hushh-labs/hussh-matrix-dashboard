@@ -306,6 +306,74 @@ function IosIdentifiedUsers({ one }: { one: OneAppSummary }) {
   );
 }
 
+function OneAtAGlance({ one }: { one: OneAppSummary }) {
+  const registered = one.registeredAccounts;
+  const iosAccounts = one.iosIdentifiedUsers;
+  const ios = one.iosUsage;
+  const tiles = [
+    {
+      group: 'Users', label: 'Total registered accounts',
+      value: registered?.available ? registered.totalAccounts : null,
+      detail: 'Current Firebase accounts · production and UAT share this realm',
+    },
+    {
+      group: 'Users', label: 'New registered accounts',
+      value: registered?.available ? registered.newAccounts : null,
+      detail: 'Firebase accounts created during selected dates · shared production/UAT realm',
+    },
+    {
+      group: 'Users', label: 'Active iOS accounts',
+      value: iosAccounts?.available ? iosAccounts.totalUsers : null,
+      detail: 'Signed-in accounts active during selected dates · once per account',
+    },
+    {
+      group: 'Devices', label: 'Active iOS app installs',
+      value: ios?.available ? ios.activeInstallIds : null,
+      detail: 'App-instance IDs active during selected dates · not physical phones',
+    },
+    {
+      group: 'Screens', label: 'iOS screen views',
+      value: ios?.available ? ios.screenViews : null,
+      detail: 'Times a screen_view event fired · repeat views count again',
+    },
+    {
+      group: 'Screens', label: 'Different iOS screens',
+      value: ios?.available ? ios.distinctScreenNames : null,
+      detail: !ios?.available
+        ? 'No One iOS app data in this reporting property and date range'
+        : ios.namedScreenViews === 0
+          ? 'Not tracked: the app sends no product screen names yet'
+          : 'Different named screens visited during selected dates',
+    },
+  ];
+
+  return (
+    <div className="mb-5 space-y-3">
+      <div>
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">One at a glance</h3>
+        <p className="mt-1 text-sm text-[#6e6e73]">
+          Users are accounts. Devices are app installations. Screen views are actions. Never add these numbers together.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {tiles.map((tile) => (
+          <div key={tile.label} className={cn(appleCard, 'p-4')}>
+            <p className="text-xs font-bold uppercase tracking-wide text-[#007aff]">{tile.group}</p>
+            <p className="mt-1 text-sm font-semibold text-[#3a3a3c]">{tile.label}</p>
+            <p className="mt-2 text-4xl font-semibold tabular-nums text-[#1d1d1f]">
+              {typeof tile.value === 'number' ? exactAccountCount(tile.value) : 'Not available'}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-[#6e6e73]">{tile.detail}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs leading-5 text-[#6e6e73]">
+        All iOS activity cards use {ios?.startDate ?? one.range?.startDate} to {ios?.endDate ?? one.range?.endDate} and the One iOS bundle. Registered total is a current account snapshot, not a date-range total. GA4 export can lag; anonymous iOS usage is excluded only from the account card.
+      </p>
+    </div>
+  );
+}
+
 const PLATFORM_LABELS: Record<string, string> = {
   IOS: 'iOS app',
   ANDROID: 'Android app',
@@ -1231,7 +1299,8 @@ export function OneAppPanel({
             </h2>
           </div>
         </div>
-        <details className={cn(appleCard, 'mb-4 p-4 text-sm leading-6 text-[#3a3a3c]')} open>
+        <OneAtAGlance one={activeData} />
+        <details className={cn(appleCard, 'mb-4 p-4 text-sm leading-6 text-[#3a3a3c]')}>
           <summary className="cursor-pointer font-semibold text-[#1d1d1f]">Plain-English guide to the numbers on this page</summary>
           <div className="mt-3 grid gap-x-6 gap-y-2 md:grid-cols-2">
             <p><strong>Registered users:</strong> distinct One account records in Firebase. “New” means the account was created during the selected dates. This does not prove one account per human.</p>
@@ -1245,13 +1314,18 @@ export function OneAppPanel({
             Production and UAT are reporting-property selections, not a claim about which backend a mobile build calls. Public iOS builds can appear in the production GA4 property while still using the UAT backend.
           </p>
         </details>
-        <div className="flex flex-col gap-4">
-          <RegisteredUsers one={activeData} />
-          <IosIdentifiedUsers one={activeData} />
-          <IdentifiedUsers one={activeData} />
-          <ActiveDevices one={activeData} />
-          <ActivesByPlatform rows={activeData.activeByPlatform} available={activeData.activeByPlatformAvailable} />
-        </div>
+        <details className="group">
+          <summary className={cn(appleCard, 'cursor-pointer p-4 font-semibold text-[#1d1d1f]')}>
+            More detail: daily / weekly / monthly accounts and device counts
+          </summary>
+          <div className="mt-4 flex flex-col gap-4">
+            <RegisteredUsers one={activeData} />
+            <IosIdentifiedUsers one={activeData} />
+            <IdentifiedUsers one={activeData} />
+            <ActiveDevices one={activeData} />
+            <ActivesByPlatform rows={activeData.activeByPlatform} available={activeData.activeByPlatformAvailable} />
+          </div>
+        </details>
       </section>
 
       <Block

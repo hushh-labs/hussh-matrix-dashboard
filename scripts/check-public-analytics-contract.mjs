@@ -150,6 +150,22 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
       findings.push(`${label}.iosIdentifiedUsers: unavailable counts must be null, not zero`);
     }
   }
+  const iosUsage = summary.iosUsage;
+  if (iosUsage) {
+    if (iosUsage.bundleId !== 'com.hushh.app') findings.push(`${label}.iosUsage: expected One iOS bundle`);
+    if (iosUsage.available) {
+      const counts = [iosUsage.activeInstallIds, iosUsage.screenViews, iosUsage.namedScreenViews];
+      if (!counts.every((value) => Number.isSafeInteger(value) && value >= 0)) {
+        findings.push(`${label}.iosUsage: counts must be non-negative integers`);
+      }
+      if (iosUsage.namedScreenViews > iosUsage.screenViews) findings.push(`${label}.iosUsage: named screen views exceed all screen views`);
+      if (iosUsage.namedScreenViews === 0 && iosUsage.distinctScreenNames !== null) {
+        findings.push(`${label}.iosUsage: distinct screens must be unavailable when names are absent`);
+      }
+    } else if (iosUsage.activeInstallIds !== null || iosUsage.screenViews !== null || iosUsage.distinctScreenNames !== null) {
+      findings.push(`${label}.iosUsage: unavailable export must not publish zero counts`);
+    }
+  }
   for (const window of ['dau', 'wau', 'mau']) {
     const devices = Number(active?.[window] ?? 0);
     const identifiedDevices = Number(identified?.identifiedDevices?.[window] ?? 0);
