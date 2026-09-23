@@ -5436,6 +5436,7 @@ function fetchFounderBriefing(): Promise<FounderBriefingData> {
       SELECT
         COUNT(DISTINCT IF(day ${currentSql}, deviceKey, NULL)) AS current_devices,
         COUNT(DISTINCT IF(day ${currentSql} AND accountId IS NOT NULL, deviceKey, NULL)) AS identified_devices,
+        CAST(MIN(IF(accountId IS NOT NULL, day, NULL)) AS STRING) AS identity_observed_since,
         COUNTIF(day ${currentSql} AND platform IN ('IOS', 'ANDROID') AND LOWER(eventEnvironment) = 'uat') AS mislabeled_native_events
       FROM events
     )
@@ -5452,6 +5453,10 @@ function fetchFounderBriefing(): Promise<FounderBriefingData> {
     const oneAvailable = !one.error && one.rows.length > 0;
     const oneRow = one.rows[0] ?? {};
     const currentDevices = toNumber(oneRow.current_devices);
+    const identityObservedSince = typeof oneRow.identity_observed_since === 'string'
+      ? oneRow.identity_observed_since : null;
+    const oneComparisonReady = oneAvailable && identityObservedSince !== null
+      && identityObservedSince < previous.startDate;
     const techAvailable = Boolean(tech.data && !tech.error);
     const searchCurrentData = searchCurrent.data ?? {};
     const searchPreviousData = searchPrevious.data ?? {};
@@ -5474,9 +5479,11 @@ function fetchFounderBriefing(): Promise<FounderBriefingData> {
       previousPeriod: founderPeriod(previous),
       one: {
         available: oneAvailable,
-        activeAccounts: founderPair(oneRow.current_active, oneRow.previous_active, oneAvailable),
-        firstObservedAccounts: founderPair(oneRow.current_first_seen, oneRow.previous_first_seen, oneAvailable),
-        activatedAccounts: founderPair(oneRow.current_activated, oneRow.previous_activated, oneAvailable),
+        activeAccounts: { current: oneAvailable ? toNumber(oneRow.current_active) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_active) : null },
+        firstObservedAccounts: { current: oneAvailable ? toNumber(oneRow.current_first_seen) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_first_seen) : null },
+        activatedAccounts: { current: oneAvailable ? toNumber(oneRow.current_activated) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_activated) : null },
+        comparisonReady: oneComparisonReady,
+        identityObservedSince,
         accountCoverage: oneAvailable && currentDevices > 0
           ? toNumber(oneRow.identified_devices) / currentDevices : null,
         hasNativeEnvironmentConflict: oneAvailable && toNumber(oneRow.mislabeled_native_events) > 0,

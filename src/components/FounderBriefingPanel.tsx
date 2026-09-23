@@ -174,12 +174,13 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
               </div>
               <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
                 {lowCoverage && <li>Only {Math.round((brief.one.accountCoverage ?? 0) * 100)}% of One activity is linked to an account. Unique customers outside that known slice cannot be verified yet.</li>}
+                {brief.one.available && !brief.one.comparisonReady && <li>One account tagging has not covered both full periods yet. Current account counts are shown, but a growth percentage would be misleading.</li>}
                 {brief.one.hasNativeEnvironmentConflict && <li>Some public One app activity still carries a test-environment label. Treat One trends as directional until this labeling is corrected.</li>}
                 {declining.slice(0, 2).map((signal) => <li key={signal.label}>{signal.label} declined from the previous period; review the detailed journey before drawing a cause-and-effect conclusion.</li>)}
                 {!brief.one.available && <li>One customer activity could not be verified from the production source.</li>}
                 {!brief.hushhTech.available && <li>HushhTech account data is currently unavailable.</li>}
                 {!brief.hushhAi.available && <li>Search reporting is incomplete or delayed, so no market-reach change is claimed.</li>}
-                {!lowCoverage && !brief.one.hasNativeEnvironmentConflict && declining.length === 0 && brief.one.available && brief.hushhTech.available && brief.hushhAi.available
+                {!lowCoverage && brief.one.comparisonReady && !brief.one.hasNativeEnvironmentConflict && declining.length === 0 && brief.one.available && brief.hushhTech.available && brief.hushhAi.available
                   && <li>No measured decline or coverage warning in this reporting period. Continue watching first-time customers and repeat engagement.</li>}
               </ul>
             </section>
