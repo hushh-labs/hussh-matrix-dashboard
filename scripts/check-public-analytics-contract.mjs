@@ -21,7 +21,7 @@ end.setUTCHours(0, 0, 0, 0);
 const start = new Date(end);
 start.setUTCDate(start.getUTCDate() - (days - 1));
 const date = (value) => value.toISOString().slice(0, 10);
-const query = new URLSearchParams({ startDate: date(start), endDate: date(end) });
+const query = new URLSearchParams({ start_date: date(start), end_date: date(end) });
 
 const forbiddenKeys = new Set([
   'identities',
@@ -125,6 +125,12 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
   }
   if (!(identifiedDau <= identifiedWau && identifiedWau <= identifiedMau)) {
     findings.push(`${label}.identifiedUsers: expected DAU <= WAU <= MAU, got ${identifiedDau}/${identifiedWau}/${identifiedMau}`);
+  }
+  if (typeof summary.activeByPlatformAvailable !== 'boolean') {
+    findings.push(`${label}.activeByPlatformAvailable: expected explicit source availability`);
+  }
+  if (summary.activeByPlatformAvailable === false && summary.activeByPlatform?.length) {
+    findings.push(`${label}.activeByPlatform: unavailable query must not publish partial or fabricated rows`);
   }
   // Optional during the dashboard rollout; once present it must never turn a
   // missing iOS export into fabricated zero-account KPIs.

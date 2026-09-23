@@ -3415,7 +3415,8 @@ ${capabilitySql.isDeliberate}
       // One row per platform, never a total. The columns are separate
       // populations: the same person on an iPhone and a laptop is two rows and
       // nothing here can collapse them.
-      activeByPlatform: activeByPlatform.rows.map((row) => {
+      activeByPlatformAvailable: !activeByPlatform.error,
+      activeByPlatform: (activeByPlatform.error ? [] : activeByPlatform.rows).map((row) => {
         const devices = toNumber(row.mauDevices);
         const withAccount = toNumber(row.mauIdentifiedDevices);
         return {

@@ -99,6 +99,11 @@ function checkOneEnvironment(label, one) {
   );
 
   const platforms = Array.isArray(one.activeByPlatform) ? one.activeByPlatform : [];
+  check(
+    `${label}_platform_source_available`,
+    one.activeByPlatformAvailable === true,
+    `available=${String(one.activeByPlatformAvailable)}`,
+  );
   for (const [key, field] of [['dau', 'dauDevices'], ['wau', 'wauDevices'], ['mau', 'mauDevices']]) {
     const platformTotal = sum(platforms, field);
     check(

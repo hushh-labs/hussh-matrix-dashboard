@@ -146,9 +146,9 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
     { label: 'Returning active users', value: range.returningUsers, detail: 'First observed before selected range' },
   ];
   const activityTiles = [
-    { label: 'Daily active users', value: users.dau, detail: users.asOf },
-    { label: 'Weekly active users', value: users.wau, detail: `7 days to ${users.asOf}` },
-    { label: 'Monthly active users', value: users.mau, detail: `30 days to ${users.asOf}` },
+    { label: 'Daily identified accounts', value: users.dau, detail: users.asOf },
+    { label: 'Weekly identified accounts', value: users.wau, detail: `7 days to ${users.asOf}` },
+    { label: 'Monthly identified accounts', value: users.mau, detail: `30 days to ${users.asOf}` },
     { label: 'Monthly identity coverage', value: percentText(users.deviceCoverage.mau, 1), detail: `${formatNumber(users.identifiedDevices.mau)} active devices carried an account ID` },
   ];
 
@@ -184,6 +184,13 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
             <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
           </div>
         ))}
+      </div>
+      <div className={cn(appleCard, 'border-[#c7ddff] bg-[#f5f9ff] p-4 text-sm leading-6 text-[#174b8a]')}>
+        <strong>{formatNumber(users.dau)} identified accounts</strong> and <strong>{formatNumber(one.activeUsers.dau)} device/browser IDs</strong> on {users.asOf} are different counting units.
+        {one.activeByPlatformAvailable !== false && one.activeByPlatform.length > 0 && (
+          <> Those device IDs include {one.activeByPlatform.map((row) => `${formatNumber(row.dauDevices)} ${platformLabel(row.platform)}`).join(', ')}.</>
+        )}
+        {' '}An account counts once across devices only when One attaches its stable account ID. Unidentified browser/app IDs are not proven to be additional people, so the gap cannot be converted into a user count.
       </div>
       <div className="flex items-start gap-3 rounded-2xl border border-[#d8c48b] bg-[#fffaf0] p-4 text-[#72510b]">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
@@ -322,8 +329,20 @@ export function platformLabel(platform: string): string {
  * that is not valid, and it puts the identity gap where you cannot miss it:
  * the platform that cannot report accounts says so on its own row.
  */
-export function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
-  if (rows.length === 0) return null;
+export function ActivesByPlatform({ rows, available = true }: { rows: OnePlatformActives[]; available?: boolean }) {
+  if (!available) {
+    return (
+      <div className={cn(appleCard, 'p-5')} role="status">
+        <p className="text-sm font-semibold text-[#8a5a04]">Platform activity is temporarily unavailable</p>
+        <p className="mt-1 text-xs leading-5 text-[#6e6e73]">
+          The GA4 platform query did not complete. iOS device and signed-in account counts are not shown as zero; retry after the export recovers.
+        </p>
+      </div>
+    );
+  }
+  if (rows.length === 0) {
+    return <p className={cn(appleCard, 'p-5 text-sm text-[#6e6e73]')}>No platform activity was recorded in this GA4 property for the selected range.</p>;
+  }
   const anyBound = rows.some((row) => row.identityBound);
 
   return (
@@ -336,9 +355,9 @@ export function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
               <th className="border-b border-black/5 px-5 py-3 text-right">Device DAU</th>
               <th className="border-b border-black/5 px-5 py-3 text-right">Device WAU</th>
               <th className="border-b border-black/5 px-5 py-3 text-right">Device MAU</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">User DAU</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">User WAU</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">User MAU</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Account DAU</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Account WAU</th>
+              <th className="border-b border-black/5 px-5 py-3 text-right">Account MAU</th>
               <th className="border-b border-black/5 px-5 py-3">Identity</th>
             </tr>
           </thead>
@@ -361,7 +380,7 @@ export function ActivesByPlatform({ rows }: { rows: OnePlatformActives[] }) {
                 <td className="border-b border-black/5 px-5 py-3 text-xs font-semibold">
                   {row.identityBound ? (
                     <span className="text-[#6e6e73]">
-                      {percentText(row.signedInShare, 0)} of devices signed in
+                      {percentText(row.signedInShare, 1)} of devices signed in
                     </span>
                   ) : (
                     <span className="text-[#8a5a04]">Not bound &mdash; devices only</span>
@@ -1212,12 +1231,26 @@ export function OneAppPanel({
             </h2>
           </div>
         </div>
+        <details className={cn(appleCard, 'mb-4 p-4 text-sm leading-6 text-[#3a3a3c]')} open>
+          <summary className="cursor-pointer font-semibold text-[#1d1d1f]">Plain-English guide to the numbers on this page</summary>
+          <div className="mt-3 grid gap-x-6 gap-y-2 md:grid-cols-2">
+            <p><strong>Registered users:</strong> distinct One account records in Firebase. “New” means the account was created during the selected dates. This does not prove one account per human.</p>
+            <p><strong>Identified active users:</strong> distinct account IDs attached to meaningful GA4 activity. One account counts once even after repeat visits or use on multiple devices. Activity without an account ID is excluded.</p>
+            <p><strong>First observed / returning:</strong> the account’s first tagged activity in the available export is inside / before the selected dates. First observed is not the same as a new registration.</p>
+            <p><strong>Active devices:</strong> distinct app-install or browser identifiers with meaningful activity. One person can have several; anonymous visits are included. These are not unique people.</p>
+            <p><strong>Daily / weekly / monthly:</strong> activity over 1 / 7 / 30 days, ending on the date printed on the tile. GA4’s finalized daily export may lag behind today or the selected end date.</p>
+            <p><strong>Installs, activation, retention and agents:</strong> these describe device journeys, first value, week-1 return, and deliberate feature use. Their percentages use the stated device cohort as the denominator; they are not account growth.</p>
+          </div>
+          <p className="mt-3 border-t border-black/5 pt-3 text-xs font-semibold text-[#6e6e73]">
+            Production and UAT are reporting-property selections, not a claim about which backend a mobile build calls. Public iOS builds can appear in the production GA4 property while still using the UAT backend.
+          </p>
+        </details>
         <div className="flex flex-col gap-4">
           <RegisteredUsers one={activeData} />
           <IosIdentifiedUsers one={activeData} />
           <IdentifiedUsers one={activeData} />
           <ActiveDevices one={activeData} />
-          <ActivesByPlatform rows={activeData.activeByPlatform} />
+          <ActivesByPlatform rows={activeData.activeByPlatform} available={activeData.activeByPlatformAvailable} />
         </div>
       </section>
 
