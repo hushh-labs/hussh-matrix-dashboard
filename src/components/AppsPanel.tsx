@@ -120,7 +120,7 @@ function EnvironmentColumn({
  * App Store Connect — Hushh 1 iOS Production, from the Analytics Reports API.
  *
  * `summary.available === false` covers two distinct cases, distinguished only
- * by `note`: credentials are missing (`App Store Connect analytics not
+ * by `note`: keys are missing (`App Store Connect analytics not
  * connected`), or the request itself failed. Neither renders a zero.
  */
 function AppStoreConnectCard({ title, summary }: { title: string; summary: AppStoreConnectSummary }) {

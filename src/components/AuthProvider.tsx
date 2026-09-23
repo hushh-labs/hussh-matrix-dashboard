@@ -2,17 +2,13 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * AuthProvider context component managing Google OAuth state, session lifecycle,
- * domain authorization verification, and sign-out handlers.
+ * AuthProvider context component managing server-side session lifecycle.
  */
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
-  fetchAuthConfig,
-  getStoredUserSession,
-  storeUserSession,
-  clearUserSession,
-  verifyCredentialWithBackend,
+  fetchCurrentUser,
+  logoutUser,
   DEFAULT_ALLOWED_DOMAINS,
   type AuthUser,
   type AuthConfig,
@@ -23,18 +19,16 @@ interface AuthContextType {
   authConfig: AuthConfig;
   loading: boolean;
   error: string | null;
-  signInWithCredential: (credential: string) => Promise<void>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
   isAuthenticated: boolean;
   isAuthorized: boolean;
 }
 
 const defaultAuthConfig: AuthConfig = {
-  oauthEnabled: false,
-  clientId: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '',
+  oauthEnabled: true,
   allowedDomains: DEFAULT_ALLOWED_DOMAINS,
   allowedEmails: [],
-  requireAuth: false,
+  requireAuth: true,
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -42,28 +36,23 @@ const AuthContext = createContext<AuthContextType>({
   authConfig: defaultAuthConfig,
   loading: true,
   error: null,
-  signInWithCredential: async () => {},
-  signOut: () => {},
+  signOut: async () => {},
   isAuthenticated: false,
   isAuthorized: false,
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [authConfig, setAuthConfig] = useState<AuthConfig>(defaultAuthConfig);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
     async function initAuth() {
-      const config = await fetchAuthConfig();
+      const currentUser = await fetchCurrentUser();
       if (!mounted) return;
-      setAuthConfig(config);
-
-      const storedUser = getStoredUserSession();
-      if (storedUser) {
-        setUser(storedUser);
+      if (currentUser) {
+        setUser(currentUser);
       }
       setLoading(false);
     }
@@ -73,56 +62,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const signInWithCredential = async (credential: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await verifyCredentialWithBackend(
-        credential,
-        authConfig.allowedDomains,
-        authConfig.allowedEmails
-      );
-
-      if (result.user) {
-        setUser(result.user);
-        storeUserSession(result.user);
-      }
-
-      if (!result.success) {
-        setError(result.error || 'Authentication failed or domain not authorized.');
-      }
-    } catch (err) {
-      console.error('Sign-in error:', err);
-      setError('An error occurred during authentication. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const signOut = () => {
+  const signOut = async () => {
+    await logoutUser();
     setUser(null);
-    setError(null);
-    clearUserSession();
-    if (typeof window !== 'undefined' && (window as any).google?.accounts?.id) {
-      try {
-        (window as any).google.accounts.id.disableAutoSelect();
-      } catch (e) {
-        // ignore
-      }
-    }
+    window.location.href = '/login';
   };
 
   const isAuthenticated = Boolean(user && user.email);
-  const isAuthorized = !authConfig.requireAuth || Boolean(user && user.domainAuthorized);
+  const isAuthorized = Boolean(user && user.domainAuthorized);
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        authConfig,
+        authConfig: defaultAuthConfig,
         loading,
         error,
-        signInWithCredential,
         signOut,
         isAuthenticated,
         isAuthorized,

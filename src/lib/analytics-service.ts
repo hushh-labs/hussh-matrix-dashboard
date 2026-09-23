@@ -36,8 +36,6 @@ import type {
   AppStoreConnectEnvironments,
 } from './types';
 
-import { getAuthToken } from './auth-service';
-
 const API_BASE = '/api';
 
 interface AllAnalyticsResponse {
@@ -86,10 +84,6 @@ async function fetchJson<T>(url: string): Promise<T | null> {
       Accept: 'application/json',
       'Cache-Control': 'no-cache',
     };
-    const token = getAuthToken();
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
 
     const res = await fetch(url, {
       cache: 'no-store',

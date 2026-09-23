@@ -4,7 +4,7 @@
  *
  * Express server for the Hussh Matrix Dashboard.
  * Proxies BigQuery public feed queries and the hushhtech.com analytics endpoint
- * so the React SPA can consume real metrics without exposing credentials.
+ * so the React SPA can consume real metrics without exposing keys.
  */
 
 import { config as loadDotenvFile } from 'dotenv';
@@ -30,8 +30,8 @@ loadDotenvFile({ path: '.env.local', override: true });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const execFileAsync = promisify(execFile);
+import crypto from 'node:crypto';
 
-const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ const HUSHH_AI_GCP_PROJECT = process.env.HUSHH_AI_GCP_PROJECT || 'hushh-ai-prod'
 const HUSHH_AI_CLOUD_RUN_SERVICE = process.env.HUSHH_AI_CLOUD_RUN_SERVICE || 'hushh-ai-website';
 const HUSHH_AI_METRICS_WINDOW_DAYS = parseInt(process.env.HUSHH_AI_METRICS_WINDOW_DAYS || '7', 10);
 // App Store Connect — Hushh 1 iOS. Official Analytics Reports API only; see the
-// "App Store Connect" section below. Credentials are optional: when absent the
+// "App Store Connect" section below. API keys are optional: when absent the
 // dashboard reports `App Store Connect analytics not connected` rather than a
 // fabricated number.
 const APP_STORE_CONNECT_KEY_ID = process.env.APP_STORE_CONNECT_KEY_ID || '';
@@ -220,48 +220,12 @@ const HUSHH_AI_LIVE_REFRESH_SECONDS = Math.max(
   Math.min(parseInt(process.env.HUSHH_AI_LIVE_REFRESH_SECONDS || '30', 10) || 30, 300),
 );
 
-app.use('/api', (_req, res, next) => {
-  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.set('Pragma', 'no-cache');
-  res.set('Expires', '0');
-  res.set('Surrogate-Control', 'no-store');
-  next();
-});
-
 // Keep upstream analytics calls from being repeated by every browser refresh.
 // Clients still receive `no-store`; this is a short-lived, aggregate-only
 // process cache keyed by the complete URL, including the selected date range.
 const ANALYTICS_RESPONSE_CACHE_TTL_MS = 30_000;
 const ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES = 100;
 const analyticsResponseCache = new Map<string, { expiresAt: number; body: unknown }>();
-
-app.use('/api/analytics', (req, res, next) => {
-  if (req.method !== 'GET') return next();
-  const key = req.originalUrl;
-  const cached = analyticsResponseCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
-    res.set('X-Metrics-Cache', 'HIT');
-    return res.json(cached.body);
-  }
-  if (cached) analyticsResponseCache.delete(key);
-
-  const sendJson = res.json.bind(res);
-  res.json = ((body: unknown) => {
-    if (res.statusCode < 500) {
-      if (analyticsResponseCache.size >= ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES) {
-        const oldestKey = analyticsResponseCache.keys().next().value as string | undefined;
-        if (oldestKey) analyticsResponseCache.delete(oldestKey);
-      }
-      analyticsResponseCache.set(key, {
-        expiresAt: Date.now() + ANALYTICS_RESPONSE_CACHE_TTL_MS,
-        body,
-      });
-      res.set('X-Metrics-Cache', 'MISS');
-    }
-    return sendJson(body);
-  }) as typeof res.json;
-  return next();
-});
 
 const PUBLIC_OMIT_KEYS = new Set([
   'sourceProjectId',
@@ -453,7 +417,7 @@ function dateSpine(range: HushhAiDateRange): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// BigQuery helper — uses Application Default Credentials (ADC)
+// BigQuery helper — uses Application Default Auth (ADC)
 // ---------------------------------------------------------------------------
 
 interface BigQueryFeedResult {
@@ -5370,7 +5334,8 @@ async function fetchHushhTechSupabaseSummary(range: HushhAiDateRange): Promise<D
 // API routes
 // ---------------------------------------------------------------------------
 
-app.get(['/api/analytics/one/uat', '/api/analytics/kai/uat'], async (_req, res) => {
+function registerAnalyticsRoutes(app: express.Express): void {
+  app.get(['/api/analytics/one/uat', '/api/analytics/kai/uat'], async (_req, res) => {
   const result = await queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW);
   res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
     environment: 'uat',
@@ -6365,8 +6330,8 @@ async function fetchAppStoreConnectSummary(range: HushhAiDateRange): Promise<Dat
     fetchAppStoreConnectProductionSummary(range),
     fetchAppStoreConnectTestFlightSummary(range),
   ]);
-  // "Not connected" (no credentials configured) is a setup state, not a
-  // fetch failure -- only surface `error` when credentials exist and a real
+  // "Not connected" (no keys configured) is a setup state, not a
+  // fetch failure -- only surface `error` when keys exist and a real
   // request still failed, so a fresh, unconfigured deploy does not add a
   // permanent warning to every dashboard load.
   const error = appStoreConnectConfigured()
@@ -6575,6 +6540,7 @@ app.get('/api/health', (_req, res) => {
     },
   }));
 });
+}
 
 // ---------------------------------------------------------------------------
 // Hussh Insights AI — production analyst agent
@@ -8342,244 +8308,688 @@ async function runHusshInsightsAgent(message: string, history: ChatHistoryMessag
 }
 
 // ---------------------------------------------------------------------------
-// Google OAuth & Domain Protection Layer Configuration
+// Google OAuth 2.0 (OpenID Connect) & App Factory Architecture
 // ---------------------------------------------------------------------------
 
-const GOOGLE_OAUTH_CLIENT_ID = (
-  process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || ''
-).trim();
-
-const ALLOWED_EMAIL_DOMAINS = (
-  process.env.ALLOWED_EMAIL_DOMAINS || 'hushh.ai,hushhtech.com,hushh.labs,hush1one.com'
-)
-  .split(',')
-  .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
-  .filter(Boolean);
-
-const ALLOWED_EMAILS = (
-  process.env.ALLOWED_EMAILS ||
-  'roopmannvaradharaj@gmail.com,i-akshat@hush1one.com,ankit@hushh.ai,parth@hushh.ai,neelesh1@hushh.ai,23ad052@kpriet.ac.in,sharukhansharukhan926@gmail.com,smirthidharmaiit@gmail.com,divya.rajendranps@gmail.com,jhumma@hushh.ai,manish@hushh.ai,kushal@hushh.ai'
-)
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean);
-
-const REQUIRE_AUTH = process.env.REQUIRE_AUTH === 'true';
-
-function isEmailAuthorizedOnServer(email: string): boolean {
-  if (!email || !email.includes('@')) return false;
-  const normEmail = email.trim().toLowerCase();
-  const domain = normEmail.split('@')[1];
-
-  if (ALLOWED_EMAILS.includes(normEmail)) return true;
-  if (ALLOWED_EMAIL_DOMAINS.includes(domain)) return true;
-
-  return false;
+export interface AppConfig {
+  requireAuth: boolean;
+  allowPublicDashboard: boolean;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  sessionSecret: string;
+  allowedDomains: string[];
+  allowedEmails: string[];
+  isProduction: boolean;
 }
 
-async function verifyGoogleTokenOnServer(idToken: string): Promise<{
-  valid: boolean;
+export function loadAppConfig(overrides?: Partial<AppConfig>): AppConfig {
+  const isProduction = overrides?.isProduction ?? (process.env.NODE_ENV === 'production');
+  const allowedDomainsEnv = process.env.ALLOWED_EMAIL_DOMAINS || 'hushh.ai,hushhtech.com,hushh.labs,hush1one.com';
+  const allowedEmailsEnv = process.env.ALLOWED_EMAILS || '';
+  const defaultRedirectUri = isProduction ? '' : 'http://localhost:3001/auth/callback';
+
+  return {
+    requireAuth: overrides?.requireAuth ?? (process.env.REQUIRE_AUTH !== 'false'),
+    allowPublicDashboard: overrides?.allowPublicDashboard ?? (process.env.ALLOW_PUBLIC_DASHBOARD === 'true'),
+    clientId: overrides?.clientId ?? (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim(),
+    clientSecret: overrides?.clientSecret ?? (process.env.GOOGLE_CLIENT_SECRET || '').trim(),
+    redirectUri: overrides?.redirectUri ?? (process.env.GOOGLE_REDIRECT_URI || defaultRedirectUri).trim(),
+    sessionSecret: overrides?.sessionSecret ?? (process.env.SESSION_SECRET || '').trim(),
+    allowedDomains: overrides?.allowedDomains ?? allowedDomainsEnv.split(',').map((d) => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean),
+    allowedEmails: overrides?.allowedEmails ?? allowedEmailsEnv.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+    isProduction,
+  };
+}
+
+export function validateConfig(config: AppConfig): void {
+  if (config.isProduction && !config.requireAuth && !config.allowPublicDashboard) {
+    console.error('FATAL ERROR: Production environment cannot run with REQUIRE_AUTH=false unless ALLOW_PUBLIC_DASHBOARD=true is explicitly set.');
+    process.exit(1);
+  }
+
+  if (!config.requireAuth) {
+    console.warn('WARNING: REQUIRE_AUTH is false. Dashboard running in PUBLIC mode.');
+    return;
+  }
+
+  const missing: string[] = [];
+  if (!config.clientId) missing.push('GOOGLE_CLIENT_ID');
+  if (!config.clientSecret) missing.push('GOOGLE_CLIENT_SECRET');
+  if (!config.redirectUri) missing.push('GOOGLE_REDIRECT_URI');
+  if (!config.sessionSecret) missing.push('SESSION_SECRET');
+
+  if (missing.length > 0) {
+    console.error(`FATAL ERROR: Missing required OAuth environment variables: ${missing.join(', ')}`);
+    process.exit(1);
+  }
+
+  if (config.sessionSecret.length < 32) {
+    console.error(`FATAL ERROR: SESSION_SECRET must be at least 32 characters long (received ${config.sessionSecret.length}).`);
+    process.exit(1);
+  }
+}
+
+export interface AuthorizationResult {
   authorized: boolean;
-  user?: { email: string; name: string; picture?: string; sub: string };
-  error?: string;
-}> {
-  if (!idToken) return { valid: false, authorized: false, error: 'No token provided' };
+  reason?: string;
+  email: string;
+}
+
+export function checkUserAuthorization(
+  idTokenPayload: {
+    email_verified?: boolean;
+    email?: string;
+    hd?: string;
+  },
+  allowedDomainsConfig: string[],
+  allowedEmailsConfig: string[]
+): AuthorizationResult {
+  const emailVerified = idTokenPayload.email_verified === true;
+  const rawEmail = idTokenPayload.email || '';
+  const normEmail = rawEmail.toLowerCase().trim();
+
+  if (!emailVerified) {
+    const reason = 'Google account email is unverified (email_verified is not true)';
+    console.warn(`[AUTH_DENIED] email=${normEmail} reason="${reason}"`);
+    return { authorized: false, reason, email: normEmail };
+  }
+
+  // Require exactly two parts when splitting email on "@"
+  const emailParts = normEmail.split('@');
+  if (emailParts.length !== 2 || !emailParts[0] || !emailParts[1]) {
+    const reason = 'Email address does not contain exactly two parts separated by "@"';
+    console.warn(`[AUTH_DENIED] email=${normEmail} reason="${reason}"`);
+    return { authorized: false, reason, email: normEmail };
+  }
+
+  const emailDomain = emailParts[1].toLowerCase().trim();
+  const payloadHd = (idTokenPayload.hd || '').toLowerCase().trim();
+
+  // Domain Match: payload.hd MUST be present, in ALLOWED_EMAIL_DOMAINS, and equal email domain
+  const normalizedAllowedDomains = allowedDomainsConfig.map((d) => d.toLowerCase().trim().replace(/^@/, ''));
+  const isDomainMatch = Boolean(
+    payloadHd &&
+    normalizedAllowedDomains.includes(payloadHd) &&
+    emailDomain === payloadHd
+  );
+
+  // Explicit Whitelist Match (case-insensitive)
+  const normalizedAllowedEmails = allowedEmailsConfig.map((e) => e.toLowerCase().trim());
+  const isExplicitEmailMatch = normalizedAllowedEmails.includes(normEmail);
+
+  const isAuthorized = isDomainMatch || isExplicitEmailMatch;
+
+  if (!isAuthorized) {
+    const reason = `Email ${normEmail} (domain: ${emailDomain}, hd: ${payloadHd || 'none'}) is not authorized`;
+    console.warn(`[AUTH_DENIED] email=${normEmail} reason="${reason}"`);
+    return { authorized: false, reason, email: normEmail };
+  }
+
+  console.log(`[AUTH_SUCCESS] email=${normEmail} (domainMatch=${isDomainMatch}, emailMatch=${isExplicitEmailMatch})`);
+  return { authorized: true, email: normEmail };
+}
+
+export function sanitizeReturnTo(rawReturnTo: unknown): string {
+  if (typeof rawReturnTo !== 'string' || !rawReturnTo) return '/';
+  let str = rawReturnTo.trim();
+  try {
+    str = decodeURIComponent(str);
+  } catch {
+    // ignore decode error
+  }
+
+  // Reject control characters, newlines, and backslashes
+  if (/[\x00-\x1F\x7F\\]/.test(str)) return '/';
+
+  // Reject protocol-relative URLs (//evil.com) and backslash schemes (/\evil.com)
+  if (str.startsWith('//') || str.startsWith('/\\') || str.startsWith('/%5C') || str.startsWith('/%5c')) return '/';
 
   try {
-    if (GOOGLE_OAUTH_CLIENT_ID) {
+    const parsed = new URL(str, 'http://x');
+    if (parsed.origin !== 'http://x') return '/';
+    return parsed.pathname + parsed.search + parsed.hash;
+  } catch {
+    return '/';
+  }
+}
+
+export function sanitizePrompt(rawPrompt: unknown): string | undefined {
+  return rawPrompt === 'select_account' ? 'select_account' : undefined;
+}
+
+export function signCookie(value: string, secret: string): string {
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(value)
+    .digest('base64url');
+  return `s:${value}.${signature}`;
+}
+
+export function unsignCookie(input: string, secret: string): string | false {
+  if (typeof input !== 'string' || !input.startsWith('s:')) return false;
+  const content = input.slice(2);
+  const lastDot = content.lastIndexOf('.');
+  if (lastDot === -1) return false;
+  const val = content.slice(0, lastDot);
+  const expectedSig = crypto
+    .createHmac('sha256', secret)
+    .update(val)
+    .digest('base64url');
+  const actualSig = content.slice(lastDot + 1);
+  if (actualSig.length !== expectedSig.length) return false;
+  try {
+    const isMatch = crypto.timingSafeEqual(Buffer.from(actualSig), Buffer.from(expectedSig));
+    return isMatch ? val : false;
+  } catch {
+    return false;
+  }
+}
+
+export function parseCookies(cookieHeader?: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  const pairs = cookieHeader.split(';');
+  for (const pair of pairs) {
+    const eqIdx = pair.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = pair.slice(0, eqIdx).trim();
+    const val = pair.slice(eqIdx + 1).trim();
+    try {
+      cookies[key] = decodeURIComponent(val);
+    } catch {
+      // Ignore malformed URI cookie values
+    }
+  }
+  return cookies;
+}
+
+export interface CookieOptions {
+  maxAge?: number;
+  expires?: Date;
+  httpOnly?: boolean;
+  sameSite?: 'Lax' | 'Strict' | 'None';
+  path?: string;
+  secure?: boolean;
+}
+
+export function serializeCookie(name: string, val: string, options: CookieOptions = {}): string {
+  let cookieStr = `${encodeURIComponent(name)}=${encodeURIComponent(val)}`;
+  if (options.maxAge !== undefined) {
+    cookieStr += `; Max-Age=${Math.floor(options.maxAge)}`;
+  }
+  if (options.expires) {
+    cookieStr += `; Expires=${options.expires.toUTCString()}`;
+  }
+  cookieStr += `; Path=${options.path || '/'}`;
+  if (options.httpOnly !== false) {
+    cookieStr += '; HttpOnly';
+  }
+  if (options.sameSite) {
+    cookieStr += `; SameSite=${options.sameSite}`;
+  } else {
+    cookieStr += '; SameSite=Lax';
+  }
+  if (options.secure) {
+    cookieStr += '; Secure';
+  }
+  return cookieStr;
+}
+
+export function isRequestSecure(req: express.Request): boolean {
+  return (
+    req.secure ||
+    req.headers['x-forwarded-proto'] === 'https' ||
+    process.env.NODE_ENV === 'production'
+  );
+}
+
+export interface SessionUser {
+  email: string;
+  name: string;
+  picture: string;
+  exp: number;
+}
+
+export function getSessionUserFromReq(req: express.Request, secret: string): SessionUser | null {
+  const cookies = parseCookies(req.headers.cookie);
+  const rawSession = cookies['hussh_matrix_session'];
+  if (!rawSession) return null;
+  const unsigned = unsignCookie(rawSession, secret);
+  if (!unsigned) return null;
+  try {
+    const sessionData = JSON.parse(unsigned) as SessionUser;
+    const now = Math.floor(Date.now() / 1000);
+    if (!sessionData.exp || sessionData.exp <= now) return null;
+    return sessionData;
+  } catch {
+    return null;
+  }
+}
+
+function renderLoginHtml(): string {
+  const distHtmlPath = path.join(__dirname, 'dist', 'index.html');
+  try {
+    return readFileSync(distHtmlPath, 'utf8');
+  } catch {
+    return `<!DOCTYPE html>
+<html>
+<head><title>Hussh Matrix Dashboard - Login</title></head>
+<body style="background:#0b0c10;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+  <div style="text-align:center;">
+    <h1>Welcome to Hussh Matrix</h1>
+    <p>Use your Hushh work account</p>
+    <a href="/api/auth/google" style="display:inline-block;padding:12px 24px;background:#fff;color:#000;text-decoration:none;border-radius:24px;font-weight:bold;margin-top:16px;">Continue with Google</a>
+  </div>
+</body>
+</html>`;
+  }
+}
+
+export function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderAccessDeniedHtml(userEmail?: string): string {
+  const safeEmail = userEmail ? escapeHtml(userEmail) : '';
+  const distHtmlPath = path.join(__dirname, 'dist', 'index.html');
+  const accessDeniedSnippet = `
+    <div id="access-denied-box" style="display:none;" data-email="${safeEmail}">Access Denied</div>
+  `;
+  try {
+    const html = readFileSync(distHtmlPath, 'utf8');
+    return html.replace('</body>', `${accessDeniedSnippet}</body>`);
+  } catch {
+    return `<!DOCTYPE html>
+<html>
+<head><title>Access Denied - Hussh Matrix</title></head>
+<body style="background:#0b0c10;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+  <div style="text-align:center;max-width:400px;padding:32px;border:1px solid #ff3b30;border-radius:16px;">
+    <h1 style="color:#ff453a;">Access Denied</h1>
+    <p>Please use your Hushh work email account to access this dashboard.</p>
+    ${safeEmail ? `<p><strong>${safeEmail}</strong> is not authorized.</p>` : ''}
+    <a href="/api/auth/google?prompt=select_account" style="display:inline-block;padding:12px 24px;background:#fff;color:#000;text-decoration:none;border-radius:12px;font-weight:bold;margin-top:16px;">Try Another Account</a>
+  </div>
+</body>
+</html>`;
+  }
+}
+
+export function createApp(configOverrides?: Partial<AppConfig>): express.Express {
+  const config = loadAppConfig(configOverrides);
+  const app = express();
+
+  // 1. Reverse Proxy Trust
+  app.set('trust proxy', 1);
+
+  // 2. Body Parsing
+  app.use(express.json({ limit: '64kb' }));
+  app.use(express.urlencoded({ extended: false }));
+
+  // 3. Attach session user to req
+  app.use((req, res, next) => {
+    (req as any).sessionUser = getSessionUserFromReq(req, config.sessionSecret);
+    next();
+  });
+
+  // 4. API No-Cache Headers & Protection Middleware
+  app.use('/api', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
+    next();
+  });
+
+  // 5. Protected API Middleware
+  app.use('/api', (req, res, next) => {
+    if (req.path.startsWith('/auth/')) return next();
+    const user = (req as any).sessionUser as SessionUser | null;
+    if (!user && config.requireAuth) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    next();
+  });
+
+  // 6. Analytics Cache Middleware
+  app.use('/api/analytics', (req, res, next) => {
+    if (req.method !== 'GET') return next();
+    const key = req.originalUrl;
+    const cached = analyticsResponseCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.set('X-Metrics-Cache', 'HIT');
+      return res.json(cached.body);
+    }
+    if (cached) analyticsResponseCache.delete(key);
+
+    const sendJson = res.json.bind(res);
+    res.json = ((body: unknown) => {
+      if (res.statusCode < 500) {
+        if (analyticsResponseCache.size >= ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES) {
+          const oldestKey = analyticsResponseCache.keys().next().value as string | undefined;
+          if (oldestKey) analyticsResponseCache.delete(oldestKey);
+        }
+        analyticsResponseCache.set(key, {
+          expiresAt: Date.now() + ANALYTICS_RESPONSE_CACHE_TTL_MS,
+          body,
+        });
+        res.set('X-Metrics-Cache', 'MISS');
+      }
+      return sendJson(body);
+    }) as typeof res.json;
+    return next();
+  });
+
+  // 5. Auth Endpoint Handlers
+  app.get('/api/auth/google', (req, res) => {
+    const returnTo = sanitizeReturnTo(req.query.returnTo);
+    const prompt = sanitizePrompt(req.query.prompt);
+
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+    const state = crypto.randomBytes(16).toString('hex');
+    const nonce = crypto.randomBytes(16).toString('hex');
+
+    const pkcePayload = JSON.stringify({ codeVerifier, state, nonce, returnTo });
+    const signedPkce = signCookie(pkcePayload, config.sessionSecret);
+
+    const secure = isRequestSecure(req);
+    res.setHeader('Set-Cookie', serializeCookie('oauth_pkce', signedPkce, {
+      maxAge: 600,
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/',
+      secure,
+    }));
+
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: config.clientId,
+      redirect_uri: config.redirectUri,
+      scope: 'openid email profile',
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      state,
+      nonce,
+    });
+
+    if (prompt === 'select_account') {
+      params.set('prompt', 'select_account');
+    }
+
+    res.redirect(302, `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+  });
+
+  app.get('/auth/callback', async (req, res) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const rawPkce = cookies['oauth_pkce'];
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+
+    const clearPkceCookie = serializeCookie('oauth_pkce', '', {
+      expires: new Date(0),
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/',
+      secure: isRequestSecure(req),
+    });
+
+    if (!rawPkce || !code || !state) {
+      res.setHeader('Set-Cookie', clearPkceCookie);
+      return res.status(400).json({ error: 'Invalid or missing OAuth state or parameters.' });
+    }
+
+    const unsignedPkce = unsignCookie(rawPkce, config.sessionSecret);
+    if (!unsignedPkce) {
+      res.setHeader('Set-Cookie', clearPkceCookie);
+      return res.status(400).json({ error: 'Invalid or missing OAuth state or parameters.' });
+    }
+
+    let pkceObj: { codeVerifier: string; state: string; nonce: string; returnTo: string };
+    try {
+      pkceObj = JSON.parse(unsignedPkce);
+    } catch {
+      res.setHeader('Set-Cookie', clearPkceCookie);
+      return res.status(400).json({ error: 'Invalid or missing OAuth state or parameters.' });
+    }
+
+    if (!pkceObj || pkceObj.state !== state) {
+      res.setHeader('Set-Cookie', clearPkceCookie);
+      return res.status(400).json({ error: 'Invalid or missing OAuth state or parameters.' });
+    }
+
+    // Explicitly clear oauth_pkce cookie
+    res.setHeader('Set-Cookie', clearPkceCookie);
+
+    let tokenRes;
+    try {
       const { OAuth2Client } = await import('google-auth-library');
-      const oauthClient = new OAuth2Client(GOOGLE_OAUTH_CLIENT_ID);
+      const oauthClient = new OAuth2Client(config.clientId, config.clientSecret, config.redirectUri);
+      tokenRes = await oauthClient.getToken({
+        code,
+        codeVerifier: pkceObj.codeVerifier,
+      });
+    } catch (err) {
+      console.error('[AUTH_ERROR] Token exchange failed:', err instanceof Error ? err.message : String(err));
+      return res.status(400).json({ error: 'OAuth token exchange failed.' });
+    }
+
+    const idToken = tokenRes.tokens?.id_token;
+    if (!idToken) {
+      console.error('[AUTH_ERROR] No ID token returned from token exchange.');
+      return res.status(400).json({ error: 'OAuth token exchange failed.' });
+    }
+
+    let payload;
+    try {
+      const { OAuth2Client } = await import('google-auth-library');
+      const oauthClient = new OAuth2Client(config.clientId, config.clientSecret, config.redirectUri);
       const ticket = await oauthClient.verifyIdToken({
         idToken,
-        audience: GOOGLE_OAUTH_CLIENT_ID,
+        audience: config.clientId,
       });
-      const payload = ticket.getPayload();
-      if (!payload || !payload.email) {
-        return { valid: false, authorized: false, error: 'Invalid token payload' };
-      }
-
-      const email = payload.email;
-      const name = payload.name || email.split('@')[0];
-      const picture = payload.picture;
-      const sub = payload.sub;
-      const authorized = isEmailAuthorizedOnServer(email);
-
-      return {
-        valid: true,
-        authorized,
-        user: { email, name, picture, sub },
-      };
-    } else {
-      // Decode fallback when Client ID is unconfigured on server
-      const parts = idToken.split('.');
-      if (parts.length === 3) {
-        const payloadStr = Buffer.from(parts[1], 'base64').toString('utf8');
-        const payload = JSON.parse(payloadStr);
-        if (payload && payload.email) {
-          const email = payload.email;
-          const name = payload.name || email.split('@')[0];
-          const picture = payload.picture;
-          const sub = payload.sub;
-          const authorized = isEmailAuthorizedOnServer(email);
-          return { valid: true, authorized, user: { email, name, picture, sub } };
-        }
-      }
+      payload = ticket.getPayload();
+    } catch (err) {
+      console.error('[AUTH_ERROR] ID token verification failed:', err instanceof Error ? err.message : String(err));
+      return res.status(400).json({ error: 'OAuth ID token verification failed.' });
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { valid: false, authorized: false, error: msg };
-  }
 
-  return { valid: false, authorized: false, error: 'Token verification failed' };
-}
+    if (!payload) {
+      console.error('[AUTH_ERROR] Empty ID token payload.');
+      return res.status(400).json({ error: 'OAuth ID token verification failed.' });
+    }
 
-async function authProtectionMiddleware(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) {
-  if (!REQUIRE_AUTH) return next();
+    if (payload.nonce !== pkceObj.nonce) {
+      console.warn('[AUTH_DENIED] reason="ID token nonce mismatch"');
+      return res.status(400).json({ error: 'ID token nonce mismatch.' });
+    }
 
-  // Public auth routes
-  if (req.path === '/api/auth/config' || req.path === '/api/auth/verify') {
-    return next();
-  }
+    const authResult = checkUserAuthorization(payload, config.allowedDomains, config.allowedEmails);
+    if (!authResult.authorized) {
+      res.status(403);
+      return res.send(renderAccessDeniedHtml(authResult.email));
+    }
 
-  const authHeader = req.headers.authorization;
-  // If Client ID is unconfigured and request has no auth header in local dev, bypass protection
-  if (!authHeader && !GOOGLE_OAUTH_CLIENT_ID) {
-    return next();
-  }
+    const sessionUser: SessionUser = {
+      email: authResult.email,
+      name: payload.name || authResult.email.split('@')[0],
+      picture: payload.picture || '',
+      exp: Math.floor(Date.now() / 1000) + 8 * 3600,
+    };
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Authentication required. Access restricted to authorized domain accounts.' });
-    return;
-  }
+    const signedSession = signCookie(JSON.stringify(sessionUser), config.sessionSecret);
+    const secure = isRequestSecure(req);
 
-  const token = authHeader.slice(7).trim();
-  const verification = await verifyGoogleTokenOnServer(token);
+    res.setHeader('Set-Cookie', [
+      clearPkceCookie,
+      serializeCookie('hussh_matrix_session', signedSession, {
+        maxAge: 8 * 3600,
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/',
+        secure,
+      }),
+    ]);
 
-  if (!verification.valid) {
-    res.status(401).json({ error: verification.error || 'Invalid authentication token.' });
-    return;
-  }
-
-  if (!verification.authorized) {
-    res.status(403).json({
-      error: `Access restricted. ${verification.user?.email} is not an authorized domain email.`,
-    });
-    return;
-  }
-
-  (req as any).authUser = verification.user;
-  next();
-}
-
-app.use(express.json({ limit: '64kb' }));
-app.use(authProtectionMiddleware);
-
-app.get('/api/auth/config', (_req, res) => {
-  res.json({
-    oauthEnabled: true,
-    clientId: GOOGLE_OAUTH_CLIENT_ID,
-    allowedDomains: ALLOWED_EMAIL_DOMAINS,
-    allowedEmails: ALLOWED_EMAILS,
-    requireAuth: REQUIRE_AUTH,
+    const destination = sanitizeReturnTo(pkceObj.returnTo);
+    return res.redirect(302, destination);
   });
-});
 
-app.post('/api/auth/verify', async (req, res) => {
-  const { credential } = req.body as { credential?: string };
-  if (!credential) {
-    res.status(400).json({ error: 'Credential token is required' });
-    return;
-  }
-  const result = await verifyGoogleTokenOnServer(credential);
-  if (!result.valid) {
-    res.status(401).json({ error: result.error || 'Invalid token' });
-    return;
-  }
-  if (!result.authorized) {
-    res.status(403).json({
-      authorized: false,
-      message: `Access restricted. ${result.user?.email} is not an authorized domain email.`,
-      user: result.user,
-    });
-    return;
-  }
-  res.json({ authorized: true, user: result.user });
-});
+  // Unknown /auth/* routes return 404 Not Found
+  app.all('/auth/*', (_req, res) => {
+    res.status(404).json({ error: 'Not Found' });
+  });
 
-app.post('/api/chat', async (req, res) => {
-  const body = req.body as { message?: unknown; history?: unknown };
-  const message = typeof body.message === 'string' ? body.message.trim() : '';
-  const history = normalizeHistory(body.history);
+  app.post('/api/auth/logout', (req, res) => {
+    const secure = isRequestSecure(req);
+    res.setHeader('Set-Cookie', serializeCookie('hussh_matrix_session', '', {
+      expires: new Date(0),
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/',
+      secure,
+    }));
+    res.json({ success: true });
+  });
 
-  if (!message) {
-    res.status(400).json({ error: 'Message is required.' });
-    return;
-  }
+  app.get('/api/auth/logout', (_req, res) => {
+    res.status(405).json({ error: 'Method Not Allowed. Use POST /api/auth/logout.' });
+  });
 
-  if (message.length > 2000) {
-    res.status(400).json({ error: 'Message is too long. Maximum 2000 characters.' });
-    return;
-  }
+  app.get('/api/auth/me', (req, res) => {
+    const user = (req as any).sessionUser as SessionUser | null;
+    if (user) {
+      res.json({
+        authenticated: true,
+        user: {
+          email: user.email,
+          name: user.name,
+          picture: user.picture,
+        },
+      });
+    } else {
+      res.json({ authenticated: false, user: null });
+    }
+  });
 
-  if (!GEMINI_API_KEY) {
-    res.status(503).json({ error: 'Hussh Insights AI is not configured. Set the GEMINI_API_KEY environment variable.' });
-    return;
-  }
+  // Unmatched auth endpoints return 404 Not Found
+  app.all('/api/auth/*', (_req, res) => {
+    res.status(404).json({ error: 'Not Found' });
+  });
 
-  const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
-  if (!checkChatRateLimit(clientIp)) {
-    res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
-    return;
-  }
 
-  try {
-    const { answer, usage } = await runHusshInsightsAgent(message, history);
-    res.json({
-      reply: answer.reply,
-      usage,
-      model: GEMINI_METRICS_CHAT_MODEL,
-      claims: answer.claims,
-      sources: answer.sources,
-      warnings: answer.warnings,
-      confidence: answer.confidence,
-      suggestedQuestions: answer.suggestedQuestions ?? [],
-    });
-  } catch (err) {
-    const messageText = err instanceof Error ? err.message : String(err);
-    console.error('Hussh Insights AI chat error:', messageText);
-    res.status(502).json({ error: 'Hussh Insights AI encountered an error. Please try again.' });
-  }
-});
+
+  // Public Static Assets (mounted BEFORE page gating middleware)
+  const distPath = path.join(__dirname, 'dist');
+  app.use('/assets', express.static(path.join(distPath, 'assets')));
+  app.use('/favicon.ico', express.static(path.join(distPath, 'favicon.ico')));
+
+  // Public Pages
+  app.get('/login', (_req, res) => {
+    res.status(200).send(renderLoginHtml());
+  });
+
+  app.get('/access-denied', (_req, res) => {
+    res.status(403).send(renderAccessDeniedHtml());
+  });
+
+  // 6. Server-Side Page Gating Middleware (HTML Shell Requests - skips /api/*, /auth/*, /assets/*, /favicon.ico, and public pages)
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path.startsWith('/assets/') || req.path === '/favicon.ico') return next();
+    if (req.path === '/login' || req.path === '/access-denied') return next();
+    const user = (req as any).sessionUser as SessionUser | null;
+    if (!user && config.requireAuth) {
+      return res.redirect(302, `/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
+    }
+    next();
+  });
+
+  // Register Analytics API Endpoints
+  registerAnalyticsRoutes(app);
+
+  // 8. Chat Endpoint
+  app.post('/api/chat', async (req, res) => {
+    const body = req.body as { message?: unknown; history?: unknown };
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    const history = normalizeHistory(body.history);
+
+    if (!message) {
+      res.status(400).json({ error: 'Message is required.' });
+      return;
+    }
+
+    if (message.length > 2000) {
+      res.status(400).json({ error: 'Message is too long. Maximum 2000 characters.' });
+      return;
+    }
+
+    if (!GEMINI_API_KEY) {
+      res.status(503).json({ error: 'Hussh Insights AI is not configured. Set the GEMINI_API_KEY environment variable.' });
+      return;
+    }
+
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkChatRateLimit(clientIp)) {
+      res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+      return;
+    }
+
+    try {
+      const { answer, usage } = await runHusshInsightsAgent(message, history);
+      res.json({
+        reply: answer.reply,
+        usage,
+        model: GEMINI_METRICS_CHAT_MODEL,
+        claims: answer.claims,
+        sources: answer.sources,
+        warnings: answer.warnings,
+        confidence: answer.confidence,
+        suggestedQuestions: answer.suggestedQuestions ?? [],
+      });
+    } catch (err) {
+      const messageText = err instanceof Error ? err.message : String(err);
+      console.error('Hussh Insights AI chat error:', messageText);
+      res.status(502).json({ error: 'Hussh Insights AI encountered an error. Please try again.' });
+    }
+  });
+
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+
+  return app;
+}
 
 // ---------------------------------------------------------------------------
-// Serve static Vite build in production
+// Server Main Execution Entry Point
 // ---------------------------------------------------------------------------
 
-const distPath = path.join(__dirname, 'dist');
-app.use(express.static(distPath));
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(distPath, 'index.html'));
-});
+if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+  const config = loadAppConfig();
+  validateConfig(config);
+  const app = createApp(config);
 
-app.listen(PORT, () => {
-  console.log(`Hussh Matrix Dashboard server listening on http://localhost:${PORT}`);
-  console.log(`  BigQuery UAT:  ${BQ_UAT_PROJECT}.${BQ_UAT_DATASET}.${BQ_UAT_VIEW}`);
-  console.log(`  BigQuery Prod: ${BQ_PROD_PROJECT}.${BQ_PROD_DATASET}.${BQ_PROD_VIEW}`);
-  console.log(`  One GA4:       ${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`);
-  console.log(`  One Prod GA4:  ${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`);
-  console.log(`  One GCP:       ${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`);
-  console.log(`  One GSC Fallback: ${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`);
-  console.log(`  Hush AI GCP:   ${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`);
-  console.log(`  Hush AI GA4:   ${hushhAiGa4SourceLabel()} (${HUSHH_AI_GA4_MEASUREMENT_ID})`);
-  console.log(`  Hush AI GA4 SA:${HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT || '(direct runtime service account)'}`);
-  console.log(`  Hush AI GSC Fallback: ${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`);
-  console.log(`  hushhtech.com: ${buildHushhTechUrl()}`);
-  console.log(`  HushhTech GCP: ${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`);
-  console.log(`  HushhTech GSC: ${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`);
-  console.log(`  HushhTech GSC Fallback: ${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}`);
-  console.log(`  HushhTech DB:  ${HUSHHTECH_SUPABASE_PROJECT_REF}`);
-});
+  app.listen(PORT, () => {
+    console.log(`Hussh Matrix Dashboard server listening on http://localhost:${PORT}`);
+    console.log(`  BigQuery UAT:  ${BQ_UAT_PROJECT}.${BQ_UAT_DATASET}.${BQ_UAT_VIEW}`);
+    console.log(`  BigQuery Prod: ${BQ_PROD_PROJECT}.${BQ_PROD_DATASET}.${BQ_PROD_VIEW}`);
+    console.log(`  One GA4:       ${KAI_GA4_PROJECT}.${KAI_GA4_DATASET}`);
+    console.log(`  One Prod GA4:  ${KAI_PROD_GA4_PROJECT}.${KAI_PROD_GA4_DATASET}`);
+    console.log(`  One GCP:       ${KAI_PROD_GCP_PROJECT}/${KAI_PROD_CLOUD_RUN_SERVICE}`);
+    console.log(`  One GSC Fallback: ${KAI_SEARCH_FALLBACK_PROJECT}.${KAI_SEARCH_FALLBACK_DATASET}`);
+    console.log(`  Hush AI GCP:   ${HUSHH_AI_GCP_PROJECT}/${HUSHH_AI_CLOUD_RUN_SERVICE}`);
+    console.log(`  Hush AI GA4:   ${hushhAiGa4SourceLabel()} (${HUSHH_AI_GA4_MEASUREMENT_ID})`);
+    console.log(`  Hush AI GA4 SA:${HUSHH_AI_GA4_IMPERSONATE_SERVICE_ACCOUNT || '(direct runtime service account)'}`);
+    console.log(`  Hush AI GSC Fallback: ${HUSHH_AI_SEARCH_FALLBACK_PROJECT}.${HUSHH_AI_SEARCH_FALLBACK_DATASET}`);
+    console.log(`  hushhtech.com: ${buildHushhTechUrl()}`);
+    console.log(`  HushhTech GCP: ${HUSHHTECH_GCP_PROJECT}/${HUSHHTECH_CLOUD_RUN_SERVICE}`);
+    console.log(`  HushhTech GSC: ${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}`);
+    console.log(`  HushhTech GSC Fallback: ${HUSHHTECH_SEARCH_FALLBACK_PROJECT}.${HUSHHTECH_SEARCH_FALLBACK_DATASET}`);
+    console.log(`  HushhTech DB:  ${HUSHHTECH_SUPABASE_PROJECT_REF}`);
+  });
+}

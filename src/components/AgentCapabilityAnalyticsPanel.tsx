@@ -112,7 +112,7 @@ const capabilityMetadata: Record<
   },
   wallet: {
     title: 'Wallet Agent',
-    description: 'Hushh identity wallet, card credentials, and asset management.',
+    description: 'Hushh identity wallet, card tokens, and asset management.',
     icon: Wallet,
     auditExplanation: 'No wallet event is emitted in current app code. Telemetry instrumentation pending.',
   },

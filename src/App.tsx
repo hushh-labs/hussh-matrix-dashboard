@@ -10,7 +10,7 @@ import { AccessDeniedPage } from './components/AccessDeniedPage';
 import { Loader2 } from 'lucide-react';
 
 function AppContent() {
-  const { user, authConfig, loading, error, signInWithCredential, signOut, isAuthenticated, isAuthorized } = useAuth();
+  const { user, authConfig, loading, error, signOut, isAuthenticated, isAuthorized } = useAuth();
 
   if (loading) {
     return (
@@ -28,7 +28,6 @@ function AppContent() {
     return (
       <LoginPage
         authConfig={authConfig}
-        onCredentialResponse={signInWithCredential}
         error={error}
         loading={loading}
       />
