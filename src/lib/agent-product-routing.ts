@@ -30,5 +30,5 @@ export function isOneEnvironmentSplitQuestion(text: string): boolean {
   if (!/\b(?:one|kai)\b/.test(lower) || !/\buat\b/.test(lower)) return false;
   // Merely selecting either environment is not a split request. The
   // comparison word must be explicit; word boundaries avoid "product".
-  return /\b(?:compare|comparison|versus|vs|split|separate|separately|difference)\b/.test(lower);
+  return /\b(?:compare|compares|compared|comparing|comparison|contrast|contrasts|contrasted|contrasting|versus|vs|split|separate|separately|difference|differences|different|differently|differ|differs|differed|differing)\b/.test(lower);
 }
