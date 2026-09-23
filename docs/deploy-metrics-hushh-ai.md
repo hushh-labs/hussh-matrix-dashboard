@@ -84,6 +84,11 @@ The workflow gates deployment with `npm ci`, `npm run lint`,
 It builds a commit-SHA-tagged image, deploys `hushh-matrix-dashboard`, verifies
 runtime env vars are Secret Manager-backed, then runs:
 
+Before deploying, it snapshots the complete Cloud Run serving traffic split.
+If deployment or any post-deploy check fails, rollback restores those exact
+revision percentages, including a pre-existing canary split; it does not
+assume the latest ready revision was the previously serving one.
+
 ```bash
 npm run test:prod:metrics-flow -- --dashboard-url https://metrics.hushh.ai --timeout-ms 120000
 npm run test:prod:hushh-ai -- --base-url https://metrics.hushh.ai --timeout-ms 120000

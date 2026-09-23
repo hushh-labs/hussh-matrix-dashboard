@@ -428,8 +428,10 @@ async function main() {
       return !actual
         || !sameNumbers(actual, expected, ['dauDevices', 'wauDevices', 'mauDevices'])
         || (actual.accounts ?? null) !== expectedAccounts
-        || (actual.dauAccounts ?? null) !== (Number(expected.dauIdentifiedDevices ?? 0) > 0 ? Number(expected.dauAccounts ?? 0) : null)
-        || (actual.wauAccounts ?? null) !== (Number(expected.wauIdentifiedDevices ?? 0) > 0 ? Number(expected.wauAccounts ?? 0) : null)
+        // Once a platform has identity in the measured monthly population,
+        // a shorter window with no signed-in accounts is a valid zero.
+        || (actual.dauAccounts ?? null) !== (expectedAccounts === null ? null : Number(expected.dauAccounts ?? 0))
+        || (actual.wauAccounts ?? null) !== (expectedAccounts === null ? null : Number(expected.wauAccounts ?? 0))
         || (actual.mauAccounts ?? null) !== expectedAccounts;
     });
     record('dashboard_platform_rows_match_bigquery', platformMismatches.length === 0,

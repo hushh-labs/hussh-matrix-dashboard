@@ -55,6 +55,9 @@ jobs:
       - name: Verify analyst product routing
         run: npm run test:agent:product-routing
 
+      - name: Verify rollback traffic snapshot
+        run: npm run test:deploy:traffic-snapshot
+
       - name: Build app
         run: npm run build
 
@@ -106,24 +109,13 @@ jobs:
           echo "Cloud Build did not finish within the expected window."
           exit 1
 
-      - name: Capture current production revision
+      - name: Capture current production traffic split
         run: |
-          PREVIOUS_REVISION="$(gcloud run services describe "${SERVICE}" \
+          PREVIOUS_TRAFFIC="$(gcloud run services describe "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
-            --format=json | node -e '
-              let input = "";
-              process.stdin.on("data", (chunk) => { input += chunk; });
-              process.stdin.on("end", () => {
-                const service = JSON.parse(input);
-                const traffic = service.status?.traffic ?? [];
-                const live = traffic.find((entry) => Number(entry.percent) === 100)
-                  ?? traffic.toSorted((a, b) => Number(b.percent ?? 0) - Number(a.percent ?? 0))[0];
-                if (!live?.revisionName) process.exit(1);
-                process.stdout.write(live.revisionName);
-              });
-            ')"
-          echo "PREVIOUS_REVISION=${PREVIOUS_REVISION}" >> "${GITHUB_ENV}"
+            --format=json | node scripts/capture-cloud-run-traffic.mjs)"
+          echo "PREVIOUS_TRAFFIC=${PREVIOUS_TRAFFIC}" >> "${GITHUB_ENV}"
 
       - name: Deploy Cloud Run service
         id: deploy
@@ -262,12 +254,11 @@ jobs:
         run: npm run test:api:public-contract -- --base-url "${PRODUCTION_URL}" --days 7 --timeout-ms 120000
 
       - name: Roll back traffic after failed production verification
-        # The deploy step can fail after update-traffic succeeds (for example,
-        # when the follow-up describe call fails). Do not require its outcome
-        # to be success before restoring the previously serving revision.
-        if: ${{ failure() && env.PREVIOUS_REVISION != '' }}
+        # Deploy itself may change traffic before failing. Restoring the exact
+        # prior allocation is safe even if no traffic change was reached.
+        if: ${{ failure() && env.PREVIOUS_TRAFFIC != '' }}
         run: |
           gcloud run services update-traffic "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
-            --to-revisions="${PREVIOUS_REVISION}=100"
+            --to-revisions="${PREVIOUS_TRAFFIC}"
