@@ -3063,15 +3063,35 @@ ${capabilitySql.isDeliberate}
   // Count app instances and screen-view events separately. Screen class is
   // often a generic UIKit controller, so only firebase_screen is accepted as
   // an actual product screen name. If absent, distinct screens are unknown.
+  // The app's typed route_id on page_view is a better product-behaviour signal.
+  // Redirect/callback routes are navigation plumbing, not screens viewed.
   const iosUsageQuery = `
+    WITH ios_events AS (
+      SELECT event_name, user_pseudo_id,
+        NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), '') AS firebaseScreen,
+        NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'route_id'), '') AS routeId
+      FROM ${table}
+      WHERE ${dateFilter} AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
+    )
     SELECT
       COUNT(*) AS scopedEvents,
       COUNT(DISTINCT IF(${meaningful}, user_pseudo_id, NULL)) AS activeInstallIds,
       COUNTIF(event_name = 'screen_view') AS screenViews,
-      COUNTIF(event_name = 'screen_view' AND NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), '') IS NOT NULL) AS namedScreenViews,
-      COUNT(DISTINCT IF(event_name = 'screen_view', NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), ''), NULL)) AS distinctScreenNames
-    FROM ${table}
-    WHERE ${dateFilter} AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
+      COUNTIF(event_name = 'screen_view' AND firebaseScreen IS NOT NULL) AS namedScreenViews,
+      COUNT(DISTINCT IF(event_name = 'screen_view', firebaseScreen, NULL)) AS distinctScreenNames,
+      COUNTIF(event_name = 'page_view') AS productScreenVisits,
+      COUNTIF(event_name = 'page_view' AND REGEXP_CONTAINS(routeId, r'^[a-z][a-z0-9_]{0,60}$')
+        AND NOT REGEXP_CONTAINS(routeId, r'(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)')) AS namedProductScreenVisits,
+      COUNT(DISTINCT IF(event_name = 'page_view' AND REGEXP_CONTAINS(routeId, r'^[a-z][a-z0-9_]{0,60}$')
+        AND NOT REGEXP_CONTAINS(routeId, r'(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)'), routeId, NULL)) AS distinctProductScreens,
+      ARRAY(
+        SELECT AS STRUCT routeId, COUNT(*) AS visits
+        FROM ios_events
+        WHERE event_name = 'page_view' AND REGEXP_CONTAINS(routeId, r'^[a-z][a-z0-9_]{0,60}$')
+          AND NOT REGEXP_CONTAINS(routeId, r'(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)')
+        GROUP BY routeId ORDER BY visits DESC, routeId LIMIT 5
+      ) AS topProductScreens
+    FROM ios_events
   `;
 
   // Week-1 retention by acquisition cohort: of the people who first appeared in
@@ -3410,12 +3430,21 @@ ${capabilitySql.isDeliberate}
         namedScreenViews: iosUsageAvailable ? toNumber(iosUsageRow.namedScreenViews) : null,
         distinctScreenNames: iosUsageAvailable && toNumber(iosUsageRow.namedScreenViews) > 0
           ? toNumber(iosUsageRow.distinctScreenNames) : null,
+        productScreenVisits: iosUsageAvailable ? toNumber(iosUsageRow.productScreenVisits) : null,
+        namedProductScreenVisits: iosUsageAvailable ? toNumber(iosUsageRow.namedProductScreenVisits) : null,
+        distinctProductScreens: iosUsageAvailable && toNumber(iosUsageRow.namedProductScreenVisits) > 0
+          ? toNumber(iosUsageRow.distinctProductScreens) : null,
+        topProductScreens: iosUsageAvailable && Array.isArray(iosUsageRow.topProductScreens)
+          ? iosUsageRow.topProductScreens.map((screen: Record<string, unknown>) => ({
+            routeId: String(screen.routeId), visits: toNumber(screen.visits),
+          }))
+          : [],
         startDate: range.startDate,
         endDate: range.endDate,
         note: iosUsage.error
           ? 'iOS usage export is temporarily unavailable; no zero is inferred.'
           : iosUsageAvailable
-            ? 'App-install IDs and screen-view events from the One iOS bundle in this reporting property. Generic controller classes do not establish distinct product screens.'
+            ? 'App-install IDs and route-level page_view events from the One iOS bundle in this reporting property. Product screens use safe route IDs; automatic UIKit screen_view events remain a separate diagnostic.'
             : 'No One iOS app events are available in this reporting property and selected range.',
       },
       registeredAccounts: registeredAccounts.data,

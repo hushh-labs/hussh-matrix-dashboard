@@ -829,7 +829,7 @@ export interface OneIosIdentifiedUsers {
   note: string;
 }
 
-/** Selected-range iOS app-instance and screen-view event totals, never people. */
+/** Selected-range iOS app-instance, product-route and controller-view totals, never people. */
 export interface OneIosUsage {
   available: boolean;
   bundleId: string;
@@ -837,6 +837,11 @@ export interface OneIosUsage {
   screenViews: number | null;
   namedScreenViews: number | null;
   distinctScreenNames: number | null;
+  /** One's own route-level page_view events, not automatic UIKit controller events. */
+  productScreenVisits: number | null;
+  namedProductScreenVisits: number | null;
+  distinctProductScreens: number | null;
+  topProductScreens: Array<{ routeId: string; visits: number }>;
   startDate: string;
   endDate: string;
   note: string;
