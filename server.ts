@@ -8258,13 +8258,16 @@ const GOOGLE_OAUTH_CLIENT_ID = (
 ).trim();
 
 const ALLOWED_EMAIL_DOMAINS = (
-  process.env.ALLOWED_EMAIL_DOMAINS || 'hushh.ai,hushhtech.com,hushh.labs'
+  process.env.ALLOWED_EMAIL_DOMAINS || 'hushh.ai,hushhtech.com,hushh.labs,hush1one.com'
 )
   .split(',')
   .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
   .filter(Boolean);
 
-const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '')
+const ALLOWED_EMAILS = (
+  process.env.ALLOWED_EMAILS ||
+  'roopmannvaradharaj@gmail.com,i-akshat@hush1one.com,ankit@hushh.ai,parth@hushh.ai,neelesh1@hushh.ai,23ad052@kpriet.ac.in,sharukhansharukhan926@gmail.com,smirthidharmaiit@gmail.com,divya.rajendranps@gmail.com,jhumma@hushh.ai,manish@hushh.ai,kushal@hushh.ai'
+)
   .split(',')
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
@@ -8289,6 +8292,23 @@ async function verifyGoogleTokenOnServer(idToken: string): Promise<{
   error?: string;
 }> {
   if (!idToken) return { valid: false, authorized: false, error: 'No token provided' };
+
+  if (idToken.startsWith('email-auth:')) {
+    try {
+      const hex = idToken.slice('email-auth:'.length);
+      const email = Buffer.from(hex, 'hex').toString('utf8').toLowerCase().trim();
+      const authorized = isEmailAuthorizedOnServer(email);
+      const nameParts = email.split('@')[0].split('.');
+      const name = nameParts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+      return {
+        valid: true,
+        authorized,
+        user: { email, name, sub: `email-${hex.slice(0, 16)}` },
+      };
+    } catch {
+      return { valid: false, authorized: false, error: 'Invalid session token format' };
+    }
+  }
 
   try {
     if (GOOGLE_OAUTH_CLIENT_ID) {
@@ -8346,7 +8366,7 @@ async function authProtectionMiddleware(
   if (!REQUIRE_AUTH) return next();
 
   // Public auth routes
-  if (req.path === '/api/auth/config' || req.path === '/api/auth/verify') {
+  if (req.path === '/api/auth/config' || req.path === '/api/auth/verify' || req.path === '/api/auth/verify-email') {
     return next();
   }
 
@@ -8357,7 +8377,7 @@ async function authProtectionMiddleware(
   }
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Authentication required. Access restricted to authorized Google accounts.' });
+    res.status(401).json({ error: 'Authentication required. Access restricted to authorized domain accounts.' });
     return;
   }
 
@@ -8413,6 +8433,36 @@ app.post('/api/auth/verify', async (req, res) => {
     return;
   }
   res.json({ authorized: true, user: result.user });
+});
+
+app.post('/api/auth/verify-email', (req, res) => {
+  const { email } = req.body as { email?: string };
+  if (!email || typeof email !== 'string') {
+    res.status(400).json({ error: 'Email address is required' });
+    return;
+  }
+  const normEmail = email.trim().toLowerCase();
+  const authorized = isEmailAuthorizedOnServer(normEmail);
+
+  if (!authorized) {
+    res.status(403).json({
+      authorized: false,
+      message: `Access restricted. ${email} is not an authorized domain or whitelisted email address.`,
+    });
+    return;
+  }
+
+  const nameParts = normEmail.split('@')[0].split('.');
+  const name = nameParts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+
+  res.json({
+    authorized: true,
+    user: {
+      email: normEmail,
+      name,
+      sub: `email-${Buffer.from(normEmail).toString('hex').slice(0, 16)}`,
+    },
+  });
 });
 
 app.post('/api/chat', async (req, res) => {

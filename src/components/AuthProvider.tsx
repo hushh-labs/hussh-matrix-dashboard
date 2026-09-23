@@ -13,6 +13,7 @@ import {
   storeUserSession,
   clearUserSession,
   verifyCredentialWithBackend,
+  verifyEmailAccess,
   DEFAULT_ALLOWED_DOMAINS,
   type AuthUser,
   type AuthConfig,
@@ -24,6 +25,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   signInWithCredential: (credential: string) => Promise<void>;
+  signInWithEmail: (email: string) => Promise<void>;
   signOut: () => void;
   isAuthenticated: boolean;
   isAuthorized: boolean;
@@ -43,6 +45,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   error: null,
   signInWithCredential: async () => {},
+  signInWithEmail: async () => {},
   signOut: () => {},
   isAuthenticated: false,
   isAuthorized: false,
@@ -99,6 +102,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const signInWithEmail = async (email: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await verifyEmailAccess(
+        email,
+        authConfig.allowedDomains,
+        authConfig.allowedEmails
+      );
+
+      if (result.user) {
+        setUser(result.user);
+        storeUserSession(result.user);
+      }
+
+      if (!result.success) {
+        setError(result.error || 'Email authentication failed or address not authorized.');
+      }
+    } catch (err) {
+      console.error('Email sign-in error:', err);
+      setError('An error occurred verifying email access. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const signOut = () => {
     setUser(null);
     setError(null);
@@ -123,6 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         error,
         signInWithCredential,
+        signInWithEmail,
         signOut,
         isAuthenticated,
         isAuthorized,

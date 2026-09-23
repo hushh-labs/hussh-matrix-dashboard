@@ -7,12 +7,13 @@
  */
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ShieldCheck, Lock, AlertCircle, Loader2, KeyRound } from 'lucide-react';
+import { ShieldCheck, Lock, AlertCircle, Loader2, KeyRound, Mail, ArrowRight } from 'lucide-react';
 import { loadGoogleGisScript, type AuthConfig } from '../lib/auth-service';
 
 interface LoginPageProps {
   authConfig: AuthConfig;
   onCredentialResponse: (credential: string) => void;
+  onEmailSubmit: (email: string) => void;
   error?: string | null;
   loading?: boolean;
 }
@@ -20,16 +21,20 @@ interface LoginPageProps {
 export function LoginPage({
   authConfig,
   onCredentialResponse,
+  onEmailSubmit,
   error,
   loading = false,
 }: LoginPageProps) {
   const [gisLoaded, setGisLoaded] = useState(false);
   const [customClientId, setCustomClientId] = useState('');
   const [clientIdInput, setClientIdInput] = useState('');
+  const [emailInput, setEmailInput] = useState('');
   const [showDevOverride, setShowDevOverride] = useState(false);
-  const buttonContainerRef = useRef<HTMLDivElement>(null);
-
+  
   const activeClientId = customClientId || authConfig.clientId || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '';
+  const [authMode, setAuthMode] = useState<'oauth' | 'email'>(activeClientId ? 'oauth' : 'email');
+
+  const buttonContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -42,7 +47,7 @@ export function LoginPage({
   }, []);
 
   useEffect(() => {
-    if (!gisLoaded || !activeClientId || typeof window === 'undefined') return;
+    if (!gisLoaded || !activeClientId || authMode !== 'oauth' || typeof window === 'undefined') return;
 
     const google = (window as any).google;
     if (!google?.accounts?.id) return;
@@ -73,16 +78,24 @@ export function LoginPage({
     } catch (err) {
       console.error('Failed to initialize Google Sign-In button:', err);
     }
-  }, [gisLoaded, activeClientId, onCredentialResponse]);
+  }, [gisLoaded, activeClientId, authMode, onCredentialResponse]);
 
   const handleApplyCustomClientId = (e: FormEvent) => {
     e.preventDefault();
     if (clientIdInput.trim()) {
       setCustomClientId(clientIdInput.trim());
+      setAuthMode('oauth');
     }
   };
 
-  const allowedDomainsList = authConfig.allowedDomains.join(', ');
+  const handleEmailFormSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (emailInput.trim()) {
+      onEmailSubmit(emailInput.trim());
+    }
+  };
+
+  const allowedDomainsList = authConfig.allowedDomains.map((d) => `@${d}`).join(', ');
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-[#0b0c10] px-4 py-12 text-[#f5f5f7] selection:bg-[#007aff]/30">
@@ -114,7 +127,7 @@ export function LoginPage({
           {/* Domain Restriction Badge */}
           <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-[#007aff]/20 bg-[#007aff]/10 px-3 py-1 text-xs font-semibold text-[#3395ff]">
             <ShieldCheck className="h-3.5 w-3.5" />
-            <span>Restricted to @{authConfig.allowedDomains[0] || 'hushh.ai'} domain</span>
+            <span>Restricted to team & company emails</span>
           </div>
         </div>
 
@@ -133,48 +146,105 @@ export function LoginPage({
               <Loader2 className="h-5 w-5 animate-spin text-[#007aff]" />
               <span>Verifying credentials...</span>
             </div>
-          ) : activeClientId ? (
-            <div className="flex flex-col items-center space-y-4">
+          ) : authMode === 'oauth' && activeClientId ? (
+            <div className="flex w-full flex-col items-center space-y-4">
               <div ref={buttonContainerRef} className="min-h-[44px]" />
               {!gisLoaded && (
                 <p className="text-xs font-medium text-[#86868b]">
                   Loading Google Sign-In...
                 </p>
               )}
+
+              <button
+                type="button"
+                onClick={() => setAuthMode('email')}
+                className="mt-2 text-xs font-medium text-[#86868b] hover:text-white transition flex items-center gap-1"
+              >
+                <Mail className="h-3.5 w-3.5 text-[#007aff]" />
+                Or sign in with company email
+              </button>
             </div>
           ) : (
-            <div className="w-full space-y-4 rounded-xl border border-dashed border-white/15 bg-white/[0.02] p-4 text-center">
-              <div className="flex items-center justify-center text-[#ff9500]">
-                <Lock className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-white">Google Client ID Required</p>
-                <p className="mt-1 text-[11px] text-[#86868b]">
-                  Set <code className="rounded bg-white/10 px-1 py-0.5 text-white">VITE_GOOGLE_CLIENT_ID</code> in <code className="rounded bg-white/10 px-1 py-0.5 text-white">.env.local</code> to enable live OAuth.
-                </p>
+            <div className="w-full space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-5 text-left">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#007aff]/30 bg-[#007aff]/15 text-[#007aff]">
+                  <Mail className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Company Email Sign-In</h3>
+                  <p className="text-[11px] text-[#86868b]">
+                    Enter your authorized company or whitelisted email address.
+                  </p>
+                </div>
               </div>
 
-              {!showDevOverride ? (
+              {!activeClientId && (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] text-amber-200/90 leading-relaxed">
+                  Google OAuth Client ID is unconfigured on server. Enter your company email below to test access.
+                </div>
+              )}
+
+              <form onSubmit={handleEmailFormSubmit} className="space-y-3 pt-1">
+                <div>
+                  <label htmlFor="company-email-input" className="block text-[11px] font-semibold text-[#86868b] uppercase tracking-wider mb-1">
+                    Work Email Address
+                  </label>
+                  <input
+                    id="company-email-input"
+                    type="email"
+                    required
+                    placeholder="name@hushh.ai or authorized email..."
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    className="w-full rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:border-[#007aff] focus:ring-1 focus:ring-[#007aff] focus:outline-none transition"
+                  />
+                </div>
+
                 <button
-                  type="button"
-                  onClick={() => setShowDevOverride(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/10"
+                  type="submit"
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#007aff] py-2.5 text-xs font-bold text-white shadow-lg shadow-[#007aff]/25 hover:bg-[#0062cc] active:scale-[0.98] transition"
                 >
-                  <KeyRound className="h-3.5 w-3.5 text-[#007aff]" />
-                  Paste Client ID
+                  <span>Verify & Access Dashboard</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
                 </button>
+              </form>
+
+              {activeClientId && (
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('oauth')}
+                    className="text-xs font-medium text-[#007aff] hover:underline"
+                  >
+                    Switch back to Google OAuth Sign-In
+                  </button>
+                </div>
+              )}
+
+              {!showDevOverride ? (
+                <div className="pt-2 border-t border-white/10 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowDevOverride(true)}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#86868b] hover:text-white transition"
+                  >
+                    <KeyRound className="h-3 w-3 text-[#007aff]" />
+                    Developer? Set custom Google Client ID
+                  </button>
+                </div>
               ) : (
-                <form onSubmit={handleApplyCustomClientId} className="space-y-2 pt-2">
+                <form onSubmit={handleApplyCustomClientId} className="space-y-2 pt-2 border-t border-white/10">
+                  <p className="text-[11px] font-medium text-[#86868b]">Paste Google Client ID:</p>
                   <input
                     type="text"
-                    placeholder="Enter Google Client ID..."
+                    placeholder="e.g. 123456789-abc.apps.googleusercontent.com"
                     value={clientIdInput}
                     onChange={(e) => setClientIdInput(e.target.value)}
                     className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs font-mono text-white placeholder-white/30 focus:border-[#007aff] focus:outline-none"
                   />
                   <button
                     type="submit"
-                    className="w-full rounded-lg bg-[#007aff] py-1.5 text-xs font-bold text-white hover:bg-[#0062cc] transition"
+                    className="w-full rounded-lg border border-white/20 bg-white/10 py-1.5 text-xs font-bold text-white hover:bg-white/20 transition"
                   >
                     Apply Client ID
                   </button>
@@ -192,3 +262,4 @@ export function LoginPage({
     </div>
   );
 }
+

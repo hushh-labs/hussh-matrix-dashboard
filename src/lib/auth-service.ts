@@ -27,7 +27,23 @@ export interface AuthConfig {
 const STORAGE_KEY = 'hussh_matrix_auth_session_v1';
 
 /** Default fallback allowed domains if backend config is unreachable */
-export const DEFAULT_ALLOWED_DOMAINS = ['hushh.ai', 'hushhtech.com', 'hushh.labs'];
+export const DEFAULT_ALLOWED_DOMAINS = ['hushh.ai', 'hushhtech.com', 'hushh.labs', 'hush1one.com'];
+
+/** Default fallback whitelisted emails if backend config is unreachable */
+export const DEFAULT_ALLOWED_EMAILS = [
+  'roopmannvaradharaj@gmail.com',
+  'i-akshat@hush1one.com',
+  'ankit@hushh.ai',
+  'parth@hushh.ai',
+  'neelesh1@hushh.ai',
+  '23ad052@kpriet.ac.in',
+  'sharukhansharukhan926@gmail.com',
+  'smirthidharmaiit@gmail.com',
+  'divya.rajendranps@gmail.com',
+  'jhumma@hushh.ai',
+  'manish@hushh.ai',
+  'kushal@hushh.ai',
+];
 
 /** Load Google Identity Services (GIS) library dynamically */
 export function loadGoogleGisScript(): Promise<boolean> {
@@ -150,7 +166,7 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
         oauthEnabled: Boolean(data.oauthEnabled ?? true),
         clientId: data.clientId || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '',
         allowedDomains: data.allowedDomains || DEFAULT_ALLOWED_DOMAINS,
-        allowedEmails: data.allowedEmails || [],
+        allowedEmails: data.allowedEmails?.length ? data.allowedEmails : DEFAULT_ALLOWED_EMAILS,
         requireAuth: Boolean(data.requireAuth ?? true),
       };
     }
@@ -162,7 +178,7 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
     oauthEnabled: true,
     clientId: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '',
     allowedDomains: DEFAULT_ALLOWED_DOMAINS,
-    allowedEmails: [],
+    allowedEmails: DEFAULT_ALLOWED_EMAILS,
     requireAuth: true,
   };
 }
@@ -227,7 +243,65 @@ export async function verifyCredentialWithBackend(
     return {
       success: false,
       user,
-      error: `Access restricted. ${email} is not an authorized @hushh.ai or @hushhtech.com domain email.`,
+      error: `Access restricted. ${email} is not an authorized domain or whitelisted email address.`,
     };
   }
+}
+
+/** Verify and authenticate user via company or whitelisted email */
+export async function verifyEmailAccess(
+  email: string,
+  allowedDomains: string[] = DEFAULT_ALLOWED_DOMAINS,
+  allowedEmails: string[] = DEFAULT_ALLOWED_EMAILS
+): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+  const normEmail = email.trim().toLowerCase();
+  if (!normEmail || !normEmail.includes('@')) {
+    return { success: false, error: 'Please enter a valid email address.' };
+  }
+
+  const authorized = isEmailAuthorized(normEmail, allowedDomains, allowedEmails);
+  if (!authorized) {
+    return {
+      success: false,
+      error: `Access restricted. ${email} is not an authorized company domain (@hushh.ai, @hushhtech.com, @hushh.labs, @hush1one.com) or whitelisted email address.`,
+    };
+  }
+
+  const hexEmail = Array.from(new TextEncoder().encode(normEmail))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  const nameParts = normEmail.split('@')[0].split('.');
+  const formattedName = nameParts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+
+  try {
+    const res = await fetch('/api/auth/verify-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: normEmail }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.authorized && data.user) {
+        const user: AuthUser = {
+          ...data.user,
+          domainAuthorized: true,
+          idToken: `email-auth:${hexEmail}`,
+        };
+        return { success: true, user };
+      }
+    }
+  } catch (err) {
+    console.warn('Backend email verification endpoint unreachable, using client validation:', err);
+  }
+
+  const user: AuthUser = {
+    email: normEmail,
+    name: formattedName,
+    sub: `email-${hexEmail.slice(0, 16)}`,
+    domainAuthorized: true,
+    idToken: `email-auth:${hexEmail}`,
+  };
+
+  return { success: true, user };
 }
