@@ -967,8 +967,19 @@ export interface OneLocationBehaviorAnalytics {
 
 export interface OnePlatformUsage {
   platform: string;
+  /** All-event app-instance/browser IDs; retained for existing diagnostics. */
   users: number;
   events: number;
+  /** Distinct identifiers with meaningful activity during the selected range. */
+  activeDeviceIds: number;
+  /** Signed-in account IDs in this platform's selected-range activity. */
+  activeAccounts: number;
+  /** Typed route events, including callbacks and routes without usable names. */
+  routeVisits: number;
+  namedRouteVisits: number;
+  /** Null when no named product route was observed. */
+  distinctScreens: number | null;
+  topProductScreens: Array<{ routeId: string; visits: number }>;
 }
 
 export interface OneAcquisitionRow {
@@ -1032,6 +1043,7 @@ export interface OneAppSummary {
   locationFeatures: OneLocationFeatureUsage[];
   locationAnalytics: OneLocationBehaviorAnalytics;
   featureUsage: Record<string, { devices: number; signals: number }>;
+  platformsAvailable: boolean;
   platforms: OnePlatformUsage[];
   acquisition: OneAcquisitionRow[];
   daily: OneDailyPoint[];

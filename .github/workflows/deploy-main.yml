@@ -235,6 +235,14 @@ jobs:
           BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
         run: npm run test:metrics:ios-usage
 
+      - name: Reconcile One web, iOS and Android activity KPIs
+        env:
+          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
+          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
+        run: |
+          npm run test:metrics:one-platforms
+          npm run test:metrics:one-platforms -- --environment uat
+
       - name: Reconcile One registered accounts with Firebase Authentication
         env:
           METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}

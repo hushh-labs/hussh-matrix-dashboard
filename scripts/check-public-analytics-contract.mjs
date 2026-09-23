@@ -132,6 +132,33 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
   if (summary.activeByPlatformAvailable === false && summary.activeByPlatform?.length) {
     findings.push(`${label}.activeByPlatform: unavailable query must not publish partial or fabricated rows`);
   }
+  if (typeof summary.platformsAvailable !== 'boolean') {
+    findings.push(`${label}.platformsAvailable: expected explicit source availability`);
+  }
+  if (summary.platformsAvailable === false && summary.platforms?.length) {
+    findings.push(`${label}.platforms: unavailable query must not publish fabricated platform rows`);
+  }
+  for (const row of summary.platforms || []) {
+    if (!['WEB', 'IOS', 'ANDROID'].includes(row.platform)) findings.push(`${label}.platforms: unexpected One platform`);
+    const values = [row.users, row.events, row.activeDeviceIds, row.activeAccounts,
+      row.routeVisits, row.namedRouteVisits];
+    if (!values.every((value) => Number.isSafeInteger(value) && value >= 0)
+      || row.activeDeviceIds > row.users || row.activeAccounts > totalUsers
+      || row.routeVisits > row.events || row.namedRouteVisits > row.routeVisits) {
+      findings.push(`${label}.platforms.${row.platform}: invalid selected-range counts`);
+    }
+    if (row.namedRouteVisits === 0 ? row.distinctScreens !== null
+      : !Number.isSafeInteger(row.distinctScreens) || row.distinctScreens < 1 || row.distinctScreens > row.namedRouteVisits) {
+      findings.push(`${label}.platforms.${row.platform}: distinct screens must match named-route availability`);
+    }
+    if (!Array.isArray(row.topProductScreens) || row.topProductScreens.length > 5
+      || row.topProductScreens.some((screen) => !/^[a-z][a-z0-9_]{0,60}$/.test(screen.routeId)
+        || /(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)/.test(screen.routeId)
+        || !Number.isSafeInteger(screen.visits) || screen.visits < 1)
+      || row.topProductScreens.reduce((sum, screen) => sum + screen.visits, 0) > row.namedRouteVisits) {
+      findings.push(`${label}.platforms.${row.platform}: top routes must be safe aggregates`);
+    }
+  }
   // Optional during the dashboard rollout; once present it must never turn a
   // missing iOS export into fabricated zero-account KPIs.
   const ios = summary.iosIdentifiedUsers;
@@ -184,6 +211,13 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
       findings.push(`${label}.iosUsage: unavailable export must not publish zero counts`);
     }
   }
+  const iosPlatform = summary.platforms?.find((row) => row.platform === 'IOS');
+  if (iosUsage?.available && iosPlatform && (
+    iosPlatform.activeDeviceIds !== iosUsage.activeInstallIds
+    || iosPlatform.routeVisits !== iosUsage.productScreenVisits
+    || iosPlatform.namedRouteVisits !== iosUsage.namedProductScreenVisits
+    || iosPlatform.distinctScreens !== iosUsage.distinctProductScreens
+  )) findings.push(`${label}.platforms.IOS: selected-range counts differ from dedicated iOS diagnostics`);
   for (const window of ['dau', 'wau', 'mau']) {
     const devices = Number(active?.[window] ?? 0);
     const identifiedDevices = Number(identified?.identifiedDevices?.[window] ?? 0);
