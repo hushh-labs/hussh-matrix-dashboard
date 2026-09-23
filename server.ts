@@ -2236,7 +2236,7 @@ const ONE_APP_UAT_HOST = process.env.ONE_APP_UAT_WEB_HOST || 'uat.one.hushh.ai';
 
 function oneAppSurfaceFilter(webHost: string): string {
   return `(
-      platform IN ('IOS', 'ANDROID')
+      (platform IN ('IOS', 'ANDROID') AND app_info.id = 'com.hushh.app')
       OR (
         platform = 'WEB'
         AND NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) = ${sqlStringLiteral(webHost)}
@@ -2483,6 +2483,8 @@ async function fetchOneAppSummary(
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
   const surfaceFilter = oneAppSurfaceFilter(webHost);
+  const backgroundNames = sqlNameList(ONE_BACKGROUND_EVENTS);
+  const meaningful = `event_name NOT IN (${backgroundNames})`;
   // GA4 app-instance ids are scoped to a stream/platform. Always carry that
   // namespace into cross-platform aggregates so a coincidental opaque-id
   // collision cannot merge two devices.
@@ -2681,13 +2683,43 @@ ${capabilitySql.isDeliberate}
   `;
 
   const platformQuery = `
-    SELECT
-      COALESCE(platform, 'unknown') AS platform,
-      COUNT(DISTINCT user_pseudo_id) AS users,
-      COUNT(*) AS events
-    FROM ${table}
-    WHERE ${dateFilter}
-    GROUP BY platform
+    WITH scoped AS (
+      SELECT platform, user_pseudo_id, NULLIF(user_id, '') AS accountId,
+        event_name,
+        NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'route_id'), '') AS routeId
+      FROM ${table}
+      WHERE ${dateFilter} AND platform IN ('WEB', 'IOS', 'ANDROID')
+    ), named_routes AS (
+      SELECT platform, routeId
+      FROM scoped
+      WHERE event_name = 'page_view' AND REGEXP_CONTAINS(routeId, r'^[a-z][a-z0-9_]{0,60}$')
+        AND NOT REGEXP_CONTAINS(routeId, r'(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)')
+    ), route_counts AS (
+      SELECT platform, routeId, COUNT(*) AS visits
+      FROM named_routes GROUP BY platform, routeId
+    ), top_routes AS (
+      SELECT platform,
+        ARRAY_AGG(STRUCT(routeId, visits) ORDER BY visits DESC, routeId LIMIT 5) AS topProductScreens
+      FROM route_counts GROUP BY platform
+    ), summary AS (
+      SELECT platform,
+        COUNT(DISTINCT user_pseudo_id) AS users,
+        COUNT(*) AS events,
+        COUNT(DISTINCT IF(${meaningful}, user_pseudo_id, NULL)) AS activeDeviceIds,
+        COUNT(DISTINCT IF(${meaningful}, accountId, NULL)) AS activeAccounts,
+        COUNTIF(event_name = 'page_view') AS routeVisits
+      FROM scoped GROUP BY platform
+    ), named_summary AS (
+      SELECT platform, COUNT(*) AS namedRouteVisits, COUNT(DISTINCT routeId) AS distinctScreens
+      FROM named_routes GROUP BY platform
+    )
+    SELECT summary.*,
+      COALESCE(named_summary.namedRouteVisits, 0) AS namedRouteVisits,
+      COALESCE(named_summary.distinctScreens, 0) AS distinctScreens,
+      top_routes.topProductScreens
+    FROM summary
+    LEFT JOIN named_summary USING (platform)
+    LEFT JOIN top_routes USING (platform)
     ORDER BY users DESC
   `;
 
@@ -2807,9 +2839,6 @@ ${capabilitySql.isDeliberate}
   // length. DAU/WAU/MAU have fixed meanings -- 1, 7 and 30 days -- and would
   // stop meaning anything if a 7-day range silently redefined "monthly".
   // ---------------------------------------------------------------------
-  const backgroundNames = sqlNameList(ONE_BACKGROUND_EVENTS);
-  const meaningful = `event_name NOT IN (${backgroundNames})`;
-
   // Read a few days wider than thirty so a full 30-day window is still
   // available after anchoring back to the last finalized daily export. Active
   // KPIs deliberately exclude intraday_*: at the start of a UTC day that table
@@ -3647,10 +3676,20 @@ ${capabilitySql.isDeliberate}
         String(row.featureKey),
         { devices: toNumber(row.devices), signals: toNumber(row.signals) },
       ])),
-      platforms: platforms.rows.map((row) => ({
+      platformsAvailable: !platforms.error,
+      platforms: (platforms.error ? [] : platforms.rows).map((row) => ({
         platform: String(row.platform),
         users: toNumber(row.users),
         events: toNumber(row.events),
+        activeDeviceIds: toNumber(row.activeDeviceIds),
+        activeAccounts: toNumber(row.activeAccounts),
+        routeVisits: toNumber(row.routeVisits),
+        namedRouteVisits: toNumber(row.namedRouteVisits),
+        distinctScreens: toNumber(row.namedRouteVisits) > 0 ? toNumber(row.distinctScreens) : null,
+        topProductScreens: Array.isArray(row.topProductScreens)
+          ? row.topProductScreens.map((screen: Record<string, unknown>) => ({
+            routeId: String(screen.routeId), visits: toNumber(screen.visits),
+          })) : [],
       })),
       acquisition: acquisition.rows.map((row) => ({
         source: String(row.source),

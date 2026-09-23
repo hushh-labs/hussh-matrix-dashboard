@@ -308,8 +308,6 @@ function IosIdentifiedUsers({ one }: { one: OneAppSummary }) {
 
 function OneAtAGlance({ one }: { one: OneAppSummary }) {
   const registered = one.registeredAccounts;
-  const iosAccounts = one.iosIdentifiedUsers;
-  const ios = one.iosUsage;
   const tiles = [
     {
       group: 'Users', label: 'Total registered accounts',
@@ -322,41 +320,18 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
       detail: 'Firebase accounts created during selected dates · shared production/UAT realm',
     },
     {
-      group: 'Users', label: 'Active iOS accounts',
-      value: iosAccounts?.available ? iosAccounts.totalUsers : null,
-      detail: 'Signed-in accounts active during selected dates · once per account',
-    },
-    {
-      group: 'Devices', label: 'Active iOS app installs',
-      value: ios?.available ? ios.activeInstallIds : null,
-      detail: 'App-instance IDs active during selected dates · not physical phones',
-    },
-    {
-      group: 'Screens', label: 'One iOS route visits',
-      value: ios?.available ? ios.productScreenVisits : null,
-      detail: 'Route opens · repeat visits count again; callbacks may appear here',
-    },
-    {
-      group: 'Screens', label: 'Different One screens visited',
-      value: ios?.available ? ios.distinctProductScreens : null,
-      detail: !ios?.available
-        ? 'No One iOS app data in this reporting property and date range'
-        : ios.namedProductScreenVisits === 0
-          ? 'Not tracked: route names are missing'
-          : 'Distinct named screens · unknown and callback routes excluded',
+      group: 'Users', label: 'Active signed-in accounts',
+      value: one.identifiedUsers?.selectedRange.totalUsers ?? null,
+      detail: 'Across measured One web and app activity · one count per account, not a sum of platforms',
     },
   ];
-  const screenLabels: Record<string, string> = {
-    one_dashboard: 'One home', chat: 'One chat', connect: 'Connect', one_location: 'Location',
-    one_setup: 'Setup', feed: 'Feed', login: 'Sign in', kai_home: 'Legacy home',
-  };
 
   return (
     <div className="mb-5 space-y-3">
       <div>
         <h3 className="text-lg font-semibold text-[#1d1d1f]">One at a glance</h3>
         <p className="mt-1 text-sm text-[#6e6e73]">
-          Users are accounts. Devices are app installations. Screen visits are actions. Never add these numbers together.
+          User reporting counts signed-in account IDs, not proven unique humans. Browser/app identifiers and screen visits are separate diagnostics below.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -371,29 +346,83 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
           </div>
         ))}
       </div>
-      {ios?.available && ios.topProductScreens.length > 0 && (
-        <div className={cn(appleCard, 'p-4')}>
-          <p className="text-sm font-semibold text-[#1d1d1f]">Most visited One iOS screens</p>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            {ios.topProductScreens.map((screen) => (
-              <div key={screen.routeId} className="rounded-xl bg-[#f5f5f7] p-3">
-                <p className="text-xs font-semibold text-[#6e6e73]">
-                  {screenLabels[screen.routeId] ?? screen.routeId.replaceAll('_', ' ')}
-                </p>
-                <p className="mt-1 text-xl font-semibold tabular-nums text-[#1d1d1f]">{exactAccountCount(screen.visits)}</p>
-                <p className="text-xs text-[#86868b]">visits</p>
-              </div>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-[#6e6e73]">
-            {exactAccountCount(ios.namedProductScreenVisits ?? 0)} of {exactAccountCount(ios.productScreenVisits ?? 0)} route visits map to named One screens. Unknown routes, sign-out and callbacks are excluded from the screen ranking. Automatic iOS controller views are not added.
-          </p>
-        </div>
-      )}
       <p className="text-xs leading-5 text-[#6e6e73]">
-        All iOS activity cards use {ios?.startDate ?? one.range?.startDate} to {ios?.endDate ?? one.range?.endDate} and the One iOS bundle. Registered total is a current account snapshot, not a date-range total. GA4 export can lag; anonymous iOS usage is excluded only from the account card.
+        Active accounts and new registrations use {one.range?.startDate} to {one.range?.endDate}; total registrations are a current shared Firebase snapshot. Anonymous activity is excluded from account counts. Production and UAT use the same Firebase identity realm.
       </p>
     </div>
+  );
+}
+
+const SCREEN_LABELS: Record<string, string> = {
+  one_dashboard: 'One home', chat: 'One chat', connect: 'Connect', one_location: 'Location',
+  one_setup: 'Setup', feed: 'Feed', login: 'Sign in', kai_home: 'Legacy home',
+};
+
+function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; environment: 'production' | 'uat' }) {
+  if (one.platformsAvailable === false) {
+    return <p className={cn(appleCard, 'mb-5 p-5 text-sm font-semibold text-[#8a5a04]')} role="status">
+      Platform behaviour is temporarily unavailable from the GA4 export. No platform counts are shown as zero.
+    </p>;
+  }
+
+  const platformCards = [
+    { key: 'WEB', title: 'One web', scope: 'one.hushh.ai browsers only' },
+    { key: 'IOS', title: 'One iOS', scope: 'com.hushh.app iOS app instances' },
+    { key: 'ANDROID', title: 'One Android', scope: 'com.hushh.app Android app instances · release status unverified' },
+  ];
+
+  return (
+    <section className="mb-5 space-y-3" aria-label="One activity by platform">
+      <div>
+        <h3 className="text-lg font-semibold text-[#1d1d1f]">One activity by platform</h3>
+        <p className="mt-1 text-sm text-[#6e6e73]">
+          Same selected dates for each surface. Signed-in accounts, browser/app IDs and screen visits answer different questions.
+        </p>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        {platformCards.map(({ key, title, scope }) => {
+          const row = one.platforms.find((item) => item.platform.toUpperCase() === key);
+          const accountsMeasured = row && (row.activeAccounts > 0 || (key === 'IOS' && one.iosIdentifiedUsers?.available));
+          return (
+            <div key={key} className={cn(appleCard, 'p-5')}>
+              <p className="text-base font-semibold text-[#1d1d1f]">{title}</p>
+              <p className="mt-1 text-xs leading-5 text-[#6e6e73]">{scope}</p>
+              {!row ? (
+                <p className="mt-5 text-sm font-semibold text-[#8a5a04]">No telemetry observed in this reporting property and date range.</p>
+              ) : (
+                <>
+                  <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4">
+                    <div><dt className="text-xs text-[#6e6e73]">Active signed-in accounts</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{accountsMeasured ? exactAccountCount(row.activeAccounts) : 'Not measurable'}</dd></div>
+                    <div><dt className="text-xs text-[#6e6e73]">Active {key === 'WEB' ? 'browser' : 'app-instance'} IDs</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{exactAccountCount(row.activeDeviceIds)}</dd></div>
+                    <div><dt className="text-xs text-[#6e6e73]">Named screen visits</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{exactAccountCount(row.namedRouteVisits)}</dd></div>
+                    <div><dt className="text-xs text-[#6e6e73]">Different named screens</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{row.distinctScreens === null ? 'Not available' : exactAccountCount(row.distinctScreens)}</dd></div>
+                  </dl>
+                  {row.topProductScreens.length > 0 && (
+                    <div className="mt-5 border-t border-black/5 pt-4">
+                      <p className="text-xs font-bold uppercase tracking-wide text-[#6e6e73]">Most visited screens</p>
+                      <ol className="mt-2 space-y-1 text-xs text-[#3a3a3c]">
+                        {row.topProductScreens.map((screen) => <li key={screen.routeId} className="flex justify-between gap-3"><span>{SCREEN_LABELS[screen.routeId] ?? screen.routeId.replaceAll('_', ' ')}</span><span className="font-semibold tabular-nums">{exactAccountCount(screen.visits)}</span></li>)}
+                      </ol>
+                    </div>
+                  )}
+                  <p className="mt-4 text-xs leading-5 text-[#6e6e73]">
+                    {exactAccountCount(row.namedRouteVisits)} of {exactAccountCount(row.routeVisits)} route visits have usable screen names. Repeat visits count again; unknown, sign-out and callback routes do not count as named screens.
+                  </p>
+                  {!accountsMeasured && <p className="mt-2 text-xs font-semibold text-[#8a5a04]">No stable account ID was observed here; the app/browser IDs cannot be converted into a user count.</p>}
+                </>
+              )}
+              {key === 'ANDROID' && <p className="mt-4 rounded-xl bg-[#fffaf0] p-3 text-xs font-semibold leading-5 text-[#72510b]">Android release status is not connected. Per the product team, current activity is pre-launch/test telemetry; do not treat these IDs as public users or downloads.</p>}
+            </div>
+          );
+        })}
+      </div>
+      {environment === 'uat' && !one.platforms.some((row) => row.platform === 'IOS' || row.platform === 'ANDROID') && (
+        <p className="rounded-xl border border-[#c7ddff] bg-[#f5f9ff] p-3 text-xs font-semibold leading-5 text-[#174b8a]">
+          No native rows reached the UAT GA4 property in this range. That does not tell us which backend the app used: mobile events tagged <code>env=uat</code> can appear in the production GA4 property and are shown there separately.
+        </p>
+      )}
+      <p className="text-xs leading-5 text-[#6e6e73]">These platform account rows can overlap and must not be added. The global active-account card deduplicates account IDs across surfaces. Store downloads, crashes and physical devices need separate sources and are not measured by these cards.</p>
+    </section>
   );
 }
 
@@ -1323,6 +1352,7 @@ export function OneAppPanel({
           </div>
         </div>
         <OneAtAGlance one={activeData} />
+        <PlatformsAtAGlance one={activeData} environment={environment} />
         <details className={cn(appleCard, 'mb-4 p-4 text-sm leading-6 text-[#3a3a3c]')}>
           <summary className="cursor-pointer font-semibold text-[#1d1d1f]">Plain-English guide to the numbers on this page</summary>
           <div className="mt-3 grid gap-x-6 gap-y-2 md:grid-cols-2">

@@ -51,6 +51,14 @@ identifiers, paths, messages, locations, or user-authored content.
 - One iOS route behaviour is measurable through typed `page_view` events with
   `route_id`. Automatic Firebase `screen_view` events have no product screen
   names and include system controller classes; keep them as diagnostics.
+- The One App landing section now shows web, iOS and Android separately for
+  selected-range signed-in account IDs, active browser/app-instance IDs, named
+  route visits and top screens. The global active-account number is distinct
+  across the measured surfaces; platform account rows may overlap and are not
+  additive. Native rows are scoped to the exact `com.hushh.app` app ID.
+- A platform without observed stable account IDs says **not measurable** for
+  signed-in users. In particular Android's pre-launch telemetry must not be
+  promoted to a public audience count merely because app-instance IDs exist.
 - The dashboard's App Store Connect endpoint reports **not connected** for
   App Store and TestFlight metrics. No store download number should be inferred
   from GA4.
@@ -71,7 +79,8 @@ but not distinct screens or accounts. Verify sign-out clears `user_id`, and
 that test builds do not enter public acquisition KPIs.
 
 The dashboard release gate independently reconciles its account, app-instance
-and route aggregates against the GA4/Firebase sources. Once store connections
+and route aggregates against the GA4/Firebase sources, including web/iOS/Android
+platform rows and screen rankings. Once store connections
 are available, add separate store-versus-dashboard contract checks; store and
 GA4 totals are different populations and need not be numerically equal.
 
