@@ -27,6 +27,8 @@ export function inferProductFromQuestion(text: string): ProductKey | 'all' {
 
 export function isOneEnvironmentSplitQuestion(text: string): boolean {
   const lower = text.toLowerCase();
-  return /\b(?:one|kai)\b/.test(lower)
-    && /(uat|production|prod|separat|split|compare)/.test(lower);
+  if (!/\b(?:one|kai)\b/.test(lower) || !/\buat\b/.test(lower)) return false;
+  // Merely selecting either environment is not a split request. The
+  // comparison word must be explicit; word boundaries avoid "product".
+  return /\b(?:compare|comparison|versus|vs|split|separate|separately|difference)\b/.test(lower);
 }
