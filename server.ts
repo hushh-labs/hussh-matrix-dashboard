@@ -8293,23 +8293,6 @@ async function verifyGoogleTokenOnServer(idToken: string): Promise<{
 }> {
   if (!idToken) return { valid: false, authorized: false, error: 'No token provided' };
 
-  if (idToken.startsWith('email-auth:')) {
-    try {
-      const hex = idToken.slice('email-auth:'.length);
-      const email = Buffer.from(hex, 'hex').toString('utf8').toLowerCase().trim();
-      const authorized = isEmailAuthorizedOnServer(email);
-      const nameParts = email.split('@')[0].split('.');
-      const name = nameParts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-      return {
-        valid: true,
-        authorized,
-        user: { email, name, sub: `email-${hex.slice(0, 16)}` },
-      };
-    } catch {
-      return { valid: false, authorized: false, error: 'Invalid session token format' };
-    }
-  }
-
   try {
     if (GOOGLE_OAUTH_CLIENT_ID) {
       const { OAuth2Client } = await import('google-auth-library');
@@ -8366,7 +8349,7 @@ async function authProtectionMiddleware(
   if (!REQUIRE_AUTH) return next();
 
   // Public auth routes
-  if (req.path === '/api/auth/config' || req.path === '/api/auth/verify' || req.path === '/api/auth/verify-email') {
+  if (req.path === '/api/auth/config' || req.path === '/api/auth/verify') {
     return next();
   }
 
@@ -8433,36 +8416,6 @@ app.post('/api/auth/verify', async (req, res) => {
     return;
   }
   res.json({ authorized: true, user: result.user });
-});
-
-app.post('/api/auth/verify-email', (req, res) => {
-  const { email } = req.body as { email?: string };
-  if (!email || typeof email !== 'string') {
-    res.status(400).json({ error: 'Email address is required' });
-    return;
-  }
-  const normEmail = email.trim().toLowerCase();
-  const authorized = isEmailAuthorizedOnServer(normEmail);
-
-  if (!authorized) {
-    res.status(403).json({
-      authorized: false,
-      message: `Access restricted. ${email} is not an authorized domain or whitelisted email address.`,
-    });
-    return;
-  }
-
-  const nameParts = normEmail.split('@')[0].split('.');
-  const name = nameParts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-
-  res.json({
-    authorized: true,
-    user: {
-      email: normEmail,
-      name,
-      sub: `email-${Buffer.from(normEmail).toString('hex').slice(0, 16)}`,
-    },
-  });
 });
 
 app.post('/api/chat', async (req, res) => {

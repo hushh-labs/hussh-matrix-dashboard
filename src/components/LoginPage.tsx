@@ -1,19 +1,10 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- *
- * Google OAuth 2.0 Sign-In Gate for Hussh Matrix Dashboard.
- * Rendered when a user is not authenticated.
- */
-
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ShieldCheck, Lock, AlertCircle, Loader2, KeyRound, Mail, ArrowRight } from 'lucide-react';
+import { ShieldCheck, Lock, AlertCircle, Loader2, KeyRound } from 'lucide-react';
 import { loadGoogleGisScript, type AuthConfig } from '../lib/auth-service';
 
 interface LoginPageProps {
   authConfig: AuthConfig;
   onCredentialResponse: (credential: string) => void;
-  onEmailSubmit: (email: string) => void;
   error?: string | null;
   loading?: boolean;
 }
@@ -21,19 +12,15 @@ interface LoginPageProps {
 export function LoginPage({
   authConfig,
   onCredentialResponse,
-  onEmailSubmit,
   error,
   loading = false,
 }: LoginPageProps) {
   const [gisLoaded, setGisLoaded] = useState(false);
   const [customClientId, setCustomClientId] = useState('');
   const [clientIdInput, setClientIdInput] = useState('');
-  const [emailInput, setEmailInput] = useState('');
   const [showDevOverride, setShowDevOverride] = useState(false);
   
   const activeClientId = customClientId || authConfig.clientId || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '';
-  const [authMode, setAuthMode] = useState<'oauth' | 'email'>(activeClientId ? 'oauth' : 'email');
-
   const buttonContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,7 +34,7 @@ export function LoginPage({
   }, []);
 
   useEffect(() => {
-    if (!gisLoaded || !activeClientId || authMode !== 'oauth' || typeof window === 'undefined') return;
+    if (!gisLoaded || !activeClientId || typeof window === 'undefined') return;
 
     const google = (window as any).google;
     if (!google?.accounts?.id) return;
@@ -78,20 +65,12 @@ export function LoginPage({
     } catch (err) {
       console.error('Failed to initialize Google Sign-In button:', err);
     }
-  }, [gisLoaded, activeClientId, authMode, onCredentialResponse]);
+  }, [gisLoaded, activeClientId, onCredentialResponse]);
 
   const handleApplyCustomClientId = (e: FormEvent) => {
     e.preventDefault();
     if (clientIdInput.trim()) {
       setCustomClientId(clientIdInput.trim());
-      setAuthMode('oauth');
-    }
-  };
-
-  const handleEmailFormSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (emailInput.trim()) {
-      onEmailSubmit(emailInput.trim());
     }
   };
 
@@ -121,13 +100,13 @@ export function LoginPage({
             Team Access Control
           </h1>
           <p className="mt-2 text-xs font-medium text-[#86868b]">
-            Internal analytics & performance center. Authentication required to view telemetry.
+            Internal analytics & performance center. Google authentication required to view telemetry.
           </p>
 
           {/* Domain Restriction Badge */}
           <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-[#007aff]/20 bg-[#007aff]/10 px-3 py-1 text-xs font-semibold text-[#3395ff]">
             <ShieldCheck className="h-3.5 w-3.5" />
-            <span>Restricted to team & company emails</span>
+            <span>Restricted to @hushh.ai & whitelisted team emails</span>
           </div>
         </div>
 
@@ -144,9 +123,9 @@ export function LoginPage({
           {loading ? (
             <div className="flex min-h-[50px] items-center gap-2 text-sm font-semibold text-[#86868b]">
               <Loader2 className="h-5 w-5 animate-spin text-[#007aff]" />
-              <span>Verifying credentials...</span>
+              <span>Verifying Google identity token...</span>
             </div>
-          ) : authMode === 'oauth' && activeClientId ? (
+          ) : activeClientId ? (
             <div className="flex w-full flex-col items-center space-y-4">
               <div ref={buttonContainerRef} className="min-h-[44px]" />
               {!gisLoaded && (
@@ -154,97 +133,40 @@ export function LoginPage({
                   Loading Google Sign-In...
                 </p>
               )}
-
-              <button
-                type="button"
-                onClick={() => setAuthMode('email')}
-                className="mt-2 text-xs font-medium text-[#86868b] hover:text-white transition flex items-center gap-1"
-              >
-                <Mail className="h-3.5 w-3.5 text-[#007aff]" />
-                Or sign in with company email
-              </button>
             </div>
           ) : (
-            <div className="w-full space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-5 text-left">
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#007aff]/30 bg-[#007aff]/15 text-[#007aff]">
-                  <Mail className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">Company Email Sign-In</h3>
-                  <p className="text-[11px] text-[#86868b]">
-                    Enter your authorized company or whitelisted email address.
-                  </p>
-                </div>
+            <div className="w-full space-y-4 rounded-xl border border-dashed border-white/15 bg-white/[0.02] p-5 text-center">
+              <div className="flex items-center justify-center text-[#ff9500]">
+                <Lock className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">Google OAuth Client ID Required</p>
+                <p className="mt-1 text-[11px] text-[#86868b]">
+                  Set <code className="rounded bg-white/10 px-1 py-0.5 text-white">GOOGLE_OAUTH_CLIENT_ID</code> in environment variables (Cloud Run or <code className="rounded bg-white/10 px-1 py-0.5 text-white">.env.local</code>) to render the Google Sign-In button.
+                </p>
               </div>
 
-              {!activeClientId && (
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] text-amber-200/90 leading-relaxed">
-                  Google OAuth Client ID is unconfigured on server. Enter your company email below to test access.
-                </div>
-              )}
-
-              <form onSubmit={handleEmailFormSubmit} className="space-y-3 pt-1">
-                <div>
-                  <label htmlFor="company-email-input" className="block text-[11px] font-semibold text-[#86868b] uppercase tracking-wider mb-1">
-                    Work Email Address
-                  </label>
-                  <input
-                    id="company-email-input"
-                    type="email"
-                    required
-                    placeholder="name@hushh.ai or authorized email..."
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    className="w-full rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:border-[#007aff] focus:ring-1 focus:ring-[#007aff] focus:outline-none transition"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#007aff] py-2.5 text-xs font-bold text-white shadow-lg shadow-[#007aff]/25 hover:bg-[#0062cc] active:scale-[0.98] transition"
-                >
-                  <span>Verify & Access Dashboard</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </form>
-
-              {activeClientId && (
-                <div className="pt-2 text-center">
-                  <button
-                    type="button"
-                    onClick={() => setAuthMode('oauth')}
-                    className="text-xs font-medium text-[#007aff] hover:underline"
-                  >
-                    Switch back to Google OAuth Sign-In
-                  </button>
-                </div>
-              )}
-
               {!showDevOverride ? (
-                <div className="pt-2 border-t border-white/10 text-center">
-                  <button
-                    type="button"
-                    onClick={() => setShowDevOverride(true)}
-                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#86868b] hover:text-white transition"
-                  >
-                    <KeyRound className="h-3 w-3 text-[#007aff]" />
-                    Developer? Set custom Google Client ID
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDevOverride(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/10"
+                >
+                  <KeyRound className="h-3.5 w-3.5 text-[#007aff]" />
+                  Paste Google Client ID
+                </button>
               ) : (
-                <form onSubmit={handleApplyCustomClientId} className="space-y-2 pt-2 border-t border-white/10">
-                  <p className="text-[11px] font-medium text-[#86868b]">Paste Google Client ID:</p>
+                <form onSubmit={handleApplyCustomClientId} className="space-y-2 pt-2">
                   <input
                     type="text"
-                    placeholder="e.g. 123456789-abc.apps.googleusercontent.com"
+                    placeholder="Enter Google Client ID (e.g. xxx.apps.googleusercontent.com)"
                     value={clientIdInput}
                     onChange={(e) => setClientIdInput(e.target.value)}
                     className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs font-mono text-white placeholder-white/30 focus:border-[#007aff] focus:outline-none"
                   />
                   <button
                     type="submit"
-                    className="w-full rounded-lg border border-white/20 bg-white/10 py-1.5 text-xs font-bold text-white hover:bg-white/20 transition"
+                    className="w-full rounded-lg bg-[#007aff] py-1.5 text-xs font-bold text-white hover:bg-[#0062cc] transition"
                   >
                     Apply Client ID
                   </button>

@@ -10,11 +10,11 @@ import { AccessDeniedPage } from './components/AccessDeniedPage';
 import { Loader2 } from 'lucide-react';
 
 function AppContent() {
-  const { user, authConfig, loading, error, signInWithCredential, signInWithEmail, signOut, isAuthenticated, isAuthorized } = useAuth();
+  const { user, authConfig, loading, error, signInWithCredential, signOut, isAuthenticated, isAuthorized } = useAuth();
 
   if (loading) {
     return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-[#0b0c10] text-white">
+      <div className="flex min-h-screen w-full items-center justify-center bg-[#0b0c10] text-[#f5f5f7]">
         <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-6 py-4 backdrop-blur-xl">
           <Loader2 className="h-6 w-6 animate-spin text-[#007aff]" />
           <span className="text-sm font-semibold">Authenticating Hussh Matrix...</span>
@@ -29,7 +29,6 @@ function AppContent() {
       <LoginPage
         authConfig={authConfig}
         onCredentialResponse={signInWithCredential}
-        onEmailSubmit={signInWithEmail}
         error={error}
         loading={loading}
       />
