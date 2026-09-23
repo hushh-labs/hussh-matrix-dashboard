@@ -65,8 +65,11 @@ rg "sbp_|SUPABASE_ACCESS_TOKEN=.+" . --glob '!node_modules/**' --glob '!dist/**'
 
 ## Deploy On Main
 
-Production redeploys automatically from GitHub Actions on every push to
-`main`.
+The workflow builds and verifies a zero-traffic release candidate on every
+push to `main`. It does not automatically route production traffic to an
+untested Google sign-in flow. If GitHub Actions is unavailable, an operator
+must run the same gates and build the exact merged `main` commit with Cloud
+Build before deploying a zero-traffic candidate.
 
 - Workflow: `.github/workflows/deploy-main.yml`
 - Trigger: `push` to `main`, plus `workflow_dispatch`
@@ -81,23 +84,49 @@ Production redeploys automatically from GitHub Actions on every push to
 
 The workflow gates deployment with `npm ci`, `npm run lint`,
 `npm run build`, `git diff --check`, and a tracked-file secret pattern scan.
-It builds a commit-SHA-tagged image, deploys `hushh-matrix-dashboard`, verifies
-runtime env vars are Secret Manager-backed, then runs:
+It builds a commit-SHA-tagged image, deploys `hushh-matrix-dashboard` at 0%
+traffic, verifies runtime env vars are Secret Manager-backed, and runs
+anonymous auth-boundary and signed-session product/KPI checks against the
+tagged candidate. A signed QA session proves the dashboard API contract, not
+the Google authorization-code callback.
 
 Before deploying, it snapshots the complete Cloud Run serving traffic split.
 If deployment or any post-deploy check fails, rollback restores those exact
 revision percentages, including a pre-existing canary split; it does not
 assume the latest ready revision was the previously serving one.
 
-```bash
-npm run test:prod:metrics-flow -- --dashboard-url https://metrics.hushh.ai --timeout-ms 120000
-npm run test:prod:hushh-ai -- --base-url https://metrics.hushh.ai --timeout-ms 120000
-npm run test:prod:one -- --dashboard-url https://metrics.hushh.ai --timeout-ms 120000
-```
+The OAuth client's only authorized redirect URI is
+`https://metrics.hushh.ai/auth/callback`. Do not try to verify Google sign-in
+through a tagged `a.run.app` URL: its host-only state cookie would not be sent
+to the production callback. After all 0%-traffic checks pass, an operator may
+promote the candidate to `metrics.hushh.ai` for a tightly monitored interactive
+sign-in with an approved account. Check the dashboard and protected APIs, and
+restore the exact prior traffic allocation immediately if sign-in or product
+checks fail. Record the verified revision and image. The five personal Gmail
+accounts are authorized by the server allowlist, not by the published External
+Google consent screen alone.
+
+The workflow runs `test:prod:auth` anonymously and the metrics-flow, Hushh AI,
+One, location, KPI, public-contract, and reconciliation probes with a
+short-lived signed QA cookie against its tagged candidate URL. Repeat the
+auth-boundary probe on the custom domain after traffic promotion, then perform
+the interactive approved-account Google login and inspect the authenticated
+dashboard. Do not mistake a synthetic cookie for a successful OAuth callback.
 
 GCP IAM required by the workflow:
 
+The deploy identity needs Secret Manager read access only to the session-signing
+secret for short-lived authenticated QA probes. Cloud Run resolves the OAuth
+client secret and email allowlist through the runtime service account; the
+deploy identity does not read those two secret values. A missing or disabled
+runtime secret makes the candidate revision fail readiness before promotion.
+
 ```bash
+gcloud secrets add-iam-policy-binding metrics-dashboard-session-secret \
+  --project=hushh-ai-prod \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
 gcloud projects add-iam-policy-binding hushh-ai-prod \
   --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
   --role="roles/run.admin"

@@ -88,16 +88,6 @@ jobs:
         with:
           install_components: bq
 
-      - name: Check production authentication secrets
-        run: |
-          for secret in metrics-dashboard-google-client-secret metrics-dashboard-session-secret metrics-dashboard-allowed-emails; do
-            state="$(gcloud secrets versions describe latest --secret="${secret}" --project="${PROJECT_ID}" --format='value(state)')"
-            if [[ "${state}" != "ENABLED" ]]; then
-              echo "Required secret ${secret} has no enabled latest version."
-              exit 1
-            fi
-          done
-
       - name: Build container image
         run: |
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
