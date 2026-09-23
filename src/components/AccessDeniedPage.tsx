@@ -44,7 +44,7 @@ export function AccessDeniedPage({ user }: AccessDeniedPageProps) {
             Access Denied
           </h1>
           <p className="mt-2 text-xs font-medium text-[#86868b] leading-relaxed">
-            Please use your Hushh work email account to access this dashboard.
+            Use a Hushh work account or a Google account explicitly approved for this dashboard.
           </p>
 
           {/* Explanation Box */}

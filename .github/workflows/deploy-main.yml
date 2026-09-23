@@ -23,6 +23,8 @@ env:
   DEPLOY_SERVICE_ACCOUNT: github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com
   WORKLOAD_IDENTITY_PROVIDER: projects/1072839345524/locations/global/workloadIdentityPools/github-actions/providers/github-hussh-matrix-dashboard
   PRODUCTION_URL: https://metrics.hushh.ai
+  GOOGLE_CLIENT_ID: 1072839345524-h2puhcg3e5uj7g2j1752lr9s19pbbmg9.apps.googleusercontent.com
+  GOOGLE_REDIRECT_URI: https://metrics.hushh.ai/auth/callback
 
 jobs:
   deploy:
@@ -84,6 +86,16 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Check production authentication secrets
+        run: |
+          for secret in metrics-dashboard-google-client-secret metrics-dashboard-session-secret metrics-dashboard-allowed-emails; do
+            state="$(gcloud secrets versions describe latest --secret="${secret}" --project="${PROJECT_ID}" --format='value(state)')"
+            if [[ "${state}" != "ENABLED" ]]; then
+              echo "Required secret ${secret} has no enabled latest version."
+              exit 1
+            fi
+          done
+
       - name: Build container image
         run: |
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
@@ -128,6 +140,8 @@ jobs:
             --region="${REGION}" \
             --image="${IMAGE}" \
             --service-account="${RUNTIME_SERVICE_ACCOUNT}" \
+            --update-env-vars="^@^GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}@GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}@ALLOWED_EMAIL_DOMAINS=hushh.ai,hushhtech.com,hushh.labs,hush1one.com@REQUIRE_AUTH=true" \
+            --update-secrets="GOOGLE_CLIENT_SECRET=metrics-dashboard-google-client-secret:latest,SESSION_SECRET=metrics-dashboard-session-secret:latest,ALLOWED_EMAILS=metrics-dashboard-allowed-emails:latest" \
             --allow-unauthenticated \
             --port=8080 \
             --memory=1Gi \
@@ -201,65 +215,39 @@ jobs:
             console.error(`Runtime env vars are not Secret Manager-backed: ${plain.join(', ')}`);
             process.exit(1);
           }
+          const byName = new Map(env.map((entry) => [entry.name, entry]));
+          const requiredSecrets = {
+            GOOGLE_CLIENT_SECRET: 'metrics-dashboard-google-client-secret',
+            SESSION_SECRET: 'metrics-dashboard-session-secret',
+            ALLOWED_EMAILS: 'metrics-dashboard-allowed-emails',
+          };
+          for (const [name, secretName] of Object.entries(requiredSecrets)) {
+            if (byName.get(name)?.valueFrom?.secretKeyRef?.name !== secretName) {
+              console.error(`${name} is not bound to the expected Secret Manager secret.`);
+              process.exit(1);
+            }
+          }
+          if (byName.get('REQUIRE_AUTH')?.value !== 'true' ||
+              byName.get('GOOGLE_CLIENT_ID')?.value !== process.env.GOOGLE_CLIENT_ID ||
+              byName.get('GOOGLE_REDIRECT_URI')?.value !== process.env.GOOGLE_REDIRECT_URI) {
+            console.error('Production Google sign-in settings do not match the release configuration.');
+            process.exit(1);
+          }
           console.log(`Latest ready revision: ${service.status?.latestReadyRevisionName || 'unknown'}`);
           NODE
 
-      - name: Verify production metrics flow
+      # Anonymous API probes must no longer expect public 200 responses after
+      # Google sign-in is enforced. Check the access boundary, then independently
+      # audit the source export without bypassing the live sign-in requirement.
+      - name: Verify production Google sign-in boundary
         env:
           METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-          METRICS_FLOW_TIMEOUT_MS: "120000"
-        run: npm run test:prod:metrics-flow -- --dashboard-url "${PRODUCTION_URL}" --timeout-ms 120000
+        run: npm run test:prod:auth
 
-      - name: Verify Hushh AI production
+      - name: Reconcile One source data without dashboard access
         env:
-          HUSHH_AI_PRODUCTION_URL: ${{ env.PRODUCTION_URL }}
-        run: npm run test:prod:hushh-ai -- --base-url "${PRODUCTION_URL}" --timeout-ms 120000
-
-      - name: Verify One production
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-        run: npm run test:prod:one -- --dashboard-url "${PRODUCTION_URL}" --timeout-ms 120000
-
-      - name: Verify One Location production and UAT analytics
-        run: npm run test:api:one-location -- --base-url "${PRODUCTION_URL}" --days 7
-
-      - name: Reconcile One unique-device and account metrics
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
           BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        run: npm run test:metrics:one-reconciliation -- --dashboard-url "${PRODUCTION_URL}"
-
-      - name: Reconcile One iOS identified accounts
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        run: npm run test:metrics:ios-accounts
-
-      - name: Reconcile One iOS installation and screen KPIs
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        run: npm run test:metrics:ios-usage
-
-      - name: Reconcile One web, iOS and Android activity KPIs
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        # The deploy identity can read the production export but not the UAT
-        # project's INFORMATION_SCHEMA. UAT remains a separate operator audit
-        # until a deliberately scoped cross-project grant is approved.
-        run: npm run test:metrics:one-platforms
-
-      - name: Reconcile One registered accounts with Firebase Authentication
-        env:
-          METRICS_DASHBOARD_URL: ${{ env.PRODUCTION_URL }}
-        run: npm run test:metrics:one-registered-accounts -- --dashboard-url "${PRODUCTION_URL}" --days 30
-
-      - name: Verify dashboard KPI invariants
-        run: npm run test:metrics:kpi-invariants -- --base-url "${PRODUCTION_URL}" --timeout-ms 120000
-
-      - name: Verify aggregate-only public analytics contract
-        run: npm run test:api:public-contract -- --base-url "${PRODUCTION_URL}" --days 7 --timeout-ms 120000
+        run: npm run test:metrics:one-reconciliation -- --skip-dashboard
 
       - name: Roll back traffic after failed production verification
         # Deploy itself may change traffic before failing. Restoring the exact

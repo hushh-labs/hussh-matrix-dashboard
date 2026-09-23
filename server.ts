@@ -8578,7 +8578,7 @@ function renderLoginHtml(): string {
 <body style="background:#0b0c10;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
   <div style="text-align:center;">
     <h1>Welcome to Hussh Matrix</h1>
-    <p>Use your Hushh work account</p>
+    <p>Use your Hushh work account or an approved Google account</p>
     <a href="/api/auth/google" style="display:inline-block;padding:12px 24px;background:#fff;color:#000;text-decoration:none;border-radius:24px;font-weight:bold;margin-top:16px;">Continue with Google</a>
   </div>
 </body>
@@ -8611,7 +8611,7 @@ function renderAccessDeniedHtml(userEmail?: string): string {
 <body style="background:#0b0c10;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
   <div style="text-align:center;max-width:400px;padding:32px;border:1px solid #ff3b30;border-radius:16px;">
     <h1 style="color:#ff453a;">Access Denied</h1>
-    <p>Please use your Hushh work email account to access this dashboard.</p>
+    <p>Use a Hushh work account or a Google account explicitly approved for this dashboard.</p>
     ${safeEmail ? `<p><strong>${safeEmail}</strong> is not authorized.</p>` : ''}
     <a href="/api/auth/google?prompt=select_account" style="display:inline-block;padding:12px 24px;background:#fff;color:#000;text-decoration:none;border-radius:12px;font-weight:bold;margin-top:16px;">Try Another Account</a>
   </div>
