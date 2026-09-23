@@ -84,13 +84,14 @@ import { ComparePanel } from './components/ComparePanel';
 import { GrowthPanel } from './components/GrowthPanel';
 import { OneAppPanel } from './components/OneAppPanel';
 import { AppsPanel } from './components/AppsPanel';
+import { FounderBriefingPanel } from './components/FounderBriefingPanel';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
 type DatePreset = 7 | 14 | 30 | 90;
-type DashboardTab = 'growth' | 'compare' | 'one' | 'apps' | 'overview' | 'platforms';
+type DashboardTab = 'briefing' | 'growth' | 'compare' | 'one' | 'apps' | 'overview' | 'platforms';
 
-const dashboardTabs: DashboardTab[] = ['growth', 'compare', 'one', 'apps', 'overview', 'platforms'];
+const dashboardTabs: DashboardTab[] = ['briefing', 'growth', 'compare', 'one', 'apps', 'overview', 'platforms'];
 
 function isDashboardTab(value: unknown): value is DashboardTab {
   return typeof value === 'string' && dashboardTabs.includes(value as DashboardTab);
@@ -1157,12 +1158,13 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 
 export default function Dashboard() {
   const { user, signOut } = useAuth();
-  // 'one' leads because the One app is the active growth focus; the founder
-  // should land on the scoreboard, not on the source matrix.
+  // The founder lands on the compact production briefing; diagnostic tabs
+  // remain available on demand.
   const [locationRoute, setLocationRoute] = useState<LocationAnalyticsRoute | null>(() => (
     typeof window === 'undefined' ? null : parseLocationAnalyticsPath(window.location.pathname)
   ));
-  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : 'growth'));
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : 'briefing'));
+  const [briefRefreshKey, setBriefRefreshKey] = useState(0);
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   // 30 days by default: the One app's agent volumes are small enough that a
   // 7-day window reads as noise rather than a trend.
@@ -1237,7 +1239,7 @@ export default function Dashboard() {
     const handlePopState = (event: PopStateEvent) => {
       const route = parseLocationAnalyticsPath(window.location.pathname);
       setLocationRoute(route);
-      setActiveTab(route ? 'one' : (isDashboardTab(event.state?.dashboardTab) ? event.state.dashboardTab : 'growth'));
+      setActiveTab(route ? 'one' : (isDashboardTab(event.state?.dashboardTab) ? event.state.dashboardTab : 'briefing'));
       window.scrollTo({ top: 0 });
     };
     window.addEventListener('popstate', handlePopState);
@@ -1279,8 +1281,8 @@ export default function Dashboard() {
   }, [hushhAiRange.endDate, hushhAiRange.startDate, kaiRange.endDate, kaiRange.startDate, oneRange.endDate, oneRange.startDate]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (activeTab !== 'briefing' || locationRoute) void loadData();
+  }, [activeTab, locationRoute, loadData]);
 
   const loadCompare = useCallback(async () => {
     setCompareLoading(true);
@@ -1303,12 +1305,12 @@ export default function Dashboard() {
   );
 
   useEffect(() => {
-    if (!autoRefresh) return undefined;
+    if (!autoRefresh || activeTab === 'briefing') return undefined;
     const refreshId = window.setInterval(() => {
       void loadData();
     }, liveRefreshSeconds * 1000);
     return () => window.clearInterval(refreshId);
-  }, [autoRefresh, liveRefreshSeconds, loadData]);
+  }, [activeTab, autoRefresh, liveRefreshSeconds, loadData]);
 
   const platforms = data?.platforms ?? [];
   const sourceGroups = data?.sourceGroups ?? [];
@@ -1359,7 +1361,9 @@ export default function Dashboard() {
   const hushhTechRangeLabel = data?.hushhTech?.window
     ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
     : 'Selected range';
-  const statusText = usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
+  const statusText = activeTab === 'briefing'
+    ? 'Production briefing · equal 30-day periods'
+    : usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
 
   const ga4SummaryRows = () => {
@@ -1746,7 +1750,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#cce4ff] selection:text-[#003b76]">
-      {loading && (
+      {loading && activeTab !== 'briefing' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#f5f5f7]/80 backdrop-blur-xl">
           <div className={cn(appleCard, 'flex items-center gap-3 px-5 py-3')}>
             <Loader2 className="h-5 w-5 animate-spin text-[#007aff]" />
@@ -1760,13 +1764,13 @@ export default function Dashboard() {
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div className={cn(
               'flex min-h-10 min-w-0 items-start gap-2 rounded-lg border px-3 py-2 text-sm font-bold leading-5 sm:items-center',
-              usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
+              activeTab === 'briefing' || usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
             )}>
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 sm:mt-0" />
+              {activeTab !== 'briefing' && <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 sm:mt-0" />}
               <span className="min-w-0">{statusText}</span>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="grid min-w-0 flex-1 grid-cols-3 gap-1 rounded-lg bg-[#f5f5f7] p-1 sm:flex sm:flex-none" role="tablist" aria-label="Dashboard sections">
+              <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto rounded-lg bg-[#f5f5f7] p-1" role="tablist" aria-label="Dashboard sections">
                 {dashboardTabs.map((tab) => (
                   <button
                     key={tab}
@@ -1775,21 +1779,24 @@ export default function Dashboard() {
                     aria-selected={activeTab === tab}
                     onClick={() => changeDashboardTab(tab)}
                     className={cn(
-                      'min-h-10 min-w-0 rounded-md px-2 text-xs font-bold capitalize leading-4 transition sm:min-h-9 sm:shrink-0 sm:px-4 sm:text-sm',
+                      'min-h-10 shrink-0 rounded-md px-3 text-xs font-bold capitalize leading-4 transition sm:min-h-9 sm:px-4 sm:text-sm',
                       activeTab === tab
                         ? 'bg-white text-[#1d1d1f] shadow-sm'
                         : 'text-[#6e6e73] hover:text-[#1d1d1f]',
                     )}
                   >
-                    {tab === 'one' ? 'One app' : tab === 'compare' ? 'Over time' : tab === 'apps' ? 'Hushh Connect' : tab}
+                    {tab === 'briefing' ? 'Founder briefing' : tab === 'one' ? 'One app' : tab === 'compare' ? 'Over time' : tab === 'apps' ? 'Hushh Connect' : tab}
                   </button>
                 ))}
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  void loadData();
-                  if (compare) void loadCompare();
+                  if (activeTab === 'briefing') setBriefRefreshKey((key) => key + 1);
+                  else {
+                    void loadData();
+                    if (compare) void loadCompare();
+                  }
                 }}
                 className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] sm:px-4"
               >
@@ -1823,7 +1830,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {!locationRoute && <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        {!locationRoute && activeTab !== 'briefing' && <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-lg border border-black/[0.06] bg-white/90 shadow-sm">
               <span className="text-3xl" aria-label="Hussh logo">🤫</span>
@@ -1838,7 +1845,9 @@ export default function Dashboard() {
           </div>
         </header>}
 
-        {activeTab === 'growth' ? (
+        {activeTab === 'briefing' ? (
+          <FounderBriefingPanel refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />
+        ) : activeTab === 'growth' ? (
           <GrowthPanel
             growth={data?.growth ?? null}
             costPerActiveUser={data?.costPerActiveUser ?? null}

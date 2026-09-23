@@ -10,6 +10,7 @@
     "start": "tsx server.ts",
     "test": "vitest run",
     "test:prod:auth": "node scripts/check-auth-production.mjs",
+    "test:prod:founder": "node scripts/check-founder-briefing-contract.mjs",
     "clean": "rm -rf dist",
     "ingest:search-console": "node scripts/ingest-hushhtech-search-console.mjs",
     "lint": "tsc --noEmit",

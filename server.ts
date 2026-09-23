@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'url';
 import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromValue } from './src/lib/agent-product-routing';
 import type { ProductKey } from './src/lib/agent-product-routing';
+import type { FounderBriefingData, FounderMeasure, FounderPeriod } from './src/lib/founder-briefing';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -5330,11 +5331,187 @@ async function fetchHushhTechSupabaseSummary(range: HushhAiDateRange): Promise<D
   }
 }
 
+// A compact, production-only founder read. It deliberately does not reuse the
+// full One app summary: that would launch two dozen BigQuery jobs per period,
+// including UAT and screen diagnostics that do not belong in this briefing.
+function founderPeriods(): { current: HushhAiDateRange; previous: HushhAiDateRange } {
+  // Complete days only. A three-day reporting buffer keeps delayed Search
+  // Console exports comparable with GA4 and authentication source windows.
+  const currentEnd = addUtcDays(utcToday(), -3);
+  const currentStart = addUtcDays(currentEnd, -29);
+  const previousEnd = addUtcDays(currentStart, -1);
+  return {
+    current: buildDateRange(currentStart, currentEnd),
+    previous: buildDateRange(addUtcDays(previousEnd, -29), previousEnd),
+  };
+}
+
+function founderPeriod(range: HushhAiDateRange): FounderPeriod {
+  return { startDate: range.startDate, endDate: range.endDate, days: range.days };
+}
+
+function founderPair(current: unknown, previous: unknown, available: boolean): FounderMeasure {
+  return available
+    ? { current: toNumber(current), previous: toNumber(previous) }
+    : { current: null, previous: null };
+}
+
+async function fetchFounderHushhTechAccounts(
+  current: HushhAiDateRange,
+  previous: HushhAiDateRange,
+): Promise<DataResult<Record<string, unknown>>> {
+  if (!HUSHHTECH_SUPABASE_ACCESS_TOKEN || !HUSHHTECH_SUPABASE_PROJECT_REF) {
+    return { data: null, error: 'HushhTech account source unavailable' };
+  }
+  const query = `
+    SELECT
+      (SELECT COUNT(*) FROM auth.users u
+        WHERE u.created_at::date <= DATE '${current.endDate}'
+          AND (u.deleted_at IS NULL OR u.deleted_at::date > DATE '${current.endDate}'))::bigint AS total_accounts,
+      (SELECT COUNT(*) FROM auth.users u
+        WHERE u.created_at::date BETWEEN DATE '${current.startDate}' AND DATE '${current.endDate}')::bigint AS current_new,
+      (SELECT COUNT(*) FROM auth.users u
+        WHERE u.created_at::date BETWEEN DATE '${previous.startDate}' AND DATE '${previous.endDate}')::bigint AS previous_new
+  `;
+  try {
+    const response = await fetch(`https://api.supabase.com/v1/projects/${HUSHHTECH_SUPABASE_PROJECT_REF}/database/query`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${HUSHHTECH_SUPABASE_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) return { data: null, error: 'HushhTech account source unavailable' };
+    const rows = await response.json() as Array<Record<string, unknown>>;
+    return { data: rows[0] ?? null, error: rows.length ? null : 'HushhTech account source unavailable' };
+  } catch (error) {
+    console.error('Founder HushhTech aggregate failed:', error instanceof Error ? error.message : String(error));
+    return { data: null, error: 'HushhTech account source unavailable' };
+  }
+}
+
+let founderBriefingCache: { expiresAt: number; promise: Promise<FounderBriefingData> } | null = null;
+
+function fetchFounderBriefing(): Promise<FounderBriefingData> {
+  if (founderBriefingCache && founderBriefingCache.expiresAt > Date.now()) {
+    return founderBriefingCache.promise;
+  }
+  const { current, previous } = founderPeriods();
+  const table = `\`${ONE_APP_GA4_PROJECT}.${ONE_APP_GA4_DATASET}.events_*\``;
+  const surface = oneAppSurfaceFilter(ONE_APP_HOST);
+  const meaningful = `event_name NOT IN (${sqlNameList(ONE_BACKGROUND_EVENTS)})`;
+  const currentSql = `BETWEEN DATE(${sqlStringLiteral(current.startDate)}) AND DATE(${sqlStringLiteral(current.endDate)})`;
+  const previousSql = `BETWEEN DATE(${sqlStringLiteral(previous.startDate)}) AND DATE(${sqlStringLiteral(previous.endDate)})`;
+  const oneQuery = `
+    WITH events AS (
+      SELECT PARSE_DATE('%Y%m%d', event_date) AS day,
+        NULLIF(user_id, '') AS accountId,
+        CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id) AS deviceKey,
+        platform,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env') AS eventEnvironment,
+        event_name
+      FROM ${table}
+      WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
+        AND REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') <= ${sqlStringLiteral(current.endDate.replaceAll('-', ''))}
+        AND ${surface} AND ${meaningful}
+    ),
+    history AS (
+      SELECT accountId, MIN(day) AS firstSeen
+      FROM events WHERE accountId IS NOT NULL GROUP BY accountId
+    ),
+    accounts AS (
+      SELECT
+        COUNT(DISTINCT IF(e.day ${currentSql}, e.accountId, NULL)) AS current_active,
+        COUNT(DISTINCT IF(e.day ${previousSql}, e.accountId, NULL)) AS previous_active,
+        COUNT(DISTINCT IF(e.day ${currentSql} AND h.firstSeen ${currentSql}, e.accountId, NULL)) AS current_first_seen,
+        COUNT(DISTINCT IF(e.day ${previousSql} AND h.firstSeen ${previousSql}, e.accountId, NULL)) AS previous_first_seen,
+        COUNT(DISTINCT IF(e.day ${currentSql} AND e.event_name = 'one_location_activation_completed', e.accountId, NULL)) AS current_activated,
+        COUNT(DISTINCT IF(e.day ${previousSql} AND e.event_name = 'one_location_activation_completed', e.accountId, NULL)) AS previous_activated
+      FROM events e JOIN history h USING (accountId)
+    ),
+    coverage AS (
+      SELECT
+        COUNT(DISTINCT IF(day ${currentSql}, deviceKey, NULL)) AS current_devices,
+        COUNT(DISTINCT IF(day ${currentSql} AND accountId IS NOT NULL, deviceKey, NULL)) AS identified_devices,
+        COUNTIF(day ${currentSql} AND platform IN ('IOS', 'ANDROID') AND LOWER(eventEnvironment) = 'uat') AS mislabeled_native_events
+      FROM events
+    )
+    SELECT * FROM accounts CROSS JOIN coverage
+  `;
+
+  const promise = (async (): Promise<FounderBriefingData> => {
+    const [one, tech, searchCurrent, searchPrevious] = await Promise.all([
+      queryBigQuerySql(BQ_JOB_PROJECT, oneQuery),
+      fetchFounderHushhTechAccounts(current, previous),
+      fetchHushhAiSearchConsole(current),
+      fetchHushhAiSearchConsole(previous),
+    ]);
+    const oneAvailable = !one.error && one.rows.length > 0;
+    const oneRow = one.rows[0] ?? {};
+    const currentDevices = toNumber(oneRow.current_devices);
+    const techAvailable = Boolean(tech.data && !tech.error);
+    const searchCurrentData = searchCurrent.data ?? {};
+    const searchPreviousData = searchPrevious.data ?? {};
+    // `daily` is a zero-filled chart spine, so its final date does not prove
+    // the Search Console export has actually reached the end of the window.
+    const latestSearchDay = typeof searchCurrentData.latestDataDate === 'string'
+      ? searchCurrentData.latestDataDate : null;
+    const previousLatestSearchDay = typeof searchPreviousData.latestDataDate === 'string'
+      ? searchPreviousData.latestDataDate : null;
+    // A partially exported current period must not get a red percentage.
+    const searchAvailable = searchCurrentData.available === true && searchPreviousData.available === true
+      && latestSearchDay !== null && latestSearchDay >= current.endDate
+      && previousLatestSearchDay !== null && previousLatestSearchDay >= previous.endDate;
+    const currentSearchTotals = (searchCurrentData.rangeTotals ?? {}) as Record<string, unknown>;
+    const previousSearchTotals = (searchPreviousData.rangeTotals ?? {}) as Record<string, unknown>;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      period: founderPeriod(current),
+      previousPeriod: founderPeriod(previous),
+      one: {
+        available: oneAvailable,
+        activeAccounts: founderPair(oneRow.current_active, oneRow.previous_active, oneAvailable),
+        firstObservedAccounts: founderPair(oneRow.current_first_seen, oneRow.previous_first_seen, oneAvailable),
+        activatedAccounts: founderPair(oneRow.current_activated, oneRow.previous_activated, oneAvailable),
+        accountCoverage: oneAvailable && currentDevices > 0
+          ? toNumber(oneRow.identified_devices) / currentDevices : null,
+        hasNativeEnvironmentConflict: oneAvailable && toNumber(oneRow.mislabeled_native_events) > 0,
+      },
+      hushhTech: {
+        available: techAvailable,
+        totalAccounts: techAvailable ? toNumber(tech.data?.total_accounts) : null,
+        newAccounts: founderPair(tech.data?.current_new, tech.data?.previous_new, techAvailable),
+      },
+      hushhAi: {
+        available: searchAvailable,
+        organicClicks: founderPair(currentSearchTotals.clicks, previousSearchTotals.clicks, searchAvailable),
+        latestSearchDay,
+      },
+    };
+  })();
+  founderBriefingCache = { expiresAt: Date.now() + 5 * 60_000, promise };
+  void promise.catch(() => { founderBriefingCache = null; });
+  return promise;
+}
+
 // ---------------------------------------------------------------------------
 // API routes
 // ---------------------------------------------------------------------------
 
 function registerAnalyticsRoutes(app: express.Express): void {
+  app.get('/api/analytics/founder', async (_req, res) => {
+    try {
+      res.status(200).json(sanitizePublicPayload(await fetchFounderBriefing()));
+    } catch (error) {
+      console.error('Founder briefing failed:', error instanceof Error ? error.message : String(error));
+      res.status(502).json({ error: 'Production briefing is temporarily unavailable.' });
+    }
+  });
+
   app.get(['/api/analytics/one/uat', '/api/analytics/kai/uat'], async (_req, res) => {
   const result = await queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW);
   res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
