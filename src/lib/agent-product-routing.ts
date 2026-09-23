@@ -27,9 +27,12 @@ export function inferProductFromQuestion(text: string): ProductKey | 'all' {
 
 export function isOneEnvironmentSplitQuestion(text: string): boolean {
   const lower = text.toLowerCase();
+  const productionSide = /\b(?:production|prod|public\s+(?:build|app))\b/.test(lower)
+    || /(?:^|[^a-z0-9.])one\.hushh\.ai\b/.test(lower)
+    || /\bone\s+app\b/.test(lower);
   if (!/\b(?:one|kai)\b/.test(lower)
     || !/\buat\b/.test(lower)
-    || !/\b(?:production|prod|public\s+(?:build|app))\b/.test(lower)) return false;
+    || !productionSide) return false;
   // Merely selecting either environment is not a split request. The
   // comparison word and both sides must be explicit (or present in the
   // conversation context); word boundaries avoid matching "product".
