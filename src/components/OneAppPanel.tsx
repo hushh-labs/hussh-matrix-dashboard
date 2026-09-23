@@ -379,7 +379,7 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
       <div>
         <h3 className="text-lg font-semibold text-[#1d1d1f]">One activity by platform</h3>
         <p className="mt-1 text-sm text-[#6e6e73]">
-          Same selected dates for each surface. Signed-in accounts, browser/app IDs and screen visits answer different questions.
+          Same selected dates for each surface. Signed-in accounts are users we can identify; browser/app IDs are not unique people.
         </p>
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
@@ -398,20 +398,16 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
                   <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4">
                     <div><dt className="text-xs text-[#6e6e73]">Active signed-in accounts</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{accountsMeasured ? exactAccountCount(row.activeAccounts) : 'Not measurable'}</dd></div>
                     <div><dt className="text-xs text-[#6e6e73]">Active {key === 'WEB' ? 'browser' : 'app-instance'} IDs</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{exactAccountCount(row.activeDeviceIds)}</dd></div>
-                    <div><dt className="text-xs text-[#6e6e73]">Named screen visits</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{exactAccountCount(row.namedRouteVisits)}</dd></div>
-                    <div><dt className="text-xs text-[#6e6e73]">Different named screens</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{row.distinctScreens === null ? 'Not available' : exactAccountCount(row.distinctScreens)}</dd></div>
                   </dl>
                   {topScreens.length > 0 && (
-                    <div className="mt-5 border-t border-black/5 pt-4">
-                      <p className="text-xs font-bold uppercase tracking-wide text-[#6e6e73]">Most visited screens</p>
+                    <details className="mt-5 border-t border-black/5 pt-4">
+                      <summary className="cursor-pointer text-xs font-semibold text-[#6e6e73]">Screen activity details</summary>
                       <ol className="mt-2 space-y-1 text-xs text-[#3a3a3c]">
                         {topScreens.map((screen) => <li key={screen.routeId} className="flex justify-between gap-3"><span>{SCREEN_LABELS[screen.routeId] ?? screen.routeId.replaceAll('_', ' ')}</span><span className="font-semibold tabular-nums">{exactAccountCount(screen.visits)}</span></li>)}
                       </ol>
-                    </div>
+                      <p className="mt-2 text-xs leading-5 text-[#6e6e73]">Visits can repeat and are not user counts. {exactAccountCount(row.namedRouteVisits)} of {exactAccountCount(row.routeVisits)} route visits had usable screen names.</p>
+                    </details>
                   )}
-                  <p className="mt-4 text-xs leading-5 text-[#6e6e73]">
-                    {exactAccountCount(row.namedRouteVisits)} of {exactAccountCount(row.routeVisits)} route visits have usable screen names. Repeat visits count again; unknown, sign-out and callback routes do not count as named screens.
-                  </p>
                   {!accountsMeasured && <p className="mt-2 text-xs font-semibold text-[#8a5a04]">No stable account ID was observed here; the app/browser IDs cannot be converted into a user count.</p>}
                 </>
               )}

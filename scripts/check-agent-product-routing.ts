@@ -14,8 +14,13 @@ assert.equal(inferProductFromQuestion('Summarize uat.one.hushh.ai'), 'uat.one.hu
 assert.equal(inferProductFromQuestion('Show hushh.ai search queries'), 'hushh.ai');
 assert.equal(isOneEnvironmentSplitQuestion('Compare One production and One UAT'), true);
 assert.equal(isOneEnvironmentSplitQuestion('What are the differences between One production and One UAT?'), true);
+assert.equal(isOneEnvironmentSplitQuestion('Compare one.hushh.ai with uat.one.hushh.ai'), true);
+assert.equal(isOneEnvironmentSplitQuestion('Compare the One app with One UAT'), true);
+assert.equal(isOneEnvironmentSplitQuestion('Compare uat.one.hushh.ai with hushh.ai'), false);
 assert.equal(isOneEnvironmentSplitQuestion('Contrast One UAT with One production'), true);
 assert.equal(isOneEnvironmentSplitQuestion('We discussed One production and One UAT. How are they different?'), true);
+assert.equal(isOneEnvironmentSplitQuestion('Show a different One UAT account metric'), false);
+assert.equal(isOneEnvironmentSplitQuestion('Show a different One production metric'), false);
 assert.equal(isOneEnvironmentSplitQuestion('Compare One UAT with the public build'), true);
 assert.equal(isOneEnvironmentSplitQuestion('Show One production search queries'), false);
 assert.equal(isOneEnvironmentSplitQuestion('Show One product metrics'), false);
