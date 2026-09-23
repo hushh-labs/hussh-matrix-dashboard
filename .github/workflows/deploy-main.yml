@@ -187,6 +187,12 @@ jobs:
             'GEMINI_METRICS_CHAT_MODEL',
             'METRICS_CHAT_REQUEST_TIMEOUT_MS',
             'METRICS_CHAT_CONTEXT_CACHE_SECONDS',
+            'GOOGLE_CLIENT_ID',
+            'GOOGLE_REDIRECT_URI',
+            'ALLOWED_EMAIL_DOMAINS',
+            'ALLOWED_EMAILS',
+            'REQUIRE_AUTH',
+            'ALLOW_PUBLIC_DASHBOARD',
           ]);
           const plain = env.filter((entry) => entry.value && !allowedPlain.has(entry.name)).map((entry) => entry.name);
           if (plain.length > 0) {
