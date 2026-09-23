@@ -16,6 +16,8 @@ assert.equal(isOneEnvironmentSplitQuestion('Compare One production and One UAT')
 assert.equal(isOneEnvironmentSplitQuestion('What are the differences between One production and One UAT?'), true);
 assert.equal(isOneEnvironmentSplitQuestion('Contrast One UAT with One production'), true);
 assert.equal(isOneEnvironmentSplitQuestion('We discussed One production and One UAT. How are they different?'), true);
+assert.equal(isOneEnvironmentSplitQuestion('Show a different One UAT account metric'), false);
+assert.equal(isOneEnvironmentSplitQuestion('Show a different One production metric'), false);
 assert.equal(isOneEnvironmentSplitQuestion('Compare One UAT with the public build'), true);
 assert.equal(isOneEnvironmentSplitQuestion('Show One production search queries'), false);
 assert.equal(isOneEnvironmentSplitQuestion('Show One product metrics'), false);
