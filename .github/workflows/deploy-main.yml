@@ -46,6 +46,9 @@ jobs:
       - name: Typecheck
         run: npm run lint
 
+      - name: Verify authentication and browser session contracts
+        run: npm test
+
       - name: Verify One Location routes
         run: npm run test:routes:one-location
 
@@ -188,11 +191,8 @@ jobs:
             'METRICS_CHAT_REQUEST_TIMEOUT_MS',
             'METRICS_CHAT_CONTEXT_CACHE_SECONDS',
             'GOOGLE_CLIENT_ID',
-            'GOOGLE_CLIENT_SECRET',
             'GOOGLE_REDIRECT_URI',
-            'SESSION_SECRET',
             'ALLOWED_EMAIL_DOMAINS',
-            'ALLOWED_EMAILS',
             'REQUIRE_AUTH',
             'ALLOW_PUBLIC_DASHBOARD',
           ]);

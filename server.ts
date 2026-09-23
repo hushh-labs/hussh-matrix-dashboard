@@ -8391,7 +8391,7 @@ export function checkUserAuthorization(
 
   if (!emailVerified) {
     const reason = 'Google account email is unverified (email_verified is not true)';
-    console.warn(`[AUTH_DENIED] email=${normEmail} reason="${reason}"`);
+    console.warn(`[AUTH_DENIED] reason="${reason}"`);
     return { authorized: false, reason, email: normEmail };
   }
 
@@ -8399,7 +8399,7 @@ export function checkUserAuthorization(
   const emailParts = normEmail.split('@');
   if (emailParts.length !== 2 || !emailParts[0] || !emailParts[1]) {
     const reason = 'Email address does not contain exactly two parts separated by "@"';
-    console.warn(`[AUTH_DENIED] email=${normEmail} reason="${reason}"`);
+    console.warn(`[AUTH_DENIED] reason="${reason}"`);
     return { authorized: false, reason, email: normEmail };
   }
 
@@ -8421,12 +8421,12 @@ export function checkUserAuthorization(
   const isAuthorized = isDomainMatch || isExplicitEmailMatch;
 
   if (!isAuthorized) {
-    const reason = `Email ${normEmail} (domain: ${emailDomain}, hd: ${payloadHd || 'none'}) is not authorized`;
-    console.warn(`[AUTH_DENIED] email=${normEmail} reason="${reason}"`);
+    const reason = 'Account is not in an allowed domain or explicit allowlist';
+    console.warn(`[AUTH_DENIED] reason="${reason}"`);
     return { authorized: false, reason, email: normEmail };
   }
 
-  console.log(`[AUTH_SUCCESS] email=${normEmail} (domainMatch=${isDomainMatch}, emailMatch=${isExplicitEmailMatch})`);
+  console.log(`[AUTH_SUCCESS] domainMatch=${isDomainMatch} emailMatch=${isExplicitEmailMatch}`);
   return { authorized: true, email: normEmail };
 }
 

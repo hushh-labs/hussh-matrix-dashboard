@@ -41,12 +41,12 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
     });
     if (res.ok) {
       const data = await res.json();
-      if (data && data.email) {
+      const user = data?.authenticated === true ? data.user : null;
+      if (user && typeof user.email === 'string' && user.email) {
         return {
-          email: data.email,
-          name: data.name || data.email.split('@')[0],
-          picture: data.picture,
-          sub: data.sub,
+          email: user.email,
+          name: user.name || user.email.split('@')[0],
+          picture: user.picture,
           domainAuthorized: true,
         };
       }
