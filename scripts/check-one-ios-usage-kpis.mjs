@@ -16,6 +16,8 @@ const project = option('--project', process.env.ONE_APP_GA4_PROJECT || 'hushh-pd
 const dataset = option('--dataset', process.env.ONE_APP_GA4_DATASET || 'analytics_526603671');
 const jobProject = option('--job-project', process.env.BQ_JOB_PROJECT || 'hushh-ai-prod');
 const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai');
+const startSuffix = startDate.replaceAll('-', '');
+const endSuffix = endDate.replaceAll('-', '');
 const ignored = [
   'api_request_completed', 'warmup_completed', 'startup_readiness_warmup_completed',
   'cache_resource_resolved', 'route_readiness_completed', 'route_refresh_completed',
@@ -28,13 +30,15 @@ const query = `
   WITH finalized_dates AS (
     SELECT REGEXP_REPLACE(table_name, r'^events_', '') AS suffix
     FROM \`${project}.${dataset}.INFORMATION_SCHEMA.TABLES\`
-    WHERE STARTS_WITH(table_name, 'events_') AND NOT STARTS_WITH(table_name, 'events_intraday_')
+    WHERE table_name BETWEEN 'events_${startSuffix}' AND 'events_${endSuffix}'
+      AND NOT STARTS_WITH(table_name, 'events_intraday_')
   ), ios_events AS (
     SELECT event_name, user_pseudo_id,
       NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), '') AS firebase_screen,
       NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'route_id'), '') AS route_id
     FROM \`${project}.${dataset}.events_*\`
-    WHERE REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') BETWEEN '${startDate.replaceAll('-', '')}' AND '${endDate.replaceAll('-', '')}'
+    WHERE (_TABLE_SUFFIX BETWEEN '${startSuffix}' AND '${endSuffix}'
+      OR _TABLE_SUFFIX BETWEEN 'intraday_${startSuffix}' AND 'intraday_${endSuffix}')
       AND (NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
         OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (SELECT suffix FROM finalized_dates))
       AND platform = 'IOS' AND app_info.id = 'com.hushh.app'

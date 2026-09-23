@@ -193,7 +193,7 @@ async function main() {
       === Number(summary.registeredAccounts.newAccounts),
     `One app ${environment} daily registrations do not reconcile`);
     const selectedUsers = summary?.identifiedUsers?.selectedRange;
-    assert(selectedUsers, `One app ${environment} selected-range unique users missing`);
+    assert(selectedUsers?.available === true, `One app ${environment} selected-range unique users unavailable`);
     assert(Number(selectedUsers.newUsers) + Number(selectedUsers.returningUsers) === Number(selectedUsers.totalUsers),
       `One app ${environment} unique-user partition is inconsistent`);
     for (const key of ['users', 'sessions', 'events']) {

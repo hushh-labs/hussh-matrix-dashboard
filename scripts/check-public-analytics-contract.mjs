@@ -111,14 +111,22 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
   const identifiedWau = Number(identified?.wau ?? 0);
   const identifiedMau = Number(identified?.mau ?? 0);
   const selectedUsers = identified?.selectedRange;
-  const totalUsers = Number(selectedUsers?.totalUsers ?? -1);
-  const newUsers = Number(selectedUsers?.newUsers ?? -1);
-  const returningUsers = Number(selectedUsers?.returningUsers ?? -1);
-  if (totalUsers < 0 || newUsers < 0 || returningUsers < 0) {
-    findings.push(`${label}.identifiedUsers.selectedRange: total/new/returning users must be non-negative`);
+  if (typeof selectedUsers?.available !== 'boolean') {
+    findings.push(`${label}.identifiedUsers.selectedRange.available: expected explicit source state`);
   }
-  if (newUsers + returningUsers !== totalUsers) {
-    findings.push(`${label}.identifiedUsers.selectedRange: new + returning must equal total, got ${newUsers} + ${returningUsers} != ${totalUsers}`);
+  if (selectedUsers?.available === false) {
+    if (selectedUsers.totalUsers !== null || selectedUsers.newUsers !== null || selectedUsers.returningUsers !== null) {
+      findings.push(`${label}.identifiedUsers.selectedRange: unavailable counts must be null, not zero`);
+    }
+  } else if (selectedUsers?.available === true) {
+    const totalUsers = selectedUsers.totalUsers;
+    const newUsers = selectedUsers.newUsers;
+    const returningUsers = selectedUsers.returningUsers;
+    if (![totalUsers, newUsers, returningUsers].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+      findings.push(`${label}.identifiedUsers.selectedRange: total/new/returning users must be non-negative integers`);
+    } else if (newUsers + returningUsers !== totalUsers) {
+      findings.push(`${label}.identifiedUsers.selectedRange: new + returning must equal total, got ${newUsers} + ${returningUsers} != ${totalUsers}`);
+    }
   }
   if (!selectedUsers?.newUserDefinition || !/first observed/i.test(selectedUsers.newUserDefinition)) {
     findings.push(`${label}.identifiedUsers.selectedRange.newUserDefinition: missing first-observed definition`);
@@ -143,7 +151,8 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
     const values = [row.users, row.events, row.activeDeviceIds, row.activeAccounts,
       row.routeVisits, row.namedRouteVisits];
     if (!values.every((value) => Number.isSafeInteger(value) && value >= 0)
-      || row.activeDeviceIds > row.users || row.activeAccounts > totalUsers
+      || row.activeDeviceIds > row.users
+      || (selectedUsers?.available === true && row.activeAccounts > selectedUsers.totalUsers)
       || row.routeVisits > row.events || row.namedRouteVisits > row.routeVisits) {
       findings.push(`${label}.platforms.${row.platform}: invalid selected-range counts`);
     }
@@ -279,7 +288,20 @@ for (const spec of [
         findings.push(`${spec.path}: production and UAT shared registered-account totals differ`);
       }
     }
-    checks.push({ endpoint: spec.path, bytes: result.bytes, durationMs: result.durationMs, findings: findings.length });
+    checks.push({
+      endpoint: spec.path,
+      bytes: result.bytes,
+      durationMs: result.durationMs,
+      findings: findings.length,
+      identifiedUserSource: {
+        production: one?.production?.identifiedUsers
+          ? (one.production.identifiedUsers.selectedRange?.available === true ? 'available' : 'waiting')
+          : 'not_applicable',
+        uat: one?.uat?.identifiedUsers
+          ? (one.uat.identifiedUsers.selectedRange?.available === true ? 'available' : 'waiting')
+          : 'not_applicable',
+      },
+    });
     failures.push(...findings.map((finding) => `${spec.path} ${finding}`));
   } catch (error) {
     failures.push(`${spec.path}: ${error instanceof Error ? error.message : String(error)}`);

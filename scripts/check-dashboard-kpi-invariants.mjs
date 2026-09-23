@@ -67,6 +67,11 @@ function checkOneEnvironment(label, one) {
   const identified = one.identifiedUsers ?? {};
   const selectedUsers = identified.selectedRange ?? {};
   check(
+    `${label}_identified_range_available`,
+    selectedUsers.available === true,
+    `available=${String(selectedUsers.available)}`,
+  );
+  check(
     `${label}_identified_total_partitions_exactly`,
     Number(selectedUsers.newUsers ?? -1) >= 0
       && Number(selectedUsers.returningUsers ?? -1) >= 0

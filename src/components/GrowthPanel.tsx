@@ -626,7 +626,7 @@ function OrganicSearch({ growth }: { growth: GrowthSummary }) {
         <Figure
           label="Click-through rate"
           value={percentText(ctr, 2)}
-          detail="Of devices that saw us, this many came"
+          detail="Search-result clicks divided by impressions"
         />
         <Figure
           label="Average position"
