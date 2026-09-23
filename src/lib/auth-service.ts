@@ -163,11 +163,11 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
     if (res.ok) {
       const data = await res.json();
       return {
-        oauthEnabled: Boolean(data.oauthEnabled ?? true),
+        oauthEnabled: Boolean(data.oauthEnabled ?? false),
         clientId: data.clientId || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '',
         allowedDomains: data.allowedDomains || DEFAULT_ALLOWED_DOMAINS,
         allowedEmails: data.allowedEmails?.length ? data.allowedEmails : DEFAULT_ALLOWED_EMAILS,
-        requireAuth: Boolean(data.requireAuth ?? true),
+        requireAuth: Boolean(data.requireAuth ?? false),
       };
     }
   } catch (err) {
@@ -175,11 +175,11 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
   }
 
   return {
-    oauthEnabled: true,
+    oauthEnabled: false,
     clientId: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '',
     allowedDomains: DEFAULT_ALLOWED_DOMAINS,
     allowedEmails: DEFAULT_ALLOWED_EMAILS,
-    requireAuth: true,
+    requireAuth: false,
   };
 }
 

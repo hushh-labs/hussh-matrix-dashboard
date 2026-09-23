@@ -8272,7 +8272,7 @@ const ALLOWED_EMAILS = (
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
-const REQUIRE_AUTH = process.env.REQUIRE_AUTH !== 'false';
+const REQUIRE_AUTH = process.env.REQUIRE_AUTH === 'true';
 
 function isEmailAuthorizedOnServer(email: string): boolean {
   if (!email || !email.includes('@')) return false;

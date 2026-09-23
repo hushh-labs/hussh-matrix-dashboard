@@ -30,11 +30,11 @@ interface AuthContextType {
 }
 
 const defaultAuthConfig: AuthConfig = {
-  oauthEnabled: true,
+  oauthEnabled: false,
   clientId: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '',
   allowedDomains: DEFAULT_ALLOWED_DOMAINS,
   allowedEmails: [],
-  requireAuth: true,
+  requireAuth: false,
 };
 
 const AuthContext = createContext<AuthContextType>({
