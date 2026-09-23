@@ -29,17 +29,31 @@ const query = `
     SELECT REGEXP_REPLACE(table_name, r'^events_', '') AS suffix
     FROM \`${project}.${dataset}.INFORMATION_SCHEMA.TABLES\`
     WHERE STARTS_WITH(table_name, 'events_') AND NOT STARTS_WITH(table_name, 'events_intraday_')
+  ), ios_events AS (
+    SELECT event_name, user_pseudo_id,
+      NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), '') AS firebase_screen,
+      NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'route_id'), '') AS route_id
+    FROM \`${project}.${dataset}.events_*\`
+    WHERE REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') BETWEEN '${startDate.replaceAll('-', '')}' AND '${endDate.replaceAll('-', '')}'
+      AND (NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
+        OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (SELECT suffix FROM finalized_dates))
+      AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
   )
   SELECT COUNT(*) AS scoped_events,
     COUNT(DISTINCT IF(event_name NOT IN (${ignored}), user_pseudo_id, NULL)) AS active_install_ids,
     COUNTIF(event_name = 'screen_view') AS screen_views,
-    COUNTIF(event_name = 'screen_view' AND NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), '') IS NOT NULL) AS named_screen_views,
-    COUNT(DISTINCT IF(event_name = 'screen_view', NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), ''), NULL)) AS distinct_screen_names
-  FROM \`${project}.${dataset}.events_*\`
-  WHERE REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') BETWEEN '${startDate.replaceAll('-', '')}' AND '${endDate.replaceAll('-', '')}'
-    AND (NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
-      OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (SELECT suffix FROM finalized_dates))
-    AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
+    COUNTIF(event_name = 'screen_view' AND firebase_screen IS NOT NULL) AS named_screen_views,
+    COUNT(DISTINCT IF(event_name = 'screen_view', firebase_screen, NULL)) AS distinct_screen_names,
+    COUNTIF(event_name = 'page_view') AS product_screen_visits,
+    COUNTIF(event_name = 'page_view' AND REGEXP_CONTAINS(route_id, r'^[a-z][a-z0-9_]{0,60}$')
+      AND NOT REGEXP_CONTAINS(route_id, r'(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)')) AS named_product_screen_visits,
+    COUNT(DISTINCT IF(event_name = 'page_view' AND REGEXP_CONTAINS(route_id, r'^[a-z][a-z0-9_]{0,60}$')
+      AND NOT REGEXP_CONTAINS(route_id, r'(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)'), route_id, NULL)) AS distinct_product_screens,
+    ARRAY(SELECT AS STRUCT route_id, COUNT(*) AS visits FROM ios_events
+      WHERE event_name = 'page_view' AND REGEXP_CONTAINS(route_id, r'^[a-z][a-z0-9_]{0,60}$')
+        AND NOT REGEXP_CONTAINS(route_id, r'(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)')
+      GROUP BY route_id ORDER BY visits DESC, route_id LIMIT 5) AS top_product_screens
+  FROM ios_events
 `;
 
 try {
@@ -55,14 +69,15 @@ try {
   const actual = payload?.data?.production?.iosUsage;
   if (!actual || actual.bundleId !== 'com.hushh.app') throw new Error('Dashboard iOS usage KPI is missing or unscoped.');
   if (Number(expected.scoped_events) === 0) {
-    if (actual.available || actual.activeInstallIds !== null || actual.screenViews !== null) {
+    if (actual.available || actual.activeInstallIds !== null || actual.screenViews !== null || actual.productScreenVisits !== null) {
       throw new Error('Dashboard presents missing iOS data as zero.');
     }
   } else {
     if (!actual.available) throw new Error('Dashboard iOS usage KPI unexpectedly unavailable.');
     for (const [actualKey, expectedKey] of [
       ['activeInstallIds', 'active_install_ids'], ['screenViews', 'screen_views'],
-      ['namedScreenViews', 'named_screen_views'],
+      ['namedScreenViews', 'named_screen_views'], ['productScreenVisits', 'product_screen_visits'],
+      ['namedProductScreenVisits', 'named_product_screen_visits'],
     ]) {
       if (Number(actual[actualKey]) !== Number(expected[expectedKey])) {
         throw new Error(`${actualKey} mismatch: dashboard ${actual[actualKey]}, export ${expected[expectedKey]}`);
@@ -70,6 +85,11 @@ try {
     }
     const expectedNames = Number(expected.named_screen_views) > 0 ? Number(expected.distinct_screen_names) : null;
     if (actual.distinctScreenNames !== expectedNames) throw new Error('Distinct screen name count mismatch.');
+    const expectedProductScreens = Number(expected.named_product_screen_visits) > 0
+      ? Number(expected.distinct_product_screens) : null;
+    if (actual.distinctProductScreens !== expectedProductScreens) throw new Error('Distinct One product screen count mismatch.');
+    const expectedTop = expected.top_product_screens.map((row) => ({ routeId: row.route_id, visits: Number(row.visits) }));
+    if (JSON.stringify(actual.topProductScreens) !== JSON.stringify(expectedTop)) throw new Error('Top One screen list mismatch.');
   }
   console.log(JSON.stringify({ status: 'passed', range: { startDate, endDate }, iOS: actual }));
 } catch (error) {

@@ -154,15 +154,33 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
   if (iosUsage) {
     if (iosUsage.bundleId !== 'com.hushh.app') findings.push(`${label}.iosUsage: expected One iOS bundle`);
     if (iosUsage.available) {
-      const counts = [iosUsage.activeInstallIds, iosUsage.screenViews, iosUsage.namedScreenViews];
+      const counts = [iosUsage.activeInstallIds, iosUsage.screenViews, iosUsage.namedScreenViews,
+        iosUsage.productScreenVisits, iosUsage.namedProductScreenVisits];
       if (!counts.every((value) => Number.isSafeInteger(value) && value >= 0)) {
         findings.push(`${label}.iosUsage: counts must be non-negative integers`);
       }
       if (iosUsage.namedScreenViews > iosUsage.screenViews) findings.push(`${label}.iosUsage: named screen views exceed all screen views`);
+      if (iosUsage.namedProductScreenVisits > iosUsage.productScreenVisits) {
+        findings.push(`${label}.iosUsage: named One screen visits exceed all route visits`);
+      }
+      if (iosUsage.namedProductScreenVisits === 0 && iosUsage.distinctProductScreens !== null) {
+        findings.push(`${label}.iosUsage: distinct One screens must be unavailable when route names are absent`);
+      }
+      if (!Array.isArray(iosUsage.topProductScreens) || iosUsage.topProductScreens.length > 5
+        || iosUsage.topProductScreens.some((row) => !/^[a-z][a-z0-9_]{0,60}$/.test(row.routeId)
+          || /(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)/.test(row.routeId)
+          || !Number.isSafeInteger(row.visits) || row.visits < 0)) {
+        findings.push(`${label}.iosUsage: top screens must be safe aggregate route rows`);
+      } else if (iosUsage.topProductScreens.reduce((sum, row) => sum + row.visits, 0) > iosUsage.namedProductScreenVisits
+        || (iosUsage.distinctProductScreens !== null && iosUsage.topProductScreens.length > iosUsage.distinctProductScreens)) {
+        findings.push(`${label}.iosUsage: top screen rows exceed named route totals`);
+      }
       if (iosUsage.namedScreenViews === 0 && iosUsage.distinctScreenNames !== null) {
         findings.push(`${label}.iosUsage: distinct screens must be unavailable when names are absent`);
       }
-    } else if (iosUsage.activeInstallIds !== null || iosUsage.screenViews !== null || iosUsage.distinctScreenNames !== null) {
+    } else if (iosUsage.activeInstallIds !== null || iosUsage.screenViews !== null || iosUsage.distinctScreenNames !== null
+      || iosUsage.productScreenVisits !== null || iosUsage.distinctProductScreens !== null
+      || iosUsage.topProductScreens?.length) {
       findings.push(`${label}.iosUsage: unavailable export must not publish zero counts`);
     }
   }

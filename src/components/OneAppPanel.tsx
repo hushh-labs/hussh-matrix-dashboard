@@ -332,27 +332,31 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
       detail: 'App-instance IDs active during selected dates · not physical phones',
     },
     {
-      group: 'Screens', label: 'iOS screen views',
-      value: ios?.available ? ios.screenViews : null,
-      detail: 'Times a screen_view event fired · repeat views count again',
+      group: 'Screens', label: 'One iOS route visits',
+      value: ios?.available ? ios.productScreenVisits : null,
+      detail: 'Route opens · repeat visits count again; callbacks may appear here',
     },
     {
-      group: 'Screens', label: 'Different iOS screens',
-      value: ios?.available ? ios.distinctScreenNames : null,
+      group: 'Screens', label: 'Different One screens visited',
+      value: ios?.available ? ios.distinctProductScreens : null,
       detail: !ios?.available
         ? 'No One iOS app data in this reporting property and date range'
-        : ios.namedScreenViews === 0
-          ? 'Not tracked: the app sends no product screen names yet'
-          : 'Different named screens visited during selected dates',
+        : ios.namedProductScreenVisits === 0
+          ? 'Not tracked: route names are missing'
+          : 'Distinct named screens · unknown and callback routes excluded',
     },
   ];
+  const screenLabels: Record<string, string> = {
+    one_dashboard: 'One home', chat: 'One chat', connect: 'Connect', one_location: 'Location',
+    one_setup: 'Setup', feed: 'Feed', login: 'Sign in', kai_home: 'Legacy home',
+  };
 
   return (
     <div className="mb-5 space-y-3">
       <div>
         <h3 className="text-lg font-semibold text-[#1d1d1f]">One at a glance</h3>
         <p className="mt-1 text-sm text-[#6e6e73]">
-          Users are accounts. Devices are app installations. Screen views are actions. Never add these numbers together.
+          Users are accounts. Devices are app installations. Screen visits are actions. Never add these numbers together.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -367,6 +371,25 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
           </div>
         ))}
       </div>
+      {ios?.available && ios.topProductScreens.length > 0 && (
+        <div className={cn(appleCard, 'p-4')}>
+          <p className="text-sm font-semibold text-[#1d1d1f]">Most visited One iOS screens</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {ios.topProductScreens.map((screen) => (
+              <div key={screen.routeId} className="rounded-xl bg-[#f5f5f7] p-3">
+                <p className="text-xs font-semibold text-[#6e6e73]">
+                  {screenLabels[screen.routeId] ?? screen.routeId.replaceAll('_', ' ')}
+                </p>
+                <p className="mt-1 text-xl font-semibold tabular-nums text-[#1d1d1f]">{exactAccountCount(screen.visits)}</p>
+                <p className="text-xs text-[#86868b]">visits</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-[#6e6e73]">
+            {exactAccountCount(ios.namedProductScreenVisits ?? 0)} of {exactAccountCount(ios.productScreenVisits ?? 0)} route visits map to named One screens. Unknown routes, sign-out and callbacks are excluded from the screen ranking. Automatic iOS controller views are not added.
+          </p>
+        </div>
+      )}
       <p className="text-xs leading-5 text-[#6e6e73]">
         All iOS activity cards use {ios?.startDate ?? one.range?.startDate} to {ios?.endDate ?? one.range?.endDate} and the One iOS bundle. Registered total is a current account snapshot, not a date-range total. GA4 export can lag; anonymous iOS usage is excluded only from the account card.
       </p>
