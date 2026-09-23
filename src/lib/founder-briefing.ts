@@ -15,6 +15,8 @@ export interface FounderBriefingData {
   previousPeriod: FounderPeriod;
   one: {
     available: boolean;
+    comparisonReady: boolean;
+    identityObservedSince: string | null;
     activeAccounts: FounderMeasure;
     firstObservedAccounts: FounderMeasure;
     activatedAccounts: FounderMeasure;

@@ -40,13 +40,16 @@ try {
     check(`${product}_availability`, typeof source?.available === 'boolean');
     for (const pair of pairs) {
       const measure = source?.[pair];
-      check(`${product}_${pair}_valid`, source?.available
+      check(`${product}_${pair}_valid`, product === 'one' && source?.available && !source?.comparisonReady
+        ? integer(measure?.current) && measure?.previous === null
+        : source?.available
         ? integer(measure?.current) && integer(measure?.previous)
         : measure?.current === null && measure?.previous === null);
     }
   }
   check('one_first_observed_bounded', !body.one?.available
     || body.one.firstObservedAccounts.current <= body.one.activeAccounts.current);
+  check('one_comparison_guarded', !body.one?.available || typeof body.one.comparisonReady === 'boolean');
   check('one_coverage_bounded', body.one?.accountCoverage === null
     || (typeof body.one?.accountCoverage === 'number'
       && body.one.accountCoverage >= 0 && body.one.accountCoverage <= 1));

@@ -12,6 +12,8 @@ The first tab on `metrics.hushh.ai` is a concise briefing, not a replacement for
 
 The One GA4 property includes public native events bearing `env=uat`. They are not called production-backend users; a warning stays visible until the client labeling is corrected and verified. The One account coverage value is a diagnostic for how much activity can be tied to a stable account, not a multiplier for estimating unknown people. The page does not show device or screen counts in headline cards, or add populations across products.
 
+One account trends are withheld until account-tagged export history covers the *entire* earlier comparison window. The current count remains visible. This prevents a newly instrumented identity source from producing a false growth spike.
+
 “Market” here means **our own measurable discovery via Google Search**, not competitive rank, share of market, addressable market, or customer sentiment. Those would require separate verified data sources and definitions.
 
 Verification: `npm run lint`, `npm test`, `npm run build`, then `npm run test:prod:founder` with an authenticated short-lived QA session against a zero-traffic candidate and again against the live production URL. The contract probe checks window boundaries, types, no-store, privacy, zero-vs-unavailable, coverage, and export freshness. A real Google sign-in remains a separate manual release gate.
