@@ -3060,6 +3060,20 @@ ${capabilitySql.isDeliberate}
     FROM range_accounts JOIN account_history USING (accountId)
   `;
 
+  // Count app instances and screen-view events separately. Screen class is
+  // often a generic UIKit controller, so only firebase_screen is accepted as
+  // an actual product screen name. If absent, distinct screens are unknown.
+  const iosUsageQuery = `
+    SELECT
+      COUNT(*) AS scopedEvents,
+      COUNT(DISTINCT IF(${meaningful}, user_pseudo_id, NULL)) AS activeInstallIds,
+      COUNTIF(event_name = 'screen_view') AS screenViews,
+      COUNTIF(event_name = 'screen_view' AND NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), '') IS NOT NULL) AS namedScreenViews,
+      COUNT(DISTINCT IF(event_name = 'screen_view', NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'firebase_screen'), ''), NULL)) AS distinctScreenNames
+    FROM ${table}
+    WHERE ${dateFilter} AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
+  `;
+
   // Week-1 retention by acquisition cohort: of the people who first appeared in
   // a given week, how many came back in the following seven days. Cohorts are
   // read from a wider window than the selected range because a cohort has to be
@@ -3182,6 +3196,7 @@ ${capabilitySql.isDeliberate}
     growth,
     identifiedGrowth,
     iosIdentifiedGrowth,
+    iosUsage,
     retention,
     activationStages,
     featureUsage,
@@ -3206,6 +3221,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, growthQuery),
     queryBigQuerySql(queryProject, identifiedGrowthQuery),
     queryBigQuerySql(queryProject, iosIdentifiedGrowthQuery),
+    queryBigQuerySql(queryProject, iosUsageQuery),
     queryBigQuerySql(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
@@ -3232,6 +3248,7 @@ ${capabilitySql.isDeliberate}
     growth.error,
     identifiedGrowth.error,
     iosIdentifiedGrowth.error,
+    iosUsage.error,
     retention.error,
     activationStages.error,
     featureUsage.error,
@@ -3258,6 +3275,8 @@ ${capabilitySql.isDeliberate}
   const identifiedGrowthRow = identifiedGrowth.rows[0] ?? {};
   const iosIdentifiedGrowthRow = iosIdentifiedGrowth.rows[0] ?? {};
   const iosHasEvents = !iosIdentifiedGrowth.error && toNumber(iosIdentifiedGrowthRow.scopedEvents) > 0;
+  const iosUsageRow = iosUsage.rows[0] ?? {};
+  const iosUsageAvailable = !iosUsage.error && toNumber(iosUsageRow.scopedEvents) > 0;
   const activationRow = activationStages.rows[0] ?? {};
   const capabilityRows = new Map(
     agents.rows.map((row) => [String(row.capability), row]),
@@ -3382,6 +3401,22 @@ ${capabilitySql.isDeliberate}
           : iosHasEvents
             ? 'Distinct signed-in One iOS accounts with meaningful activity. First observed means first account-tagged meaningful iOS event in available GA4 export history, not a new Firebase registration.'
             : 'No meaningful One iOS app events are available in this GA4 property and selected range.',
+      },
+      iosUsage: {
+        available: iosUsageAvailable,
+        bundleId: 'com.hushh.app',
+        activeInstallIds: iosUsageAvailable ? toNumber(iosUsageRow.activeInstallIds) : null,
+        screenViews: iosUsageAvailable ? toNumber(iosUsageRow.screenViews) : null,
+        namedScreenViews: iosUsageAvailable ? toNumber(iosUsageRow.namedScreenViews) : null,
+        distinctScreenNames: iosUsageAvailable && toNumber(iosUsageRow.namedScreenViews) > 0
+          ? toNumber(iosUsageRow.distinctScreenNames) : null,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        note: iosUsage.error
+          ? 'iOS usage export is temporarily unavailable; no zero is inferred.'
+          : iosUsageAvailable
+            ? 'App-install IDs and screen-view events from the One iOS bundle in this reporting property. Generic controller classes do not establish distinct product screens.'
+            : 'No One iOS app events are available in this reporting property and selected range.',
       },
       registeredAccounts: registeredAccounts.data,
       // The install cohort funnel, per native platform. Stages nest because

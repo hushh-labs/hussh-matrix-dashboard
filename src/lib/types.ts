@@ -829,6 +829,19 @@ export interface OneIosIdentifiedUsers {
   note: string;
 }
 
+/** Selected-range iOS app-instance and screen-view event totals, never people. */
+export interface OneIosUsage {
+  available: boolean;
+  bundleId: string;
+  activeInstallIds: number | null;
+  screenViews: number | null;
+  namedScreenViews: number | null;
+  distinctScreenNames: number | null;
+  startDate: string;
+  endDate: string;
+  note: string;
+}
+
 export interface OneInstallStage {
   key: string;
   label: string;
@@ -995,6 +1008,7 @@ export interface OneAppSummary {
   activeUsers: OneActiveUsers;
   identifiedUsers: OneIdentifiedUsers;
   iosIdentifiedUsers?: OneIosIdentifiedUsers;
+  iosUsage?: OneIosUsage;
   registeredAccounts: OneRegisteredAccounts;
   activeByPlatformAvailable?: boolean;
   activeByPlatform: OnePlatformActives[];
