@@ -996,6 +996,7 @@ export interface OneAppSummary {
   identifiedUsers: OneIdentifiedUsers;
   iosIdentifiedUsers?: OneIosIdentifiedUsers;
   registeredAccounts: OneRegisteredAccounts;
+  activeByPlatformAvailable?: boolean;
   activeByPlatform: OnePlatformActives[];
   installFunnel: OneInstallFunnel[];
   growth: OneGrowthSplit;

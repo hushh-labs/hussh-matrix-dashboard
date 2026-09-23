@@ -101,7 +101,7 @@ function EnvironmentColumn({
 
       {one ? (
         <>
-          <ActivesByPlatform rows={one.activeByPlatform} />
+          <ActivesByPlatform rows={one.activeByPlatform} available={one.activeByPlatformAvailable} />
           <InstallFunnel funnels={one.installFunnel} />
           <Activation one={one} />
           <Retention one={one} />
