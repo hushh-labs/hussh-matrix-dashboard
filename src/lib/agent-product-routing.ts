@@ -1,0 +1,32 @@
+/** Pure product routing shared by the analyst's tools and deterministic path. */
+export type ProductKey = 'hushh.ai' | 'one.hushh.ai' | 'uat.one.hushh.ai' | 'hushhtech.com';
+
+export function productFromValue(value: unknown): ProductKey | 'all' {
+  const raw = String(value ?? 'all').toLowerCase().trim();
+  if (raw === 'all') return 'all';
+  // One hosts must win before the generic hushh.ai suffix.
+  if (raw.includes('uat.one.hushh.ai') || raw.includes('one uat')) return 'uat.one.hushh.ai';
+  if (raw.includes('one.hushh.ai') || raw.includes('one production') || raw === 'one') return 'one.hushh.ai';
+  // Retain historical aliases only for old analyst messages/tool results.
+  if (raw.includes('uat.kai') || (raw.includes('kai') && raw.includes('uat'))) return 'uat.one.hushh.ai';
+  if (raw.includes('hushhtech')) return 'hushhtech.com';
+  if (raw.includes('kai')) return 'one.hushh.ai';
+  if (raw.includes('hushh.ai') || raw.includes('hushhai') || raw.includes('hushh ai')) return 'hushh.ai';
+  return 'all';
+}
+
+export function inferProductFromQuestion(text: string): ProductKey | 'all' {
+  const lower = text.toLowerCase();
+  if (lower.includes('hushhtech')) return 'hushhtech.com';
+  if (lower.includes('uat.one.hushh.ai') || /\bone\s+uat\b/.test(lower)) return 'uat.one.hushh.ai';
+  if (lower.includes('one.hushh.ai') || /\bone\s+(?:app|production)\b/.test(lower)) return 'one.hushh.ai';
+  if (lower.includes('kai')) return 'one.hushh.ai';
+  if (lower.includes('hushh.ai') || lower.includes('hushh ai')) return 'hushh.ai';
+  return 'all';
+}
+
+export function isOneEnvironmentSplitQuestion(text: string): boolean {
+  const lower = text.toLowerCase();
+  return /\b(?:one|kai)\b/.test(lower)
+    && /(uat|production|prod|separat|split|compare)/.test(lower);
+}

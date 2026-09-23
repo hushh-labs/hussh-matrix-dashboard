@@ -23,6 +23,8 @@
     "test:metrics:ios-accounts": "node scripts/check-one-ios-account-kpis.mjs",
     "test:metrics:ios-usage": "node scripts/check-one-ios-usage-kpis.mjs",
     "test:metrics:one-platforms": "node scripts/check-one-platform-kpis.mjs",
+    "test:ui:one-platforms": "tsx scripts/check-one-platform-render.tsx",
+    "test:agent:product-routing": "tsx scripts/check-agent-product-routing.ts",
     "test:metrics:one-registered-accounts": "node scripts/check-one-registered-accounts-reconciliation.mjs",
     "test:metrics:kpi-invariants": "node scripts/check-dashboard-kpi-invariants.mjs",
     "test:api:one-location": "node scripts/check-one-location-analytics-contract.mjs",

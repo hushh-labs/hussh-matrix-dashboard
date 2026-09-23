@@ -76,9 +76,17 @@ const response = await fetch(url, { signal: AbortSignal.timeout(180_000) });
 if (!response.ok) throw new Error(`Dashboard returned HTTP ${response.status}`);
 const payload = await response.json();
 const actual = payload?.data?.production?.iosIdentifiedUsers;
-if (!actual?.available || actual.bundleId !== 'com.hushh.app' || actual.countingUnit !== 'account') {
+if (!actual || actual.bundleId !== 'com.hushh.app' || actual.countingUnit !== 'account') {
   throw new Error('Dashboard iOS account KPI is unavailable or incorrectly scoped.');
 }
+if (Number(expected.total_users) === 0) {
+  if (actual.available || actual.totalUsers !== null || actual.firstObservedUsers !== null || actual.previouslyObservedUsers !== null) {
+    throw new Error('Dashboard presents anonymous iOS activity as a measured zero-account audience.');
+  }
+  console.log(JSON.stringify({ status: 'passed', range: { startDate, endDate }, iOS: { available: false } }));
+  process.exit(0);
+}
+if (!actual.available) throw new Error('Dashboard iOS account KPI unexpectedly unavailable.');
 for (const [actualKey, expectedKey] of [
   ['totalUsers', 'total_users'],
   ['firstObservedUsers', 'first_observed_users'],

@@ -168,7 +168,7 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
               <p className="text-sm font-semibold text-[#6e6e73]">{tile.label}</p>
             </div>
             <p className="mt-2 text-5xl font-semibold leading-none text-[#1d1d1f]">
-              {typeof tile.value === 'number' ? exactAccountCount(tile.value) : tile.value}
+              {typeof tile.value === 'number' ? exactAccountCount(tile.value) : 'Not available'}
             </p>
             <p className="mt-2 text-xs font-semibold text-[#86868b]">{tile.detail}</p>
           </motion.div>
@@ -358,15 +358,18 @@ const SCREEN_LABELS: Record<string, string> = {
   one_setup: 'Setup', feed: 'Feed', login: 'Sign in', kai_home: 'Legacy home',
 };
 
-function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; environment: 'production' | 'uat' }) {
-  if (one.platformsAvailable === false) {
+export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; environment: 'production' | 'uat' }) {
+  // A browser can briefly pair the new UI bundle with the previous API
+  // revision during a rolling deploy or rollback. Missing fields mean
+  // unavailable, not an empty or zero-valued platform.
+  if (one.platformsAvailable === false || !Array.isArray(one.platforms)) {
     return <p className={cn(appleCard, 'mb-5 p-5 text-sm font-semibold text-[#8a5a04]')} role="status">
       Platform behaviour is temporarily unavailable from the GA4 export. No platform counts are shown as zero.
     </p>;
   }
 
   const platformCards = [
-    { key: 'WEB', title: 'One web', scope: 'one.hushh.ai browsers only' },
+    { key: 'WEB', title: 'One web', scope: `${one.sourceWebHost ?? (environment === 'uat' ? 'uat.one.hushh.ai' : 'one.hushh.ai')} browsers only` },
     { key: 'IOS', title: 'One iOS', scope: 'com.hushh.app iOS app instances' },
     { key: 'ANDROID', title: 'One Android', scope: 'com.hushh.app Android app instances · release status unverified' },
   ];
@@ -382,7 +385,8 @@ function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; environm
       <div className="grid gap-4 lg:grid-cols-3">
         {platformCards.map(({ key, title, scope }) => {
           const row = one.platforms.find((item) => item.platform.toUpperCase() === key);
-          const accountsMeasured = row && (row.activeAccounts > 0 || (key === 'IOS' && one.iosIdentifiedUsers?.available));
+          const accountsMeasured = row && row.activeAccounts > 0;
+          const topScreens = Array.isArray(row?.topProductScreens) ? row.topProductScreens : [];
           return (
             <div key={key} className={cn(appleCard, 'p-5')}>
               <p className="text-base font-semibold text-[#1d1d1f]">{title}</p>
@@ -397,11 +401,11 @@ function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; environm
                     <div><dt className="text-xs text-[#6e6e73]">Named screen visits</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{exactAccountCount(row.namedRouteVisits)}</dd></div>
                     <div><dt className="text-xs text-[#6e6e73]">Different named screens</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{row.distinctScreens === null ? 'Not available' : exactAccountCount(row.distinctScreens)}</dd></div>
                   </dl>
-                  {row.topProductScreens.length > 0 && (
+                  {topScreens.length > 0 && (
                     <div className="mt-5 border-t border-black/5 pt-4">
                       <p className="text-xs font-bold uppercase tracking-wide text-[#6e6e73]">Most visited screens</p>
                       <ol className="mt-2 space-y-1 text-xs text-[#3a3a3c]">
-                        {row.topProductScreens.map((screen) => <li key={screen.routeId} className="flex justify-between gap-3"><span>{SCREEN_LABELS[screen.routeId] ?? screen.routeId.replaceAll('_', ' ')}</span><span className="font-semibold tabular-nums">{exactAccountCount(screen.visits)}</span></li>)}
+                        {topScreens.map((screen) => <li key={screen.routeId} className="flex justify-between gap-3"><span>{SCREEN_LABELS[screen.routeId] ?? screen.routeId.replaceAll('_', ' ')}</span><span className="font-semibold tabular-nums">{exactAccountCount(screen.visits)}</span></li>)}
                       </ol>
                     </div>
                   )}
@@ -1168,7 +1172,7 @@ function Health({ metrics }: { metrics: BreakdownMetric[] }) {
  * number above can be trusted: what an active "person" actually is, and how old
  * the data is. Both used to be absent from the page entirely.
  */
-function Provenance({ one, rangeLabel }: { one: OneAppSummary; rangeLabel: string }) {
+function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rangeLabel: string; environment: 'production' | 'uat' }) {
   const lagHours = typeof one.expectedLagSeconds === 'number'
     ? Math.round(one.expectedLagSeconds / 3600)
     : null;
@@ -1187,7 +1191,7 @@ function Provenance({ one, rangeLabel }: { one: OneAppSummary; rangeLabel: strin
         people. The signed-in-user cards separately count distinct stable account IDs and collapse the
         same account across devices, while clearly showing how much device traffic has no bound identity.
         Native and <code className="rounded bg-white/70 px-1 py-0.5 text-xs">{one.sourceWebHost ?? 'one.hushh.ai'}</code> only;
-        every other web host is excluded. {nativeUatTagged
+        every other web host is excluded. {environment === 'production' && nativeUatTagged
           ? 'Public mobile-build events tagged for the UAT backend remain visible, but backend environment and GA4 property are reported separately. '
           : ''}Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
         {rangeLabel}
@@ -1332,7 +1336,7 @@ export function OneAppPanel({
           <div className="shrink-0">{dateControl}</div>
         </div>
 
-        {nativeUatTagged.length > 0 && (
+        {environment === 'production' && nativeUatTagged.length > 0 && (
           <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#007aff]/20 bg-[#007aff]/[0.06] px-4 py-3 text-sm font-semibold leading-5 text-[#245b88]">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
@@ -1453,7 +1457,7 @@ export function OneAppPanel({
       </Block>
 
       <section className={dashboardBand}>
-        <Provenance one={activeData} rangeLabel={rangeLabel} />
+        <Provenance one={activeData} rangeLabel={rangeLabel} environment={environment} />
       </section>
     </main>
   );

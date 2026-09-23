@@ -747,12 +747,14 @@ export interface OneIdentifiedUsers {
   countingUnit: 'account';
   identityScope: string;
   selectedRange: {
+    /** False when the account-history query failed; null counts never mean zero. */
+    available: boolean;
     /** Every distinct stable account active in the selected range, counted once. */
-    totalUsers: number;
+    totalUsers: number | null;
     /** Accounts whose first observed One event falls inside the selected range. */
-    newUsers: number;
+    newUsers: number | null;
     /** Selected-range accounts first observed before the selected range. */
-    returningUsers: number;
+    returningUsers: number | null;
     startDate: string;
     endDate: string;
     newUserDefinition: string;

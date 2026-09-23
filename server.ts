@@ -16,6 +16,8 @@ import express from 'express';
 import path from 'path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'url';
+import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromValue } from './src/lib/agent-product-routing';
+import type { ProductKey } from './src/lib/agent-product-routing';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -2943,10 +2945,10 @@ ${capabilitySql.isDeliberate}
       platform,
       COUNT(*) AS installed,
       SUM(triedSignIn) AS triedSignIn,
-      SUM(signedIn) AS signedIn,
-      SUM(onboarded) AS onboarded,
-      SUM(activated) AS activated,
-      SUM(IF(activated = 1 AND returnedW1 = 1, 1, 0)) AS returnedW1
+      SUM(IF(triedSignIn = 1 AND signedIn = 1, 1, 0)) AS signedIn,
+      SUM(IF(triedSignIn = 1 AND signedIn = 1 AND onboarded = 1, 1, 0)) AS onboarded,
+      SUM(IF(triedSignIn = 1 AND signedIn = 1 AND onboarded = 1 AND activated = 1, 1, 0)) AS activated,
+      SUM(IF(triedSignIn = 1 AND signedIn = 1 AND onboarded = 1 AND activated = 1 AND returnedW1 = 1, 1, 0)) AS returnedW1
     FROM progressed
     GROUP BY platform
     ORDER BY installed DESC
@@ -3322,8 +3324,10 @@ ${capabilitySql.isDeliberate}
   const activeRow = active.rows[0] ?? {};
   const growthRow = growth.rows[0] ?? {};
   const identifiedGrowthRow = identifiedGrowth.rows[0] ?? {};
+  const identifiedGrowthAvailable = !identifiedGrowth.error && identifiedGrowth.rows.length > 0;
   const iosIdentifiedGrowthRow = iosIdentifiedGrowth.rows[0] ?? {};
   const iosHasEvents = !iosIdentifiedGrowth.error && toNumber(iosIdentifiedGrowthRow.scopedEvents) > 0;
+  const iosHasAccounts = iosHasEvents && toNumber(iosIdentifiedGrowthRow.totalUsers) > 0;
   const iosUsageRow = iosUsage.rows[0] ?? {};
   const iosUsageAvailable = !iosUsage.error && toNumber(iosUsageRow.scopedEvents) > 0;
   const activationRow = activationStages.rows[0] ?? {};
@@ -3412,9 +3416,10 @@ ${capabilitySql.isDeliberate}
         countingUnit: 'account',
         identityScope: 'Distinct stable salted One account identifier (GA4 user_id); cross-device deduplicated where bound',
         selectedRange: {
-          totalUsers: toNumber(identifiedGrowthRow.totalUsers),
-          newUsers: toNumber(identifiedGrowthRow.newUsers),
-          returningUsers: toNumber(identifiedGrowthRow.returningUsers),
+          available: identifiedGrowthAvailable,
+          totalUsers: identifiedGrowthAvailable ? toNumber(identifiedGrowthRow.totalUsers) : null,
+          newUsers: identifiedGrowthAvailable ? toNumber(identifiedGrowthRow.newUsers) : null,
+          returningUsers: identifiedGrowthAvailable ? toNumber(identifiedGrowthRow.returningUsers) : null,
           startDate: range.startDate,
           endDate: range.endDate,
           newUserDefinition: 'First observed One event for this stable account ID is inside the selected range',
@@ -3436,20 +3441,22 @@ ${capabilitySql.isDeliberate}
         asOf: activeAsOf,
       },
       iosIdentifiedUsers: {
-        available: iosHasEvents,
+        available: iosHasAccounts,
         countingUnit: 'account',
         bundleId: 'com.hushh.app',
-        totalUsers: iosHasEvents ? toNumber(iosIdentifiedGrowthRow.totalUsers) : null,
-        firstObservedUsers: iosHasEvents ? toNumber(iosIdentifiedGrowthRow.firstObservedUsers) : null,
-        previouslyObservedUsers: iosHasEvents ? toNumber(iosIdentifiedGrowthRow.previouslyObservedUsers) : null,
+        totalUsers: iosHasAccounts ? toNumber(iosIdentifiedGrowthRow.totalUsers) : null,
+        firstObservedUsers: iosHasAccounts ? toNumber(iosIdentifiedGrowthRow.firstObservedUsers) : null,
+        previouslyObservedUsers: iosHasAccounts ? toNumber(iosIdentifiedGrowthRow.previouslyObservedUsers) : null,
         identityObservedSince: iosIdentifiedGrowthRow.identityObservedSince ?? null,
         startDate: range.startDate,
         endDate: range.endDate,
         note: iosIdentifiedGrowth.error
           ? 'iOS account export is temporarily unavailable; no zero is inferred.'
-          : iosHasEvents
+          : iosHasAccounts
             ? 'Distinct signed-in One iOS accounts with meaningful activity. First observed means first account-tagged meaningful iOS event in available GA4 export history, not a new Firebase registration.'
-            : 'No meaningful One iOS app events are available in this GA4 property and selected range.',
+            : iosHasEvents
+              ? 'One iOS activity exists, but no stable account ID was observed; account counts are not measurable.'
+              : 'No meaningful One iOS app events are available in this GA4 property and selected range.',
       },
       iosUsage: {
         available: iosUsageAvailable,
@@ -3521,8 +3528,8 @@ ${capabilitySql.isDeliberate}
           // account: "no accounts signed in" and "this platform cannot report
           // accounts" are different facts and only one is about behaviour.
           accounts: withAccount > 0 ? toNumber(row.mauAccounts) : null,
-          dauAccounts: toNumber(row.dauIdentifiedDevices) > 0 ? toNumber(row.dauAccounts) : null,
-          wauAccounts: toNumber(row.wauIdentifiedDevices) > 0 ? toNumber(row.wauAccounts) : null,
+          dauAccounts: withAccount > 0 ? toNumber(row.dauAccounts) : null,
+          wauAccounts: withAccount > 0 ? toNumber(row.wauAccounts) : null,
           mauAccounts: withAccount > 0 ? toNumber(row.mauAccounts) : null,
           signedInShare: devices > 0 && withAccount > 0 ? withAccount / devices : null,
           identityBound: withAccount > 0,
@@ -5503,6 +5510,7 @@ async function fetchGrowthSummary(
     formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -364)),
     range.endDate,
   );
+  const trailingYearStart = formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -364));
 
   // Weekly first-touch cohorts. The running total is accumulated in TypeScript
   // rather than with a window function so the same rows serve both the weekly
@@ -5516,7 +5524,7 @@ async function fetchGrowthSummary(
       FROM ${table}
       WHERE ${historyFilter} AND ${surface} AND ${meaningful}
     )
-    WHERE firstDay IS NOT NULL
+    WHERE firstDay BETWEEN DATE ${sqlStringLiteral(trailingYearStart)} AND DATE ${sqlStringLiteral(range.endDate)}
     GROUP BY week
     ORDER BY week
   `;
@@ -6572,7 +6580,6 @@ app.get('/api/health', (_req, res) => {
 // Hussh Insights AI — production analyst agent
 // ---------------------------------------------------------------------------
 
-type ProductKey = 'hushh.ai' | 'one.hushh.ai' | 'uat.one.hushh.ai' | 'hushhtech.com';
 type AgentConfidence = 'high' | 'medium' | 'low';
 type AgentWindow = 'calendar_days' | 'last_24_hours';
 
@@ -7000,16 +7007,6 @@ function sanitizeAgentText(value: string): string {
     .replace(/\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|URL)[A-Z0-9_]*\b/g, 'runtime config')
     .replace(/\b(?:hushh-ai-prod|hushh-pda(?:-uat)?|ibsisfnjxeowvdtvgzff)\b/g, 'internal aggregate source')
     .replace(/\b(?:analytics|searchconsole)_[A-Za-z0-9_]+\b/g, 'internal aggregate source');
-}
-
-function productFromValue(value: unknown): ProductKey | 'all' {
-  const raw = String(value ?? 'all').toLowerCase();
-  if (raw === 'all') return 'all';
-  if (raw.includes('uat.kai') || (raw.includes('kai') && raw.includes('uat'))) return 'uat.one.hushh.ai';
-  if (raw.includes('hushhtech') || raw.includes('hushhtech.com')) return 'hushhtech.com';
-  if (raw.includes('kai')) return 'one.hushh.ai';
-  if (raw.includes('hushh.ai') || raw.includes('hushhai') || raw.includes('hushh ai')) return 'hushh.ai';
-  return 'all';
 }
 
 function productsFor(product: ProductKey | 'all'): ProductKey[] {
@@ -7749,14 +7746,6 @@ function deterministicClaim(
   return { product, metric, label, value, unit, source, range: snapshot.range };
 }
 
-function inferProductFromQuestion(text: string): ProductKey | 'all' {
-  const lower = text.toLowerCase();
-  if (lower.includes('hushhtech')) return 'hushhtech.com';
-  if (lower.includes('kai')) return 'one.hushh.ai';
-  if (lower.includes('hushh.ai') || lower.includes('hushh ai')) return 'hushh.ai';
-  return 'all';
-}
-
 function isCrossProductUserQuestion(text: string): boolean {
   const lower = text.toLowerCase();
   return (
@@ -8074,7 +8063,7 @@ function buildDeterministicAgentAnswer(message: string, history: ChatHistoryMess
     return buildCrossProductUsersAnswer(snapshot);
   }
 
-  if (/kai/.test(contextText) && /(uat|production|prod|separat|split|compare)/i.test(contextText)) {
+  if (isOneEnvironmentSplitQuestion(contextText)) {
     return buildKaiEnvironmentSplitAnswer(snapshot);
   }
 
@@ -8223,7 +8212,7 @@ function shouldUseDeterministicFastPath(message: string): boolean {
     || isClearlyUnsupportedMetricQuestion(message)
     || isCrossProductUserQuestion(message)
     || isLast24ReportQuestion(message)
-    || (lower.includes('kai') && /(uat|production|prod|separat|split|compare)/i.test(message))
+    || isOneEnvironmentSplitQuestion(message)
     || /top\s*3|act on|issues?|priorit/i.test(message)
     || (lower.includes('cloud run') && /(request|error rate|healthiest|compare|what about|exact)/i.test(message))
     || (lower.includes('hushhtech') && /(signup|persisted|conversion|funnel)/i.test(message))

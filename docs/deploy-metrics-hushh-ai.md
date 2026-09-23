@@ -118,6 +118,17 @@ bq add-iam-policy-binding hushh-pda:analytics_526603671 \
   --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
   --role="roles/bigquery.dataViewer"
 
+# The deployment reconciliation reads only aggregate Firebase account counts.
+# Both the deploy identity and the runtime identity need this read-only role
+# in the shared One identity project; a BigQuery role does not grant it.
+gcloud projects add-iam-policy-binding hushh-pda \
+  --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/firebaseauth.viewer"
+
+gcloud projects add-iam-policy-binding hushh-pda \
+  --member="serviceAccount:metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com" \
+  --role="roles/firebaseauth.viewer"
+
 gcloud projects add-iam-policy-binding hushh-ai-prod \
   --member="serviceAccount:github-actions-deployer@hushh-ai-prod.iam.gserviceaccount.com" \
   --role="roles/cloudscheduler.viewer"
