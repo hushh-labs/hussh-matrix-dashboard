@@ -90,11 +90,20 @@ try {
       one.available && agent.instrumented, one.comparisonReady));
     check(`agent_${agent.key}_interactions`, validMeasure(agent.interactions,
       one.available && agent.instrumented, one.interactionComparisonReady));
+    for (const metric of ['successes', 'expectedErrors', 'failures', 'outcomeSignals']) {
+      check(`agent_${agent.key}_${metric}`, validMeasure(agent[metric],
+        one.available && agent.instrumented, one.interactionComparisonReady));
+    }
+    check(`agent_${agent.key}_successful_accounts`, validMeasure(agent.successfulAccounts,
+      one.available && agent.instrumented, one.comparisonReady));
+    check(`agent_${agent.key}_outcomes_reconcile`, !agent.instrumented || !one.available
+      || agent.successes.current + agent.expectedErrors.current + agent.failures.current === agent.outcomeSignals.current);
     check(`agent_${agent.key}_platform_reconciles`, !agent.instrumented || !one.available
       || (integer(agent.iosInteractions) && integer(agent.webInteractions)
         && agent.iosInteractions + agent.webInteractions === agent.interactions.current));
     check(`agent_${agent.key}_bounded`, !agent.instrumented || !one.available
-      || agent.identifiedAccounts.current <= one.activeAccounts.current);
+      || (agent.identifiedAccounts.current <= one.activeAccounts.current
+        && agent.successfulAccounts.current <= one.activeAccounts.current));
   }
 
   const daily = Array.isArray(one.daily) ? one.daily : [];
