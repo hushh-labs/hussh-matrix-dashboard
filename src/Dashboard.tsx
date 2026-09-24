@@ -1760,26 +1760,26 @@ export default function Dashboard() {
       )}
 
       <div className="mx-auto max-w-[1320px] px-3 pb-10 pt-3 sm:px-6 sm:pb-12 sm:pt-6 lg:px-8">
-        <div className="relative z-30 mb-6 rounded-lg border border-white/70 bg-white/76 p-2 shadow-[0_8px_24px_rgba(0,0,0,0.07)] backdrop-blur-2xl sm:sticky sm:top-3 sm:mb-8">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative z-30 mb-6 rounded-2xl border border-white/80 bg-white/90 p-2.5 shadow-[0_8px_30px_rgba(15,23,42,0.09)] backdrop-blur-2xl sm:sticky sm:top-3 sm:mb-8 sm:p-3">
+          <div className="flex flex-col gap-2.5 xl:flex-row xl:items-center xl:justify-between">
             <div className={cn(
-              'flex min-h-10 min-w-0 items-start gap-2 rounded-lg border px-3 py-2 text-sm font-bold leading-5 sm:items-center',
+              'flex min-h-10 min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold leading-5 sm:text-sm',
               activeTab === 'briefing' || usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
             )}>
-              {activeTab !== 'briefing' && <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 sm:mt-0" />}
+              {activeTab !== 'briefing' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
               <span className="min-w-0">{statusText}</span>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto rounded-lg bg-[#f5f5f7] p-1" role="tablist" aria-label="Dashboard sections">
+            <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
+              <nav className="min-w-0 flex-1" aria-label="Dashboard sections">
+                <div className="flex min-w-0 gap-1 overflow-x-auto rounded-xl bg-[#f5f5f7] p-1.5 [scrollbar-width:thin]">
                 {dashboardTabs.map((tab) => (
                   <button
                     key={tab}
                     type="button"
-                    role="tab"
-                    aria-selected={activeTab === tab}
+                    aria-current={activeTab === tab ? 'page' : undefined}
                     onClick={() => changeDashboardTab(tab)}
                     className={cn(
-                      'min-h-10 shrink-0 rounded-md px-3 text-xs font-bold capitalize leading-4 transition sm:min-h-9 sm:px-4 sm:text-sm',
+                      'min-h-10 shrink-0 rounded-lg px-3 text-xs font-bold capitalize leading-4 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 sm:min-h-9 sm:px-4 sm:text-sm',
                       activeTab === tab
                         ? 'bg-white text-[#1d1d1f] shadow-sm'
                         : 'text-[#6e6e73] hover:text-[#1d1d1f]',
@@ -1788,7 +1788,9 @@ export default function Dashboard() {
                     {tab === 'briefing' ? 'Founder briefing' : tab === 'one' ? 'One app' : tab === 'compare' ? 'Over time' : tab === 'apps' ? 'Hushh Connect' : tab}
                   </button>
                 ))}
-              </div>
+                </div>
+              </nav>
+              <div className="flex shrink-0 items-center justify-between gap-2 lg:justify-start">
               <button
                 type="button"
                 onClick={() => {
@@ -1798,7 +1800,7 @@ export default function Dashboard() {
                     if (compare) void loadCompare();
                   }
                 }}
-                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] sm:px-4"
+                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 sm:px-4"
               >
                 <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
                 Refresh
@@ -1818,14 +1820,15 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={signOut}
-                    className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-[#f5f5f7] px-3 text-xs font-bold text-[#6e6e73] transition hover:bg-[#ff3b30]/10 hover:text-[#ff3b30]"
+                    className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-[#f5f5f7] px-3 text-xs font-bold text-[#6e6e73] transition hover:bg-[#ff3b30]/10 hover:text-[#ff3b30] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
                     title="Sign Out"
                   >
                     <LogOut className="h-3.5 w-3.5" />
-                    <span className="hidden md:inline">Sign Out</span>
+                    <span className="hidden sm:inline">Sign Out</span>
                   </button>
                 </div>
               )}
+              </div>
             </div>
           </div>
         </div>

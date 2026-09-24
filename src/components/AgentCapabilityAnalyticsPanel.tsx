@@ -105,34 +105,34 @@ const capabilityMetadata: Record<
     auditExplanation: 'Marketplace profile views measure device-level exploration of data deals.',
   },
   memory: {
-    title: 'Memory Agent',
-    description: 'Personal Knowledge Model (PKM) context resolution and memory persistence.',
+    title: 'Memory activity',
+    description: 'Preparing, saving, correcting and exporting memories. These are feature actions, not proof of a specialist-agent invocation.',
     icon: Database,
-    auditExplanation: 'PKM agent context resolution telemetry is emitted for device-level interactions.',
+    auditExplanation: 'Privacy-safe Memory actions are measured after the updated app reaches users.',
   },
   wallet: {
-    title: 'Wallet Agent',
-    description: 'Hushh identity wallet, card tokens, and asset management.',
+    title: 'Wallet activity',
+    description: 'Secure card additions and removals, without card data or reveal tracking.',
     icon: Wallet,
-    auditExplanation: 'No wallet event is emitted in current app code. Telemetry instrumentation pending.',
+    auditExplanation: 'Privacy-safe Wallet actions are measured after the updated app reaches users.',
   },
   calendar: {
-    title: 'Calendar Agent',
-    description: 'Schedule management, event syncing, and availability checks.',
+    title: 'Calendar activity',
+    description: 'Connections, disconnections and Calendar assistance handoffs—not calendar contents.',
     icon: Calendar,
-    auditExplanation: 'No calendar event is emitted in current app code. Telemetry instrumentation pending.',
+    auditExplanation: 'Privacy-safe Calendar actions are measured after the updated app reaches users.',
   },
   kyc: {
-    title: 'KYC Agent',
-    description: 'Identity verification, document upload, and compliance checks.',
+    title: 'KYC activity',
+    description: 'Access decisions and draft/reply actions, without identity details or workflow contents.',
     icon: Lock,
-    auditExplanation: 'No KYC event is emitted in current app code. Telemetry instrumentation pending.',
+    auditExplanation: 'Privacy-safe KYC actions are measured after the updated app reaches users.',
   },
   connected_systems: {
-    title: 'CRM / Connected Systems Agent',
-    description: 'Integration with Salesforce, HubSpot, and enterprise CRMs.',
+    title: 'CRM / Connected Systems',
+    description: 'Development-only and feature-flagged; not available as a production KPI.',
     icon: Layers,
-    auditExplanation: 'No CRM event is emitted in current app code. Telemetry instrumentation pending.',
+    auditExplanation: 'CRM is not a launched production feature. No customer-use total is claimed.',
   },
   onboarding: {
     title: 'Sign-up & Onboarding Agent',
@@ -150,6 +150,14 @@ interface FeatureAuditSpec {
   badgeLabel: string;
   badgeClass: string;
   explanation: string;
+}
+
+function actionSpec(key: string, label: string, icon: typeof Activity): FeatureAuditSpec {
+  return {
+    key, label, icon, status: 'active', badgeLabel: 'Awaiting live signal',
+    badgeClass: 'bg-amber-50 text-amber-800',
+    explanation: 'A privacy-safe action event is defined; this count appears only after it is verified in the selected GA4 export.',
+  };
 }
 
 const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
@@ -382,24 +390,29 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
   ],
   memory: [
-    {
-      key: 'context_resolved',
-      label: 'PKM Context Resolution',
-      icon: Database,
-      status: 'active',
-      badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_memory_context_resolved"). Vector memory retrieval.',
-    },
-    {
-      key: 'turn_diagnostics',
-      label: 'Agent-Turn Diagnostics',
-      icon: Activity,
-      status: 'gap',
-      badgeLabel: 'Instrumentation Gap',
-      badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
-      explanation: 'Agent-turn diagnostic emitter is un-instrumented. Zero reflects missing GA4 event pipeline.',
-    },
+    actionSpec('memory_capture_prepared', 'Prepared a memory for review', Database),
+    actionSpec('memory_capture_saved', 'Saved a reviewed memory', Database),
+    actionSpec('memory_detail_edited', 'Corrected a saved detail', Database),
+    actionSpec('memory_detail_deleted', 'Removed a saved detail', Database),
+    actionSpec('memory_export_saved', 'Exported saved memories', Download),
+    actionSpec('memory_auto_save_changed', 'Changed automatic saving', Sliders),
+  ],
+  wallet: [
+    actionSpec('wallet_card_added', 'Added a card securely', Wallet),
+    actionSpec('wallet_card_deleted', 'Removed a card', Wallet),
+  ],
+  calendar: [
+    actionSpec('calendar_connected', 'Connected Calendar', Calendar),
+    actionSpec('calendar_disconnected', 'Disconnected Calendar', Calendar),
+    actionSpec('calendar_chat_opened', 'Opened Calendar assistance', Calendar),
+  ],
+  kyc: [
+    actionSpec('kyc_access_approved', 'Approved access', Lock),
+    actionSpec('kyc_access_denied', 'Denied access', Lock),
+    actionSpec('kyc_redraft_completed', 'Revised a draft', FileText),
+    actionSpec('kyc_reply_sent', 'Sent an approved reply', Send),
+    actionSpec('kyc_reply_rejected', 'Rejected a draft', Lock),
+    actionSpec('kyc_workflow_refreshed', 'Refreshed a request', RefreshCw),
   ],
   location: [
     {
@@ -565,6 +578,8 @@ export function AgentCapabilityAnalyticsPanel({
 
     return {
       ...spec,
+      badgeLabel: !measured ? 'Not yet measured' : (signals ?? 0) > 0 ? 'Recorded activity' : 'No activity in range',
+      badgeClass: !measured ? 'bg-amber-50 text-amber-800' : (signals ?? 0) > 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-100 text-slate-600',
       devices,
       signals,
       successful,

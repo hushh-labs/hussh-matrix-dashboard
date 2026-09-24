@@ -62,6 +62,15 @@ try {
     check(`${platform.key}_accounts`, validMeasure(platform.identifiedAccounts, one.available, one.comparisonReady));
     check(`${platform.key}_coverage`, platform.identityCoverage === null
       || (typeof platform.identityCoverage === 'number' && platform.identityCoverage >= 0 && platform.identityCoverage <= 1));
+    check(`${platform.key}_identity_diagnostics`, !one.available
+      || (integer(platform.trackedIdentifiers) && integer(platform.boundIdentifiers)
+        && integer(platform.signInIdentifiers) && integer(platform.signedInBoundIdentifiers)
+        && platform.boundIdentifiers <= platform.trackedIdentifiers
+        && platform.signInIdentifiers <= platform.trackedIdentifiers
+        && platform.signedInBoundIdentifiers <= platform.signInIdentifiers
+        && platform.signedInBoundIdentifiers <= platform.boundIdentifiers
+        && (platform.trackedIdentifiers === 0 ? platform.identityCoverage === null
+          : Math.abs(platform.identityCoverage - platform.boundIdentifiers / platform.trackedIdentifiers) < 0.000001)));
     check(`${platform.key}_bounded`, !one.available || platform.identifiedAccounts.current <= one.activeAccounts.current);
   }
   check('cross_platform_unique_bound', !one.available || one.activeAccounts.current <= platforms.reduce(

@@ -2089,7 +2089,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'memory',
     label: 'Memory',
-    deliberate: [],
+    deliberate: ['one_memory_action'],
     // The PKM events are agent-turn reliability diagnostics, not somebody
     // using Memory. Counting them as usage is what made "Agent chat" look
     // like a used capability when nothing measured its use.
@@ -2098,31 +2098,31 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'agent_pkm_save_confirmation_completed',
     ],
     instrumented: false,
-    note: 'Only PKM reliability diagnostics are emitted. Nothing records deliberate Memory usage at device level.',
+    note: 'Memory actions are being rolled out. Usage is shown only after a deliberate action reaches the GA4 export.',
   },
   {
     key: 'wallet',
     label: 'Wallet',
-    deliberate: [],
+    deliberate: ['one_wallet_action'],
     background: [],
     instrumented: false,
-    note: 'No wallet event is emitted anywhere in the app.',
+    note: 'Wallet actions are being rolled out. Card contents and reveals are never sent to analytics.',
   },
   {
     key: 'calendar',
     label: 'Calendar',
-    deliberate: [],
+    deliberate: ['one_calendar_action'],
     background: [],
     instrumented: false,
-    note: 'No calendar event is emitted anywhere in the app.',
+    note: 'Calendar actions are being rolled out. Event titles and schedules are never sent to analytics.',
   },
   {
     key: 'kyc',
     label: 'KYC',
-    deliberate: [],
+    deliberate: ['one_kyc_action'],
     background: [],
     instrumented: false,
-    note: 'No KYC event is emitted anywhere in the app.',
+    note: 'KYC actions are being rolled out. Workflow content and identity data are never sent to analytics.',
   },
   {
     key: 'connected_systems',
@@ -2130,7 +2130,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     deliberate: [],
     background: [],
     instrumented: false,
-    note: 'No connected-systems event is emitted anywhere in the app.',
+    note: 'CRM is a development-only, feature-flagged surface and is not a production product KPI.',
   },
   {
     key: 'onboarding',
@@ -2145,6 +2145,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     instrumented: true,
   },
 ];
+const NEW_ONE_ACTION_CAPABILITIES = new Set(['memory', 'wallet', 'calendar', 'kyc']);
 
 /**
  * Machine-generated events, excluded from every active-user and usage count.
@@ -3179,6 +3180,10 @@ ${capabilitySql.isDeliberate}
           WHEN event_name IN ('marketplace_browsed', 'one_marketplace_browsed') THEN 'marketplace_browsed'
           WHEN event_name IN ('marketplace_profile_viewed', 'one_marketplace_profile_viewed') THEN 'profile_viewed'
           WHEN event_name IN ('agent_pkm_context_resolved', 'one_memory_context_resolved') THEN 'context_resolved'
+          WHEN event_name = 'one_memory_action' THEN CONCAT('memory_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
+          WHEN event_name = 'one_wallet_action' THEN CONCAT('wallet_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
+          WHEN event_name = 'one_calendar_action' THEN CONCAT('calendar_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
+          WHEN event_name = 'one_kyc_action' THEN CONCAT('kyc_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
           ELSE NULL
         END AS feature_key
       FROM ${table}
@@ -3532,6 +3537,7 @@ ${capabilitySql.isDeliberate}
       // vanishing from the list.
       capabilities: ONE_CAPABILITIES.map((spec) => {
         const row = capabilityRows.get(spec.key);
+        const instrumented = spec.instrumented || (NEW_ONE_ACTION_CAPABILITIES.has(spec.key) && toNumber(row?.deliberateEvents) > 0);
         const byDate = new Map(
           agentDaily.rows
             .filter((point) => String(point.capability) === spec.key)
@@ -3540,10 +3546,10 @@ ${capabilitySql.isDeliberate}
         return {
           key: spec.key,
           label: spec.label,
-          instrumented: spec.instrumented,
+          instrumented,
           note: spec.note ?? null,
-          devices: spec.instrumented ? toNumber(row?.deliberateDevices) : null,
-          deliberateEvents: spec.instrumented ? toNumber(row?.deliberateEvents) : null,
+          devices: instrumented ? toNumber(row?.deliberateDevices) : null,
+          deliberateEvents: instrumented ? toNumber(row?.deliberateEvents) : null,
           totalUsers: toNumber(row?.totalUsers),
           totalEvents: toNumber(row?.totalEvents),
           // Spined so every capability's chart shares one x-axis and quiet days
@@ -5418,17 +5424,30 @@ ${capabilitySql.isDeliberate}
   const platformQuery = `
     WITH scoped AS (
       SELECT PARSE_DATE('%Y%m%d', event_date) AS day, platform,
+        event_name,
         NULLIF(user_id, '') AS accountId,
         IF(user_pseudo_id IS NULL, NULL, CONCAT(platform, ':', user_pseudo_id)) AS deviceKey
       FROM ${table}
       WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
         AND ${boundedSuffix} AND ${surface} AND ${platformScope} AND ${meaningful}
+    ), periodized AS (
+      SELECT *, IF(day ${currentSql}, 'current', 'previous') AS period FROM scoped
+    ), identifier_binding AS (
+      SELECT period, platform, deviceKey,
+        LOGICAL_OR(event_name = 'auth_succeeded') AS signed_in,
+        LOGICAL_OR(accountId IS NOT NULL) AS bound
+      FROM periodized WHERE deviceKey IS NOT NULL
+      GROUP BY period, platform, deviceKey
     )
-    SELECT IF(day ${currentSql}, 'current', 'previous') AS period, platform,
-      COUNT(DISTINCT accountId) AS identified_accounts,
-      COUNT(DISTINCT deviceKey) AS tracked_identifiers,
-      COUNT(DISTINCT IF(accountId IS NOT NULL, deviceKey, NULL)) AS bound_identifiers
-    FROM scoped GROUP BY period, platform
+    SELECT p.period, p.platform,
+      COUNT(DISTINCT p.accountId) AS identified_accounts,
+      COUNT(DISTINCT p.deviceKey) AS tracked_identifiers,
+      COUNT(DISTINCT IF(p.accountId IS NOT NULL, p.deviceKey, NULL)) AS bound_identifiers,
+      COUNT(DISTINCT IF(b.signed_in, p.deviceKey, NULL)) AS sign_in_identifiers,
+      COUNT(DISTINCT IF(b.signed_in AND b.bound, p.deviceKey, NULL)) AS signed_in_bound_identifiers
+    FROM periodized p
+    LEFT JOIN identifier_binding b USING (period, platform, deviceKey)
+    GROUP BY p.period, p.platform
   `;
 
   const agentQuery = `
@@ -5502,26 +5521,32 @@ ${capabilitySql.isDeliberate}
           previous: oneComparisonReady ? toNumber(previousRow?.identified_accounts) : null,
         },
         identityCoverage: oneAvailable && tracked > 0 ? toNumber(currentRow?.bound_identifiers) / tracked : null,
+        trackedIdentifiers: oneAvailable ? tracked : null,
+        boundIdentifiers: oneAvailable ? toNumber(currentRow?.bound_identifiers) : null,
+        signInIdentifiers: oneAvailable ? toNumber(currentRow?.sign_in_identifiers) : null,
+        signedInBoundIdentifiers: oneAvailable ? toNumber(currentRow?.signed_in_bound_identifiers) : null,
       };
     });
     const agents = ONE_CAPABILITIES.filter((spec) => spec.key !== 'onboarding').map((spec) => {
       const currentRow = agentRows.get(`current:${spec.key}`);
       const previousRow = agentRows.get(`previous:${spec.key}`);
+      const instrumented = spec.instrumented || (NEW_ONE_ACTION_CAPABILITIES.has(spec.key)
+        && (toNumber(currentRow?.interactions) > 0 || toNumber(previousRow?.interactions) > 0));
       return {
         key: spec.key,
         label: spec.label,
-        instrumented: spec.instrumented,
+        instrumented,
         note: spec.note ?? null,
         identifiedAccounts: {
-          current: oneAvailable && spec.instrumented ? toNumber(currentRow?.identified_accounts) : null,
-          previous: oneComparisonReady && spec.instrumented ? toNumber(previousRow?.identified_accounts) : null,
+          current: oneAvailable && instrumented ? toNumber(currentRow?.identified_accounts) : null,
+          previous: oneComparisonReady && instrumented ? toNumber(previousRow?.identified_accounts) : null,
         },
         interactions: {
-          current: oneAvailable && spec.instrumented ? toNumber(currentRow?.interactions) : null,
-          previous: interactionComparisonReady && spec.instrumented ? toNumber(previousRow?.interactions) : null,
+          current: oneAvailable && instrumented ? toNumber(currentRow?.interactions) : null,
+          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.interactions) : null,
         },
-        iosInteractions: oneAvailable && spec.instrumented ? toNumber(currentRow?.ios_interactions) : null,
-        webInteractions: oneAvailable && spec.instrumented ? toNumber(currentRow?.web_interactions) : null,
+        iosInteractions: oneAvailable && instrumented ? toNumber(currentRow?.ios_interactions) : null,
+        webInteractions: oneAvailable && instrumented ? toNumber(currentRow?.web_interactions) : null,
       };
     });
     const daily = dateSpine(current).map((day, index) => {

@@ -14,6 +14,14 @@ export interface FounderPlatform {
   label: string;
   identifiedAccounts: FounderMeasure;
   identityCoverage: number | null;
+  /** GA4 browser/app-instance identifiers, not unique humans. */
+  trackedIdentifiers: number | null;
+  /** Identifiers with at least one account-tagged meaningful event. */
+  boundIdentifiers: number | null;
+  /** Identifiers emitting auth_succeeded, not unique sign-ins or people. */
+  signInIdentifiers: number | null;
+  /** Signed-in browser identifiers later observed with an account ID. */
+  signedInBoundIdentifiers: number | null;
 }
 
 export interface FounderAgent {
