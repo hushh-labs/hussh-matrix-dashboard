@@ -9,6 +9,32 @@ export interface FounderMeasure {
   previous: number | null;
 }
 
+export interface FounderPlatform {
+  key: 'IOS' | 'WEB';
+  label: string;
+  identifiedAccounts: FounderMeasure;
+  identityCoverage: number | null;
+}
+
+export interface FounderAgent {
+  key: string;
+  label: string;
+  instrumented: boolean;
+  note: string | null;
+  identifiedAccounts: FounderMeasure;
+  interactions: FounderMeasure;
+  iosInteractions: number | null;
+  webInteractions: number | null;
+}
+
+export interface FounderDailyPoint {
+  day: string;
+  activeAccounts: number;
+  agentInteractions: number;
+  previousActiveAccounts: number | null;
+  previousAgentInteractions: number | null;
+}
+
 export interface FounderBriefingData {
   generatedAt: string;
   period: FounderPeriod;
@@ -16,22 +42,24 @@ export interface FounderBriefingData {
   one: {
     available: boolean;
     comparisonReady: boolean;
+    interactionComparisonReady: boolean;
     identityObservedSince: string | null;
+    latestEventDate: string | null;
     activeAccounts: FounderMeasure;
     firstObservedAccounts: FounderMeasure;
     activatedAccounts: FounderMeasure;
+    agentEngagedAccounts: FounderMeasure;
     accountCoverage: number | null;
     hasNativeEnvironmentConflict: boolean;
+    platforms: FounderPlatform[];
+    agents: FounderAgent[];
+    daily: FounderDailyPoint[];
   };
-  hushhTech: {
+  search: {
     available: boolean;
-    totalAccounts: number | null;
-    newAccounts: FounderMeasure;
-  };
-  hushhAi: {
-    available: boolean;
-    organicClicks: FounderMeasure;
-    latestSearchDay: string | null;
+    clicks: FounderMeasure;
+    impressions: FounderMeasure;
+    latestDataDate: string | null;
   };
 }
 
@@ -52,7 +80,54 @@ export function founderTrend(measure: FounderMeasure): { trend: FounderTrend; pe
 export function founderChangeLabel(measure: FounderMeasure): string {
   const { trend, percent } = founderTrend(measure);
   if (trend === 'unavailable') return 'Comparison unavailable';
-  if (trend === 'new') return 'New activity · previous period was 0';
-  if (trend === 'flat') return 'No change vs previous 30 days';
-  return `${percent! > 0 ? '+' : ''}${percent!.toFixed(1)}% vs previous 30 days`;
+  if (trend === 'new') return 'New activity · earlier period was 0';
+  if (trend === 'flat') return 'No change vs earlier period';
+  return `${percent! > 0 ? '+' : ''}${percent!.toFixed(1)}% vs earlier period`;
+}
+
+export const FOUNDER_MAX_DAYS = 90;
+export const FOUNDER_EARLIEST_DATE = '2026-05-01';
+export const FOUNDER_SETTLE_DAYS = 3;
+
+function utcDate(value: string): Date {
+  return new Date(`${value}T00:00:00Z`);
+}
+
+function format(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+export function founderLatestCompleteDate(now = new Date()): string {
+  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  day.setUTCDate(day.getUTCDate() - FOUNDER_SETTLE_DAYS);
+  return format(day);
+}
+
+export function founderPresetRange(days: 7 | 30 | 90, now = new Date()): FounderPeriod {
+  const endDate = founderLatestCompleteDate(now);
+  const start = utcDate(endDate);
+  start.setUTCDate(start.getUTCDate() - days + 1);
+  return { startDate: format(start), endDate, days };
+}
+
+export function founderMonthRange(month: string, now = new Date()): FounderPeriod | null {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return null;
+  const startDate = `${month}-01`;
+  const lastDay = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0));
+  const endDate = [format(lastDay), founderLatestCompleteDate(now)].sort()[0];
+  if (startDate > endDate || startDate < FOUNDER_EARLIEST_DATE) return null;
+  return founderCustomRange(startDate, endDate, now);
+}
+
+export function founderCustomRange(startDate: string, endDate: string, now = new Date()): FounderPeriod | null {
+  const valid = /^\d{4}-\d{2}-\d{2}$/;
+  if (!valid.test(startDate) || !valid.test(endDate)) return null;
+  const start = utcDate(startDate);
+  const end = utcDate(endDate);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())
+    || format(start) !== startDate || format(end) !== endDate
+    || startDate > endDate || startDate < FOUNDER_EARLIEST_DATE
+    || endDate > founderLatestCompleteDate(now)) return null;
+  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  return days <= FOUNDER_MAX_DAYS ? { startDate, endDate, days } : null;
 }

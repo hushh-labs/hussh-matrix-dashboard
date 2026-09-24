@@ -18,7 +18,8 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'url';
 import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromValue } from './src/lib/agent-product-routing';
 import type { ProductKey } from './src/lib/agent-product-routing';
-import type { FounderBriefingData, FounderMeasure, FounderPeriod } from './src/lib/founder-briefing';
+import { FOUNDER_EARLIEST_DATE, founderCustomRange, founderPresetRange } from './src/lib/founder-briefing';
+import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -5334,15 +5335,22 @@ async function fetchHushhTechSupabaseSummary(range: HushhAiDateRange): Promise<D
 // A compact, production-only founder read. It deliberately does not reuse the
 // full One app summary: that would launch two dozen BigQuery jobs per period,
 // including UAT and screen diagnostics that do not belong in this briefing.
-function founderPeriods(): { current: HushhAiDateRange; previous: HushhAiDateRange } {
-  // Complete days only. A three-day reporting buffer keeps delayed Search
-  // Console exports comparable with GA4 and authentication source windows.
-  const currentEnd = addUtcDays(utcToday(), -3);
-  const currentStart = addUtcDays(currentEnd, -29);
+function founderPeriods(query: Record<string, unknown>): { current: HushhAiDateRange; previous: HushhAiDateRange } | null {
+  // A selected month is sent as exact start/end dates by the client. Every
+  // window compares with the immediately preceding, equally long UTC window.
+  const startValue = firstQueryValue(query.start_date);
+  const endValue = firstQueryValue(query.end_date);
+  if (Boolean(startValue) !== Boolean(endValue)) return null;
+  const selected = startValue && endValue
+    ? founderCustomRange(startValue, endValue)
+    : founderPresetRange(30);
+  if (!selected) return null;
+  const currentStart = parseUtcDate(selected.startDate) as Date;
+  const currentEnd = parseUtcDate(selected.endDate) as Date;
   const previousEnd = addUtcDays(currentStart, -1);
   return {
     current: buildDateRange(currentStart, currentEnd),
-    previous: buildDateRange(addUtcDays(previousEnd, -29), previousEnd),
+    previous: buildDateRange(addUtcDays(previousEnd, -(selected.days - 1)), previousEnd),
   };
 }
 
@@ -5350,73 +5358,34 @@ function founderPeriod(range: HushhAiDateRange): FounderPeriod {
   return { startDate: range.startDate, endDate: range.endDate, days: range.days };
 }
 
-function founderPair(current: unknown, previous: unknown, available: boolean): FounderMeasure {
-  return available
-    ? { current: toNumber(current), previous: toNumber(previous) }
-    : { current: null, previous: null };
-}
+const founderBriefingCache = new Map<string, { expiresAt: number; promise: Promise<FounderBriefingData> }>();
 
-async function fetchFounderHushhTechAccounts(
-  current: HushhAiDateRange,
-  previous: HushhAiDateRange,
-): Promise<DataResult<Record<string, unknown>>> {
-  if (!HUSHHTECH_SUPABASE_ACCESS_TOKEN || !HUSHHTECH_SUPABASE_PROJECT_REF) {
-    return { data: null, error: 'HushhTech account source unavailable' };
-  }
-  const query = `
-    SELECT
-      (SELECT COUNT(*) FROM auth.users u
-        WHERE u.created_at::date <= DATE '${current.endDate}'
-          AND (u.deleted_at IS NULL OR u.deleted_at::date > DATE '${current.endDate}'))::bigint AS total_accounts,
-      (SELECT COUNT(*) FROM auth.users u
-        WHERE u.created_at::date BETWEEN DATE '${current.startDate}' AND DATE '${current.endDate}')::bigint AS current_new,
-      (SELECT COUNT(*) FROM auth.users u
-        WHERE u.created_at::date BETWEEN DATE '${previous.startDate}' AND DATE '${previous.endDate}')::bigint AS previous_new
-  `;
-  try {
-    const response = await fetch(`https://api.supabase.com/v1/projects/${HUSHHTECH_SUPABASE_PROJECT_REF}/database/query`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${HUSHHTECH_SUPABASE_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) return { data: null, error: 'HushhTech account source unavailable' };
-    const rows = await response.json() as Array<Record<string, unknown>>;
-    return { data: rows[0] ?? null, error: rows.length ? null : 'HushhTech account source unavailable' };
-  } catch (error) {
-    console.error('Founder HushhTech aggregate failed:', error instanceof Error ? error.message : String(error));
-    return { data: null, error: 'HushhTech account source unavailable' };
-  }
-}
-
-let founderBriefingCache: { expiresAt: number; promise: Promise<FounderBriefingData> } | null = null;
-
-function fetchFounderBriefing(): Promise<FounderBriefingData> {
-  if (founderBriefingCache && founderBriefingCache.expiresAt > Date.now()) {
-    return founderBriefingCache.promise;
-  }
-  const { current, previous } = founderPeriods();
+function fetchFounderBriefing(current: HushhAiDateRange, previous: HushhAiDateRange): Promise<FounderBriefingData> {
+  const cacheKey = `${current.startDate}:${current.endDate}`;
+  const cached = founderBriefingCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
   const table = `\`${ONE_APP_GA4_PROJECT}.${ONE_APP_GA4_DATASET}.events_*\``;
   const surface = oneAppSurfaceFilter(ONE_APP_HOST);
   const meaningful = `event_name NOT IN (${sqlNameList(ONE_BACKGROUND_EVENTS)})`;
+  const platformScope = `platform IN ('IOS', 'WEB')`;
+  const boundedSuffix = `REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') BETWEEN ${sqlStringLiteral(previous.startDate.replaceAll('-', ''))} AND ${sqlStringLiteral(current.endDate.replaceAll('-', ''))}`;
+  const capabilitySql = oneCapabilitySql();
   const currentSql = `BETWEEN DATE(${sqlStringLiteral(current.startDate)}) AND DATE(${sqlStringLiteral(current.endDate)})`;
   const previousSql = `BETWEEN DATE(${sqlStringLiteral(previous.startDate)}) AND DATE(${sqlStringLiteral(previous.endDate)})`;
   const oneQuery = `
     WITH events AS (
       SELECT PARSE_DATE('%Y%m%d', event_date) AS day,
         NULLIF(user_id, '') AS accountId,
-        CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id) AS deviceKey,
+        IF(user_pseudo_id IS NULL, NULL, CONCAT(platform, ':', user_pseudo_id)) AS deviceKey,
         platform,
         (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env') AS eventEnvironment,
-        event_name
+        event_name,
+${capabilitySql.capability},
+${capabilitySql.isDeliberate}
       FROM ${table}
       WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
         AND REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') <= ${sqlStringLiteral(current.endDate.replaceAll('-', ''))}
-        AND ${surface} AND ${meaningful}
+        AND ${surface} AND ${platformScope} AND ${meaningful}
     ),
     history AS (
       SELECT accountId, MIN(day) AS firstSeen
@@ -5429,7 +5398,9 @@ function fetchFounderBriefing(): Promise<FounderBriefingData> {
         COUNT(DISTINCT IF(e.day ${currentSql} AND h.firstSeen ${currentSql}, e.accountId, NULL)) AS current_first_seen,
         COUNT(DISTINCT IF(e.day ${previousSql} AND h.firstSeen ${previousSql}, e.accountId, NULL)) AS previous_first_seen,
         COUNT(DISTINCT IF(e.day ${currentSql} AND e.event_name = 'one_location_activation_completed', e.accountId, NULL)) AS current_activated,
-        COUNT(DISTINCT IF(e.day ${previousSql} AND e.event_name = 'one_location_activation_completed', e.accountId, NULL)) AS previous_activated
+        COUNT(DISTINCT IF(e.day ${previousSql} AND e.event_name = 'one_location_activation_completed', e.accountId, NULL)) AS previous_activated,
+        COUNT(DISTINCT IF(e.day ${currentSql} AND e.is_deliberate AND e.capability IS NOT NULL AND e.capability != 'onboarding', e.accountId, NULL)) AS current_agent_engaged,
+        COUNT(DISTINCT IF(e.day ${previousSql} AND e.is_deliberate AND e.capability IS NOT NULL AND e.capability != 'onboarding', e.accountId, NULL)) AS previous_agent_engaged
       FROM events e JOIN history h USING (accountId)
     ),
     coverage AS (
@@ -5437,39 +5408,144 @@ function fetchFounderBriefing(): Promise<FounderBriefingData> {
         COUNT(DISTINCT IF(day ${currentSql}, deviceKey, NULL)) AS current_devices,
         COUNT(DISTINCT IF(day ${currentSql} AND accountId IS NOT NULL, deviceKey, NULL)) AS identified_devices,
         CAST(MIN(IF(accountId IS NOT NULL, day, NULL)) AS STRING) AS identity_observed_since,
-        COUNTIF(day ${currentSql} AND platform IN ('IOS', 'ANDROID') AND LOWER(eventEnvironment) = 'uat') AS mislabeled_native_events
+        CAST(MAX(IF(day ${currentSql}, day, NULL)) AS STRING) AS latest_event_date,
+        COUNTIF(day ${currentSql} AND platform = 'IOS' AND LOWER(eventEnvironment) = 'uat') AS mislabeled_native_events
       FROM events
     )
     SELECT * FROM accounts CROSS JOIN coverage
   `;
 
+  const platformQuery = `
+    WITH scoped AS (
+      SELECT PARSE_DATE('%Y%m%d', event_date) AS day, platform,
+        NULLIF(user_id, '') AS accountId,
+        IF(user_pseudo_id IS NULL, NULL, CONCAT(platform, ':', user_pseudo_id)) AS deviceKey
+      FROM ${table}
+      WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
+        AND ${boundedSuffix} AND ${surface} AND ${platformScope} AND ${meaningful}
+    )
+    SELECT IF(day ${currentSql}, 'current', 'previous') AS period, platform,
+      COUNT(DISTINCT accountId) AS identified_accounts,
+      COUNT(DISTINCT deviceKey) AS tracked_identifiers,
+      COUNT(DISTINCT IF(accountId IS NOT NULL, deviceKey, NULL)) AS bound_identifiers
+    FROM scoped GROUP BY period, platform
+  `;
+
+  const agentQuery = `
+    WITH classified AS (
+      SELECT PARSE_DATE('%Y%m%d', event_date) AS day, platform,
+        NULLIF(user_id, '') AS accountId,
+${capabilitySql.capability},
+${capabilitySql.isDeliberate}
+      FROM ${table}
+      WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
+        AND ${boundedSuffix} AND ${surface} AND ${platformScope}
+    )
+    SELECT IF(day ${currentSql}, 'current', 'previous') AS period, capability,
+      COUNT(DISTINCT IF(is_deliberate, accountId, NULL)) AS identified_accounts,
+      COUNTIF(is_deliberate) AS interactions,
+      COUNTIF(is_deliberate AND platform = 'IOS') AS ios_interactions,
+      COUNTIF(is_deliberate AND platform = 'WEB') AS web_interactions
+    FROM classified WHERE capability IS NOT NULL AND capability != 'onboarding'
+    GROUP BY period, capability
+  `;
+
+  const dailyQuery = `
+    WITH classified AS (
+      SELECT PARSE_DATE('%Y%m%d', event_date) AS day, NULLIF(user_id, '') AS accountId,
+${capabilitySql.capability},
+${capabilitySql.isDeliberate}
+      FROM ${table}
+      WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
+        AND ${boundedSuffix} AND ${surface} AND ${platformScope} AND ${meaningful}
+    )
+    SELECT CAST(day AS STRING) AS day,
+      COUNT(DISTINCT accountId) AS active_accounts,
+      COUNTIF(is_deliberate AND capability IS NOT NULL AND capability != 'onboarding') AS agent_interactions
+    FROM classified GROUP BY day ORDER BY day
+  `;
+
   const promise = (async (): Promise<FounderBriefingData> => {
-    const [one, tech, searchCurrent, searchPrevious] = await Promise.all([
+    const [one, platformsResult, agentsResult, dailyResult, searchCurrent, searchPrevious] = await Promise.all([
       queryBigQuerySql(BQ_JOB_PROJECT, oneQuery),
-      fetchFounderHushhTechAccounts(current, previous),
-      fetchHushhAiSearchConsole(current),
-      fetchHushhAiSearchConsole(previous),
+      queryBigQuerySql(BQ_JOB_PROJECT, platformQuery),
+      queryBigQuerySql(BQ_JOB_PROJECT, agentQuery),
+      queryBigQuerySql(BQ_JOB_PROJECT, dailyQuery),
+      fetchKaiProductionSearchConsole(current),
+      fetchKaiProductionSearchConsole(previous),
     ]);
-    const oneAvailable = !one.error && one.rows.length > 0;
+    const oneAvailable = !one.error && one.rows.length > 0
+      && !platformsResult.error && !agentsResult.error && !dailyResult.error;
     const oneRow = one.rows[0] ?? {};
     const currentDevices = toNumber(oneRow.current_devices);
     const identityObservedSince = typeof oneRow.identity_observed_since === 'string'
       ? oneRow.identity_observed_since : null;
     const oneComparisonReady = oneAvailable && identityObservedSince !== null
       && identityObservedSince < previous.startDate;
-    const techAvailable = Boolean(tech.data && !tech.error);
+    // The public event catalogue has a bounded trustworthy history. A 90-day
+    // selection can move its comparison window before that history; zero rows
+    // there are missing history, not evidence of a decline.
+    const interactionComparisonReady = oneAvailable && previous.startDate >= FOUNDER_EARLIEST_DATE;
+    const platformRows = new Map(platformsResult.rows.map((row) => [`${row.period}:${row.platform}`, row]));
+    const agentRows = new Map(agentsResult.rows.map((row) => [`${row.period}:${row.capability}`, row]));
+    const dailyRows = new Map(dailyResult.rows.map((row) => [String(row.day), row]));
+    const previousDates = dateSpine(previous);
+    const platforms = (['IOS', 'WEB'] as const).map((key) => {
+      const currentRow = platformRows.get(`current:${key}`);
+      const previousRow = platformRows.get(`previous:${key}`);
+      const tracked = toNumber(currentRow?.tracked_identifiers);
+      return {
+        key,
+        label: key === 'IOS' ? 'iOS app' : 'Web app',
+        identifiedAccounts: {
+          current: oneAvailable ? toNumber(currentRow?.identified_accounts) : null,
+          previous: oneComparisonReady ? toNumber(previousRow?.identified_accounts) : null,
+        },
+        identityCoverage: oneAvailable && tracked > 0 ? toNumber(currentRow?.bound_identifiers) / tracked : null,
+      };
+    });
+    const agents = ONE_CAPABILITIES.filter((spec) => spec.key !== 'onboarding').map((spec) => {
+      const currentRow = agentRows.get(`current:${spec.key}`);
+      const previousRow = agentRows.get(`previous:${spec.key}`);
+      return {
+        key: spec.key,
+        label: spec.label,
+        instrumented: spec.instrumented,
+        note: spec.note ?? null,
+        identifiedAccounts: {
+          current: oneAvailable && spec.instrumented ? toNumber(currentRow?.identified_accounts) : null,
+          previous: oneComparisonReady && spec.instrumented ? toNumber(previousRow?.identified_accounts) : null,
+        },
+        interactions: {
+          current: oneAvailable && spec.instrumented ? toNumber(currentRow?.interactions) : null,
+          previous: interactionComparisonReady && spec.instrumented ? toNumber(previousRow?.interactions) : null,
+        },
+        iosInteractions: oneAvailable && spec.instrumented ? toNumber(currentRow?.ios_interactions) : null,
+        webInteractions: oneAvailable && spec.instrumented ? toNumber(currentRow?.web_interactions) : null,
+      };
+    });
+    const daily = dateSpine(current).map((day, index) => {
+      const today = dailyRows.get(day);
+      const earlier = dailyRows.get(previousDates[index]);
+      return {
+        day,
+        activeAccounts: toNumber(today?.active_accounts),
+        agentInteractions: toNumber(today?.agent_interactions),
+        previousActiveAccounts: oneComparisonReady ? toNumber(earlier?.active_accounts) : null,
+        previousAgentInteractions: interactionComparisonReady ? toNumber(earlier?.agent_interactions) : null,
+      };
+    });
     const searchCurrentData = searchCurrent.data ?? {};
     const searchPreviousData = searchPrevious.data ?? {};
-    // `daily` is a zero-filled chart spine, so its final date does not prove
-    // the Search Console export has actually reached the end of the window.
     const latestSearchDay = typeof searchCurrentData.latestDataDate === 'string'
       ? searchCurrentData.latestDataDate : null;
     const previousLatestSearchDay = typeof searchPreviousData.latestDataDate === 'string'
       ? searchPreviousData.latestDataDate : null;
-    // A partially exported current period must not get a red percentage.
-    const searchAvailable = searchCurrentData.available === true && searchPreviousData.available === true
-      && latestSearchDay !== null && latestSearchDay >= current.endDate
-      && previousLatestSearchDay !== null && previousLatestSearchDay >= previous.endDate;
+    const searchAvailable = !searchCurrent.error && searchCurrentData.available === true
+      && latestSearchDay !== null && latestSearchDay >= current.endDate;
+    const searchComparisonReady = searchAvailable && !searchPrevious.error
+      && searchPreviousData.available === true && previousLatestSearchDay !== null
+      && previousLatestSearchDay >= previous.endDate;
     const currentSearchTotals = (searchCurrentData.rangeTotals ?? {}) as Record<string, unknown>;
     const previousSearchTotals = (searchPreviousData.rangeTotals ?? {}) as Record<string, unknown>;
 
@@ -5482,26 +5558,29 @@ function fetchFounderBriefing(): Promise<FounderBriefingData> {
         activeAccounts: { current: oneAvailable ? toNumber(oneRow.current_active) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_active) : null },
         firstObservedAccounts: { current: oneAvailable ? toNumber(oneRow.current_first_seen) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_first_seen) : null },
         activatedAccounts: { current: oneAvailable ? toNumber(oneRow.current_activated) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_activated) : null },
+        agentEngagedAccounts: { current: oneAvailable ? toNumber(oneRow.current_agent_engaged) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_agent_engaged) : null },
         comparisonReady: oneComparisonReady,
+        interactionComparisonReady,
         identityObservedSince,
+        latestEventDate: typeof oneRow.latest_event_date === 'string' ? oneRow.latest_event_date : null,
         accountCoverage: oneAvailable && currentDevices > 0
           ? toNumber(oneRow.identified_devices) / currentDevices : null,
         hasNativeEnvironmentConflict: oneAvailable && toNumber(oneRow.mislabeled_native_events) > 0,
+        platforms,
+        agents,
+        daily,
       },
-      hushhTech: {
-        available: techAvailable,
-        totalAccounts: techAvailable ? toNumber(tech.data?.total_accounts) : null,
-        newAccounts: founderPair(tech.data?.current_new, tech.data?.previous_new, techAvailable),
-      },
-      hushhAi: {
+      search: {
         available: searchAvailable,
-        organicClicks: founderPair(currentSearchTotals.clicks, previousSearchTotals.clicks, searchAvailable),
-        latestSearchDay,
+        clicks: { current: searchAvailable ? toNumber(currentSearchTotals.clicks) : null, previous: searchComparisonReady ? toNumber(previousSearchTotals.clicks) : null },
+        impressions: { current: searchAvailable ? toNumber(currentSearchTotals.impressions) : null, previous: searchComparisonReady ? toNumber(previousSearchTotals.impressions) : null },
+        latestDataDate: latestSearchDay,
       },
     };
   })();
-  founderBriefingCache = { expiresAt: Date.now() + 5 * 60_000, promise };
-  void promise.catch(() => { founderBriefingCache = null; });
+  if (founderBriefingCache.size >= 15) founderBriefingCache.delete(founderBriefingCache.keys().next().value as string);
+  founderBriefingCache.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, promise });
+  void promise.catch(() => { founderBriefingCache.delete(cacheKey); });
   return promise;
 }
 
@@ -5510,9 +5589,14 @@ function fetchFounderBriefing(): Promise<FounderBriefingData> {
 // ---------------------------------------------------------------------------
 
 function registerAnalyticsRoutes(app: express.Express): void {
-  app.get('/api/analytics/founder', async (_req, res) => {
+  app.get('/api/analytics/founder', async (req, res) => {
+    const periods = founderPeriods(req.query as Record<string, unknown>);
+    if (!periods) {
+      res.status(400).json({ error: 'Choose a valid completed date range of 1–90 days, from 2026-05-01 onward.' });
+      return;
+    }
     try {
-      res.status(200).json(sanitizePublicPayload(await fetchFounderBriefing()));
+      res.status(200).json(sanitizePublicPayload(await fetchFounderBriefing(periods.current, periods.previous)));
     } catch (error) {
       console.error('Founder briefing failed:', error instanceof Error ? error.message : String(error));
       res.status(502).json({ error: 'Production briefing is temporarily unavailable.' });
