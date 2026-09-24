@@ -14,6 +14,10 @@ const agentDescriptions: Record<string, string> = {
   gmail: 'Connection and receipt sync',
   ria: 'Workspace, onboarding and requests',
   marketplace: 'Marketplace profile views',
+  memory: 'Preparing, saving and correcting memories',
+  wallet: 'Secure card additions and removals',
+  calendar: 'Connections and Calendar assistance handoffs',
+  kyc: 'Access decisions and draft/reply actions',
 };
 
 function number(value: number | null): string {
@@ -61,7 +65,7 @@ function AgentRow({ agent }: { agent: FounderAgent; key?: string }) {
       <span className="block text-sm font-semibold text-slate-900">{agent.label}</span>
       <span className="mt-1 block text-xs leading-5 text-slate-500">{agent.instrumented
         ? agentDescriptions[agent.key] ?? 'Measured product interactions'
-        : 'Deliberate use is not instrumented yet'}</span>
+        : agent.note ?? 'Deliberate use is not measured yet'}</span>
     </th>
     <td className="py-4 pr-5 text-right text-sm font-semibold text-slate-900">{number(agent.identifiedAccounts.current)}</td>
     <td className="py-4 pr-5 text-right text-sm font-semibold text-slate-900">{number(agent.interactions.current)}</td>
@@ -138,6 +142,9 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
     || (b.interactions.current ?? 0) - (a.interactions.current ?? 0));
   const ios = brief?.one.platforms.find((item) => item.key === 'IOS');
   const web = brief?.one.platforms.find((item) => item.key === 'WEB');
+  const webIdentityGap = web?.signInIdentifiers !== null && web?.signInIdentifiers !== undefined
+    && web.signInIdentifiers > 0
+    && (web.signedInBoundIdentifiers ?? 0) / web.signInIdentifiers < 0.8;
   const lowCoverage = brief?.one.accountCoverage !== null && brief?.one.accountCoverage !== undefined
     && brief.one.accountCoverage < 0.8;
   const chartData = (brief?.one.daily ?? []).map((point, index) => ({
@@ -197,7 +204,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
           <Sparkles className="h-3.5 w-3.5" /> One app · founder briefing
         </p>
         <h1 className="mt-5 text-3xl font-semibold tracking-tight sm:text-5xl">Who is using One—and what do they do?</h1>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-200 sm:text-base">A clear production view of identifiable users on iOS and web, the agents they use, and how behaviour changes over time.</p>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-200 sm:text-base">A clear production view of identifiable users on iOS and web, the features they use, and how behaviour changes over time.</p>
         {brief && <div className="mt-6 flex flex-wrap gap-2 text-xs font-medium text-slate-200">
           <span className="rounded-full bg-white/10 px-3 py-1.5">{rangeLabel(brief.period)} · {brief.period.days} days</span>
           <span className="rounded-full bg-white/10 px-3 py-1.5">vs {rangeLabel(brief.previousPeriod)}</span>
@@ -215,10 +222,13 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
               note="A signed-in account is counted once across iOS and web, even if it uses both." />
             <MetricCard eyebrow="One · iOS" label="iOS app users we can identify" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
               note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
-            <MetricCard eyebrow="One · web" label="Web users we can identify" measure={web?.identifiedAccounts ?? { current: null, previous: null }}
-              note="Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above." />
-            <MetricCard eyebrow="One · agents" label="Accounts using a measured agent" measure={brief.one.agentEngagedAccounts}
-              note="Distinct signed-in accounts with at least one measured agent interaction—not a sum of agent rows." />
+            <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Web users we can identify'}
+              measure={webIdentityGap ? { current: null, previous: null } : web?.identifiedAccounts ?? { current: null, previous: null }}
+              note={webIdentityGap
+                ? `${number(web?.identifiedAccounts.current ?? null)} account IDs reached analytics, but only ${number(web?.signedInBoundIdentifiers ?? null)} of ${number(web?.signInIdentifiers ?? null)} sign-in browser identifiers later carried an account ID. This is not a reliable total of web users.`
+                : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
+            <MetricCard eyebrow="One · activity" label="Accounts using a measured feature" measure={brief.one.agentEngagedAccounts}
+              note="Distinct signed-in accounts with at least one measured feature action—not a sum of the rows below." />
           </div>
 
           <section className="grid gap-4 lg:grid-cols-[1.45fr_1fr]">
@@ -230,11 +240,11 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                   <button type="button" aria-pressed={chartMode === 'accounts'} onClick={() => setChartMode('accounts')}
                     className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'accounts' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>Accounts</button>
                   <button type="button" aria-pressed={chartMode === 'interactions'} onClick={() => setChartMode('interactions')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'interactions' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>Agent interactions</button>
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'interactions' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>Feature actions</button>
                 </div>
               </div>
               {brief.one.available ? <>
-                <div className="mt-5 h-60 w-full" role="img" aria-label={`Daily ${chartMode === 'accounts' ? 'identified active accounts' : 'agent interactions'} trend for ${rangeLabel(brief.period)}`}>
+                <div className="mt-5 h-60 w-full" role="img" aria-label={`Daily ${chartMode === 'accounts' ? 'identified active accounts' : 'feature actions'} trend for ${rangeLabel(brief.period)}`}>
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData} margin={{ top: 8, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -256,7 +266,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Founder readout</p>
               <h2 className="mt-1 text-xl font-semibold text-slate-950">What stands out</h2>
               <ul className="mt-5 space-y-4 text-sm leading-6 text-slate-700">
-                <li><strong className="text-slate-900">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} identified accounts; <strong className="text-slate-900">web:</strong> {number(web?.identifiedAccounts.current ?? null)}. These platform populations can overlap.</li>
+                <li><strong className="text-slate-900">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} identified accounts; <strong className="text-slate-900">web:</strong> {webIdentityGap ? 'user total unverified' : `${number(web?.identifiedAccounts.current ?? null)} identified accounts`}. These platform populations can overlap.</li>
                 <li>{mostAccounts ? <><strong className="text-slate-900">Most identified accounts used {mostAccounts.label}:</strong> {number(mostAccounts.identifiedAccounts.current)} in this period.</>
                   : 'No agent has a verifiable signed-in audience in this range yet.'}</li>
                 <li>{mostInteractions ? <><strong className="text-slate-900">Most measured interactions:</strong> {mostInteractions.label} had {number(mostInteractions.interactions.current)}. Repeats count; this is not a user count.</>
@@ -268,15 +278,15 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Agent behaviour</p>
-                <h2 className="mt-1 text-xl font-semibold text-slate-950">Which agents do people choose?</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Accounts are deduplicated separately for each agent. Interactions count catalogued actions and selected views, so the same person can contribute more than once. Agent rows must not be added together.</p></div>
+              <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Inside One</p>
+                <h2 className="mt-1 text-xl font-semibold text-slate-950">What do people use most?</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Accounts are deduplicated separately for each capability. Interactions count catalogued feature actions and selected views, not confirmed specialist-agent replies. The same person can contribute more than once; rows must not be added together.</p></div>
               <button type="button" onClick={onExploreOne} className="inline-flex items-center gap-1 text-sm font-semibold text-sky-700 hover:text-sky-900">Explore full One analytics <ArrowRight className="h-4 w-4" /></button>
             </div>
             <div className="mt-5 overflow-x-auto">
               <table className="min-w-[760px] w-full text-left">
                 <thead><tr className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500">
-                  <th scope="col" className="pb-3 pr-5">Agent / behaviour</th>
+                  <th scope="col" className="pb-3 pr-5">Feature / behaviour</th>
                   <th scope="col" className="pb-3 pr-5 text-right">Known accounts</th>
                   <th scope="col" className="pb-3 pr-5 text-right">Interactions</th>
                   <th scope="col" className="pb-3 pr-5 text-right">iOS / web</th>
@@ -304,6 +314,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
               <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-amber-800"><ShieldAlert className="h-4 w-4" /> Measurement confidence</p>
               <h2 className="mt-1 text-xl font-semibold text-slate-950">What we can—and cannot—claim</h2>
               <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-700">
+                {webIdentityGap && <li>Web identity tracking needs repair: {number(web?.signInIdentifiers ?? null)} browser identifiers recorded a successful sign-in, but only {number(web?.signedInBoundIdentifiers ?? null)} of those later carried an account ID in this period. Sign-ins and browsers are <strong>not</strong> unique people. The web user total and its growth percentage are withheld.</li>}
                 {lowCoverage && <li>Only {Math.round((brief.one.accountCoverage ?? 0) * 100)}% of tracked app/browser identifiers are linked to an account. Unlinked people cannot be uniquely counted.</li>}
                 {brief.one.available && !brief.one.comparisonReady && <li>Account tagging began within the earlier period. Account-growth percentages are withheld until both periods are fully comparable.</li>}
                 {brief.one.available && !brief.one.interactionComparisonReady && <li>The earlier agent-interaction period predates reliable event history. Its comparisons are withheld, not treated as zero.</li>}
