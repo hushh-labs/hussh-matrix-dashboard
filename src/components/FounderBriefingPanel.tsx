@@ -4,7 +4,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import type { FounderAgent, FounderBriefingData, FounderMeasure, FounderPeriod } from '../lib/founder-briefing';
 import {
   FOUNDER_EARLIEST_DATE, founderChangeLabel, founderCustomRange, founderLatestCompleteDate,
-  founderMonthRange, founderPresetRange, founderTrend,
+  founderMonthRange, founderPresetRange, founderTrend, founderWebIdentityMeasure,
 } from '../lib/founder-briefing';
 
 const agentDescriptions: Record<string, string> = {
@@ -142,9 +142,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
     || (b.interactions.current ?? 0) - (a.interactions.current ?? 0));
   const ios = brief?.one.platforms.find((item) => item.key === 'IOS');
   const web = brief?.one.platforms.find((item) => item.key === 'WEB');
-  const webIdentityGap = web?.signInIdentifiers !== null && web?.signInIdentifiers !== undefined
-    && web.signInIdentifiers > 0
-    && (web.signedInBoundIdentifiers ?? 0) / web.signInIdentifiers < 0.8;
+  const { measure: webMeasure, currentGap: webIdentityGap, previousGap: webPreviousIdentityGap } = founderWebIdentityMeasure(web);
   const lowCoverage = brief?.one.accountCoverage !== null && brief?.one.accountCoverage !== undefined
     && brief.one.accountCoverage < 0.8;
   const chartData = (brief?.one.daily ?? []).map((point, index) => ({
@@ -223,10 +221,12 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
             <MetricCard eyebrow="One · iOS" label="iOS app users we can identify" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
               note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
             <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Web users we can identify'}
-              measure={webIdentityGap ? { current: null, previous: null } : web?.identifiedAccounts ?? { current: null, previous: null }}
+              measure={webMeasure}
               note={webIdentityGap
                 ? `${number(web?.identifiedAccounts.current ?? null)} account IDs reached analytics, but only ${number(web?.signedInBoundIdentifiers ?? null)} of ${number(web?.signInIdentifiers ?? null)} sign-in browser identifiers later carried an account ID. This is not a reliable total of web users.`
-                : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
+                : webPreviousIdentityGap
+                  ? 'Current identified accounts are shown, but growth is withheld: the earlier period did not reliably bind signed-in web activity to accounts.'
+                  : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
             <MetricCard eyebrow="One · activity" label="Accounts using a measured feature" measure={brief.one.agentEngagedAccounts}
               note="Distinct signed-in accounts with at least one measured feature action—not a sum of the rows below." />
           </div>
@@ -315,6 +315,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
               <h2 className="mt-1 text-xl font-semibold text-slate-950">What we can—and cannot—claim</h2>
               <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-700">
                 {webIdentityGap && <li>Web identity tracking needs repair: {number(web?.signInIdentifiers ?? null)} browser identifiers recorded a successful sign-in, but only {number(web?.signedInBoundIdentifiers ?? null)} of those later carried an account ID in this period. Sign-ins and browsers are <strong>not</strong> unique people. The web user total and its growth percentage are withheld.</li>}
+                {!webIdentityGap && webPreviousIdentityGap && <li>The earlier web period had {number(web?.previousSignedInBoundIdentifiers ?? null)} account-bound identifiers after {number(web?.previousSignInIdentifiers ?? null)} signed-in identifiers. Its identified-account count is not a reliable baseline, so web growth is withheld.</li>}
                 {lowCoverage && <li>Only {Math.round((brief.one.accountCoverage ?? 0) * 100)}% of tracked app/browser identifiers are linked to an account. Unlinked people cannot be uniquely counted.</li>}
                 {brief.one.available && !brief.one.comparisonReady && <li>Account tagging began within the earlier period. Account-growth percentages are withheld until both periods are fully comparable.</li>}
                 {brief.one.available && !brief.one.interactionComparisonReady && <li>The earlier agent-interaction period predates reliable event history. Its comparisons are withheld, not treated as zero.</li>}

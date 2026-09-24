@@ -22,6 +22,33 @@ export interface FounderPlatform {
   signInIdentifiers: number | null;
   /** Signed-in browser identifiers later observed with an account ID. */
   signedInBoundIdentifiers: number | null;
+  /** Same diagnostics for the preceding equal-length period. */
+  previousTrackedIdentifiers: number | null;
+  previousBoundIdentifiers: number | null;
+  previousSignInIdentifiers: number | null;
+  previousSignedInBoundIdentifiers: number | null;
+}
+
+/** Suppress web growth when either side has untrustworthy sign-in binding. */
+export function founderWebIdentityMeasure(platform: FounderPlatform | undefined): {
+  measure: FounderMeasure;
+  currentGap: boolean;
+  previousGap: boolean;
+} {
+  if (!platform) return { measure: { current: null, previous: null }, currentGap: false, previousGap: false };
+  const currentGap = platform.signInIdentifiers !== null && platform.signInIdentifiers > 0
+    && (platform.signedInBoundIdentifiers ?? 0) / platform.signInIdentifiers < 0.8;
+  const previousGap = platform.previousSignInIdentifiers !== null
+    && platform.previousSignInIdentifiers > 0
+    && (platform.previousSignedInBoundIdentifiers ?? 0) / platform.previousSignInIdentifiers < 0.8;
+  return {
+    measure: {
+      current: currentGap ? null : platform.identifiedAccounts.current,
+      previous: currentGap || previousGap ? null : platform.identifiedAccounts.previous,
+    },
+    currentGap,
+    previousGap,
+  };
 }
 
 export interface FounderAgent {
