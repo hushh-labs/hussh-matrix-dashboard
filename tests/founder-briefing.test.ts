@@ -56,6 +56,22 @@ describe('founder briefing comparisons', () => {
     });
   });
 
+  it('keeps a fully bound earlier period comparable when nobody signs in again', () => {
+    const platform = {
+      key: 'WEB' as const, label: 'Web app',
+      identifiedAccounts: { current: 20, previous: 10 },
+      identityCoverage: 1,
+      trackedIdentifiers: 20, boundIdentifiers: 20,
+      signInIdentifiers: 10, signedInBoundIdentifiers: 10,
+      previousTrackedIdentifiers: 10, previousBoundIdentifiers: 10,
+      previousSignInIdentifiers: 0, previousSignedInBoundIdentifiers: 0,
+    };
+    expect(founderWebIdentityMeasure(platform)).toEqual({
+      measure: { current: 20, previous: 10 },
+      currentGap: false, previousGap: false,
+    });
+  });
+
   it('keeps every preset on completed UTC days', () => {
     const now = new Date('2026-09-24T23:30:00Z');
     expect(founderLatestCompleteDate(now)).toBe('2026-09-21');

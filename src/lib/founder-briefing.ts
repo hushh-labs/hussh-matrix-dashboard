@@ -39,9 +39,8 @@ export function founderWebIdentityMeasure(platform: FounderPlatform | undefined)
   const currentGap = platform.signInIdentifiers !== null && platform.signInIdentifiers > 0
     && (platform.signedInBoundIdentifiers ?? 0) / platform.signInIdentifiers < 0.8;
   const previousGap = platform.previousSignInIdentifiers !== null
-    && (platform.previousSignInIdentifiers > 0
-      ? (platform.previousSignedInBoundIdentifiers ?? 0) / platform.previousSignInIdentifiers < 0.8
-      : (platform.previousTrackedIdentifiers ?? 0) > 0);
+    && platform.previousSignInIdentifiers > 0
+    && (platform.previousSignedInBoundIdentifiers ?? 0) / platform.previousSignInIdentifiers < 0.8;
   return {
     measure: {
       current: currentGap ? null : platform.identifiedAccounts.current,
