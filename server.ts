@@ -1990,11 +1990,10 @@ const ONE_LOCATION_JOURNEY_STEPS = [
  * counted nowhere, which is deliberate -- a new event should be classified on
  * purpose rather than absorbed by a prefix.
  *
- * Four product capabilities emit no events at all (Wallet, Calendar, KYC,
- * CRM) and Memory emits only reliability diagnostics. They are listed anyway,
- * marked not instrumented: an agent nobody can measure is a fact worth
- * showing, and leaving them off made the dashboard imply the product had six
- * agents when it has eleven.
+ * Memory, Wallet, Calendar and KYC now have privacy-safe action emitters. CRM
+ * remains development-only and is therefore not a production KPI. A declared
+ * emitter and an observed export row are separate states in the response so a
+ * quiet date range cannot be confused with missing instrumentation.
  *
  * Sign-up & onboarding is not in the product catalogue -- it is a funnel
  * stage, kept because it is useful and labelled so it cannot be mistaken for
@@ -2052,6 +2051,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     deliberate: [
       'consent_action_submitted', 'consent_action_result',
       'one_consent_preferences_updated', 'one_consent_data_unlocked',
+      'permission_granted', 'one_consent_permission_granted',
     ],
     // consent_pending_loaded carries load_surface precisely to separate a real
     // screen view from the unlock warm prefetch. It is split on that parameter
@@ -2065,7 +2065,8 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     deliberate: [
       'gmail_connect_started', 'gmail_sync_requested',
       'gmail_disconnect_result', 'hushh_mail_signin_screen_view',
-      'one_gmail_connected', 'one_gmail_receipt_synced',
+      'one_gmail_connected', 'one_gmail_receipt_synced', 'one_gmail_inbox_viewed',
+      'autocategory_applied', 'receipt_categorized', 'one_gmail_receipt_categorized',
     ],
     // Start and result are two signals for one user action. The result is an
     // outcome diagnostic, not a second deliberate interaction.
@@ -2079,6 +2080,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'ria_onboarding_submitted', 'ria_request_created', 'ria_workspace_opened',
       'ria_verification_status_changed', 'persona_switched',
       'one_ria_workspace_visited', 'one_ria_onboarding_completed',
+      'one_ria_verification_checked', 'one_ria_strategy_requested',
     ],
     background: [],
     instrumented: true,
@@ -2086,7 +2088,10 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   {
     key: 'marketplace',
     label: 'Information Marketplace',
-    deliberate: ['marketplace_profile_viewed'],
+    deliberate: [
+      'marketplace_profile_viewed', 'marketplace_browsed',
+      'one_marketplace_browsed', 'one_marketplace_profile_viewed',
+    ],
     background: [],
     instrumented: true,
   },
@@ -2101,7 +2106,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'agent_pkm_context_resolved', 'agent_pkm_context_unavailable',
       'agent_pkm_save_confirmation_completed',
     ],
-    instrumented: false,
+    instrumented: true,
     note: 'Memory actions are being rolled out. Usage is shown only after a deliberate action reaches the GA4 export.',
   },
   {
@@ -2109,7 +2114,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     label: 'Wallet',
     deliberate: ['one_wallet_action'],
     background: [],
-    instrumented: false,
+    instrumented: true,
     note: 'Wallet actions are being rolled out. Card contents and reveals are never sent to analytics.',
   },
   {
@@ -2117,7 +2122,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     label: 'Calendar',
     deliberate: ['one_calendar_action'],
     background: [],
-    instrumented: false,
+    instrumented: true,
     note: 'Calendar actions are being rolled out. Event titles and schedules are never sent to analytics.',
   },
   {
@@ -2125,16 +2130,16 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     label: 'KYC',
     deliberate: ['one_kyc_action'],
     background: [],
-    instrumented: false,
+    instrumented: true,
     note: 'KYC actions are being rolled out. Workflow content and identity data are never sent to analytics.',
   },
   {
     key: 'connected_systems',
     label: 'CRM',
-    deliberate: [],
+    deliberate: ['one_crm_action'],
     background: [],
-    instrumented: false,
-    note: 'CRM is a development-only, feature-flagged surface and is not a production product KPI.',
+    instrumented: true,
+    note: 'CRM is feature-flagged. UAT signals can be validated before this becomes a launched production KPI.',
   },
   {
     key: 'onboarding',
@@ -2144,12 +2149,13 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       'phone_verification_started', 'phone_verification_completed',
       'onboarding_started', 'onboarding_step_completed', 'onboarding_completed',
       'one_auth_login_completed', 'one_phone_verified', 'one_onboarding_completed',
+      'one_auth_started', 'one_auth_google_signed_in', 'one_auth_phone_verified',
+      'profile_created', 'one_auth_profile_created', 'one_auth_onboarding_completed',
     ],
     background: ['auth_failed', 'google_sign_in_failed'],
     instrumented: true,
   },
 ];
-const NEW_ONE_ACTION_CAPABILITIES = new Set(['memory', 'wallet', 'calendar', 'kyc']);
 
 /**
  * Machine-generated events, excluded from every active-user and usage count.
@@ -2505,6 +2511,7 @@ async function fetchOneAppSummary(
   const agentQuery = `
     SELECT
       capability,
+      COUNT(DISTINCT IF(is_deliberate, accountKey, NULL)) AS deliberateAccounts,
       COUNT(DISTINCT IF(is_deliberate, deviceKey, NULL)) AS deliberateDevices,
       COUNTIF(is_deliberate) AS deliberateEvents,
       COUNT(DISTINCT deviceKey) AS totalUsers,
@@ -2512,6 +2519,7 @@ async function fetchOneAppSummary(
     FROM (
       SELECT
         ${deviceKeySql} AS deviceKey,
+        NULLIF(user_id, '') AS accountKey,
 ${capabilitySql.capability},
 ${capabilitySql.isDeliberate}
       FROM ${table}
@@ -3143,6 +3151,8 @@ ${capabilitySql.isDeliberate}
     WITH classified AS (
       SELECT
         ${deviceKeySql} AS deviceKey,
+        NULLIF(user_id, '') AS accountKey,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') AS result,
         CASE
           WHEN event_name = 'one_location_share_confirmed' THEN 'live_sharing'
           WHEN event_name = 'one_location_check_in_completed' OR event_name LIKE '%check_in%' THEN 'check_in'
@@ -3170,18 +3180,18 @@ ${capabilitySql.isDeliberate}
           WHEN event_name IN ('portfolio_viewed', 'one_finance_portfolio_viewed') THEN 'portfolio_view'
           WHEN event_name IN ('recommendation_viewed', 'one_finance_recommendation_viewed') THEN 'ai_recommendation'
           WHEN event_name IN ('analysis_stream_started', 'one_finance_analysis_started') THEN 'analysis_stream'
-          WHEN event_name = 'import_parse_completed' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'success' THEN 'receipt_parsed'
-          WHEN event_name = 'import_save_completed' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'success' THEN 'import_saved'
+          WHEN event_name = 'import_parse_completed' THEN 'receipt_parsed'
+          WHEN event_name = 'import_save_completed' THEN 'import_saved'
           WHEN event_name IN ('consent_action_submitted', 'one_consent_preferences_updated', 'consent_pending_loaded') THEN 'preferences_updated'
           WHEN event_name IN ('one_consent_data_unlocked', 'data_unlocked', 'one_consent_data_unlock_requested', 'consent_action_result') THEN 'data_unlock'
           WHEN event_name IN ('permission_granted', 'one_consent_permission_granted') THEN 'permission_granted'
           WHEN event_name = 'gmail_connect_started' THEN 'account_connect_started'
-          WHEN event_name = 'gmail_connect_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'complete' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'success' THEN 'account_connected'
+          WHEN event_name = 'gmail_connect_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'complete' THEN 'account_connected'
           WHEN event_name = 'one_gmail_connected' THEN 'account_connected'
-          WHEN event_name = 'gmail_connect_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'complete' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'error' THEN 'account_connect_failed'
           WHEN event_name = 'gmail_sync_requested' THEN 'receipt_sync_requested'
-          WHEN event_name = 'gmail_sync_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'queue' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'success' THEN 'receipt_sync'
-          WHEN event_name = 'one_gmail_receipt_synced' THEN 'receipt_sync'
+          WHEN event_name = 'gmail_sync_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'queue' THEN 'receipt_sync'
+          WHEN event_name = 'gmail_sync_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'complete' THEN 'receipt_sync_completed'
+          WHEN event_name = 'one_gmail_receipt_synced' THEN 'receipt_sync_completed'
           WHEN event_name = 'hushh_mail_signin_screen_view' THEN 'mail_signin_screen_view'
           WHEN event_name = 'one_gmail_inbox_viewed' THEN 'inbox_viewed'
           WHEN event_name IN ('autocategory_applied', 'receipt_categorized', 'one_gmail_receipt_categorized') THEN 'autocategory_applied'
@@ -3195,6 +3205,7 @@ ${capabilitySql.isDeliberate}
           WHEN event_name = 'one_wallet_action' THEN CONCAT('wallet_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
           WHEN event_name = 'one_calendar_action' THEN CONCAT('calendar_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
           WHEN event_name = 'one_kyc_action' THEN CONCAT('kyc_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
+          WHEN event_name = 'one_crm_action' THEN CONCAT('crm_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
           ELSE NULL
         END AS feature_key
       FROM ${table}
@@ -3202,8 +3213,13 @@ ${capabilitySql.isDeliberate}
     )
     SELECT
       feature_key AS featureKey,
+      COUNT(DISTINCT accountKey) AS accounts,
       COUNT(DISTINCT deviceKey) AS devices,
-      COUNT(*) AS signals
+      COUNT(*) AS signals,
+      COUNTIF(result = 'success') AS successes,
+      COUNTIF(result = 'expected_error') AS expectedErrors,
+      COUNTIF(result = 'error') AS failures,
+      COUNTIF(result IN ('success', 'expected_error', 'error')) AS outcomeSignals
     FROM classified
     WHERE feature_key IS NOT NULL
     GROUP BY feature_key
@@ -3546,9 +3562,11 @@ ${capabilitySql.isDeliberate}
       // Driven by the declared catalogue, not by what came back from the query,
       // so a capability that emits nothing appears with a reason instead of
       // vanishing from the list.
+      capabilitiesAvailable: !agents.error,
       capabilities: ONE_CAPABILITIES.map((spec) => {
         const row = capabilityRows.get(spec.key);
-        const instrumented = spec.instrumented || (NEW_ONE_ACTION_CAPABILITIES.has(spec.key) && toNumber(row?.deliberateEvents) > 0);
+        const observed = toNumber(row?.deliberateEvents) > 0;
+        const instrumented = spec.instrumented;
         const byDate = new Map(
           agentDaily.rows
             .filter((point) => String(point.capability) === spec.key)
@@ -3558,9 +3576,11 @@ ${capabilitySql.isDeliberate}
           key: spec.key,
           label: spec.label,
           instrumented,
+          observed,
           note: spec.note ?? null,
-          devices: instrumented ? toNumber(row?.deliberateDevices) : null,
-          deliberateEvents: instrumented ? toNumber(row?.deliberateEvents) : null,
+          accounts: instrumented && !agents.error ? toNumber(row?.deliberateAccounts) : null,
+          devices: instrumented && !agents.error ? toNumber(row?.deliberateDevices) : null,
+          deliberateEvents: instrumented && !agents.error ? toNumber(row?.deliberateEvents) : null,
           totalUsers: toNumber(row?.totalUsers),
           totalEvents: toNumber(row?.totalEvents),
           // Spined so every capability's chart shares one x-axis and quiet days
@@ -3662,9 +3682,18 @@ ${capabilitySql.isDeliberate}
             ? 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.'
             : 'The detailed journey event has not reached the UAT export yet. TestFlight, Android internal and UAT web events will appear after the next GA4 export.',
       },
+      featureUsageAvailable: !featureUsage.error,
       featureUsage: Object.fromEntries(featureUsage.rows.map((row) => [
         String(row.featureKey),
-        { devices: toNumber(row.devices), signals: toNumber(row.signals) },
+        {
+          accounts: toNumber(row.accounts),
+          devices: toNumber(row.devices),
+          signals: toNumber(row.signals),
+          successes: toNumber(row.successes),
+          expectedErrors: toNumber(row.expectedErrors),
+          failures: toNumber(row.failures),
+          outcomeSignals: toNumber(row.outcomeSignals),
+        },
       ])),
       platformsAvailable: !platforms.error,
       platforms: (platforms.error ? [] : platforms.rows).map((row) => ({
@@ -5546,8 +5575,7 @@ ${capabilitySql.isDeliberate}
     const agents = ONE_CAPABILITIES.filter((spec) => spec.key !== 'onboarding').map((spec) => {
       const currentRow = agentRows.get(`current:${spec.key}`);
       const previousRow = agentRows.get(`previous:${spec.key}`);
-      const instrumented = spec.instrumented || (NEW_ONE_ACTION_CAPABILITIES.has(spec.key)
-        && (toNumber(currentRow?.interactions) > 0 || toNumber(previousRow?.interactions) > 0));
+      const instrumented = spec.instrumented;
       return {
         key: spec.key,
         label: spec.label,

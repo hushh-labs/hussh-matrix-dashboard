@@ -714,8 +714,12 @@ export interface OneCapabilityUsage {
   key: string;
   label: string;
   instrumented: boolean;
-  /** Why it cannot be measured. Non-null only when `instrumented` is false. */
+  /** True only after a matching aggregate row is present in the selected GA4 export window. */
+  observed: boolean;
+  /** Rollout, privacy or availability context for this capability. */
   note: string | null;
+  /** Distinct stable GA4 user_id values; null when no matching row is observed. */
+  accounts: number | null;
   devices: number | null;
   deliberateEvents: number | null;
   totalUsers: number;
@@ -1034,6 +1038,7 @@ export interface OneAppSummary {
   growth: OneGrowthSplit;
   retention: OneRetentionCohort[];
   activationStages: OneActivationStage[];
+  capabilitiesAvailable: boolean;
   capabilities: OneCapabilityUsage[];
   surfaces: OneSurfaceRow[];
   nativeEnvironments?: Array<{
@@ -1044,7 +1049,16 @@ export interface OneAppSummary {
   }>;
   locationFeatures: OneLocationFeatureUsage[];
   locationAnalytics: OneLocationBehaviorAnalytics;
-  featureUsage: Record<string, { devices: number; signals: number }>;
+  featureUsageAvailable: boolean;
+  featureUsage: Record<string, {
+    accounts: number;
+    devices: number;
+    signals: number;
+    successes: number;
+    expectedErrors: number;
+    failures: number;
+    outcomeSignals: number;
+  }>;
   platformsAvailable: boolean;
   platforms: OnePlatformUsage[];
   acquisition: OneAcquisitionRow[];

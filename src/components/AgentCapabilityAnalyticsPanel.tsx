@@ -130,9 +130,9 @@ const capabilityMetadata: Record<
   },
   connected_systems: {
     title: 'CRM / Connected Systems',
-    description: 'Development-only and feature-flagged; not available as a production KPI.',
+    description: 'Feature-flagged CRM record creation, updates and deletion outcomes.',
     icon: Layers,
-    auditExplanation: 'CRM is not a launched production feature. No customer-use total is claimed.',
+    auditExplanation: 'Privacy-safe CRM action outcomes can be validated in UAT. Production activity is not claimed until the feature is launched and observed.',
   },
   onboarding: {
     title: 'Sign-up & Onboarding Agent',
@@ -243,7 +243,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'untested',
       badgeLabel: 'Partially Tested',
       badgeClass: 'bg-[#5856d6]/10 text-[#3a38a8]',
-      explanation: 'Counts successful import_parse_completed events only. Import saves are a separate step and are not added here.',
+      explanation: 'Counts parse outcomes here; successful, canceled/no-op and failed results remain separate. Import saves are not added.',
     },
     {
       key: 'import_saved',
@@ -252,7 +252,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Awaiting live signal',
       badgeClass: 'bg-amber-50 text-amber-800',
-      explanation: 'Counts successful import_save_completed events only; this is not an additional parsed import.',
+      explanation: 'Counts save outcomes separately from parse outcomes, so one import is not inflated by adding its stages.',
     },
   ],
   consent: [
@@ -310,7 +310,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Counts gmail_connect_result only when action=complete and result=success; the OAuth start step is excluded.',
+      explanation: 'Counts terminal OAuth completion outcomes. The OAuth start step is excluded, and success/failure remain separate.',
     },
     {
       key: 'receipt_sync_requested',
@@ -328,7 +328,16 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Awaiting live signal',
       badgeClass: 'bg-amber-50 text-amber-800',
-      explanation: 'Counts gmail_sync_result only when action=queue and result=success. This is job acceptance, not completed receipt processing.',
+      explanation: 'Counts queue outcomes separately. A success here means the job was accepted, not that receipt processing finished.',
+    },
+    {
+      key: 'receipt_sync_completed',
+      label: 'Receipt sync completed',
+      icon: CheckCircle2,
+      status: 'active',
+      badgeLabel: 'Awaiting live signal',
+      badgeClass: 'bg-amber-50 text-amber-800',
+      explanation: 'Counts terminal Gmail receipt-sync outcomes emitted only after processing finishes.',
     },
     {
       key: 'mail_signin_screen_view',
@@ -450,6 +459,11 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     actionSpec('kyc_reply_rejected', 'Rejected a draft', Lock),
     actionSpec('kyc_workflow_refreshed', 'Refreshed a request', RefreshCw),
   ],
+  connected_systems: [
+    actionSpec('crm_record_created', 'Created a CRM record', Layers),
+    actionSpec('crm_record_updated', 'Updated a CRM record', Layers),
+    actionSpec('crm_record_deleted', 'Deleted a CRM record', Layers),
+  ],
   location: [
     {
       key: 'live_sharing',
@@ -535,14 +549,9 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
   ],
 };
 
-function ratio(numerator: number | null, denominator: number | null): string {
-  if (numerator === null || denominator === null || denominator <= 0) return '—';
-  return `${Math.round((numerator / denominator) * 100)}%`;
-}
-
 function MetricValue({ value, waiting = false }: { value: number | null; waiting?: boolean }) {
   if (waiting || value === null) {
-    return <span className="text-xs font-semibold text-[#86868b]">Not measured</span>;
+    return <span className="text-xs font-semibold text-[#86868b]">—</span>;
   }
   return <>{formatNumber(value)}</>;
 }
@@ -570,14 +579,16 @@ export function AgentCapabilityAnalyticsPanel({
 
   const Icon = meta.icon;
 
-  const deviceUsers = capability?.devices ?? 0;
-  const deliberateEvents = capability?.deliberateEvents ?? 0;
+  const identifiedAccounts = capability?.accounts ?? null;
+  const deviceUsers = capability?.devices ?? null;
+  const deliberateEvents = capability?.deliberateEvents ?? null;
   const totalEvents = capability?.totalEvents ?? 0;
   const instrumented = capability?.instrumented ?? false;
+  const observed = capability?.observed ?? false;
+  const capabilitySourceAvailable = activeSummary?.capabilitiesAvailable ?? false;
   const daily = capability?.daily ?? [];
 
-  const backgroundEvents = Math.max(0, totalEvents - deliberateEvents);
-  const backgroundRatio = deliberateEvents > 0 ? (totalEvents / deliberateEvents).toFixed(1) : null;
+  const backgroundRatio = (deliberateEvents ?? 0) > 0 ? (totalEvents / (deliberateEvents ?? 1)).toFixed(1) : null;
 
   // Compute sub-feature telemetry breakdown in FIXED order
   const specs = featureAuditSpecs[capabilityKey] || [
@@ -598,27 +609,46 @@ export function AgentCapabilityAnalyticsPanel({
       ? activeSummary?.locationAnalytics?.features?.find((item) => item.key === spec.key)
       : undefined;
     const aggregateMetric = locationMetric
-      ? { devices: locationMetric.users, signals: locationMetric.events }
+      ? {
+          accounts: null,
+          devices: locationMetric.users,
+          signals: locationMetric.events,
+          successes: locationMetric.successes,
+          expectedErrors: 0,
+          failures: locationMetric.failures,
+          outcomeSignals: locationMetric.successes + locationMetric.failures,
+        }
       : activeSummary?.featureUsage?.[spec.key];
-    const measured = !isGap && Boolean(aggregateMetric);
+    const sourceAvailable = capabilityKey === 'location'
+      ? Boolean(activeSummary?.available)
+      : Boolean(activeSummary?.featureUsageAvailable);
+    const measured = !isGap && sourceAvailable;
+    const wasObserved = measured && Boolean(aggregateMetric) && (aggregateMetric?.signals ?? 0) > 0;
+    const accounts = measured ? (aggregateMetric?.accounts ?? null) : null;
     const devices = measured ? (aggregateMetric?.devices ?? 0) : null;
     const signals = measured ? (aggregateMetric?.signals ?? 0) : null;
-    const successful = locationMetric?.instrumented ? locationMetric.successes : null;
-    const failed = locationMetric?.instrumented ? locationMetric.failures : null;
+    const hasOutcomes = measured && (aggregateMetric?.outcomeSignals ?? 0) > 0;
+    const successful = hasOutcomes ? (aggregateMetric?.successes ?? 0) : null;
+    const expectedErrors = hasOutcomes ? (aggregateMetric?.expectedErrors ?? 0) : null;
+    const failed = hasOutcomes ? (aggregateMetric?.failures ?? 0) : null;
     const explanation =
-      measured && ((signals ?? 0) > 0 || (devices ?? 0) > 0)
+      wasObserved
         ? `${formatNumber(signals)} event signals recorded across ${formatNumber(devices)} active ${devices === 1 ? 'device' : 'devices'} in this window.`
         : isGap
           ? spec.explanation
-          : 'This event is declared, but no matching aggregate row was observed in the selected window. No value is estimated.';
+          : !sourceAvailable
+            ? 'The aggregate source is temporarily unavailable. No zero is inferred.'
+            : 'The event is defined and the export was read successfully, but no matching signal appeared in this date range.';
 
     return {
       ...spec,
-      badgeLabel: !measured ? 'Not yet measured' : (signals ?? 0) > 0 ? 'Recorded activity' : 'No activity in range',
-      badgeClass: !measured ? 'bg-amber-50 text-amber-800' : (signals ?? 0) > 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-100 text-slate-600',
+      badgeLabel: isGap ? 'Not instrumented' : !sourceAvailable ? 'Source unavailable' : wasObserved ? 'Observed in export' : 'No signal in range',
+      badgeClass: isGap || !sourceAvailable ? 'bg-amber-50 text-amber-800' : wasObserved ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-100 text-slate-600',
+      accounts,
       devices,
       signals,
       successful,
+      expectedErrors,
       failed,
       measured,
       explanation,
@@ -695,8 +725,8 @@ export function AgentCapabilityAnalyticsPanel({
           </div>
           <p className="text-xs font-semibold leading-5 text-[#6e6e73]">
             {environment === 'production'
-              ? 'Production web plus public iOS and Android builds. Tester traffic is excluded. Counts never mix across environments.'
-              : 'UAT web plus iOS TestFlight and Android internal. Production traffic is excluded. Counts never mix across environments.'}
+              ? 'Production GA4 property: production web plus public iOS and Android build traffic. Native rows can carry env=uat while those builds use the UAT backend, so they are not described as production-backend users.'
+              : 'UAT GA4 property: UAT web validation traffic. Native rows appear only when an explicit UAT native build sends them. Counts never mix across GA4 properties.'}
           </p>
         </div>
       </div>
@@ -705,47 +735,47 @@ export function AgentCapabilityAnalyticsPanel({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className={cn(appleCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Deliberate Devices</p>
+            <p className="text-sm font-semibold text-[#6e6e73]">Identified accounts</p>
+            <UserCheck className="h-4 w-4 text-[#007aff]" />
+          </div>
+          <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
+            <MetricValue value={instrumented && capabilitySourceAvailable ? identifiedAccounts : null} />
+          </p>
+          <p className="mt-1 text-xs font-semibold text-[#86868b]">
+            Distinct signed-in One account IDs; anonymous activity excluded
+          </p>
+        </div>
+
+        <div className={cn(appleCard, 'p-5')}>
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-[#6e6e73]">Active devices</p>
             <Users className="h-4 w-4 text-[#007aff]" />
           </div>
           <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
-            {instrumented ? formatNumber(deviceUsers) : '—'}
+            <MetricValue value={instrumented && capabilitySourceAvailable ? deviceUsers : null} />
           </p>
           <p className="mt-1 text-xs font-semibold text-[#86868b]">
-            {instrumented ? 'Unique device/browser identifiers taking deliberate action' : 'Not instrumented'}
+            Unique GA4 device/browser identifiers; not unique people
           </p>
         </div>
 
         <div className={cn(appleCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Deliberate Actions</p>
+            <p className="text-sm font-semibold text-[#6e6e73]">Deliberate actions</p>
             <Zap className="h-4 w-4 text-[#1f7a36]" />
           </div>
           <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
-            {instrumented ? formatNumber(deliberateEvents) : '—'}
+            <MetricValue value={instrumented && capabilitySourceAvailable ? deliberateEvents : null} />
           </p>
           <p className="mt-1 text-xs font-semibold text-[#86868b]">
-            {instrumented ? 'Deliberate capability events' : 'Not instrumented'}
-          </p>
-        </div>
-
-        <div className={cn(appleCard, 'p-5')}>
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Total Telemetry Events</p>
-            <Activity className="h-4 w-4 text-[#6e6e73]" />
-          </div>
-          <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
-            {formatNumber(totalEvents)}
-          </p>
-          <p className="mt-1 text-xs font-semibold text-[#86868b]">
-            {backgroundEvents > 0 ? `${formatNumber(backgroundEvents)} background/diagnostic pings` : 'All events deliberate'}
+            Repeat actions count again; this is not a user total
           </p>
         </div>
 
         <div className={cn(appleCard, 'p-5')}>
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-[#6e6e73]">Telemetry Status</p>
-            {instrumented ? (
+            {observed ? (
               <CheckCircle2 className="h-4 w-4 text-[#1f7a36]" />
             ) : (
               <AlertTriangle className="h-4 w-4 text-[#8a5a04]" />
@@ -755,22 +785,28 @@ export function AgentCapabilityAnalyticsPanel({
             <span
               className={cn(
                 'inline-block rounded-full px-2.5 py-1 text-xs font-bold',
-                instrumented
+                observed
                   ? 'bg-[#34c759]/10 text-[#1f7a36]'
                   : 'bg-[#ff9500]/10 text-[#b36b00]'
               )}
             >
-              {instrumented ? 'Instrumented' : 'Telemetry Pending'}
+              {!instrumented ? 'Not instrumented' : !capabilitySourceAvailable ? 'Source unavailable' : observed ? 'Observed in export' : 'Defined; awaiting signal'}
             </span>
           </div>
           <p className="mt-2 text-xs font-semibold text-[#86868b]">
-            {instrumented ? 'Events actively exported to GA4 BigQuery' : capability?.note || 'No event emitted in app code'}
+            {!instrumented
+              ? capability?.note || 'No event is emitted in app code'
+              : !capabilitySourceAvailable
+                ? 'The export query failed; no zero is inferred'
+                : observed
+                  ? 'At least one matching aggregate row exists in this date range'
+                  : 'The event is shipped, but no matching row exists in this date range'}
           </p>
         </div>
       </div>
 
       {/* Daily Active Trend Chart */}
-      {instrumented && daily.length > 0 && (
+      {instrumented && observed && daily.length > 0 && (
         <div className={cn(appleCard, 'p-6')}>
           <div className="mb-4">
             <h3 className="text-lg font-bold text-[#1d1d1f]">Daily Deliberate Active Devices</h3>
@@ -816,7 +852,7 @@ export function AgentCapabilityAnalyticsPanel({
       <div className="space-y-4">
         <div>
           <p className={appleLabel}>Feature adoption</p>
-          <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What devices actually use in {meta.title}</h3>
+          <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What people and devices do in {meta.title}</h3>
         </div>
 
         <div className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs">
@@ -825,21 +861,22 @@ export function AgentCapabilityAnalyticsPanel({
             <span>Telemetry & Feature Zero Justification Audit</span>
           </div>
           <p className="mt-1 text-[#6e6e73]">
-            Features with no measured row remain unavailable; the dashboard never estimates adoption or failure counts.
+            Accounts are distinct signed-in One IDs. Devices are GA4 app/browser identifiers and can count one person more than once. A successful source with no matching row shows zero; a failed source shows a dash.
           </p>
         </div>
 
         <div className={cn(applePanel, 'overflow-hidden')}>
           <div className="overflow-x-auto">
-            <table className={cn('w-full border-collapse text-left', capabilityKey === 'location' ? 'min-w-[760px]' : 'min-w-[520px]')}>
+            <table className="min-w-[960px] w-full border-collapse text-left">
               <thead>
                 <tr className="border-b border-black/[0.06] bg-white/55 text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">
                   <th className="px-5 py-3">Feature & Telemetry Audit</th>
+                  <th className="px-4 py-3 text-right">Identified accounts</th>
                   <th className="px-4 py-3 text-right">Devices</th>
                   <th className="px-4 py-3 text-right">Signals</th>
-                  {capabilityKey === 'location' && <th className="px-4 py-3 text-right">Successful</th>}
-                  {capabilityKey === 'location' && <th className="px-4 py-3 text-right">Failed</th>}
-                  {capabilityKey === 'location' && <th className="px-5 py-3 text-right">Non-error share</th>}
+                  <th className="px-4 py-3 text-right">Successful</th>
+                  <th className="px-4 py-3 text-right">Canceled / no-op</th>
+                  <th className="px-5 py-3 text-right">Failed</th>
                 </tr>
               </thead>
               <tbody>
@@ -869,6 +906,9 @@ export function AgentCapabilityAnalyticsPanel({
                           </div>
                         </td>
                         <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                          <MetricValue value={feature.accounts} waiting={waiting} />
+                        </td>
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <button
                             type="button"
                             onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
@@ -883,20 +923,20 @@ export function AgentCapabilityAnalyticsPanel({
                         <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.signals} waiting={waiting} />
                         </td>
-                        {capabilityKey === 'location' && <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.successful} waiting={waiting} />
-                        </td>}
-                        {capabilityKey === 'location' && <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                        </td>
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                          <MetricValue value={feature.expectedErrors} waiting={waiting} />
+                        </td>
+                        <td className="px-5 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.failed} waiting={waiting} />
-                        </td>}
-                        {capabilityKey === 'location' && <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
-                          {waiting ? '—' : ratio(feature.successful, feature.signals)}
-                        </td>}
+                        </td>
                       </tr>
 
                       {isExpanded && (
                         <tr key={`${feature.key}-users`}>
-                          <td colSpan={capabilityKey === 'location' ? 6 : 3} className="bg-[#f5f9ff] p-4 border-b border-black/10">
+                          <td colSpan={7} className="bg-[#f5f9ff] p-4 border-b border-black/10">
                             <FeatureUserBreakdownPanel
                               featureLabel={feature.label}
                               totalDevices={feature.devices ?? undefined}
