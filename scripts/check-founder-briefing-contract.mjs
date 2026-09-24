@@ -65,10 +65,16 @@ try {
     check(`${platform.key}_identity_diagnostics`, !one.available
       || (integer(platform.trackedIdentifiers) && integer(platform.boundIdentifiers)
         && integer(platform.signInIdentifiers) && integer(platform.signedInBoundIdentifiers)
+        && integer(platform.previousTrackedIdentifiers) && integer(platform.previousBoundIdentifiers)
+        && integer(platform.previousSignInIdentifiers) && integer(platform.previousSignedInBoundIdentifiers)
         && platform.boundIdentifiers <= platform.trackedIdentifiers
         && platform.signInIdentifiers <= platform.trackedIdentifiers
         && platform.signedInBoundIdentifiers <= platform.signInIdentifiers
         && platform.signedInBoundIdentifiers <= platform.boundIdentifiers
+        && platform.previousBoundIdentifiers <= platform.previousTrackedIdentifiers
+        && platform.previousSignInIdentifiers <= platform.previousTrackedIdentifiers
+        && platform.previousSignedInBoundIdentifiers <= platform.previousSignInIdentifiers
+        && platform.previousSignedInBoundIdentifiers <= platform.previousBoundIdentifiers
         && (platform.trackedIdentifiers === 0 ? platform.identityCoverage === null
           : Math.abs(platform.identityCoverage - platform.boundIdentifiers / platform.trackedIdentifiers) < 0.000001)));
     check(`${platform.key}_bounded`, !one.available || platform.identifiedAccounts.current <= one.activeAccounts.current);

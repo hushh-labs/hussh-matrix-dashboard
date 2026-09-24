@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   founderChangeLabel, founderCustomRange, founderLatestCompleteDate, founderMonthRange,
-  founderPresetRange, founderTrend,
+  founderPresetRange, founderTrend, founderWebIdentityMeasure,
 } from '../src/lib/founder-briefing';
 
 describe('founder briefing comparisons', () => {
@@ -21,6 +21,39 @@ describe('founder briefing comparisons', () => {
     expect(founderTrend({ current: null, previous: 10 })).toEqual({ trend: 'unavailable', percent: null });
     expect(founderTrend({ current: 10, previous: Number.NaN })).toEqual({ trend: 'unavailable', percent: null });
     expect(founderChangeLabel({ current: null, previous: null })).toBe('Comparison unavailable');
+  });
+
+  it('withholds web growth when the earlier sign-in cohort was not account-bound', () => {
+    const platform = {
+      key: 'WEB' as const, label: 'Web app',
+      identifiedAccounts: { current: 20, previous: 1 },
+      identityCoverage: 0.9,
+      trackedIdentifiers: 40, boundIdentifiers: 36,
+      signInIdentifiers: 10, signedInBoundIdentifiers: 9,
+      previousTrackedIdentifiers: 100, previousBoundIdentifiers: 1,
+      previousSignInIdentifiers: 50, previousSignedInBoundIdentifiers: 1,
+    };
+    expect(founderWebIdentityMeasure(platform)).toEqual({
+      measure: { current: 20, previous: null },
+      currentGap: false, previousGap: true,
+    });
+    expect(founderTrend(founderWebIdentityMeasure(platform).measure).percent).toBeNull();
+  });
+
+  it('withholds the web count when current sign-ins lack later account binding', () => {
+    const platform = {
+      key: 'WEB' as const, label: 'Web app',
+      identifiedAccounts: { current: 1, previous: 10 },
+      identityCoverage: 0.1,
+      trackedIdentifiers: 100, boundIdentifiers: 1,
+      signInIdentifiers: 50, signedInBoundIdentifiers: 1,
+      previousTrackedIdentifiers: 20, previousBoundIdentifiers: 19,
+      previousSignInIdentifiers: 10, previousSignedInBoundIdentifiers: 9,
+    };
+    expect(founderWebIdentityMeasure(platform)).toEqual({
+      measure: { current: null, previous: null },
+      currentGap: true, previousGap: false,
+    });
   });
 
   it('keeps every preset on completed UTC days', () => {

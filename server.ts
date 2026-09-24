@@ -5424,7 +5424,7 @@ ${capabilitySql.isDeliberate}
   const platformQuery = `
     WITH scoped AS (
       SELECT PARSE_DATE('%Y%m%d', event_date) AS day, platform,
-        event_name,
+        event_name, event_timestamp,
         NULLIF(user_id, '') AS accountId,
         IF(user_pseudo_id IS NULL, NULL, CONCAT(platform, ':', user_pseudo_id)) AS deviceKey
       FROM ${table}
@@ -5434,8 +5434,8 @@ ${capabilitySql.isDeliberate}
       SELECT *, IF(day ${currentSql}, 'current', 'previous') AS period FROM scoped
     ), identifier_binding AS (
       SELECT period, platform, deviceKey,
-        LOGICAL_OR(event_name = 'auth_succeeded') AS signed_in,
-        LOGICAL_OR(accountId IS NOT NULL) AS bound
+        MIN(IF(event_name = 'auth_succeeded', event_timestamp, NULL)) AS first_sign_in_at,
+        MAX(IF(accountId IS NOT NULL, event_timestamp, NULL)) AS last_bound_at
       FROM periodized WHERE deviceKey IS NOT NULL
       GROUP BY period, platform, deviceKey
     )
@@ -5443,8 +5443,8 @@ ${capabilitySql.isDeliberate}
       COUNT(DISTINCT p.accountId) AS identified_accounts,
       COUNT(DISTINCT p.deviceKey) AS tracked_identifiers,
       COUNT(DISTINCT IF(p.accountId IS NOT NULL, p.deviceKey, NULL)) AS bound_identifiers,
-      COUNT(DISTINCT IF(b.signed_in, p.deviceKey, NULL)) AS sign_in_identifiers,
-      COUNT(DISTINCT IF(b.signed_in AND b.bound, p.deviceKey, NULL)) AS signed_in_bound_identifiers
+      COUNT(DISTINCT IF(b.first_sign_in_at IS NOT NULL, p.deviceKey, NULL)) AS sign_in_identifiers,
+      COUNT(DISTINCT IF(b.first_sign_in_at IS NOT NULL AND b.last_bound_at >= b.first_sign_in_at, p.deviceKey, NULL)) AS signed_in_bound_identifiers
     FROM periodized p
     LEFT JOIN identifier_binding b USING (period, platform, deviceKey)
     GROUP BY p.period, p.platform
@@ -5513,6 +5513,7 @@ ${capabilitySql.isDeliberate}
       const currentRow = platformRows.get(`current:${key}`);
       const previousRow = platformRows.get(`previous:${key}`);
       const tracked = toNumber(currentRow?.tracked_identifiers);
+      const previousTracked = toNumber(previousRow?.tracked_identifiers);
       return {
         key,
         label: key === 'IOS' ? 'iOS app' : 'Web app',
@@ -5525,6 +5526,10 @@ ${capabilitySql.isDeliberate}
         boundIdentifiers: oneAvailable ? toNumber(currentRow?.bound_identifiers) : null,
         signInIdentifiers: oneAvailable ? toNumber(currentRow?.sign_in_identifiers) : null,
         signedInBoundIdentifiers: oneAvailable ? toNumber(currentRow?.signed_in_bound_identifiers) : null,
+        previousTrackedIdentifiers: oneAvailable ? previousTracked : null,
+        previousBoundIdentifiers: oneAvailable ? toNumber(previousRow?.bound_identifiers) : null,
+        previousSignInIdentifiers: oneAvailable ? toNumber(previousRow?.sign_in_identifiers) : null,
+        previousSignedInBoundIdentifiers: oneAvailable ? toNumber(previousRow?.signed_in_bound_identifiers) : null,
       };
     });
     const agents = ONE_CAPABILITIES.filter((spec) => spec.key !== 'onboarding').map((spec) => {
