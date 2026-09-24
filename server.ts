@@ -2616,7 +2616,8 @@ ${capabilitySql.isDeliberate}
       COUNT(DISTINCT deviceKey) AS users,
       COUNT(*) AS events,
       COUNTIF(result = 'success') AS successes,
-      COUNTIF(result IN ('expected_error', 'error')) AS failures
+      COUNTIF(result = 'expected_error') AS expectedErrors,
+      COUNTIF(result = 'error') AS failures
     FROM classified
     WHERE featureKey IS NOT NULL
     GROUP BY featureKey
@@ -2624,7 +2625,7 @@ ${capabilitySql.isDeliberate}
     SELECT
       'feature_daily', featureKey, eventDate, NULL,
       COUNT(DISTINCT deviceKey), COUNT(*),
-      COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
+      COUNTIF(result = 'success'), COUNTIF(result = 'expected_error'), COUNTIF(result = 'error')
     FROM classified
     WHERE featureKey IS NOT NULL
     GROUP BY featureKey, eventDate
@@ -2632,7 +2633,7 @@ ${capabilitySql.isDeliberate}
     SELECT
       'feature_platform', featureKey, NULL, platform,
       COUNT(DISTINCT deviceKey), COUNT(*),
-      COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
+      COUNTIF(result = 'success'), COUNTIF(result = 'expected_error'), COUNTIF(result = 'error')
     FROM classified
     WHERE featureKey IS NOT NULL
     GROUP BY featureKey, platform
@@ -2642,7 +2643,8 @@ ${capabilitySql.isDeliberate}
       COUNT(DISTINCT IF(result = 'success' OR eventName = 'page_view', deviceKey, NULL)),
       COUNTIF(result = 'success' OR eventName = 'page_view'),
       COUNTIF(result = 'success' OR eventName = 'page_view'),
-      COUNTIF(result IN ('expected_error', 'error'))
+      COUNTIF(result = 'expected_error'),
+      COUNTIF(result = 'error')
     FROM classified
     WHERE journeyKey IS NOT NULL
     GROUP BY journeyKey
@@ -2650,7 +2652,7 @@ ${capabilitySql.isDeliberate}
     SELECT
       'circle_kind', COALESCE(NULLIF(circleKind, ''), 'unknown'), NULL, NULL,
       COUNT(DISTINCT deviceKey), COUNT(*),
-      COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
+      COUNTIF(result = 'success'), COUNTIF(result = 'expected_error'), COUNTIF(result = 'error')
     FROM classified
     WHERE eventName = 'one_location_circle_created'
     GROUP BY COALESCE(NULLIF(circleKind, ''), 'unknown')
@@ -2658,7 +2660,7 @@ ${capabilitySql.isDeliberate}
     SELECT
       'instrumentation', 'journey_action', MIN(eventDate), NULL,
       COUNT(DISTINCT deviceKey), COUNT(*),
-      COUNTIF(result = 'success'), COUNTIF(result IN ('expected_error', 'error'))
+      COUNTIF(result = 'success'), COUNTIF(result = 'expected_error'), COUNTIF(result = 'error')
     FROM classified
     WHERE eventName = 'one_location_journey_action'
   `;
@@ -3607,6 +3609,7 @@ ${capabilitySql.isDeliberate}
         users: toNumber(row.users),
         events: toNumber(row.events),
       })),
+      locationBehaviorAvailable: !locationBehavior.error,
       locationAnalytics: {
         // Stable catalogue ordering means a newly instrumented feature appears
         // as "measuring" before its first event instead of disappearing.
@@ -3624,6 +3627,7 @@ ${capabilitySql.isDeliberate}
             users: toNumber(row?.users),
             events: toNumber(row?.events),
             successes: toNumber(row?.successes),
+            expectedErrors: toNumber(row?.expectedErrors),
             failures: toNumber(row?.failures),
             daily: dateSpine(range).map((date) => {
               const point = byDate.get(date) ?? {};

@@ -28,6 +28,10 @@ const finance = source.match(/key: 'finance',[\s\S]*?key: 'consent'/)?.[0] || ''
 const gmail = source.match(/key: 'gmail',[\s\S]*?key: 'ria'/)?.[0] || '';
 results.push({ name: 'finance_import_outcomes_not_double_counted', ok: /background: \[[\s\S]*?'import_parse_completed', 'import_save_completed'/.test(finance) });
 results.push({ name: 'gmail_results_not_double_counted', ok: /background: \[[\s\S]*?'gmail_connect_result', 'gmail_sync_result'/.test(gmail) });
+const locationQuery = source.match(/const locationBehaviorQuery = `([\s\S]*?)`;/)?.[1] || '';
+results.push({ name: 'location_expected_outcomes_are_separate', ok: locationQuery.includes("COUNTIF(result = 'expected_error') AS expectedErrors") });
+results.push({ name: 'location_failures_are_true_errors', ok: locationQuery.includes("COUNTIF(result = 'error') AS failures") });
+results.push({ name: 'location_source_availability_is_explicit', ok: source.includes('locationBehaviorAvailable: !locationBehavior.error') });
 const ok = results.every((result) => result.ok);
 console.log(JSON.stringify({ ok, checkedAt: new Date().toISOString(), target: 'One agent feature classification', checks: results }, null, 2));
 if (!ok) process.exitCode = 1;

@@ -608,19 +608,25 @@ export function AgentCapabilityAnalyticsPanel({
     const locationMetric = capabilityKey === 'location'
       ? activeSummary?.locationAnalytics?.features?.find((item) => item.key === spec.key)
       : undefined;
+    const featureUsageMetric = activeSummary?.featureUsage?.[spec.key];
     const aggregateMetric = locationMetric
       ? {
-          accounts: null,
+          accounts: activeSummary?.featureUsageAvailable
+            ? (featureUsageMetric?.accounts ?? 0)
+            : null,
           devices: locationMetric.users,
           signals: locationMetric.events,
           successes: locationMetric.successes,
-          expectedErrors: 0,
+          expectedErrors: locationMetric.expectedErrors,
           failures: locationMetric.failures,
-          outcomeSignals: locationMetric.successes + locationMetric.failures,
+          outcomeSignals:
+            (locationMetric.successes ?? 0)
+            + (locationMetric.expectedErrors ?? 0)
+            + (locationMetric.failures ?? 0),
         }
-      : activeSummary?.featureUsage?.[spec.key];
+      : featureUsageMetric;
     const sourceAvailable = capabilityKey === 'location'
-      ? Boolean(activeSummary?.available)
+      ? Boolean(activeSummary?.locationBehaviorAvailable)
       : Boolean(activeSummary?.featureUsageAvailable);
     const measured = !isGap && sourceAvailable;
     const wasObserved = measured && Boolean(aggregateMetric) && (aggregateMetric?.signals ?? 0) > 0;

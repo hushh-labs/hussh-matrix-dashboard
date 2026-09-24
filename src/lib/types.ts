@@ -930,6 +930,7 @@ export interface OneLocationBehaviorMetric {
   users: number | null;
   events: number | null;
   successes: number | null;
+  expectedErrors: number | null;
   failures: number | null;
   daily: OneLocationMetricPoint[];
 }
@@ -1048,6 +1049,8 @@ export interface OneAppSummary {
     events: number;
   }>;
   locationFeatures: OneLocationFeatureUsage[];
+  /** Whether the dedicated Location behaviour aggregate completed successfully. */
+  locationBehaviorAvailable: boolean;
   locationAnalytics: OneLocationBehaviorAnalytics;
   featureUsageAvailable: boolean;
   featureUsage: Record<string, {
