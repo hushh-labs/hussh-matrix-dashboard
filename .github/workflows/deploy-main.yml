@@ -255,6 +255,8 @@ jobs:
           node scripts/check-dashboard-kpi-invariants.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
           node scripts/check-public-analytics-contract.mjs --base-url "${CANDIDATE_URL}" --days 7 --timeout-ms 120000
           node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
+          node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000 --start-date 2026-08-01 --end-date 2026-08-31
+          node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000 --start-date 2026-06-24 --end-date 2026-09-21
           unset METRICS_AUTH_COOKIE NODE_OPTIONS
 
       - name: Reconcile One source data without dashboard access

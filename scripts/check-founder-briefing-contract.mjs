@@ -7,67 +7,101 @@ const option = (name, fallback) => {
 };
 const baseUrl = option('--base-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai').replace(/\/$/, '');
 const timeoutMs = Number(option('--timeout-ms', '120000'));
+const startDate = option('--start-date', '');
+const endDate = option('--end-date', '');
+const params = new URLSearchParams();
+if (startDate) params.set('start_date', startDate);
+if (endDate) params.set('end_date', endDate);
+const path = `/api/analytics/founder${params.size ? `?${params}` : ''}`;
 const checks = [];
 const check = (name, ok) => checks.push({ name, ok: Boolean(ok) });
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
 const date = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
-const days = (start, end) => (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000 + 1;
+const dayCount = (start, end) => (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000 + 1;
+const validMeasure = (value, currentAvailable, comparisonAvailable) => currentAvailable
+  ? integer(value?.current) && (comparisonAvailable ? integer(value?.previous) : value?.previous === null)
+  : value?.current === null && value?.previous === null;
 
 try {
-  const response = await fetch(`${baseUrl}/api/analytics/founder`, {
-    headers: { Accept: 'application/json' },
-    cache: 'no-store',
-    signal: AbortSignal.timeout(timeoutMs),
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: { Accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(timeoutMs),
   });
   check('authenticated_api_200', response.status === 200);
   check('no_store', /no-store/i.test(response.headers.get('cache-control') || ''));
   const body = await response.json();
-  check('production_aggregate_shape', Boolean(body.one && body.hushhTech && body.hushhAi));
-  check('no_uat_or_person_records', !/"uat"\s*:|user_pseudo_id|"user_id"\s*:|"email"\s*:/i.test(JSON.stringify(body)));
-  check('periods_are_equal_and_complete', date(body.period?.startDate) && date(body.period?.endDate)
-    && date(body.previousPeriod?.startDate) && date(body.previousPeriod?.endDate)
-    && days(body.period.startDate, body.period.endDate) === 30
-    && days(body.previousPeriod.startDate, body.previousPeriod.endDate) === 30
-    && Date.parse(`${body.previousPeriod.endDate}T00:00:00Z`) + 86_400_000
-      === Date.parse(`${body.period.startDate}T00:00:00Z`));
-
-  for (const [product, pairs] of [
-    ['one', ['activeAccounts', 'firstObservedAccounts', 'activatedAccounts']],
-    ['hushhTech', ['newAccounts']],
-    ['hushhAi', ['organicClicks']],
-  ]) {
-    const source = body[product];
-    check(`${product}_availability`, typeof source?.available === 'boolean');
-    for (const pair of pairs) {
-      const measure = source?.[pair];
-      check(`${product}_${pair}_valid`, product === 'one' && source?.available && !source?.comparisonReady
-        ? integer(measure?.current) && measure?.previous === null
-        : source?.available
-        ? integer(measure?.current) && integer(measure?.previous)
-        : measure?.current === null && measure?.previous === null);
-    }
+  check('one_only_shape', Boolean(body.one && body.search && !body.hushhTech && !body.hushhAi));
+  check('no_person_records', !/user_pseudo_id|"user_id"\s*:|"email"\s*:|"phone"\s*:/i.test(JSON.stringify(body)));
+  const current = body.period ?? {};
+  const previous = body.previousPeriod ?? {};
+  check('periods_equal_contiguous', date(current.startDate) && date(current.endDate)
+    && date(previous.startDate) && date(previous.endDate)
+    && dayCount(current.startDate, current.endDate) === current.days
+    && dayCount(previous.startDate, previous.endDate) === current.days
+    && current.days >= 1 && current.days <= 90
+    && Date.parse(`${previous.endDate}T00:00:00Z`) + 86_400_000 === Date.parse(`${current.startDate}T00:00:00Z`));
+  check('requested_range_exact', (!startDate || startDate === current.startDate) && (!endDate || endDate === current.endDate));
+  const one = body.one ?? {};
+  check('one_source_available', one.available === true);
+  check('identity_comparison_flag', typeof one.comparisonReady === 'boolean');
+  check('interaction_comparison_flag', typeof one.interactionComparisonReady === 'boolean');
+  check('interaction_history_guard', one.interactionComparisonReady === (one.available && previous.startDate >= '2026-05-01'));
+  for (const name of ['activeAccounts', 'firstObservedAccounts', 'activatedAccounts', 'agentEngagedAccounts']) {
+    check(`one_${name}`, validMeasure(one[name], one.available, one.comparisonReady));
   }
-  check('one_first_observed_bounded', !body.one?.available
-    || body.one.firstObservedAccounts.current <= body.one.activeAccounts.current);
-  check('one_comparison_guarded', !body.one?.available || typeof body.one.comparisonReady === 'boolean');
-  check('one_coverage_bounded', body.one?.accountCoverage === null
-    || (typeof body.one?.accountCoverage === 'number'
-      && body.one.accountCoverage >= 0 && body.one.accountCoverage <= 1));
-  check('tech_total_bounded', !body.hushhTech?.available
-    || (integer(body.hushhTech.totalAccounts)
-      && body.hushhTech.newAccounts.current <= body.hushhTech.totalAccounts));
-  check('search_freshness', !body.hushhAi?.available
-    || (date(body.hushhAi.latestSearchDay) && body.hushhAi.latestSearchDay >= body.period.endDate));
+  check('account_bounds', !one.available || (one.firstObservedAccounts.current <= one.activeAccounts.current
+    && one.activatedAccounts.current <= one.activeAccounts.current
+    && one.agentEngagedAccounts.current <= one.activeAccounts.current));
+  check('coverage_bounded', one.accountCoverage === null
+    || (typeof one.accountCoverage === 'number' && one.accountCoverage >= 0 && one.accountCoverage <= 1));
+  check('source_date', one.latestEventDate === null || date(one.latestEventDate));
+
+  const platforms = Array.isArray(one.platforms) ? one.platforms : [];
+  check('ios_and_web_only', platforms.length === 2
+    && platforms.some((item) => item.key === 'IOS') && platforms.some((item) => item.key === 'WEB'));
+  for (const platform of platforms) {
+    check(`${platform.key}_accounts`, validMeasure(platform.identifiedAccounts, one.available, one.comparisonReady));
+    check(`${platform.key}_coverage`, platform.identityCoverage === null
+      || (typeof platform.identityCoverage === 'number' && platform.identityCoverage >= 0 && platform.identityCoverage <= 1));
+    check(`${platform.key}_bounded`, !one.available || platform.identifiedAccounts.current <= one.activeAccounts.current);
+  }
+  check('cross_platform_unique_bound', !one.available || one.activeAccounts.current <= platforms.reduce(
+    (sum, item) => sum + (item.identifiedAccounts.current ?? 0), 0,
+  ));
+
+  const agents = Array.isArray(one.agents) ? one.agents : [];
+  check('agent_catalog_complete', agents.length === 11 && !agents.some((item) => item.key === 'onboarding'));
+  for (const agent of agents) {
+    check(`agent_${agent.key}_accounts`, validMeasure(agent.identifiedAccounts,
+      one.available && agent.instrumented, one.comparisonReady));
+    check(`agent_${agent.key}_interactions`, validMeasure(agent.interactions,
+      one.available && agent.instrumented, one.interactionComparisonReady));
+    check(`agent_${agent.key}_platform_reconciles`, !agent.instrumented || !one.available
+      || (integer(agent.iosInteractions) && integer(agent.webInteractions)
+        && agent.iosInteractions + agent.webInteractions === agent.interactions.current));
+    check(`agent_${agent.key}_bounded`, !agent.instrumented || !one.available
+      || agent.identifiedAccounts.current <= one.activeAccounts.current);
+  }
+
+  const daily = Array.isArray(one.daily) ? one.daily : [];
+  check('daily_complete_spine', daily.length === current.days
+    && daily.every((item) => date(item.day) && integer(item.activeAccounts) && integer(item.agentInteractions)));
+  check('daily_agent_actions_reconcile', !one.available || daily.reduce((sum, item) => sum + item.agentInteractions, 0)
+    === agents.reduce((sum, item) => sum + (item.interactions.current ?? 0), 0));
+  check('daily_comparison_guarded', one.comparisonReady || daily.every((item) => item.previousActiveAccounts === null));
+  check('daily_interaction_comparison_guarded', one.interactionComparisonReady
+    || daily.every((item) => item.previousAgentInteractions === null));
+
+  const search = body.search ?? {};
+  check('search_explicit_availability', typeof search.available === 'boolean');
+  check('search_counts', search.available
+    ? integer(search.clicks?.current) && integer(search.impressions?.current)
+      && search.clicks.current <= search.impressions.current
+    : search.clicks?.current === null && search.impressions?.current === null);
 } catch (error) {
   check('fetch_or_parse', false);
   console.error(error instanceof Error ? error.message : String(error));
 }
 
-const result = {
-  ok: checks.every((item) => item.ok),
-  checkedAt: new Date().toISOString(),
-  target: baseUrl,
-  checks,
-};
+const result = { ok: checks.every((item) => item.ok), checkedAt: new Date().toISOString(), target: baseUrl, range: { startDate, endDate }, checks };
 console.log(JSON.stringify(result, null, 2));
 if (!result.ok) process.exitCode = 1;

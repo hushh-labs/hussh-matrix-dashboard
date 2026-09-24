@@ -1362,7 +1362,7 @@ export default function Dashboard() {
     ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
     : 'Selected range';
   const statusText = activeTab === 'briefing'
-    ? 'Production briefing · equal 30-day periods'
+    ? 'One production briefing · choose dates below'
     : usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
 
