@@ -90,7 +90,7 @@ const capabilityMetadata: Record<
     title: 'Gmail Agent',
     description: 'Gmail account connection, email receipt syncing, and Hushh Mail integration.',
     icon: Mail,
-    auditExplanation: 'Tracks sign-in screen views, connection attempts, and receipt sync requests.',
+    auditExplanation: 'Separates Gmail connection attempts from completed OAuth connections, and sync requests from accepted sync jobs. It does not claim that a queued sync finished.',
   },
   ria: {
     title: 'RIA Agent',
@@ -216,7 +216,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_finance_portfolio_viewed"). Asset summary screen.',
+      explanation: 'A portfolio_viewed event records a deliberate portfolio screen view, not a financial outcome.',
     },
     {
       key: 'ai_recommendation',
@@ -225,25 +225,34 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_finance_recommendation_viewed"). AI insights generation.',
+      explanation: 'A recommendation_viewed event records an opened recommendation, not advice accepted or acted upon.',
     },
     {
       key: 'analysis_stream',
-      label: 'Real-Time Analysis Stream',
+      label: 'Analysis started',
       icon: TrendingUp,
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_finance_analysis_stream_started"). Streaming market metrics.',
+      explanation: 'An analysis_stream_started event means the service accepted a stream request; it does not prove a completed analysis.',
     },
     {
       key: 'receipt_parsed',
-      label: 'Transaction & Bank Parsing',
+      label: 'Portfolio import parsed',
       icon: FileText,
       status: 'untested',
       badgeLabel: 'Partially Tested',
       badgeClass: 'bg-[#5856d6]/10 text-[#3a38a8]',
-      explanation: 'Parsing engine active in test builds; requires expanded transaction sample verification.',
+      explanation: 'Counts successful import_parse_completed events only. Import saves are a separate step and are not added here.',
+    },
+    {
+      key: 'import_saved',
+      label: 'Portfolio import saved',
+      icon: Download,
+      status: 'active',
+      badgeLabel: 'Awaiting live signal',
+      badgeClass: 'bg-amber-50 text-amber-800',
+      explanation: 'Counts successful import_save_completed events only; this is not an additional parsed import.',
     },
   ],
   consent: [
@@ -286,22 +295,49 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
   ],
   gmail: [
     {
+      key: 'account_connect_started',
+      label: 'Connection attempts',
+      icon: Mail,
+      status: 'active',
+      badgeLabel: 'Awaiting live signal',
+      badgeClass: 'bg-amber-50 text-amber-800',
+      explanation: 'A gmail_connect_started event records an OAuth attempt, not a connected account.',
+    },
+    {
       key: 'account_connected',
       label: 'Google Account Connection',
       icon: Mail,
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_gmail_account_connected"). Gmail OAuth connection.',
+      explanation: 'Counts gmail_connect_result only when action=complete and result=success; the OAuth start step is excluded.',
+    },
+    {
+      key: 'receipt_sync_requested',
+      label: 'Sync requests',
+      icon: RefreshCw,
+      status: 'active',
+      badgeLabel: 'Awaiting live signal',
+      badgeClass: 'bg-amber-50 text-amber-800',
+      explanation: 'A gmail_sync_requested event means the user requested a sync; it does not prove the server accepted or finished it.',
     },
     {
       key: 'receipt_sync',
-      label: 'Email Receipt Syncing',
+      label: 'Sync jobs accepted',
       icon: RefreshCw,
       status: 'active',
-      badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_gmail_receipt_sync_requested"). Automated receipt scanning.',
+      badgeLabel: 'Awaiting live signal',
+      badgeClass: 'bg-amber-50 text-amber-800',
+      explanation: 'Counts gmail_sync_result only when action=queue and result=success. This is job acceptance, not completed receipt processing.',
+    },
+    {
+      key: 'mail_signin_screen_view',
+      label: 'Mail sign-in screen views',
+      icon: Mail,
+      status: 'active',
+      badgeLabel: 'Awaiting live signal',
+      badgeClass: 'bg-amber-50 text-amber-800',
+      explanation: 'A sign-in screen view is separate from an authenticated inbox view.',
     },
     {
       key: 'inbox_viewed',
@@ -310,7 +346,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_gmail_inbox_viewed"). Mail viewer interaction.',
+      explanation: 'Only an actual one_gmail_inbox_viewed event can fill this row. Sign-in screen views are excluded.',
     },
     {
       key: 'autocategory_applied',
@@ -795,15 +831,15 @@ export function AgentCapabilityAnalyticsPanel({
 
         <div className={cn(applePanel, 'overflow-hidden')}>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-left">
+            <table className={cn('w-full border-collapse text-left', capabilityKey === 'location' ? 'min-w-[760px]' : 'min-w-[520px]')}>
               <thead>
                 <tr className="border-b border-black/[0.06] bg-white/55 text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">
                   <th className="px-5 py-3">Feature & Telemetry Audit</th>
                   <th className="px-4 py-3 text-right">Devices</th>
                   <th className="px-4 py-3 text-right">Signals</th>
-                  <th className="px-4 py-3 text-right">Successful</th>
-                  <th className="px-4 py-3 text-right">Failed</th>
-                  <th className="px-5 py-3 text-right">Non-error share</th>
+                  {capabilityKey === 'location' && <th className="px-4 py-3 text-right">Successful</th>}
+                  {capabilityKey === 'location' && <th className="px-4 py-3 text-right">Failed</th>}
+                  {capabilityKey === 'location' && <th className="px-5 py-3 text-right">Non-error share</th>}
                 </tr>
               </thead>
               <tbody>
@@ -847,20 +883,20 @@ export function AgentCapabilityAnalyticsPanel({
                         <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.signals} waiting={waiting} />
                         </td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                        {capabilityKey === 'location' && <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.successful} waiting={waiting} />
-                        </td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
+                        </td>}
+                        {capabilityKey === 'location' && <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.failed} waiting={waiting} />
-                        </td>
-                        <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
+                        </td>}
+                        {capabilityKey === 'location' && <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
                           {waiting ? '—' : ratio(feature.successful, feature.signals)}
-                        </td>
+                        </td>}
                       </tr>
 
                       {isExpanded && (
                         <tr key={`${feature.key}-users`}>
-                          <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
+                          <td colSpan={capabilityKey === 'location' ? 6 : 3} className="bg-[#f5f9ff] p-4 border-b border-black/10">
                             <FeatureUserBreakdownPanel
                               featureLabel={feature.label}
                               totalDevices={feature.devices ?? undefined}

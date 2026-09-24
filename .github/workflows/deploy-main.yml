@@ -57,6 +57,11 @@ jobs:
       - name: Verify One platform cards across API schema versions
         run: npm run test:ui:one-platforms
 
+      - name: Verify One agent event classification and feature labels
+        run: |
+          npm run test:metrics:agent-feature-classification
+          npm run test:ui:agent-feature-render
+
       - name: Verify analyst product routing
         run: npm run test:agent:product-routing
 

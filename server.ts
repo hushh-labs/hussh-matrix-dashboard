@@ -2035,12 +2035,14 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     deliberate: [
       'portfolio_viewed', 'recommendation_viewed', 'analysis_stream_started',
       'analysis_stream_terminal_decision', 'import_upload_started',
-      'import_save_completed', 'import_parse_completed',
       'one_finance_portfolio_viewed', 'one_finance_analysis_started',
     ],
     background: [
       'market_insights_loaded', 'profile_picks_loaded', 'analysis_stream_error',
       'analysis_stream_aborted', 'import_quality_gate_passed', 'import_quality_gate_failed',
+      // One upload can emit start, parse and save. Count the deliberate start
+      // once; outcomes are available in the feature audit, not added as uses.
+      'import_parse_completed', 'import_save_completed',
     ],
     instrumented: true,
   },
@@ -2061,11 +2063,13 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     key: 'gmail',
     label: 'Gmail',
     deliberate: [
-      'gmail_connect_started', 'gmail_connect_result', 'gmail_sync_requested',
+      'gmail_connect_started', 'gmail_sync_requested',
       'gmail_disconnect_result', 'hushh_mail_signin_screen_view',
       'one_gmail_connected', 'one_gmail_receipt_synced',
     ],
-    background: ['gmail_receipts_loaded', 'gmail_sync_result'],
+    // Start and result are two signals for one user action. The result is an
+    // outcome diagnostic, not a second deliberate interaction.
+    background: ['gmail_receipts_loaded', 'gmail_connect_result', 'gmail_sync_result'],
     instrumented: true,
   },
   {
@@ -3166,13 +3170,20 @@ ${capabilitySql.isDeliberate}
           WHEN event_name IN ('portfolio_viewed', 'one_finance_portfolio_viewed') THEN 'portfolio_view'
           WHEN event_name IN ('recommendation_viewed', 'one_finance_recommendation_viewed') THEN 'ai_recommendation'
           WHEN event_name IN ('analysis_stream_started', 'one_finance_analysis_started') THEN 'analysis_stream'
-          WHEN event_name IN ('import_parse_completed', 'import_save_completed') THEN 'receipt_parsed'
+          WHEN event_name = 'import_parse_completed' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'success' THEN 'receipt_parsed'
+          WHEN event_name = 'import_save_completed' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'success' THEN 'import_saved'
           WHEN event_name IN ('consent_action_submitted', 'one_consent_preferences_updated', 'consent_pending_loaded') THEN 'preferences_updated'
           WHEN event_name IN ('one_consent_data_unlocked', 'data_unlocked', 'one_consent_data_unlock_requested', 'consent_action_result') THEN 'data_unlock'
           WHEN event_name IN ('permission_granted', 'one_consent_permission_granted') THEN 'permission_granted'
-          WHEN event_name IN ('gmail_connect_started', 'gmail_connect_result', 'one_gmail_connected') THEN 'account_connected'
-          WHEN event_name IN ('gmail_sync_requested', 'one_gmail_receipt_synced') THEN 'receipt_sync'
-          WHEN event_name IN ('hushh_mail_signin_screen_view', 'one_gmail_inbox_viewed') THEN 'inbox_viewed'
+          WHEN event_name = 'gmail_connect_started' THEN 'account_connect_started'
+          WHEN event_name = 'gmail_connect_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'complete' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'success' THEN 'account_connected'
+          WHEN event_name = 'one_gmail_connected' THEN 'account_connected'
+          WHEN event_name = 'gmail_connect_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'complete' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'error' THEN 'account_connect_failed'
+          WHEN event_name = 'gmail_sync_requested' THEN 'receipt_sync_requested'
+          WHEN event_name = 'gmail_sync_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'queue' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') = 'success' THEN 'receipt_sync'
+          WHEN event_name = 'one_gmail_receipt_synced' THEN 'receipt_sync'
+          WHEN event_name = 'hushh_mail_signin_screen_view' THEN 'mail_signin_screen_view'
+          WHEN event_name = 'one_gmail_inbox_viewed' THEN 'inbox_viewed'
           WHEN event_name IN ('autocategory_applied', 'receipt_categorized', 'one_gmail_receipt_categorized') THEN 'autocategory_applied'
           WHEN event_name IN ('ria_verification_status_changed', 'one_ria_verification_checked') THEN 'verification_checked'
           WHEN event_name IN ('ria_workspace_opened', 'one_ria_workspace_visited') THEN 'workspace_visited'
