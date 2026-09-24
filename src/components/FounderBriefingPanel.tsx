@@ -4,7 +4,8 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import type { FounderAgent, FounderBriefingData, FounderMeasure, FounderPeriod } from '../lib/founder-briefing';
 import {
   FOUNDER_EARLIEST_DATE, founderChangeLabel, founderCustomRange, founderLatestCompleteDate,
-  founderMonthRange, founderPresetRange, founderTrend, founderWebIdentityMeasure,
+  founderMonthRange, founderOutcomeHealth, founderPresetRange, founderReturningAccounts,
+  founderTrend, founderWebIdentityMeasure,
 } from '../lib/founder-briefing';
 
 const agentDescriptions: Record<string, string> = {
@@ -18,6 +19,7 @@ const agentDescriptions: Record<string, string> = {
   wallet: 'Secure card additions and removals',
   calendar: 'Connections and Calendar assistance handoffs',
   kyc: 'Access decisions and draft/reply actions',
+  connected_systems: 'CRM relationships and record changes',
 };
 
 function number(value: number | null): string {
@@ -59,6 +61,21 @@ function MetricCard({ eyebrow, label, measure, note }: {
   </article>;
 }
 
+function OutcomeHealth({ agent }: { agent: FounderAgent }) {
+  const health = founderOutcomeHealth(agent);
+  if (health.state === 'not_measured') return <span className="text-xs font-medium text-amber-800">Not measured</span>;
+  if (health.state === 'unavailable') return <span className="text-xs font-medium text-slate-500">Source unavailable</span>;
+  if (health.state === 'waiting') return <span className="text-xs font-medium text-slate-500">Awaiting a result event</span>;
+  const { successRate: rate, successes, expectedErrors: expected, failures } = health;
+  const style = failures > 0 ? 'text-rose-800' : expected > 0 ? 'text-amber-800' : 'text-emerald-800';
+  return <div className="min-w-40">
+    <span className={`block text-sm font-semibold ${style}`}>{rate}% successful</span>
+    <span className="mt-1 block text-[11px] leading-4 text-slate-500">
+      {number(successes)} success · {number(expected)} expected block · {number(failures)} failed
+    </span>
+  </div>;
+}
+
 function AgentRow({ agent }: { agent: FounderAgent; key?: string }) {
   return <tr className="border-t border-slate-100 align-top">
     <th scope="row" className="py-4 pr-5 text-left font-normal">
@@ -68,11 +85,13 @@ function AgentRow({ agent }: { agent: FounderAgent; key?: string }) {
         : agent.note ?? 'Deliberate use is not measured yet'}</span>
     </th>
     <td className="py-4 pr-5 text-right text-sm font-semibold text-slate-900">{number(agent.identifiedAccounts.current)}</td>
-    <td className="py-4 pr-5 text-right text-sm font-semibold text-slate-900">{number(agent.interactions.current)}</td>
-    <td className="py-4 pr-5 text-right text-xs text-slate-600">{agent.instrumented
-      ? `${number(agent.iosInteractions)} / ${number(agent.webInteractions)}` : '—'}</td>
-    <td className="py-4 text-right">{agent.instrumented
-      ? <ChangeBadge measure={agent.interactions} neutralWhenNew />
+    <td className="py-4 pr-5 text-right text-sm font-semibold text-slate-900">{number(agent.successfulAccounts.current)}</td>
+    <td className="py-4 pr-5 text-right">
+      <span className="block text-sm font-semibold text-slate-900">{number(agent.interactions.current)}</span>
+      <span className="mt-1 block text-[11px] text-slate-500">iOS {number(agent.iosInteractions)} · web {number(agent.webInteractions)}</span>
+    </td>
+    <td className="py-4 pr-5 text-right"><OutcomeHealth agent={agent} /></td>
+    <td className="py-4 text-right">{agent.instrumented ? <ChangeBadge measure={agent.interactions} neutralWhenNew />
       : <span className="text-xs font-medium text-amber-800">Not measured</span>}</td>
   </tr>;
 }
@@ -145,6 +164,9 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
   const { measure: webMeasure, currentGap: webIdentityGap, previousGap: webPreviousIdentityGap } = founderWebIdentityMeasure(web);
   const lowCoverage = brief?.one.accountCoverage !== null && brief?.one.accountCoverage !== undefined
     && brief.one.accountCoverage < 0.8;
+  const returningAccounts = brief
+    ? founderReturningAccounts(brief.one.activeAccounts, brief.one.firstObservedAccounts)
+    : { current: null, previous: null };
   const chartData = (brief?.one.daily ?? []).map((point, index) => ({
     label: dayLabel(point.day),
     position: index + 1,
@@ -215,9 +237,15 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
       : error && !brief ? <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">The production briefing is temporarily unavailable. No estimate is shown.</div>
         : brief ? <>
           {error && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Refresh failed; the previous period remains visible.</p>}
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <MetricCard eyebrow="One · all platforms" label="Identifiable active accounts" measure={brief.one.activeAccounts}
               note="A signed-in account is counted once across iOS and web, even if it uses both." />
+            <MetricCard eyebrow="One · audience growth" label="Newly observed active accounts" measure={brief.one.firstObservedAccounts}
+              note="Signed-in accounts seen for the first time in available One analytics history. This is not a registration count." />
+            <MetricCard eyebrow="One · audience loyalty" label="Returning active accounts" measure={returningAccounts}
+              note="Active signed-in accounts first observed before this period. Repeat actions and extra devices do not add users." />
+            <MetricCard eyebrow="One · feature adoption" label="Accounts using a measured feature" measure={brief.one.agentEngagedAccounts}
+              note="Distinct signed-in accounts with at least one measured feature action—not a sum of agent rows." />
             <MetricCard eyebrow="One · iOS" label="iOS app users we can identify" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
               note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
             <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Web users we can identify'}
@@ -227,8 +255,6 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                 : webPreviousIdentityGap
                   ? 'Current identified accounts are shown, but growth is withheld: the earlier period did not reliably bind signed-in web activity to accounts.'
                   : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
-            <MetricCard eyebrow="One · activity" label="Accounts using a measured feature" measure={brief.one.agentEngagedAccounts}
-              note="Distinct signed-in accounts with at least one measured feature action—not a sum of the rows below." />
           </div>
 
           <section className="grid gap-4 lg:grid-cols-[1.45fr_1fr]">
@@ -280,7 +306,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Inside One</p>
                 <h2 className="mt-1 text-xl font-semibold text-slate-950">What do people use most?</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Accounts are deduplicated separately for each capability. Interactions count catalogued feature actions and selected views, not confirmed specialist-agent replies. The same person can contribute more than once; rows must not be added together.</p></div>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Known and successful accounts are deduplicated separately for each capability. Actions may repeat. Outcome health uses only events that explicitly report success, an expected product block, or a genuine failure; rows must not be added together.</p></div>
               <button type="button" onClick={onExploreOne} className="inline-flex items-center gap-1 text-sm font-semibold text-sky-700 hover:text-sky-900">Explore full One analytics <ArrowRight className="h-4 w-4" /></button>
             </div>
             <div className="mt-5 overflow-x-auto">
@@ -288,14 +314,15 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                 <thead><tr className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500">
                   <th scope="col" className="pb-3 pr-5">Feature / behaviour</th>
                   <th scope="col" className="pb-3 pr-5 text-right">Known accounts</th>
-                  <th scope="col" className="pb-3 pr-5 text-right">Interactions</th>
-                  <th scope="col" className="pb-3 pr-5 text-right">iOS / web</th>
+                  <th scope="col" className="pb-3 pr-5 text-right">Successful accounts</th>
+                  <th scope="col" className="pb-3 pr-5 text-right">Actions by platform</th>
+                  <th scope="col" className="pb-3 pr-5 text-right">Outcome health</th>
                   <th scope="col" className="pb-3 text-right">Change in actions</th>
                 </tr></thead>
                 <tbody>{displayedAgents.map((agent) => <AgentRow key={agent.key} agent={agent} />)}</tbody>
               </table>
             </div>
-            <p className="mt-4 text-xs leading-5 text-slate-500">Not measured means no deliberate-use event exists for that agent; it does not mean zero use. The Marketplace event is a profile view, not a completed transaction.</p>
+            <p className="mt-4 text-xs leading-5 text-slate-500">Awaiting a result event means usage is measured but no governed outcome has reached the completed GA4 export yet—it is not shown as a failure. The Marketplace event is a profile view, not a completed transaction.</p>
           </section>
 
           <section className="grid gap-4 lg:grid-cols-2">

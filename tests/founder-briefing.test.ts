@@ -1,10 +1,48 @@
 import { describe, expect, it } from 'vitest';
 import {
   founderChangeLabel, founderCustomRange, founderLatestCompleteDate, founderMonthRange,
-  founderPresetRange, founderTrend, founderWebIdentityMeasure,
+  founderOutcomeHealth, founderPresetRange, founderReturningAccounts, founderTrend, founderWebIdentityMeasure,
 } from '../src/lib/founder-briefing';
+import type { FounderAgent } from '../src/lib/founder-briefing';
+
+function agent(overrides: Partial<FounderAgent> = {}): FounderAgent {
+  return {
+    key: 'memory', label: 'Memory', instrumented: true, note: null,
+    identifiedAccounts: { current: 3, previous: 2 },
+    successfulAccounts: { current: 2, previous: 1 },
+    interactions: { current: 5, previous: 4 },
+    successes: { current: 4, previous: 3 },
+    expectedErrors: { current: 1, previous: 0 },
+    failures: { current: 0, previous: 1 },
+    outcomeSignals: { current: 5, previous: 4 },
+    iosInteractions: 2, webInteractions: 3,
+    ...overrides,
+  };
+}
 
 describe('founder briefing comparisons', () => {
+  it('derives returning accounts without counting repeat activity or hiding invalid source data', () => {
+    expect(founderReturningAccounts(
+      { current: 12, previous: 10 }, { current: 5, previous: 4 },
+    )).toEqual({ current: 7, previous: 6 });
+    expect(founderReturningAccounts(
+      { current: 3, previous: null }, { current: 4, previous: null },
+    )).toEqual({ current: null, previous: null });
+  });
+
+  it('summarizes only explicit governed outcomes', () => {
+    expect(founderOutcomeHealth(agent())).toEqual({
+      state: 'measured', successRate: 80, successes: 4, expectedErrors: 1, failures: 0,
+    });
+  });
+
+  it('does not turn an unavailable or not-yet-exported outcome into zero success', () => {
+    expect(founderOutcomeHealth(agent({ outcomeSignals: { current: null, previous: null } })).state).toBe('unavailable');
+    expect(founderOutcomeHealth(agent({ outcomeSignals: { current: 0, previous: 0 } }))).toEqual({
+      state: 'waiting', successRate: null, successes: 0, expectedErrors: 0, failures: 0,
+    });
+  });
+
   it('shows an increase or decrease only against the same nonzero measure', () => {
     expect(founderTrend({ current: 12, previous: 10 })).toEqual({ trend: 'up', percent: 20 });
     expect(founderTrend({ current: 8, previous: 10 })).toEqual({ trend: 'down', percent: -20 });

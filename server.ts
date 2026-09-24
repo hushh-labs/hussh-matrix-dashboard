@@ -5498,6 +5498,7 @@ ${capabilitySql.isDeliberate}
     WITH classified AS (
       SELECT PARSE_DATE('%Y%m%d', event_date) AS day, platform,
         NULLIF(user_id, '') AS accountId,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') AS result,
 ${capabilitySql.capability},
 ${capabilitySql.isDeliberate}
       FROM ${table}
@@ -5506,9 +5507,14 @@ ${capabilitySql.isDeliberate}
     )
     SELECT IF(day ${currentSql}, 'current', 'previous') AS period, capability,
       COUNT(DISTINCT IF(is_deliberate, accountId, NULL)) AS identified_accounts,
+      COUNT(DISTINCT IF(result = 'success', accountId, NULL)) AS successful_accounts,
       COUNTIF(is_deliberate) AS interactions,
       COUNTIF(is_deliberate AND platform = 'IOS') AS ios_interactions,
-      COUNTIF(is_deliberate AND platform = 'WEB') AS web_interactions
+      COUNTIF(is_deliberate AND platform = 'WEB') AS web_interactions,
+      COUNTIF(result = 'success') AS successes,
+      COUNTIF(result = 'expected_error') AS expected_errors,
+      COUNTIF(result = 'error') AS failures,
+      COUNTIF(result IN ('success', 'expected_error', 'error')) AS outcome_signals
     FROM classified WHERE capability IS NOT NULL AND capability != 'onboarding'
     GROUP BY period, capability
   `;
@@ -5589,9 +5595,29 @@ ${capabilitySql.isDeliberate}
           current: oneAvailable && instrumented ? toNumber(currentRow?.identified_accounts) : null,
           previous: oneComparisonReady && instrumented ? toNumber(previousRow?.identified_accounts) : null,
         },
+        successfulAccounts: {
+          current: oneAvailable && instrumented ? toNumber(currentRow?.successful_accounts) : null,
+          previous: oneComparisonReady && instrumented ? toNumber(previousRow?.successful_accounts) : null,
+        },
         interactions: {
           current: oneAvailable && instrumented ? toNumber(currentRow?.interactions) : null,
           previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.interactions) : null,
+        },
+        successes: {
+          current: oneAvailable && instrumented ? toNumber(currentRow?.successes) : null,
+          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.successes) : null,
+        },
+        expectedErrors: {
+          current: oneAvailable && instrumented ? toNumber(currentRow?.expected_errors) : null,
+          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.expected_errors) : null,
+        },
+        failures: {
+          current: oneAvailable && instrumented ? toNumber(currentRow?.failures) : null,
+          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.failures) : null,
+        },
+        outcomeSignals: {
+          current: oneAvailable && instrumented ? toNumber(currentRow?.outcome_signals) : null,
+          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.outcome_signals) : null,
         },
         iosInteractions: oneAvailable && instrumented ? toNumber(currentRow?.ios_interactions) : null,
         webInteractions: oneAvailable && instrumented ? toNumber(currentRow?.web_interactions) : null,

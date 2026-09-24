@@ -9,6 +9,17 @@ export interface FounderMeasure {
   previous: number | null;
 }
 
+/** Returning identified accounts = active accounts minus first-ever observed accounts. */
+export function founderReturningAccounts(active: FounderMeasure, firstObserved: FounderMeasure): FounderMeasure {
+  const subtract = (total: number | null, first: number | null) => total !== null && first !== null
+    && Number.isFinite(total) && Number.isFinite(first) && total >= first && first >= 0
+    ? total - first : null;
+  return {
+    current: subtract(active.current, firstObserved.current),
+    previous: subtract(active.previous, firstObserved.previous),
+  };
+}
+
 export interface FounderPlatform {
   key: 'IOS' | 'WEB';
   label: string;
@@ -57,9 +68,46 @@ export interface FounderAgent {
   instrumented: boolean;
   note: string | null;
   identifiedAccounts: FounderMeasure;
+  /** Distinct signed-in accounts that emitted a verified successful outcome. */
+  successfulAccounts: FounderMeasure;
   interactions: FounderMeasure;
+  /** Outcome events, kept separate from repeatable deliberate interactions. */
+  successes: FounderMeasure;
+  expectedErrors: FounderMeasure;
+  failures: FounderMeasure;
+  outcomeSignals: FounderMeasure;
   iosInteractions: number | null;
   webInteractions: number | null;
+}
+
+export interface FounderOutcomeHealth {
+  state: 'not_measured' | 'unavailable' | 'waiting' | 'measured';
+  successRate: number | null;
+  successes: number | null;
+  expectedErrors: number | null;
+  failures: number | null;
+}
+
+/** Convert raw governed outcomes into the small, honest summary shown to founders. */
+export function founderOutcomeHealth(agent: FounderAgent): FounderOutcomeHealth {
+  if (!agent.instrumented) {
+    return { state: 'not_measured', successRate: null, successes: null, expectedErrors: null, failures: null };
+  }
+  const outcomes = agent.outcomeSignals.current;
+  if (outcomes === null) {
+    return { state: 'unavailable', successRate: null, successes: null, expectedErrors: null, failures: null };
+  }
+  if (outcomes === 0) {
+    return { state: 'waiting', successRate: null, successes: 0, expectedErrors: 0, failures: 0 };
+  }
+  const successes = agent.successes.current ?? 0;
+  return {
+    state: 'measured',
+    successRate: Math.round((successes / outcomes) * 100),
+    successes,
+    expectedErrors: agent.expectedErrors.current ?? 0,
+    failures: agent.failures.current ?? 0,
+  };
 }
 
 export interface FounderDailyPoint {
