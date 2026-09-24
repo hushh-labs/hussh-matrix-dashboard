@@ -4,7 +4,8 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import type { FounderAgent, FounderBriefingData, FounderMeasure, FounderPeriod } from '../lib/founder-briefing';
 import {
   FOUNDER_EARLIEST_DATE, founderChangeLabel, founderCustomRange, founderLatestCompleteDate,
-  founderMonthRange, founderOutcomeHealth, founderPresetRange, founderTrend, founderWebIdentityMeasure,
+  founderMonthRange, founderOutcomeHealth, founderPresetRange, founderReturningAccounts,
+  founderTrend, founderWebIdentityMeasure,
 } from '../lib/founder-briefing';
 
 const agentDescriptions: Record<string, string> = {
@@ -163,6 +164,9 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
   const { measure: webMeasure, currentGap: webIdentityGap, previousGap: webPreviousIdentityGap } = founderWebIdentityMeasure(web);
   const lowCoverage = brief?.one.accountCoverage !== null && brief?.one.accountCoverage !== undefined
     && brief.one.accountCoverage < 0.8;
+  const returningAccounts = brief
+    ? founderReturningAccounts(brief.one.activeAccounts, brief.one.firstObservedAccounts)
+    : { current: null, previous: null };
   const chartData = (brief?.one.daily ?? []).map((point, index) => ({
     label: dayLabel(point.day),
     position: index + 1,
@@ -233,9 +237,15 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
       : error && !brief ? <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">The production briefing is temporarily unavailable. No estimate is shown.</div>
         : brief ? <>
           {error && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Refresh failed; the previous period remains visible.</p>}
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <MetricCard eyebrow="One · all platforms" label="Identifiable active accounts" measure={brief.one.activeAccounts}
               note="A signed-in account is counted once across iOS and web, even if it uses both." />
+            <MetricCard eyebrow="One · audience growth" label="Newly observed active accounts" measure={brief.one.firstObservedAccounts}
+              note="Signed-in accounts seen for the first time in available One analytics history. This is not a registration count." />
+            <MetricCard eyebrow="One · audience loyalty" label="Returning active accounts" measure={returningAccounts}
+              note="Active signed-in accounts first observed before this period. Repeat actions and extra devices do not add users." />
+            <MetricCard eyebrow="One · feature adoption" label="Accounts using a measured feature" measure={brief.one.agentEngagedAccounts}
+              note="Distinct signed-in accounts with at least one measured feature action—not a sum of agent rows." />
             <MetricCard eyebrow="One · iOS" label="iOS app users we can identify" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
               note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
             <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Web users we can identify'}
@@ -245,8 +255,6 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                 : webPreviousIdentityGap
                   ? 'Current identified accounts are shown, but growth is withheld: the earlier period did not reliably bind signed-in web activity to accounts.'
                   : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
-            <MetricCard eyebrow="One · activity" label="Accounts using a measured feature" measure={brief.one.agentEngagedAccounts}
-              note="Distinct signed-in accounts with at least one measured feature action—not a sum of the rows below." />
           </div>
 
           <section className="grid gap-4 lg:grid-cols-[1.45fr_1fr]">

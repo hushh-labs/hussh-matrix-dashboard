@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   founderChangeLabel, founderCustomRange, founderLatestCompleteDate, founderMonthRange,
-  founderOutcomeHealth, founderPresetRange, founderTrend, founderWebIdentityMeasure,
+  founderOutcomeHealth, founderPresetRange, founderReturningAccounts, founderTrend, founderWebIdentityMeasure,
 } from '../src/lib/founder-briefing';
 import type { FounderAgent } from '../src/lib/founder-briefing';
 
@@ -21,6 +21,15 @@ function agent(overrides: Partial<FounderAgent> = {}): FounderAgent {
 }
 
 describe('founder briefing comparisons', () => {
+  it('derives returning accounts without counting repeat activity or hiding invalid source data', () => {
+    expect(founderReturningAccounts(
+      { current: 12, previous: 10 }, { current: 5, previous: 4 },
+    )).toEqual({ current: 7, previous: 6 });
+    expect(founderReturningAccounts(
+      { current: 3, previous: null }, { current: 4, previous: null },
+    )).toEqual({ current: null, previous: null });
+  });
+
   it('summarizes only explicit governed outcomes', () => {
     expect(founderOutcomeHealth(agent())).toEqual({
       state: 'measured', successRate: 80, successes: 4, expectedErrors: 1, failures: 0,

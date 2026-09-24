@@ -9,6 +9,17 @@ export interface FounderMeasure {
   previous: number | null;
 }
 
+/** Returning identified accounts = active accounts minus first-ever observed accounts. */
+export function founderReturningAccounts(active: FounderMeasure, firstObserved: FounderMeasure): FounderMeasure {
+  const subtract = (total: number | null, first: number | null) => total !== null && first !== null
+    && Number.isFinite(total) && Number.isFinite(first) && total >= first && first >= 0
+    ? total - first : null;
+  return {
+    current: subtract(active.current, firstObserved.current),
+    previous: subtract(active.previous, firstObserved.previous),
+  };
+}
+
 export interface FounderPlatform {
   key: 'IOS' | 'WEB';
   label: string;
