@@ -714,8 +714,12 @@ export interface OneCapabilityUsage {
   key: string;
   label: string;
   instrumented: boolean;
-  /** Why it cannot be measured. Non-null only when `instrumented` is false. */
+  /** True only after a matching aggregate row is present in the selected GA4 export window. */
+  observed: boolean;
+  /** Rollout, privacy or availability context for this capability. */
   note: string | null;
+  /** Distinct stable GA4 user_id values; null when no matching row is observed. */
+  accounts: number | null;
   devices: number | null;
   deliberateEvents: number | null;
   totalUsers: number;
@@ -926,6 +930,7 @@ export interface OneLocationBehaviorMetric {
   users: number | null;
   events: number | null;
   successes: number | null;
+  expectedErrors: number | null;
   failures: number | null;
   daily: OneLocationMetricPoint[];
 }
@@ -1034,6 +1039,7 @@ export interface OneAppSummary {
   growth: OneGrowthSplit;
   retention: OneRetentionCohort[];
   activationStages: OneActivationStage[];
+  capabilitiesAvailable: boolean;
   capabilities: OneCapabilityUsage[];
   surfaces: OneSurfaceRow[];
   nativeEnvironments?: Array<{
@@ -1043,8 +1049,19 @@ export interface OneAppSummary {
     events: number;
   }>;
   locationFeatures: OneLocationFeatureUsage[];
+  /** Whether the dedicated Location behaviour aggregate completed successfully. */
+  locationBehaviorAvailable: boolean;
   locationAnalytics: OneLocationBehaviorAnalytics;
-  featureUsage: Record<string, { devices: number; signals: number }>;
+  featureUsageAvailable: boolean;
+  featureUsage: Record<string, {
+    accounts: number;
+    devices: number;
+    signals: number;
+    successes: number;
+    expectedErrors: number;
+    failures: number;
+    outcomeSignals: number;
+  }>;
   platformsAvailable: boolean;
   platforms: OnePlatformUsage[];
   acquisition: OneAcquisitionRow[];
