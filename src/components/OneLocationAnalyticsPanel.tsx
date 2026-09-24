@@ -124,81 +124,27 @@ function StatCard({
   );
 }
 
-interface FeatureAuditInfo {
-  status: 'active' | 'gap' | 'untested';
-  badgeLabel: string;
-  badgeClass: string;
-  explanation: string;
+function featureAudit(feature: OneLocationBehaviorMetric, environment: LocationAnalyticsEnvironment) {
+  if (!feature.instrumented) {
+    return {
+      badgeLabel: 'Not measured',
+      badgeClass: 'bg-amber-50 text-amber-800',
+      explanation: `No matching ${environment === 'production' ? 'production' : 'UAT/test'} event has been observed. This is not proof of zero use.`,
+    };
+  }
+  if (!feature.events) {
+    return {
+      badgeLabel: 'No signals in range',
+      badgeClass: 'bg-slate-100 text-slate-600',
+      explanation: 'No matching event was found in the selected date range. A live flow test is still needed.',
+    };
+  }
+  return {
+    badgeLabel: 'Recorded activity',
+    badgeClass: 'bg-emerald-50 text-emerald-800',
+    explanation: `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} ${feature.users === 1 ? 'device' : 'devices'} in this range.`,
+  };
 }
-
-const featureAuditMap: Record<string, FeatureAuditInfo> = {
-  live_sharing: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: '233 confirmed live-location sharing events recorded across 34 active devices.',
-  },
-  check_in: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_in_completed").',
-  },
-  check_out: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_out_completed"). Verified active in UAT & Production.',
-  },
-  sms_safety: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: '9 Save My Soul emergency trigger events recorded across 4 devices.',
-  },
-  request_location: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: '66 location request events recorded across 15 devices.',
-  },
-  public_sharing: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: '59 public location link creation events recorded across 15 devices.',
-  },
-  contact_sync: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: '153 background contact signal sync events recorded across 24 devices.',
-  },
-  invitations: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: '6 circle invite handoff events recorded across active devices in this window.',
-  },
-  circle_engagement: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_circle_created").',
-  },
-  auth_started: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: 'Tracks daily user sign-ins, session authentication, and login events.',
-  },
-  daily_signin: {
-    status: 'active',
-    badgeLabel: 'Verified Active',
-    badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-    explanation: 'Tracks daily user sign-ins, session authentication, and login events.',
-  },
-};
 
 function FeatureTable({
   features,
@@ -235,10 +181,10 @@ function FeatureTable({
       <div className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs">
         <div className="flex items-center gap-2 font-bold text-[#1d1d1f]">
           <Info className="h-4 w-4 text-[#007aff]" />
-          <span>Telemetry & Feature Zero Justification Audit</span>
+          <span>What these feature counts show</span>
         </div>
         <p className="mt-1 text-[#6e6e73]">
-          Features showing 0 count are audited to distinguish between actual un-emitted user activity (instrumentation gaps in app code) and verified low/zero volume.
+          Counts come from matching analytics events in the selected date range. Zero means no matching event was found; it does not prove nobody used the feature. A newly shipped event needs a live flow test and time to reach the export.
         </p>
       </div>
 
@@ -246,7 +192,7 @@ function FeatureTable({
         {sortedFeatures.map((feature) => {
           const Icon = featureIcon[feature.key] ?? Activity;
           const waiting = !feature.instrumented;
-          const audit = featureAuditMap[feature.key];
+          const audit = featureAudit(feature, environment);
           const isExpanded = expandedFeatureKey === feature.key;
           const values = [
             { label: 'Devices', value: feature.users },
@@ -271,11 +217,7 @@ function FeatureTable({
                       )}
                     </div>
                     <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">
-                      {audit
-                        ? (audit.status === 'active'
-                            ? `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} active ${feature.users === 1 ? 'device' : 'devices'} in this window.`
-                            : audit.explanation)
-                        : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
+                      {audit.explanation}
                     </p>
                   </div>
                 </div>
@@ -334,7 +276,7 @@ function FeatureTable({
             {sortedFeatures.map((feature) => {
               const Icon = featureIcon[feature.key] ?? Activity;
               const waiting = !feature.instrumented;
-              const audit = featureAuditMap[feature.key];
+              const audit = featureAudit(feature, environment);
               const isExpanded = expandedFeatureKey === feature.key;
               return (
                 <Fragment key={feature.key}>
@@ -354,11 +296,7 @@ function FeatureTable({
                             )}
                           </div>
                           <p className="mt-0.5 text-xs font-medium text-[#86868b]">
-                            {audit
-                              ? (audit.status === 'active'
-                                  ? `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} active ${feature.users === 1 ? 'device' : 'devices'} in this window.`
-                                  : audit.explanation)
-                              : (waiting ? `Waiting for first ${environment === 'production' ? 'production' : 'UAT/test'} event` : 'Event-level outcomes')}
+                            {audit.explanation}
                           </p>
                         </div>
                       </div>
