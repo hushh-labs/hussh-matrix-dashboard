@@ -26,8 +26,22 @@ const cases = [
 const results = cases.map(([name, fragment]) => ({ name, ok: query.includes(fragment) }));
 const finance = source.match(/key: 'finance',[\s\S]*?key: 'consent'/)?.[0] || '';
 const gmail = source.match(/key: 'gmail',[\s\S]*?key: 'ria'/)?.[0] || '';
+const memory = source.match(/key: 'memory',[\s\S]*?key: 'wallet'/)?.[0] || '';
+const founderAgentQuery = [...source.matchAll(/const agentQuery = `([\s\S]*?)`;/g)]
+  .map((match) => match[1])
+  .find((candidate) => candidate.includes('AS successful_accounts')) || '';
 results.push({ name: 'finance_import_outcomes_not_double_counted', ok: /background: \[[\s\S]*?'import_parse_completed', 'import_save_completed'/.test(finance) });
 results.push({ name: 'gmail_results_not_double_counted', ok: /background: \[[\s\S]*?'gmail_connect_result', 'gmail_sync_result'/.test(gmail) });
+results.push({
+  name: 'memory_background_diagnostics_are_not_outcomes',
+  ok: !/outcomes:\s*\[[\s\S]*?agent_pkm_/.test(memory),
+});
+results.push({
+  name: 'founder_outcomes_use_explicit_gate',
+  ok: founderAgentQuery.includes('${capabilitySql.isOutcome}')
+    && founderAgentQuery.includes("COUNTIF(is_outcome AND result = 'success') AS successes")
+    && founderAgentQuery.includes("COUNTIF(is_outcome AND result IN ('success', 'expected_error', 'error')) AS outcome_signals"),
+});
 const locationQuery = source.match(/const locationBehaviorQuery = `([\s\S]*?)`;/)?.[1] || '';
 results.push({ name: 'location_expected_outcomes_are_separate', ok: locationQuery.includes("COUNTIF(result = 'expected_error') AS expectedErrors") });
 results.push({ name: 'location_failures_are_true_errors', ok: locationQuery.includes("COUNTIF(result = 'error') AS failures") });
