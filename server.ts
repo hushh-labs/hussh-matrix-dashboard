@@ -2004,6 +2004,14 @@ interface OneCapabilitySpec {
   label: string;
   deliberate: string[];
   background: string[];
+  /**
+   * Events allowed to contribute to success / expected-block / failure KPIs.
+   *
+   * This is intentionally separate from `background`: a reliability signal
+   * can help diagnose a capability without representing a customer outcome.
+   * When omitted, only deliberate events are eligible outcomes.
+   */
+  outcomes?: string[];
   instrumented: boolean;
   /** Why a capability cannot be measured. Shown verbatim in the UI. */
   note?: string;
@@ -2043,6 +2051,12 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
       // once; outcomes are available in the feature audit, not added as uses.
       'import_parse_completed', 'import_save_completed',
     ],
+    outcomes: [
+      'portfolio_viewed', 'recommendation_viewed',
+      'analysis_stream_terminal_decision', 'analysis_stream_error',
+      'analysis_stream_aborted', 'import_parse_completed',
+      'import_save_completed', 'one_finance_portfolio_viewed',
+    ],
     instrumented: true,
   },
   {
@@ -2071,6 +2085,11 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     // Start and result are two signals for one user action. The result is an
     // outcome diagnostic, not a second deliberate interaction.
     background: ['gmail_receipts_loaded', 'gmail_connect_result', 'gmail_sync_result'],
+    outcomes: [
+      'gmail_connect_result', 'gmail_disconnect_result', 'gmail_sync_result',
+      'gmail_receipts_loaded', 'one_gmail_connected',
+      'one_gmail_receipt_synced', 'one_gmail_receipt_categorized',
+    ],
     instrumented: true,
   },
   {
@@ -2184,7 +2203,7 @@ function sqlNameList(names: string[]): string {
  * Kept in SQL rather than post-processed in TypeScript because distinct users
  * per capability cannot be recovered by summing per-event counts after the fact.
  */
-function oneCapabilitySql(): { capability: string; isDeliberate: string } {
+function oneCapabilitySql(): { capability: string; isDeliberate: string; isOutcome: string } {
   const capabilityBranches = ONE_CAPABILITIES
     .filter((spec) => spec.deliberate.length > 0 || spec.background.length > 0)
     .map((spec) => {
@@ -2194,6 +2213,7 @@ function oneCapabilitySql(): { capability: string; isDeliberate: string } {
     .join('\n');
 
   const deliberateNames = ONE_CAPABILITIES.flatMap((spec) => spec.deliberate);
+  const outcomeNames = ONE_CAPABILITIES.flatMap((spec) => spec.outcomes ?? spec.deliberate);
 
   return {
     capability: `      CASE\n${capabilityBranches}\n        ELSE NULL\n      END AS capability`,
@@ -2207,6 +2227,7 @@ function oneCapabilitySql(): { capability: string; isDeliberate: string } {
           AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'load_surface') = 'screen'
         )
       ) AS is_deliberate`,
+    isOutcome: `      event_name IN (${sqlNameList(outcomeNames)}) AS is_outcome`,
   };
 }
 
@@ -5500,21 +5521,22 @@ ${capabilitySql.isDeliberate}
         NULLIF(user_id, '') AS accountId,
         (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') AS result,
 ${capabilitySql.capability},
-${capabilitySql.isDeliberate}
+${capabilitySql.isDeliberate},
+${capabilitySql.isOutcome}
       FROM ${table}
       WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
         AND ${boundedSuffix} AND ${surface} AND ${platformScope}
     )
     SELECT IF(day ${currentSql}, 'current', 'previous') AS period, capability,
       COUNT(DISTINCT IF(is_deliberate, accountId, NULL)) AS identified_accounts,
-      COUNT(DISTINCT IF(result = 'success', accountId, NULL)) AS successful_accounts,
+      COUNT(DISTINCT IF(is_outcome AND result = 'success', accountId, NULL)) AS successful_accounts,
       COUNTIF(is_deliberate) AS interactions,
       COUNTIF(is_deliberate AND platform = 'IOS') AS ios_interactions,
       COUNTIF(is_deliberate AND platform = 'WEB') AS web_interactions,
-      COUNTIF(result = 'success') AS successes,
-      COUNTIF(result = 'expected_error') AS expected_errors,
-      COUNTIF(result = 'error') AS failures,
-      COUNTIF(result IN ('success', 'expected_error', 'error')) AS outcome_signals
+      COUNTIF(is_outcome AND result = 'success') AS successes,
+      COUNTIF(is_outcome AND result = 'expected_error') AS expected_errors,
+      COUNTIF(is_outcome AND result = 'error') AS failures,
+      COUNTIF(is_outcome AND result IN ('success', 'expected_error', 'error')) AS outcome_signals
     FROM classified WHERE capability IS NOT NULL AND capability != 'onboarding'
     GROUP BY period, capability
   `;
