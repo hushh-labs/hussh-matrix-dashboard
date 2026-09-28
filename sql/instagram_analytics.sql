@@ -1,0 +1,42 @@
+-- Apply manually to an isolated test project first. Do not run in production
+-- as part of application startup. All IDs are STRING, including Instagram IDs.
+CREATE SCHEMA IF NOT EXISTS `hushh-ai-prod.instagram_analytics` OPTIONS(location='US');
+
+CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.accounts` (
+  account_id STRING NOT NULL, username STRING NOT NULL, api_version STRING NOT NULL,
+  verified_at TIMESTAMP NOT NULL, last_success_at TIMESTAMP, last_attempt_at TIMESTAMP,
+  connection_state STRING NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.account_metrics` (
+  observation_key STRING NOT NULL, account_id STRING NOT NULL,
+  metric_name STRING NOT NULL, value FLOAT64, value_status STRING NOT NULL,
+  period STRING NOT NULL, metric_type STRING NOT NULL, unit STRING NOT NULL,
+  requested_since TIMESTAMP NOT NULL, requested_until TIMESTAMP NOT NULL,
+  provider_since TIMESTAMP, provider_until TIMESTAMP, breakdowns_json STRING,
+  api_version STRING NOT NULL, fetched_at TIMESTAMP NOT NULL, sync_run_id STRING NOT NULL
+)
+PARTITION BY DATE(requested_until)
+CLUSTER BY account_id, metric_name
+OPTIONS(partition_expiration_days=730);
+
+CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.sync_runs` (
+  run_id STRING NOT NULL, account_id STRING NOT NULL, started_at TIMESTAMP NOT NULL,
+  finished_at TIMESTAMP, status STRING NOT NULL, reach_status STRING NOT NULL,
+  error_kind STRING, requested_since TIMESTAMP, requested_until TIMESTAMP
+)
+PARTITION BY DATE(started_at)
+CLUSTER BY account_id
+OPTIONS(partition_expiration_days=180);
+
+CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.sync_lock` (
+  lock_name STRING NOT NULL, owner STRING, lease_until TIMESTAMP NOT NULL
+);
+
+-- Insert this row once during migration. BigQuery primary keys are not
+-- enforced, so do not re-run an unconditional INSERT.
+MERGE `hushh-ai-prod.instagram_analytics.sync_lock` T
+USING (SELECT 'company-instagram' AS lock_name) S
+ON T.lock_name = S.lock_name
+WHEN NOT MATCHED THEN INSERT (lock_name, owner, lease_until)
+VALUES (S.lock_name, NULL, TIMESTAMP '1970-01-01 00:00:00+00');

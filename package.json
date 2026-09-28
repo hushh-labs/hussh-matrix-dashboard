@@ -13,6 +13,7 @@
     "test:prod:founder": "node scripts/check-founder-briefing-contract.mjs",
     "clean": "rm -rf dist",
     "ingest:search-console": "node scripts/ingest-hushhtech-search-console.mjs",
+    "ingest:instagram": "tsx scripts/ingest-instagram.ts",
     "lint": "tsc --noEmit",
     "ingest:hushhtech-search-console": "node scripts/ingest-hushhtech-search-console.mjs",
     "test:prod:metrics-flow": "node scripts/check-metrics-flow.mjs",

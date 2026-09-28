@@ -20,6 +20,9 @@ import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromVal
 import type { ProductKey } from './src/lib/agent-product-routing';
 import { FOUNDER_EARLIEST_DATE, founderCustomRange, founderPresetRange } from './src/lib/founder-briefing';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
+import { BigQueryInstagramStore } from './src/server/instagram/store';
+import { syncInstagram } from './src/server/instagram/sync';
+import { InstagramCredentials } from './src/server/instagram/credentials';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -9047,6 +9050,9 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
 
   // 6. Analytics Cache Middleware
   app.use('/api/analytics', (req, res, next) => {
+    // Instagram includes authorization-dependent operator capability. Never
+    // put it in the shared aggregate response cache.
+    if (req.path === '/instagram') return next();
     if (req.method !== 'GET') return next();
     const key = req.originalUrl;
     const cached = analyticsResponseCache.get(key);
@@ -9300,6 +9306,54 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
 
   // Register Analytics API Endpoints
   registerAnalyticsRoutes(app);
+
+  // Instagram is private even if the rest of this dashboard is deliberately
+  // configured for aggregate public access. Operational writes need a smaller
+  // explicit email allowlist and an origin check for cookie-based sessions.
+  const instagramEnabled = process.env.INSTAGRAM_ANALYTICS_ENABLED === 'true';
+  const instagramAccountId = process.env.INSTAGRAM_USER_ID || '';
+  const instagramVersion = process.env.INSTAGRAM_GRAPH_API_VERSION || 'v26.0';
+  const instagramAdmins = new Set((process.env.INSTAGRAM_ANALYTICS_ADMIN_EMAILS || '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean));
+  const instagramStore = new BigQueryInstagramStore();
+  const instagramCredentials = new InstagramCredentials();
+  const instagramViewer = (req: express.Request) => Boolean((req as any).sessionUser as SessionUser | null);
+  app.get('/api/analytics/instagram', async (req, res) => {
+    if (!instagramViewer(req)) return res.status(401).json({ error: 'Authentication required' });
+    if (!instagramEnabled || !/^\d+$/.test(instagramAccountId) || !instagramCredentials.configured()) {
+      return res.json({ state: 'not_configured', username: null, reach: null, lastSuccessfulSync: null, lastAttempt: null, canSync: false });
+    }
+    try {
+      const summary = await instagramStore.summary(instagramAccountId);
+      const user = (req as any).sessionUser as SessionUser;
+      return res.json({ ...summary, canSync: instagramAdmins.has(user.email.toLowerCase()) });
+    } catch {
+      return res.status(503).json({ state: 'sync_failed', username: null, reach: null, lastSuccessfulSync: null, lastAttempt: null, canSync: false });
+    }
+  });
+  app.post('/api/instagram/sync', async (req, res) => {
+    const user = (req as any).sessionUser as SessionUser | null;
+    if (!user) return res.status(401).json({ error: 'Authentication required' });
+    if (!instagramAdmins.has(user.email.toLowerCase())) return res.status(403).json({ error: 'Instagram sync requires an operator account' });
+    const origin = req.get('origin');
+    const allowedOrigin = process.env.APP_URL;
+    let expectedOrigin = '';
+    try { expectedOrigin = allowedOrigin ? new URL(allowedOrigin).origin : ''; } catch { /* fail closed */ }
+    if (!origin || origin !== expectedOrigin) return res.status(403).json({ error: 'Invalid request origin' });
+    if (!instagramEnabled || !/^\d+$/.test(instagramAccountId) || !instagramCredentials.configured()) {
+      return res.status(409).json({ state: 'not_configured' });
+    }
+    try {
+      const summary = await instagramStore.summary(instagramAccountId);
+      if (summary.lastAttempt && Date.now() - new Date(summary.lastAttempt).getTime() < 15 * 60_000) {
+        return res.status(429).json({ error: 'Manual sync cooldown is 15 minutes' });
+      }
+      const result = await syncInstagram({ enabled: true, accountId: instagramAccountId,
+        apiVersion: instagramVersion, loadToken: () => instagramCredentials.loadForSync(new Date(), false), store: instagramStore });
+      return res.status(result.state === 'already_running' ? 409 : 200).json(result);
+    } catch {
+      return res.status(503).json({ state: 'failed' });
+    }
+  });
 
   // 8. Chat Endpoint
   app.post('/api/chat', async (req, res) => {

@@ -85,13 +85,14 @@ import { GrowthPanel } from './components/GrowthPanel';
 import { OneAppPanel } from './components/OneAppPanel';
 import { AppsPanel } from './components/AppsPanel';
 import { FounderBriefingPanel } from './components/FounderBriefingPanel';
+import { InstagramPanel } from './components/InstagramPanel';
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
 type DatePreset = 7 | 14 | 30 | 90;
-type DashboardTab = 'briefing' | 'growth' | 'compare' | 'one' | 'apps' | 'overview' | 'platforms';
+type DashboardTab = 'briefing' | 'growth' | 'compare' | 'one' | 'apps' | 'overview' | 'platforms' | 'instagram';
 
-const dashboardTabs: DashboardTab[] = ['briefing', 'growth', 'compare', 'one', 'apps', 'overview', 'platforms'];
+const dashboardTabs: DashboardTab[] = ['briefing', 'growth', 'compare', 'one', 'apps', 'overview', 'platforms', 'instagram'];
 
 function isDashboardTab(value: unknown): value is DashboardTab {
   return typeof value === 'string' && dashboardTabs.includes(value as DashboardTab);
@@ -1165,6 +1166,7 @@ export default function Dashboard() {
   ));
   const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : 'briefing'));
   const [briefRefreshKey, setBriefRefreshKey] = useState(0);
+  const [instagramRefreshKey, setInstagramRefreshKey] = useState(0);
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   // 30 days by default: the One app's agent volumes are small enough that a
   // 7-day window reads as noise rather than a trend.
@@ -1281,7 +1283,7 @@ export default function Dashboard() {
   }, [hushhAiRange.endDate, hushhAiRange.startDate, kaiRange.endDate, kaiRange.startDate, oneRange.endDate, oneRange.startDate]);
 
   useEffect(() => {
-    if (activeTab !== 'briefing' || locationRoute) void loadData();
+    if ((activeTab !== 'briefing' && activeTab !== 'instagram') || locationRoute) void loadData();
   }, [activeTab, locationRoute, loadData]);
 
   const loadCompare = useCallback(async () => {
@@ -1305,7 +1307,7 @@ export default function Dashboard() {
   );
 
   useEffect(() => {
-    if (!autoRefresh || activeTab === 'briefing') return undefined;
+    if (!autoRefresh || activeTab === 'briefing' || activeTab === 'instagram') return undefined;
     const refreshId = window.setInterval(() => {
       void loadData();
     }, liveRefreshSeconds * 1000);
@@ -1361,7 +1363,9 @@ export default function Dashboard() {
   const hushhTechRangeLabel = data?.hushhTech?.window
     ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
     : 'Selected range';
-  const statusText = activeTab === 'briefing'
+  const statusText = activeTab === 'instagram'
+    ? 'Instagram reporting · stored observations'
+    : activeTab === 'briefing'
     ? 'One production briefing · choose dates below'
     : usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
@@ -1750,7 +1754,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#cce4ff] selection:text-[#003b76]">
-      {loading && activeTab !== 'briefing' && (
+      {loading && activeTab !== 'briefing' && activeTab !== 'instagram' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#f5f5f7]/80 backdrop-blur-xl">
           <div className={cn(appleCard, 'flex items-center gap-3 px-5 py-3')}>
             <Loader2 className="h-5 w-5 animate-spin text-[#007aff]" />
@@ -1764,9 +1768,9 @@ export default function Dashboard() {
           <div className="flex flex-col gap-2.5 xl:flex-row xl:items-center xl:justify-between">
             <div className={cn(
               'flex min-h-10 min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold leading-5 sm:text-sm',
-              activeTab === 'briefing' || usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
+              activeTab === 'briefing' || activeTab === 'instagram' || usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
             )}>
-              {activeTab !== 'briefing' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+              {activeTab !== 'briefing' && activeTab !== 'instagram' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
               <span className="min-w-0">{statusText}</span>
             </div>
             <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
@@ -1795,6 +1799,7 @@ export default function Dashboard() {
                 type="button"
                 onClick={() => {
                   if (activeTab === 'briefing') setBriefRefreshKey((key) => key + 1);
+                  else if (activeTab === 'instagram') setInstagramRefreshKey((key) => key + 1);
                   else {
                     void loadData();
                     if (compare) void loadCompare();
@@ -1833,7 +1838,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {!locationRoute && activeTab !== 'briefing' && <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        {!locationRoute && activeTab !== 'briefing' && activeTab !== 'instagram' && <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-lg border border-black/[0.06] bg-white/90 shadow-sm">
               <span className="text-3xl" aria-label="Hussh logo">🤫</span>
@@ -1850,6 +1855,8 @@ export default function Dashboard() {
 
         {activeTab === 'briefing' ? (
           <FounderBriefingPanel refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />
+        ) : activeTab === 'instagram' ? (
+          <InstagramPanel refreshKey={instagramRefreshKey} />
         ) : activeTab === 'growth' ? (
           <GrowthPanel
             growth={data?.growth ?? null}
