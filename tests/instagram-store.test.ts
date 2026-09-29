@@ -47,4 +47,28 @@ describe('Instagram BigQuery persistence adapter', () => {
     expect(queries[0].query).toContain('fetched_at=CURRENT_TIMESTAMP()');
     expect(JSON.stringify(queries)).not.toContain('private-token');
   });
+  it('writes a full classified inventory and reconciles batched lifetime insights', async () => {
+    const queries: any[] = [];
+    const fake = { query: async (options: any) => { queries.push(options); return [[]]; } } as unknown as Pick<BigQuery, 'query'>;
+    const store = new BigQueryInstagramStore('test-project', 'instagram_test', 'test-project', fake);
+    const item = { id: '17841436775785808', mediaType: 'VIDEO' as const, productType: 'REELS' as const,
+      permalink: 'https://www.instagram.com/reel/test/', publishedAt: '2026-09-28T00:00:00Z', likeCount: 0, commentsCount: null };
+    await store.saveMediaInventory('run-one', accountId,
+      { items: [item], complete: true, windowSince: '2025-09-29T00:00:00Z' }, 'v26.0');
+    expect(queries[0].query).toContain('BEGIN TRANSACTION');
+    expect(queries[0].query).toContain('inventory_complete=@complete');
+    expect(JSON.parse(queries[0].params.payload)[0]).toMatchObject({ id: item.id, productType: 'REELS', likeCount: 0 });
+    const observation = { name: 'views' as const, period: 'lifetime' as const, metricType: 'lifetime_snapshot' as const,
+      unit: 'views' as const, value: 0, status: 'available' as const, providerSince: null, providerUntil: null };
+    const writes = [{ mediaId: item.id, publishedAt: item.publishedAt, observation }];
+    await store.saveMediaInsightsBatch('run-one', accountId, writes, 'v26.0');
+    await store.saveMediaInsightsBatch('run-two', accountId, writes, 'v26.0');
+    const first = JSON.parse(queries[1].params.payload)[0];
+    const second = JSON.parse(queries[2].params.payload)[0];
+    expect(first.key).toBe(mediaObservationKey(accountId, item.id, 'views'));
+    expect(first.key).toBe(second.key);
+    expect(first.value).toBe(0);
+    expect(queries[1].query).toContain('T.observation_key=S.observation_key');
+    expect(queries).toHaveLength(3);
+  });
 });

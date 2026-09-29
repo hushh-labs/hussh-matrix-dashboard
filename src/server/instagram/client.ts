@@ -18,12 +18,13 @@ export type AccountInsightName = 'reach' | 'views' | 'total_interactions' | 'acc
 export type MediaInsightName = 'reach' | 'saved' | 'shares' | 'views';
 export interface AccountProfile { userId: string; username: string; followersCount: number | null; mediaCount: number | null }
 export interface InstagramMedia {
-  id: string; mediaType: 'IMAGE' | 'VIDEO' | 'CAROUSEL_ALBUM'; permalink: string;
+  id: string; mediaType: 'IMAGE' | 'VIDEO' | 'CAROUSEL_ALBUM'; productType: 'FEED' | 'REELS' | 'STORY' | 'UNKNOWN'; permalink: string;
   publishedAt: string; likeCount: number | null; commentsCount: number | null;
 }
+export interface MediaInventory { items: InstagramMedia[]; complete: boolean; windowSince: string }
 export interface MediaObservation {
   name: MediaInsightName; period: 'lifetime'; metricType: 'lifetime_snapshot'; unit: 'accounts' | 'count' | 'views';
-  value: number | null; status: InsightStatus; providerSince: null; providerUntil: null;
+  value: number | null; status: InsightStatus; providerSince: null; providerUntil: null; fetchedAt?: string | null;
 }
 
 const accountUnits: Record<AccountInsightName, ReachObservation['unit']> = {
@@ -93,14 +94,16 @@ export function parseMediaList(payload: unknown): { items: InstagramMedia[]; aft
       !['IMAGE', 'VIDEO', 'CAROUSEL_ALBUM'].includes(item.media_type) ||
       typeof item.permalink !== 'string' || !/^https:\/\/(www\.)?instagram\.com\//.test(item.permalink) ||
       typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))) throw new InstagramApiError('invalid_response');
-    return { id: item.id, mediaType: item.media_type, permalink: item.permalink,
+    const productType = ['FEED', 'REELS', 'STORY'].includes(item.media_product_type) ? item.media_product_type : 'UNKNOWN';
+    return { id: item.id, mediaType: item.media_type, productType, permalink: item.permalink,
       publishedAt: new Date(item.timestamp).toISOString(), likeCount: optionalCount(item.like_count),
       commentsCount: optionalCount(item.comments_count) };
   });
   // Never follow a provider-supplied URL. Only an opaque cursor is used on our fixed host/path.
   const after = body.paging?.cursors?.after;
   if (after !== undefined && (typeof after !== 'string' || !/^[A-Za-z0-9_=-]{1,512}$/.test(after))) throw new InstagramApiError('invalid_response');
-  return { items, after: body.paging?.next ? after || null : null };
+  if (body.paging?.next && !after) throw new InstagramApiError('invalid_response');
+  return { items, after: body.paging?.next ? after : null };
 }
 
 export function completedSevenDayWindow(now = new Date()): { since: Date; until: Date } {
@@ -190,23 +193,35 @@ export class InstagramClient {
     return this.accountInsight(userId, 'reach', since, until);
   }
 
-  async recentMedia(userId: string, maxItems = 10): Promise<InstagramMedia[]> {
-    if (!/^\d+$/.test(userId) || !Number.isInteger(maxItems) || maxItems < 1 || maxItems > 10) throw new InstagramApiError('invalid_response');
+  async recentMedia(userId: string, maxItems = 75, windowSince = new Date(Date.now() - 365 * 86_400_000)): Promise<MediaInventory> {
+    if (!/^\d+$/.test(userId) || !Number.isInteger(maxItems) || maxItems < 1 || maxItems > 75 || !Number.isFinite(windowSince.getTime())) throw new InstagramApiError('invalid_response');
     const items: InstagramMedia[] = [];
+    const seen = new Set<string>();
     let after: string | null = null;
-    for (let page = 0; page < 2 && items.length < maxItems; page += 1) {
-      const body = await this.get(`${userId}/media`, { fields: 'id,media_type,permalink,timestamp,like_count,comments_count',
-        limit: String(Math.min(5, maxItems - items.length)), ...(after ? { after } : {}) });
+    let complete = false;
+    for (let page = 0; page < 3 && items.length < maxItems; page += 1) {
+      const body = await this.get(`${userId}/media`, { fields: 'id,media_type,media_product_type,permalink,timestamp,like_count,comments_count',
+        limit: String(Math.min(25, maxItems - items.length)), ...(after ? { after } : {}) });
       const parsed = parseMediaList(body);
-      items.push(...parsed.items.slice(0, maxItems - items.length));
-      if (!parsed.after || parsed.after === after || parsed.items.length === 0) break;
+      for (const item of parsed.items) {
+        if (items.length >= maxItems) break;
+        if (!seen.has(item.id)) { seen.add(item.id); if (Date.parse(item.publishedAt) >= windowSince.getTime()) items.push(item); }
+      }
+      if (!parsed.after) { complete = true; break; }
+      if (parsed.after === after || parsed.items.length === 0) break;
       after = parsed.after;
     }
-    return items;
+    return { items, complete, windowSince: windowSince.toISOString() };
   }
 
   async mediaInsight(mediaId: string, name: MediaInsightName): Promise<MediaObservation> {
     if (!/^\d+$/.test(mediaId) || !(name in mediaUnits)) throw new InstagramApiError('invalid_response');
     return parseMediaInsight(await this.get(`${mediaId}/insights`, { metric: name }), name);
+  }
+
+  async mediaInsights(mediaId: string): Promise<MediaObservation[]> {
+    if (!/^\d+$/.test(mediaId)) throw new InstagramApiError('invalid_response');
+    const body = await this.get(`${mediaId}/insights`, { metric: 'reach,saved,shares,views' });
+    return (['reach', 'saved', 'shares', 'views'] as MediaInsightName[]).map((name) => parseMediaInsight(body, name));
   }
 }

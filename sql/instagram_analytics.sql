@@ -6,7 +6,9 @@ CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.accounts` (
   account_id STRING NOT NULL, username STRING NOT NULL, api_version STRING NOT NULL,
   verified_at TIMESTAMP NOT NULL, last_success_at TIMESTAMP, last_attempt_at TIMESTAMP,
   connection_state STRING NOT NULL, followers_count INT64, media_count INT64,
-  counts_observed_at TIMESTAMP
+  counts_observed_at TIMESTAMP,
+  inventory_run_id STRING, inventory_window_since TIMESTAMP,
+  inventory_complete BOOL, inventory_count INT64, inventory_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.account_metrics` (
@@ -25,9 +27,15 @@ OPTIONS(partition_expiration_days=730);
 ALTER TABLE `hushh-ai-prod.instagram_analytics.accounts` ADD COLUMN IF NOT EXISTS followers_count INT64;
 ALTER TABLE `hushh-ai-prod.instagram_analytics.accounts` ADD COLUMN IF NOT EXISTS media_count INT64;
 ALTER TABLE `hushh-ai-prod.instagram_analytics.accounts` ADD COLUMN IF NOT EXISTS counts_observed_at TIMESTAMP;
+ALTER TABLE `hushh-ai-prod.instagram_analytics.accounts` ADD COLUMN IF NOT EXISTS inventory_run_id STRING;
+ALTER TABLE `hushh-ai-prod.instagram_analytics.accounts` ADD COLUMN IF NOT EXISTS inventory_window_since TIMESTAMP;
+ALTER TABLE `hushh-ai-prod.instagram_analytics.accounts` ADD COLUMN IF NOT EXISTS inventory_complete BOOL;
+ALTER TABLE `hushh-ai-prod.instagram_analytics.accounts` ADD COLUMN IF NOT EXISTS inventory_count INT64;
+ALTER TABLE `hushh-ai-prod.instagram_analytics.accounts` ADD COLUMN IF NOT EXISTS inventory_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.media` (
   account_id STRING NOT NULL, media_id STRING NOT NULL, media_type STRING NOT NULL,
+  media_product_type STRING,
   permalink STRING NOT NULL, published_at TIMESTAMP NOT NULL,
   like_count INT64, comments_count INT64, fetched_at TIMESTAMP NOT NULL,
   api_version STRING NOT NULL, sync_run_id STRING NOT NULL
@@ -35,6 +43,8 @@ CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.media` (
 PARTITION BY DATE(published_at)
 CLUSTER BY account_id, media_id
 OPTIONS(partition_expiration_days=730);
+
+ALTER TABLE `hushh-ai-prod.instagram_analytics.media` ADD COLUMN IF NOT EXISTS media_product_type STRING;
 
 CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.media_metrics` (
   observation_key STRING NOT NULL, account_id STRING NOT NULL, media_id STRING NOT NULL,

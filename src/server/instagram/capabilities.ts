@@ -7,6 +7,7 @@ export const INSTAGRAM_CAPABILITIES = {
   total_interactions: { scope: 'account', status: 'verified', metricType: 'total_value', period: 'day' },
   accounts_engaged: { scope: 'account', status: 'verified', metricType: 'total_value', period: 'day' },
   media: { scope: 'media', status: 'verified' },
+  media_product_type: { scope: 'media', status: 'verified', valuesObserved: ['FEED', 'REELS'] },
   media_reach: { scope: 'media', status: 'verified', metricType: 'lifetime_snapshot' },
   media_saved: { scope: 'media', status: 'verified', metricType: 'lifetime_snapshot' },
   media_shares: { scope: 'media', status: 'verified', metricType: 'lifetime_snapshot' },
