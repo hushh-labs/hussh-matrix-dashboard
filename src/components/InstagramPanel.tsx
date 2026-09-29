@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { appleCard, applePanel } from '../lib/theme';
 import { cn } from '../lib/utils';
@@ -11,6 +11,14 @@ interface InstagramReport {
     value: number | null; status: string; metricType: string; period: string;
     requestedSince: string; requestedUntil: string;
   } | null;
+  accountMetrics?: Record<string, { value: number | null; status: string; requestedSince: string; requestedUntil: string }>;
+  followersCount?: number | null;
+  mediaCount?: number | null;
+  countsObservedAt?: string | null;
+  metricResults?: Record<string, string>;
+  media?: Array<{ id: string; mediaType: string; permalink: string; publishedAt: string;
+    likeCount: number | null; commentsCount: number | null; fetchedAt: string;
+    insights: Record<string, { value: number | null; status: string }> }>;
   lastSuccessfulSync: string | null;
   lastAttempt: string | null;
   canSync: boolean;
@@ -36,6 +44,20 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const [campaign, setCampaign] = useState('');
   const [content, setContent] = useState('');
   const [copied, setCopied] = useState(false);
+  const [mediaSort, setMediaSort] = useState<'publishedAt' | 'reach' | 'likes'>('publishedAt');
+  const [mediaPage, setMediaPage] = useState(0);
+  const mediaRows = useMemo(() => [...(report?.media || [])].sort((a, b) => {
+    const score = (item: typeof a) => mediaSort === 'publishedAt' ? Date.parse(item.publishedAt)
+      : mediaSort === 'reach' ? item.insights.reach?.value ?? -1 : item.likeCount ?? -1;
+    return score(b) - score(a) || b.id.localeCompare(a.id);
+  }), [report?.media, mediaSort]);
+  const mediaPages = Math.max(1, Math.ceil(mediaRows.length / 5));
+  const visibleMedia = mediaRows.slice(Math.min(mediaPage, mediaPages - 1) * 5, (Math.min(mediaPage, mediaPages - 1) + 1) * 5);
+  const metricValue = (value: number | null | undefined, status?: string) => status === 'available' && value !== null && value !== undefined ? value.toLocaleString() : '—';
+  const safePermalink = (value: string) => {
+    try { const url = new URL(value); return url.protocol === 'https:' && ['instagram.com', 'www.instagram.com'].includes(url.hostname) ? url.href : null; }
+    catch { return null; }
+  };
   const campaignLink = buildInstagramCampaignLink(destination, campaign, content);
   const load = useCallback(async () => {
     try {
@@ -90,6 +112,55 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       <p className="mt-3 text-sm text-[#6e6e73]">Last successful sync: {report?.lastSuccessfulSync || 'Never'}.</p>
       <p className="mt-1 text-sm text-[#6e6e73]">Last attempt: {report?.lastAttempt || 'Never'}.</p>
       <p className="mt-1 text-xs text-[#86868b]">Instagram reach is separate from website visitors, signups, and app installs.</p>
+    </div>
+    <div className={cn(appleCard, 'p-5 sm:p-8')}>
+      <h3 className="text-xl font-semibold">Account activity</h3>
+      <p className="mt-2 text-sm text-[#6e6e73]">Requested seven-day totals for the same UTC window as reach. These are native Instagram metrics and may include paid activity.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {([['views', 'Views'], ['total_interactions', 'Total interactions'], ['accounts_engaged', 'Accounts engaged']] as const).map(([name, label]) => {
+          const metric = report?.accountMetrics?.[name];
+          return <div key={name} className="rounded-xl border border-black/10 p-4">
+            <p className="text-sm text-[#6e6e73]">{label}</p>
+            <p className="mt-2 text-2xl font-semibold tabular-nums">{metricValue(metric?.value, metric?.status)}</p>
+            <p className="mt-1 text-xs text-[#86868b]">{report?.metricResults?.[`account.${name}`] || metric?.status || 'Not yet collected'}</p>
+          </div>;
+        })}
+      </div>
+      <p className="mt-4 text-sm text-[#6e6e73]">Current followers: {metricValue(report?.followersCount, report?.followersCount === null || report?.followersCount === undefined ? undefined : 'available')} · Current media count: {metricValue(report?.mediaCount, report?.mediaCount === null || report?.mediaCount === undefined ? undefined : 'available')}.</p>
+      <p className="mt-1 text-xs text-[#86868b]">Counts observed: {report?.countsObservedAt || 'Not yet available'} (UTC). These are current totals, not follower growth or daily additions.</p>
+      {report?.metricResults && Object.values(report.metricResults).some((status) => status !== 'available') &&
+        <p className="mt-3 text-sm text-[#946200]">Some optional metrics are unavailable or failed on the last sync. Available values remain stored.</p>}
+    </div>
+    <div className={cn(applePanel, 'p-5 sm:p-8')}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h3 className="text-xl font-semibold">Recent Instagram media</h3>
+          <p className="mt-1 text-sm text-[#6e6e73]">Lifetime snapshots; values may change after publication. Video may include Reels.</p></div>
+        <label className="text-sm text-[#6e6e73]">Sort by
+          <select value={mediaSort} onChange={(event) => { setMediaSort(event.target.value as typeof mediaSort); setMediaPage(0); }}
+            className="ml-2 min-h-10 rounded-lg border border-black/10 bg-white px-2">
+            <option value="publishedAt">Published</option><option value="reach">Reach</option><option value="likes">Likes</option>
+          </select>
+        </label>
+      </div>
+      {mediaRows.length === 0 ? <p className="mt-5 text-sm text-[#6e6e73]">No recent media has been stored yet.</p> :
+        <div className="mt-5 overflow-x-auto"><table className="min-w-[720px] w-full text-left text-sm">
+          <thead><tr className="border-b border-black/10 text-[#6e6e73]"><th className="py-3 pr-3">Published (UTC)</th><th className="py-3 pr-3">Type</th>
+            <th className="py-3 pr-3">Reach</th><th className="py-3 pr-3">Views</th><th className="py-3 pr-3">Saves</th><th className="py-3 pr-3">Shares</th>
+            <th className="py-3 pr-3">Likes</th><th className="py-3 pr-3">Comments</th><th className="py-3">Post</th></tr></thead>
+          <tbody>{visibleMedia.map((item) => <tr key={item.id} className="border-b border-black/[0.06]">
+            <td className="py-3 pr-3 whitespace-nowrap">{item.publishedAt.slice(0, 10)}</td><td className="py-3 pr-3">{item.mediaType === 'CAROUSEL_ALBUM' ? 'Carousel' : item.mediaType === 'VIDEO' ? 'Video' : 'Image'}</td>
+            {(['reach','views','saved','shares'] as const).map((name) => <td key={name} className="py-3 pr-3 tabular-nums" title={item.insights[name]?.status || report?.metricResults?.[`media.${item.id}.${name}`] || 'Not collected'}>
+              {metricValue(item.insights[name]?.value, item.insights[name]?.status)}</td>)}
+            <td className="py-3 pr-3 tabular-nums">{item.likeCount === null ? '—' : item.likeCount.toLocaleString()}</td>
+            <td className="py-3 pr-3 tabular-nums">{item.commentsCount === null ? '—' : item.commentsCount.toLocaleString()}</td>
+            <td className="py-3">{safePermalink(item.permalink) ? <a href={safePermalink(item.permalink)!} target="_blank" rel="noopener noreferrer" className="text-[#005eb8] underline">Open</a> : '—'}</td>
+          </tr>)}</tbody>
+        </table></div>}
+      {mediaRows.length > 5 && <div className="mt-4 flex items-center justify-end gap-3 text-sm">
+        <button type="button" disabled={mediaPage === 0} onClick={() => setMediaPage((page) => Math.max(0, page - 1))} className="min-h-10 rounded-lg border border-black/10 px-3 disabled:opacity-40">Previous</button>
+        <span>Page {Math.min(mediaPage, mediaPages - 1) + 1} of {mediaPages}</span>
+        <button type="button" disabled={mediaPage >= mediaPages - 1} onClick={() => setMediaPage((page) => Math.min(mediaPages - 1, page + 1))} className="min-h-10 rounded-lg border border-black/10 px-3 disabled:opacity-40">Next</button>
+      </div>}
     </div>
     <div className={cn(appleCard, 'p-5 sm:p-8')}>
       <h3 className="text-xl font-semibold">Instagram campaign link</h3>
