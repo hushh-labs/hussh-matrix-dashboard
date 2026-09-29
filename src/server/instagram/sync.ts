@@ -1,0 +1,116 @@
+import { randomUUID } from 'node:crypto';
+import { completedSevenDayWindow, InstagramApiError, InstagramClient } from './client';
+import type { AccountInsightName, InsightStatus, MediaInsightName } from './client';
+import type { InstagramStore } from './store';
+
+export interface SyncResult {
+  state: 'success' | 'failed' | 'reconnect_required' | 'permission_missing' | 'already_running' | 'already_synced_today' | 'not_configured';
+  reachStatus: string;
+  optionalResults?: Record<string, InsightStatus>;
+  runId?: string;
+}
+
+export async function syncInstagram(options: {
+  enabled: boolean; accountId: string; apiVersion: string; token?: string | null;
+  loadToken?: () => Promise<string | null>;
+  store: InstagramStore; now?: Date; client?: InstagramClient; scheduled?: boolean;
+}): Promise<SyncResult> {
+  const { enabled, accountId, apiVersion, store } = options;
+  if (!enabled || (!options.token && !options.loadToken) || !/^\d+$/.test(accountId)) return { state: 'not_configured', reachStatus: 'unknown' };
+  // Leave headroom under the existing dashboard service's 300-second request
+  // timeout. The scheduled Cloud Run Job has a longer timeout.
+  const optionalDeadline = Date.now() + 240_000;
+  const runId = randomUUID();
+  if (!await store.acquire(runId)) return { state: 'already_running', reachStatus: 'unknown' };
+  const { since, until } = completedSevenDayWindow(options.now);
+  let started = false;
+  let state: SyncResult['state'] = 'failed';
+  let reachStatus = 'sync_failed';
+  let errorKind: string | undefined;
+  const optionalResults: Record<string, InsightStatus> = {};
+  try {
+    if (options.scheduled) {
+      const now = options.now || new Date();
+      const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      if (await store.attemptedSince(accountId, today)) return { state: 'already_synced_today', reachStatus: 'unknown' };
+    }
+    await store.start(runId, accountId, since, until);
+    started = true;
+    const token = options.loadToken ? await options.loadToken() : options.token;
+    if (!token) { state = 'not_configured'; reachStatus = 'unknown'; errorKind = 'not_configured'; return { state, reachStatus, runId }; }
+    const client = options.client || new InstagramClient(token, apiVersion);
+    const identity = await client.identity();
+    if (identity.userId !== accountId) {
+      // Do not save metadata or observations for an unexpected account.
+      errorKind = 'account_mismatch';
+      return { state, reachStatus, runId };
+    }
+    await store.verifiedAccount(accountId, identity.username, apiVersion);
+    const observation = await client.reach(accountId, since, until);
+    reachStatus = observation.status;
+    if (observation.status === 'available') {
+      await store.saveReach(runId, accountId, observation, apiVersion);
+      state = 'success';
+    } else {
+      state = 'failed';
+      errorKind = observation.status;
+    }
+    // Reach is the required slice. Each subsequent read is independently
+    // guarded; missing/failed optional data never replaces a valid value.
+    if (state === 'success') {
+      let stopOptionalReads = false;
+      const capture = async (key: string, work: () => Promise<InsightStatus>) => {
+        if (Date.now() >= optionalDeadline) stopOptionalReads = true;
+        if (stopOptionalReads) { optionalResults[key] = 'unknown'; return; }
+        try { optionalResults[key] = await work(); }
+        catch (error) {
+          const kind = error instanceof InstagramApiError ? error.kind : 'sync_failed';
+          optionalResults[key] = kind === 'not_supported' ? 'not_supported'
+            : kind === 'permission_missing' ? 'permission_missing' : 'sync_failed';
+          if (kind === 'reconnect_required' || kind === 'rate_limited') stopOptionalReads = true;
+        }
+      };
+      if (store.saveProfile && typeof client.profile === 'function') await capture('account.current_counts', async () => {
+        const profile = await client.profile();
+        if (profile.userId !== accountId) throw new InstagramApiError('invalid_response');
+        await store.saveProfile!(accountId, profile);
+        return profile.followersCount === null && profile.mediaCount === null ? 'not_yet_available' : 'available';
+      });
+      for (const name of ['views', 'total_interactions', 'accounts_engaged'] as AccountInsightName[]) {
+        if (!store.saveAccountMetric || typeof client.accountInsight !== 'function') break;
+        await capture(`account.${name}`, async () => {
+          const metric = await client.accountInsight(accountId, name, since, until);
+          if (metric.status === 'available') await store.saveAccountMetric!(runId, accountId, metric, apiVersion);
+          return metric.status;
+        });
+      }
+      if (store.saveMedia && store.saveMediaInsight && typeof client.recentMedia === 'function' && typeof client.mediaInsight === 'function') {
+        let media: Awaited<ReturnType<InstagramClient['recentMedia']>> = [];
+        await capture('media.list', async () => {
+          media = await client.recentMedia(accountId, 5);
+          return media.length ? 'available' : 'not_yet_available';
+        });
+        for (const item of media) {
+          await capture(`media.${item.id}.metadata`, async () => { await store.saveMedia!(runId, accountId, item, apiVersion); return 'available'; });
+          for (const name of ['reach', 'saved', 'shares', 'views'] as MediaInsightName[]) {
+            await capture(`media.${item.id}.${name}`, async () => {
+              const metric = await client.mediaInsight(item.id, name);
+              if (metric.status === 'available') await store.saveMediaInsight!(runId, accountId, item.id, item.publishedAt, metric, apiVersion);
+              return metric.status;
+            });
+          }
+        }
+      }
+    }
+    return { state, reachStatus, runId, optionalResults };
+  } catch (error) {
+    errorKind = error instanceof InstagramApiError ? error.kind : 'storage_or_unknown';
+    state = errorKind === 'reconnect_required' ? 'reconnect_required'
+      : errorKind === 'permission_missing' ? 'permission_missing' : 'failed';
+    reachStatus = errorKind === 'permission_missing' ? 'permission_missing' : 'sync_failed';
+    return { state, reachStatus, runId };
+  } finally {
+    try { if (started) await store.finish(runId, accountId, state, reachStatus, errorKind, optionalResults); }
+    finally { await store.release(runId); }
+  }
+}
