@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   BarChart3,
   CalendarDays,
+  ChevronDown,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -93,6 +94,16 @@ type DatePreset = 7 | 14 | 30 | 90;
 type DashboardTab = 'briefing' | 'growth' | 'compare' | 'one' | 'apps' | 'overview' | 'platforms' | 'instagram';
 
 const dashboardTabs: DashboardTab[] = ['briefing', 'growth', 'compare', 'one', 'apps', 'overview', 'platforms', 'instagram'];
+const dashboardTabLabels: Record<DashboardTab, string> = {
+  briefing: 'Founder briefing',
+  growth: 'Growth',
+  compare: 'Over time',
+  one: 'One app',
+  apps: 'Hushh Connect',
+  overview: 'Overview',
+  platforms: 'Platforms',
+  instagram: 'Instagram',
+};
 
 function isDashboardTab(value: unknown): value is DashboardTab {
   return typeof value === 'string' && dashboardTabs.includes(value as DashboardTab);
@@ -1165,6 +1176,7 @@ export default function Dashboard() {
     typeof window === 'undefined' ? null : parseLocationAnalyticsPath(window.location.pathname)
   ));
   const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : 'briefing'));
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [briefRefreshKey, setBriefRefreshKey] = useState(0);
   const [instagramRefreshKey, setInstagramRefreshKey] = useState(0);
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
@@ -1206,6 +1218,7 @@ export default function Dashboard() {
       window.history.replaceState({ ...window.history.state, dashboardTab: tab }, '', window.location.href);
     }
     setActiveTab(tab);
+    setMobileNavOpen(false);
   }, [locationRoute]);
 
   const changeLocationRoute = useCallback((route: LocationAnalyticsRoute) => {
@@ -1765,76 +1778,84 @@ export default function Dashboard() {
 
       <div className="mx-auto max-w-[1320px] px-3 pb-10 pt-3 sm:px-6 sm:pb-12 sm:pt-6 lg:px-8">
         <div className="relative z-30 mb-6 rounded-2xl border border-white/80 bg-white/90 p-2.5 shadow-[0_8px_30px_rgba(15,23,42,0.09)] backdrop-blur-2xl sm:sticky sm:top-3 sm:mb-8 sm:p-3">
-          <div className="flex flex-col gap-2.5 xl:flex-row xl:items-center xl:justify-between">
-            <div className={cn(
-              'flex min-h-10 min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold leading-5 sm:text-sm',
-              activeTab === 'briefing' || activeTab === 'instagram' || usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
-            )}>
-              {activeTab !== 'briefing' && activeTab !== 'instagram' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
-              <span className="min-w-0">{statusText}</span>
-            </div>
-            <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
-              <nav className="min-w-0 flex-1" aria-label="Dashboard sections">
-                <div className="flex min-w-0 gap-1 overflow-x-auto rounded-xl bg-[#f5f5f7] p-1.5 [scrollbar-width:thin]">
-                {dashboardTabs.map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    aria-current={activeTab === tab ? 'page' : undefined}
-                    onClick={() => changeDashboardTab(tab)}
-                    className={cn(
-                      'min-h-10 shrink-0 rounded-lg px-3 text-xs font-bold capitalize leading-4 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 sm:min-h-9 sm:px-4 sm:text-sm',
-                      activeTab === tab
-                        ? 'bg-white text-[#1d1d1f] shadow-sm'
-                        : 'text-[#6e6e73] hover:text-[#1d1d1f]',
-                    )}
-                  >
-                    {tab === 'briefing' ? 'Founder briefing' : tab === 'one' ? 'One app' : tab === 'compare' ? 'Over time' : tab === 'apps' ? 'Hushh Connect' : tab}
-                  </button>
-                ))}
-                </div>
-              </nav>
-              <div className="flex shrink-0 items-center justify-between gap-2 lg:justify-start">
-              <button
-                type="button"
-                onClick={() => {
-                  if (activeTab === 'briefing') setBriefRefreshKey((key) => key + 1);
-                  else if (activeTab === 'instagram') setInstagramRefreshKey((key) => key + 1);
-                  else {
-                    void loadData();
-                    if (compare) void loadCompare();
-                  }
-                }}
-                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 sm:px-4"
-              >
-                <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-                Refresh
-              </button>
-              {user && (
-                <div className="flex items-center gap-1.5 border-l border-black/10 pl-2">
-                  <div className="flex items-center gap-1.5 rounded-lg bg-[#f5f5f7] px-2.5 py-1.5 text-xs font-bold text-[#1d1d1f]">
-                    {user.picture ? (
-                      <img src={user.picture} alt="" className="h-5 w-5 rounded-full" />
-                    ) : (
-                      <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#007aff]/10 text-[10px] text-[#007aff]">
-                        {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
-                      </div>
-                    )}
-                    <span className="hidden sm:inline">{user.email}</span>
+          <div className="flex flex-col gap-2.5">
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className={cn(
+                'flex min-h-10 min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold leading-5 sm:flex-1 sm:text-sm',
+                activeTab === 'briefing' || activeTab === 'instagram' || usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
+              )}>
+                {activeTab !== 'briefing' && activeTab !== 'instagram' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                <span className="min-w-0 break-words">{statusText}</span>
+              </div>
+              <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeTab === 'briefing') setBriefRefreshKey((key) => key + 1);
+                    else if (activeTab === 'instagram') setInstagramRefreshKey((key) => key + 1);
+                    else {
+                      void loadData();
+                      if (compare) void loadCompare();
+                    }
+                  }}
+                  className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 sm:px-4"
+                >
+                  <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+                  Refresh
+                </button>
+                {user && (
+                  <div className="flex min-w-0 items-center gap-1.5 border-l border-black/10 pl-2">
+                    <div className="flex min-w-0 items-center gap-1.5 rounded-lg bg-[#f5f5f7] px-2.5 py-1.5 text-xs font-bold text-[#1d1d1f]">
+                      {user.picture ? (
+                        <img src={user.picture} alt="" className="h-5 w-5 shrink-0 rounded-full" />
+                      ) : (
+                        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#007aff]/10 text-[10px] text-[#007aff]">
+                          {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                        </div>
+                      )}
+                      <span className="hidden max-w-44 truncate md:inline">{user.email}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={signOut}
+                      aria-label="Sign Out"
+                      className="inline-flex min-h-10 min-w-10 items-center justify-center gap-1.5 rounded-lg bg-[#f5f5f7] px-3 text-xs font-bold text-[#6e6e73] transition hover:bg-[#ff3b30]/10 hover:text-[#ff3b30] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
+                      title="Sign Out"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      <span className="hidden lg:inline">Sign Out</span>
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={signOut}
-                    className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-[#f5f5f7] px-3 text-xs font-bold text-[#6e6e73] transition hover:bg-[#ff3b30]/10 hover:text-[#ff3b30] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
-                    title="Sign Out"
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Sign Out</span>
-                  </button>
-                </div>
-              )}
+                )}
               </div>
             </div>
+            <div className="lg:hidden">
+              <button
+                type="button"
+                aria-expanded={mobileNavOpen}
+                aria-controls="dashboard-mobile-sections"
+                onClick={() => setMobileNavOpen((open) => !open)}
+                className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl bg-[#f5f5f7] px-3 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
+              >
+                <span className="min-w-0"><span className="block text-[10px] font-bold uppercase tracking-wide text-[#86868b]">Sections</span>
+                  <span className="block truncate text-sm font-bold text-[#1d1d1f]">{dashboardTabLabels[activeTab]}</span></span>
+                <ChevronDown className={cn('h-4 w-4 shrink-0 text-[#6e6e73] transition-transform', mobileNavOpen && 'rotate-180')} />
+              </button>
+              <nav id="dashboard-mobile-sections" aria-label="Dashboard sections" className={cn('mt-2 grid grid-cols-2 gap-1 rounded-xl bg-[#f5f5f7] p-1.5 sm:grid-cols-4', !mobileNavOpen && 'hidden')}>
+                {dashboardTabs.map((tab) => <button key={tab} type="button" aria-current={activeTab === tab ? 'page' : undefined}
+                  onClick={() => changeDashboardTab(tab)} className={cn(
+                    'min-h-11 min-w-0 rounded-lg px-2 py-2 text-center text-xs font-bold leading-tight transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600',
+                    activeTab === tab ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+                  )}>{dashboardTabLabels[tab]}</button>)}
+              </nav>
+            </div>
+            <nav className="hidden min-w-0 grid-cols-4 gap-1 rounded-xl bg-[#f5f5f7] p-1.5 lg:grid xl:grid-cols-8" aria-label="Dashboard sections">
+              {dashboardTabs.map((tab) => <button key={tab} type="button" aria-current={activeTab === tab ? 'page' : undefined}
+                onClick={() => changeDashboardTab(tab)} className={cn(
+                  'min-h-10 min-w-0 rounded-lg px-2 py-2 text-center text-xs font-bold leading-tight transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 xl:px-3 xl:text-sm',
+                  activeTab === tab ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+                )}>{dashboardTabLabels[tab]}</button>)}
+            </nav>
           </div>
         </div>
 
