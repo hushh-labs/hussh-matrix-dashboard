@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { InstagramClient, InstagramApiError, completedSevenDayWindow, parseReach, parseAccountInsight, parseMediaInsight, parseMediaList } from '../src/server/instagram/client';
-import { observationKey, type InstagramStore, type InstagramSummary } from '../src/server/instagram/store';
+import { observationKey, type InstagramStore, type InstagramSummary, type MediaInsightWrite } from '../src/server/instagram/store';
 import { syncInstagram } from '../src/server/instagram/sync';
 import { INSTAGRAM_CAPABILITIES } from '../src/server/instagram/capabilities';
 
@@ -37,8 +37,14 @@ class MemoryStore implements InstagramStore {
     this.optional.set(observation.name, observation.value);
   }
   async saveMedia(_runId: string, _id: string, media: { id: string }) { this.optional.set(`media.${media.id}`, 1); }
+  async saveMediaInventory(_runId: string, _id: string, inventory: { items: Array<{ id: string }> }) {
+    for (const media of inventory.items) this.optional.set(`media.${media.id}`, 1);
+  }
   async saveMediaInsight(_runId: string, _id: string, mediaId: string, _publishedAt: string, observation: ReturnType<typeof parseMediaInsight>) {
     this.optional.set(`${mediaId}.${observation.name}`, observation.value);
+  }
+  async saveMediaInsightsBatch(_runId: string, _id: string, writes: MediaInsightWrite[]) {
+    for (const { mediaId, observation } of writes) this.optional.set(`${mediaId}.${observation.name}`, observation.value);
   }
   async finish(_runId: string, _accountId: string, state: string) { this.finished.push(state); }
   async summary(): Promise<InstagramSummary> { return { state: 'empty', username: null, reach: null, lastSuccessfulSync: null, lastAttempt: null }; }
@@ -151,7 +157,7 @@ describe('verified optional Instagram reads', () => {
   });
   it('paginates only with a bounded cursor on the fixed Meta host and preserves string IDs', async () => {
     const urls: URL[] = [];
-    const media = (id: string) => ({ id, media_type: 'VIDEO', permalink: `https://www.instagram.com/p/${id}/`, timestamp: '2026-09-28T10:38:36+0000', like_count: 0 });
+    const media = (id: string) => ({ id, media_type: 'VIDEO', media_product_type: 'REELS', permalink: `https://www.instagram.com/reel/${id}/`, timestamp: '2026-09-28T10:38:36+0000', like_count: 0 });
     const transport = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input)); urls.push(url);
       return response(url.searchParams.has('after')
@@ -160,12 +166,47 @@ describe('verified optional Instagram reads', () => {
     });
     const client = new InstagramClient('private-token', 'v26.0', transport as typeof fetch);
     const result = await client.recentMedia(accountId, 5);
-    expect(result.map((item) => item.id)).toEqual(['17841436775785808', '17841436775785809']);
+    expect(result.items.map((item) => item.id)).toEqual(['17841436775785808', '17841436775785809']);
+    expect(result.items.map((item) => item.productType)).toEqual(['REELS', 'REELS']);
+    expect(result.complete).toBe(true);
     expect(urls).toHaveLength(2);
     expect(urls.every((url) => url.hostname === 'graph.instagram.com' && !url.searchParams.has('access_token'))).toBe(true);
     expect(urls[1].searchParams.get('after')).toBe('opaque_cursor');
     expect(JSON.stringify(result)).not.toContain('private-token');
     expect(() => parseMediaList({ data: [], paging: { next: 'https://graph.instagram.com/', cursors: { after: 'invalid/cursor' } } })).toThrow(InstagramApiError);
+    expect(() => parseMediaList({ data: [], paging: { next: 'https://graph.instagram.com/' } })).toThrow(InstagramApiError);
+  });
+  it('caps inventory at 75 items and reports partial coverage when more pages exist', async () => {
+    const transport = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get('after') || 0);
+      const data = Array.from({ length: 25 }, (_, index) => ({ id: String(17841436775785000n + BigInt(page * 25 + index)),
+        media_type: 'VIDEO', media_product_type: index % 2 ? 'FEED' : 'REELS',
+        permalink: `https://www.instagram.com/reel/${page}-${index}/`, timestamp: '2026-09-28T10:38:36+0000' }));
+      return response({ data, paging: { next: 'https://evil.example/private-token', cursors: { after: String(page + 1) } } });
+    });
+    const result = await new InstagramClient('private-token', 'v26.0', transport as typeof fetch)
+      .recentMedia(accountId, 75, new Date('2025-09-29T00:00:00Z'));
+    expect(result.items).toHaveLength(75);
+    expect(result.complete).toBe(false);
+    expect(result.items.filter((item) => item.productType === 'REELS')).toHaveLength(39);
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+  it('parses a single combined media-insights response without inventing missing values', async () => {
+    const transport = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      expect(url.searchParams.get('metric')).toBe('reach,saved,shares,views');
+      return response({ data: [
+        { name: 'reach', period: 'lifetime', values: [{ value: 3 }] },
+        { name: 'saved', period: 'lifetime', values: [{ value: 0 }] },
+        { name: 'views', period: 'lifetime', values: [{ value: 12 }] },
+      ] });
+    });
+    const observations = await new InstagramClient('private-token', 'v26.0', transport as typeof fetch).mediaInsights('17841436775785808');
+    expect(observations.map((metric) => [metric.name, metric.value, metric.status])).toEqual([
+      ['reach', 3, 'available'], ['saved', 0, 'available'], ['shares', null, 'not_yet_available'], ['views', 12, 'available'],
+    ]);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
   it('keeps reach successful when optional metrics fail and does not overwrite valid optional data', async () => {
     const store = new MemoryStore();
@@ -178,10 +219,10 @@ describe('verified optional Instagram reads', () => {
         if (name === 'total_interactions') throw new InstagramApiError('not_supported', 400, 100);
         return parseAccountInsight({ data: [{ name, period: 'day', total_value: { value: name === 'views' ? 0 : 5 } }] }, name as 'views', sevenDays.since, sevenDays.until);
       },
-      recentMedia: async () => [{ id: '17841436775785808', mediaType: 'IMAGE', permalink: 'https://www.instagram.com/p/x/', publishedAt: '2026-09-28T00:00:00Z', likeCount: 0, commentsCount: null }],
-      mediaInsight: async (_id: string, name: string) => name === 'shares'
-        ? { name, period: 'lifetime', metricType: 'lifetime_snapshot', unit: 'count', value: null, status: 'not_yet_available', providerSince: null, providerUntil: null }
-        : parseMediaInsight({ data: [{ name, period: 'lifetime', values: [{ value: 1 }] }] }, name as 'reach'),
+      recentMedia: async () => ({ items: [{ id: '17841436775785808', mediaType: 'IMAGE', productType: 'FEED', permalink: 'https://www.instagram.com/p/x/', publishedAt: '2026-09-28T00:00:00Z', likeCount: 0, commentsCount: null }], complete: true, windowSince: '2025-09-29T12:00:00Z' }),
+      mediaInsights: async () => (['reach', 'saved', 'shares', 'views'] as const).map((name) => name === 'shares'
+        ? { name, period: 'lifetime' as const, metricType: 'lifetime_snapshot' as const, unit: 'count' as const, value: null, status: 'not_yet_available' as const, providerSince: null, providerUntil: null }
+        : parseMediaInsight({ data: [{ name, period: 'lifetime', values: [{ value: 1 }] }] }, name)),
     } as unknown as InstagramClient;
     const result = await syncInstagram({ enabled: true, accountId, apiVersion: 'v26.0', token: 'private-token', store, client, now: new Date('2026-09-29T12:00:00Z') });
     expect(result.state).toBe('success');
@@ -190,6 +231,23 @@ describe('verified optional Instagram reads', () => {
     expect(store.optional.get('views')).toBe(0);
     expect(store.optional.get('followers')).toBe(0);
     expect(store.optional.has('17841436775785808.shares')).toBe(false);
+  });
+  it('preserves prior media insights when one media object rejects the combined optional read', async () => {
+    const store = new MemoryStore();
+    store.optional.set('17841436775785808.views', 88);
+    const client = {
+      identity: async () => ({ userId: accountId, username: 'hussh.ai' }),
+      reach: async () => parseReach(syntheticReachResponse, sevenDays.since, sevenDays.until),
+      recentMedia: async () => ({ items: [{ id: '17841436775785808', mediaType: 'VIDEO', productType: 'REELS',
+        permalink: 'https://www.instagram.com/reel/test/', publishedAt: '2026-09-28T00:00:00Z', likeCount: 2, commentsCount: 0 }],
+        complete: true, windowSince: '2025-09-29T00:00:00Z' }),
+      mediaInsights: async () => { throw new InstagramApiError('not_supported', 400, 100); },
+    } as unknown as InstagramClient;
+    const result = await syncInstagram({ enabled: true, accountId, apiVersion: 'v26.0', token: 'private-token', store,
+      client, now: new Date('2026-09-29T12:00:00Z') });
+    expect(result.state).toBe('success');
+    expect(result.optionalResults?.['media.17841436775785808.views']).toBe('not_supported');
+    expect(store.optional.get('17841436775785808.views')).toBe(88);
   });
   it('distinguishes Meta code 100 unsupported media from code 4 rate limiting on HTTP 400', async () => {
     const unsupported = vi.fn(async () => response({ error: { code: 100, message: 'private-token' } }, 400));

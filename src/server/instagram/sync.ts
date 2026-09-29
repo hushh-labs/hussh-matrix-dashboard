@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { completedSevenDayWindow, InstagramApiError, InstagramClient } from './client';
 import type { AccountInsightName, InsightStatus, MediaInsightName } from './client';
-import type { InstagramStore } from './store';
+import type { InstagramStore, MediaInsightWrite } from './store';
 
 export interface SyncResult {
   state: 'success' | 'failed' | 'reconnect_required' | 'permission_missing' | 'already_running' | 'already_synced_today' | 'not_configured';
@@ -84,21 +84,42 @@ export async function syncInstagram(options: {
           return metric.status;
         });
       }
-      if (store.saveMedia && store.saveMediaInsight && typeof client.recentMedia === 'function' && typeof client.mediaInsight === 'function') {
-        let media: Awaited<ReturnType<InstagramClient['recentMedia']>> = [];
+      if (store.saveMediaInventory && store.saveMediaInsightsBatch && typeof client.recentMedia === 'function' && typeof client.mediaInsights === 'function') {
+        let inventory: Awaited<ReturnType<InstagramClient['recentMedia']>> | null = null;
+        let inventoryStored = false;
         await capture('media.list', async () => {
-          media = await client.recentMedia(accountId, 5);
-          return media.length ? 'available' : 'not_yet_available';
+          inventory = await client.recentMedia(accountId, 75, new Date((options.now || new Date()).getTime() - 365 * 86_400_000));
+          await store.saveMediaInventory!(runId, accountId, inventory, apiVersion);
+          inventoryStored = true;
+          return inventory.complete ? 'available' : 'not_yet_available';
         });
-        for (const item of media) {
-          await capture(`media.${item.id}.metadata`, async () => { await store.saveMedia!(runId, accountId, item, apiVersion); return 'available'; });
-          for (const name of ['reach', 'saved', 'shares', 'views'] as MediaInsightName[]) {
-            await capture(`media.${item.id}.${name}`, async () => {
-              const metric = await client.mediaInsight(item.id, name);
-              if (metric.status === 'available') await store.saveMediaInsight!(runId, accountId, item.id, item.publishedAt, metric, apiVersion);
-              return metric.status;
-            });
+        const writes: MediaInsightWrite[] = [];
+        const insightNames: MediaInsightName[] = ['reach', 'saved', 'shares', 'views'];
+        if (inventoryStored && inventory) for (const item of inventory.items) {
+          if (Date.now() >= optionalDeadline || stopOptionalReads) {
+            for (const name of insightNames) optionalResults[`media.${item.id}.${name}`] = 'unknown';
+            continue;
           }
+          try {
+            const metrics = await client.mediaInsights(item.id);
+            for (const metric of metrics) {
+              optionalResults[`media.${item.id}.${metric.name}`] = metric.status;
+              if (metric.status === 'available') writes.push({ mediaId: item.id, publishedAt: item.publishedAt, observation: metric });
+            }
+          } catch (error) {
+            const kind = error instanceof InstagramApiError ? error.kind : 'sync_failed';
+            const status: InsightStatus = kind === 'not_supported' ? 'not_supported'
+              : kind === 'permission_missing' ? 'permission_missing' : 'sync_failed';
+            for (const name of insightNames) optionalResults[`media.${item.id}.${name}`] = status;
+            if (kind === 'reconnect_required' || kind === 'rate_limited') stopOptionalReads = true;
+          }
+        }
+        if (writes.length) try {
+          await store.saveMediaInsightsBatch!(runId, accountId, writes, apiVersion);
+          optionalResults['media.insights.save'] = 'available';
+        } catch {
+          optionalResults['media.insights.save'] = 'sync_failed';
+          for (const write of writes) optionalResults[`media.${write.mediaId}.${write.observation.name}`] = 'sync_failed';
         }
       }
     }

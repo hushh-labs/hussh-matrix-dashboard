@@ -1,6 +1,8 @@
 import { BigQuery } from '@google-cloud/bigquery';
 import { createHash } from 'node:crypto';
-import type { AccountProfile, InstagramMedia, MediaObservation, MediaInsightName, ReachObservation, AccountInsightName, InsightStatus } from './client';
+import type { AccountProfile, InstagramMedia, MediaInventory, MediaObservation, MediaInsightName, ReachObservation, AccountInsightName, InsightStatus } from './client';
+
+export interface MediaInsightWrite { mediaId: string; publishedAt: string; observation: MediaObservation }
 
 export interface MediaReport extends InstagramMedia {
   insights: Partial<Record<MediaInsightName, MediaObservation>>;
@@ -16,6 +18,7 @@ export interface InstagramSummary {
   mediaCount?: number | null;
   countsObservedAt?: string | null;
   media?: MediaReport[];
+  inventory?: { complete: boolean; windowSince: string; count: number; scannedAt: string } | null;
   metricResults?: Record<string, InsightStatus>;
   lastSuccessfulSync: string | null;
   lastAttempt: string | null;
@@ -31,7 +34,9 @@ export interface InstagramStore {
   saveProfile?(accountId: string, profile: AccountProfile): Promise<void>;
   saveAccountMetric?(runId: string, accountId: string, observation: ReachObservation, version: string): Promise<void>;
   saveMedia?(runId: string, accountId: string, media: InstagramMedia, version: string): Promise<void>;
+  saveMediaInventory?(runId: string, accountId: string, inventory: MediaInventory, version: string): Promise<void>;
   saveMediaInsight?(runId: string, accountId: string, mediaId: string, publishedAt: string, observation: MediaObservation, version: string): Promise<void>;
+  saveMediaInsightsBatch?(runId: string, accountId: string, observations: MediaInsightWrite[], version: string): Promise<void>;
   saveReach(runId: string, accountId: string, observation: ReachObservation, version: string): Promise<void>;
   finish(runId: string, accountId: string, state: string, reachStatus: string, errorKind?: string, metricResults?: Record<string, InsightStatus>): Promise<void>;
   summary(accountId: string): Promise<InstagramSummary>;
@@ -143,17 +148,43 @@ export class BigQueryInstagramStore implements InstagramStore {
   }
   async saveMedia(runId: string, accountId: string, media: InstagramMedia, version: string): Promise<void> {
     await this.query(`MERGE ${this.table('media')} T USING
-      (SELECT @accountId account_id,@mediaId media_id,@mediaType media_type,@permalink permalink,
+      (SELECT @accountId account_id,@mediaId media_id,@mediaType media_type,@productType media_product_type,@permalink permalink,
         TIMESTAMP(@publishedAt) published_at,@likeCount like_count,@commentsCount comments_count,
         @version api_version,@runId sync_run_id) S
       ON T.account_id=S.account_id AND T.media_id=S.media_id
       WHEN MATCHED THEN UPDATE SET media_type=S.media_type,permalink=S.permalink,published_at=S.published_at,
+        media_product_type=IF(S.media_product_type='UNKNOWN',COALESCE(T.media_product_type,'UNKNOWN'),S.media_product_type),
         like_count=COALESCE(S.like_count,T.like_count),comments_count=COALESCE(S.comments_count,T.comments_count),
         fetched_at=CURRENT_TIMESTAMP(),api_version=S.api_version,sync_run_id=S.sync_run_id
-      WHEN NOT MATCHED THEN INSERT (account_id,media_id,media_type,permalink,published_at,like_count,comments_count,fetched_at,api_version,sync_run_id)
-        VALUES (S.account_id,S.media_id,S.media_type,S.permalink,S.published_at,S.like_count,S.comments_count,CURRENT_TIMESTAMP(),S.api_version,S.sync_run_id)`,
-      { accountId, mediaId: media.id, mediaType: media.mediaType, permalink: media.permalink,
+      WHEN NOT MATCHED THEN INSERT (account_id,media_id,media_type,media_product_type,permalink,published_at,like_count,comments_count,fetched_at,api_version,sync_run_id)
+        VALUES (S.account_id,S.media_id,S.media_type,S.media_product_type,S.permalink,S.published_at,S.like_count,S.comments_count,CURRENT_TIMESTAMP(),S.api_version,S.sync_run_id)`,
+      { accountId, mediaId: media.id, mediaType: media.mediaType, productType: media.productType, permalink: media.permalink,
         publishedAt: media.publishedAt, likeCount: media.likeCount, commentsCount: media.commentsCount, version, runId });
+  }
+  async saveMediaInventory(runId: string, accountId: string, inventory: MediaInventory, version: string): Promise<void> {
+    const payload = JSON.stringify(inventory.items);
+    await this.query(`BEGIN TRANSACTION;
+      MERGE ${this.table('media')} T USING (
+        SELECT @accountId account_id,JSON_VALUE(item,'$.id') media_id,
+          JSON_VALUE(item,'$.mediaType') media_type,JSON_VALUE(item,'$.productType') media_product_type,
+          JSON_VALUE(item,'$.permalink') permalink,TIMESTAMP(JSON_VALUE(item,'$.publishedAt')) published_at,
+          SAFE_CAST(JSON_VALUE(item,'$.likeCount') AS INT64) like_count,
+          SAFE_CAST(JSON_VALUE(item,'$.commentsCount') AS INT64) comments_count,
+          @version api_version,@runId sync_run_id
+        FROM UNNEST(JSON_QUERY_ARRAY(@payload)) item
+      ) S ON T.account_id=S.account_id AND T.media_id=S.media_id
+      WHEN MATCHED THEN UPDATE SET media_type=S.media_type,permalink=S.permalink,published_at=S.published_at,
+        media_product_type=IF(S.media_product_type='UNKNOWN',COALESCE(T.media_product_type,'UNKNOWN'),S.media_product_type),
+        like_count=COALESCE(S.like_count,T.like_count),comments_count=COALESCE(S.comments_count,T.comments_count),
+        fetched_at=CURRENT_TIMESTAMP(),api_version=S.api_version,sync_run_id=S.sync_run_id
+      WHEN NOT MATCHED THEN INSERT (account_id,media_id,media_type,media_product_type,permalink,published_at,like_count,comments_count,fetched_at,api_version,sync_run_id)
+        VALUES (S.account_id,S.media_id,S.media_type,S.media_product_type,S.permalink,S.published_at,S.like_count,S.comments_count,CURRENT_TIMESTAMP(),S.api_version,S.sync_run_id);
+      UPDATE ${this.table('accounts')} SET inventory_run_id=@runId,
+        inventory_window_since=TIMESTAMP(@windowSince),inventory_complete=@complete,
+        inventory_count=@count,inventory_at=CURRENT_TIMESTAMP()
+      WHERE account_id=@accountId;
+      COMMIT TRANSACTION;`, { accountId, runId, version, payload, windowSince: inventory.windowSince,
+        complete: inventory.complete, count: inventory.items.length });
   }
   async saveMediaInsight(runId: string, accountId: string, mediaId: string, publishedAt: string, observation: MediaObservation, version: string): Promise<void> {
     await this.query(`MERGE ${this.table('media_metrics')} T USING
@@ -172,6 +203,30 @@ export class BigQueryInstagramStore implements InstagramStore {
         name: observation.name, value: observation.value, status: observation.status, period: observation.period,
         metricType: observation.metricType, unit: observation.unit, version, runId });
   }
+  async saveMediaInsightsBatch(runId: string, accountId: string, observations: MediaInsightWrite[], version: string): Promise<void> {
+    if (!observations.length) return;
+    const payload = JSON.stringify(observations.map(({ mediaId, publishedAt, observation }) => ({
+      key: mediaObservationKey(accountId, mediaId, observation.name), mediaId, publishedAt,
+      name: observation.name, value: observation.value, status: observation.status,
+      period: observation.period, metricType: observation.metricType, unit: observation.unit,
+    })));
+    await this.query(`MERGE ${this.table('media_metrics')} T USING (
+      SELECT JSON_VALUE(item,'$.key') observation_key,@accountId account_id,
+        JSON_VALUE(item,'$.mediaId') media_id,TIMESTAMP(JSON_VALUE(item,'$.publishedAt')) published_at,
+        JSON_VALUE(item,'$.name') metric_name,SAFE_CAST(JSON_VALUE(item,'$.value') AS FLOAT64) value,
+        JSON_VALUE(item,'$.status') value_status,JSON_VALUE(item,'$.period') period,
+        JSON_VALUE(item,'$.metricType') metric_type,JSON_VALUE(item,'$.unit') unit,
+        @version api_version,@runId sync_run_id
+      FROM UNNEST(JSON_QUERY_ARRAY(@payload)) item
+    ) S ON T.observation_key=S.observation_key AND T.account_id=S.account_id
+      AND T.media_id=S.media_id AND T.published_at=S.published_at
+    WHEN MATCHED THEN UPDATE SET value=S.value,value_status=S.value_status,api_version=S.api_version,
+      fetched_at=CURRENT_TIMESTAMP(),sync_run_id=S.sync_run_id
+    WHEN NOT MATCHED THEN INSERT (observation_key,account_id,media_id,published_at,metric_name,value,value_status,period,metric_type,unit,
+      provider_since,provider_until,breakdowns_json,api_version,fetched_at,sync_run_id)
+      VALUES (S.observation_key,S.account_id,S.media_id,S.published_at,S.metric_name,S.value,S.value_status,S.period,S.metric_type,S.unit,
+        NULL,NULL,NULL,S.api_version,CURRENT_TIMESTAMP(),S.sync_run_id)`, { accountId, runId, version, payload });
+  }
   async finish(runId: string, accountId: string, state: string, reachStatus: string, errorKind?: string, metricResults: Record<string, InsightStatus> = {}): Promise<void> {
     await this.query(`UPDATE ${this.table('sync_runs')} SET finished_at=CURRENT_TIMESTAMP(), status=@state,
       reach_status=@reachStatus,error_kind=@errorKind,metric_results_json=@metricResults
@@ -185,7 +240,8 @@ export class BigQueryInstagramStore implements InstagramStore {
   }
   async summary(accountId: string): Promise<InstagramSummary> {
     const [accounts, metrics, runs, mediaRows, mediaMetricRows] = await Promise.all([
-      this.query(`SELECT username,last_success_at,last_attempt_at,connection_state,followers_count,media_count,counts_observed_at FROM ${this.table('accounts')}
+      this.query(`SELECT username,last_success_at,last_attempt_at,connection_state,followers_count,media_count,counts_observed_at,
+          inventory_window_since,inventory_complete,inventory_count,inventory_at FROM ${this.table('accounts')}
         WHERE account_id=@accountId LIMIT 1`, { accountId }),
       this.query(`SELECT metric_name,value,value_status,period,metric_type,unit,requested_since,requested_until,
           provider_since,provider_until,fetched_at FROM ${this.table('account_metrics')}
@@ -195,17 +251,20 @@ export class BigQueryInstagramStore implements InstagramStore {
       this.query(`SELECT status,error_kind,started_at,metric_results_json FROM ${this.table('sync_runs')}
         WHERE account_id=@accountId AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
         ORDER BY started_at DESC LIMIT 1`, { accountId }),
-      this.query(`SELECT media_id,media_type,permalink,published_at,like_count,comments_count,fetched_at
-        FROM ${this.table('media')} WHERE account_id=@accountId
-        AND published_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(),INTERVAL 90 DAY)
-        ORDER BY published_at DESC LIMIT 100`, { accountId }),
+      this.query(`SELECT M.media_id,M.media_type,M.media_product_type,M.permalink,M.published_at,
+          M.like_count,M.comments_count,M.fetched_at
+        FROM ${this.table('media')} M JOIN ${this.table('accounts')} A ON M.account_id=A.account_id
+        WHERE M.account_id=@accountId AND (A.inventory_run_id IS NULL OR M.sync_run_id=A.inventory_run_id)
+          AND M.published_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(),INTERVAL 365 DAY)
+        ORDER BY M.published_at DESC LIMIT 75`, { accountId }),
       this.query(`SELECT M.media_id,M.metric_name,M.value,M.value_status,M.period,M.metric_type,M.unit,M.fetched_at
         FROM ${this.table('media_metrics')} M JOIN
-          (SELECT media_id FROM ${this.table('media')} WHERE account_id=@accountId
-           AND published_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(),INTERVAL 90 DAY)
-           ORDER BY published_at DESC LIMIT 100) R ON M.media_id=R.media_id
+          (SELECT C.media_id FROM ${this.table('media')} C JOIN ${this.table('accounts')} A ON C.account_id=A.account_id
+           WHERE C.account_id=@accountId AND (A.inventory_run_id IS NULL OR C.sync_run_id=A.inventory_run_id)
+             AND C.published_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(),INTERVAL 365 DAY)
+           ORDER BY C.published_at DESC LIMIT 75) R ON M.media_id=R.media_id
         WHERE M.account_id=@accountId AND M.metric_name IN ('reach','saved','shares','views')
-        LIMIT 400`, { accountId }),
+        LIMIT 300`, { accountId }),
     ]);
     const account = accounts[0]; const metric = metrics.find((row) => row.metric_name === 'reach'); const run = runs[0];
     const reach: ReachObservation | null = metric ? {
@@ -230,10 +289,11 @@ export class BigQueryInstagramStore implements InstagramStore {
       const insights = mediaMetrics.get(row.media_id) || {};
       insights[row.metric_name as MediaInsightName] = { name: row.metric_name, period: 'lifetime',
         metricType: 'lifetime_snapshot', unit: row.unit, value: typeof row.value === 'number' ? row.value : null,
-        status: row.value_status, providerSince: null, providerUntil: null };
+        status: row.value_status, providerSince: null, providerUntil: null, fetchedAt: timestamp(row.fetched_at) };
       mediaMetrics.set(row.media_id, insights);
     }
     const media: MediaReport[] = mediaRows.map((row) => ({ id: row.media_id, mediaType: row.media_type,
+      productType: ['FEED','REELS','STORY'].includes(row.media_product_type) ? row.media_product_type : 'UNKNOWN',
       permalink: row.permalink, publishedAt: timestamp(row.published_at)!,
       likeCount: typeof row.like_count === 'number' ? row.like_count : null,
       commentsCount: typeof row.comments_count === 'number' ? row.comments_count : null,
@@ -251,7 +311,11 @@ export class BigQueryInstagramStore implements InstagramStore {
       const raw = JSON.parse(run?.metric_results_json || '{}');
       if (raw && typeof raw === 'object' && !Array.isArray(raw)) metricResults = raw;
     } catch { /* older or malformed status metadata is ignored */ }
-    return { state, username: account?.username || null, reach, accountMetrics, metricResults,
+    const inventory = account?.inventory_at ? {
+      complete: account.inventory_complete === true, windowSince: timestamp(account.inventory_window_since)!,
+      count: Number(account.inventory_count) || 0, scannedAt: timestamp(account.inventory_at)!,
+    } : null;
+    return { state, username: account?.username || null, reach, accountMetrics, metricResults, inventory,
       followersCount: typeof account?.followers_count === 'number' ? account.followers_count : null,
       mediaCount: typeof account?.media_count === 'number' ? account.media_count : null,
       countsObservedAt: timestamp(account?.counts_observed_at), media,
