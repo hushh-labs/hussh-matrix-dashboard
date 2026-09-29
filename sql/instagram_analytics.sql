@@ -1,5 +1,5 @@
--- Apply manually to an isolated test project first. Do not run in production
--- as part of application startup. All IDs are STRING, including Instagram IDs.
+-- Validate against an isolated test dataset before applying to production.
+-- Apply manually; never run at application startup. Instagram IDs are STRING.
 CREATE SCHEMA IF NOT EXISTS `hushh-ai-prod.instagram_analytics` OPTIONS(location='US');
 
 CREATE TABLE IF NOT EXISTS `hushh-ai-prod.instagram_analytics.accounts` (
