@@ -1,6 +1,6 @@
 # Instagram analytics for the company account
 
-Status: **local implementation only**. No production migration, Meta connection, Scheduler change, push, or deploy has been performed. The feature flag defaults to `false`.
+Status: **local implementation with live read-only Meta verification**. On 2026-09-29, the account owner added enabled version 1 of `metrics-instagram-credential`. Its JSON format was valid, v26.0 identity matched the configured company account, and a reach total was returned for the exact requested interval `2026-09-22T00:00:00Z` to `2026-09-29T00:00:00Z`. The observed value is intentionally not kept as dashboard data in this repository. The owner confirmed that the previously exposed Instagram app secret was reset; this was not independently verified. No production migration, BigQuery ingestion, Scheduler change, push, or deploy has been performed. The feature flag defaults to `false`.
 
 ## Scope and architecture
 

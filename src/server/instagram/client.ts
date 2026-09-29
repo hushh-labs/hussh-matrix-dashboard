@@ -82,7 +82,8 @@ export class InstagramClient {
         if (response.status === 403 || code === 10 || code === 200) throw new InstagramApiError('permission_missing', response.status, code);
         if (response.status === 429 || response.status >= 500) {
           if (attempt < 2) {
-            const retryAfter = Number(response.headers.get('retry-after'));
+            const retryAfterHeader = response.headers.get('retry-after');
+            const retryAfter = retryAfterHeader === null ? NaN : Number(retryAfterHeader);
             await this.sleep(Number.isFinite(retryAfter) && retryAfter >= 0 ? Math.min(retryAfter * 1000, 5_000) : 250 * (attempt + 1));
             continue;
           }

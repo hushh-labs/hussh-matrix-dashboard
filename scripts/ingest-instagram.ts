@@ -4,8 +4,9 @@ import { InstagramCredentials } from '../src/server/instagram/credentials';
 import { BigQueryInstagramStore } from '../src/server/instagram/store';
 import { syncInstagram } from '../src/server/instagram/sync';
 
+// Explicit process settings win. Local values fill gaps before shared defaults.
+loadDotenvFile({ path: '.env.local' });
 loadDotenvFile({ path: '.env' });
-loadDotenvFile({ path: '.env.local', override: true });
 
 async function main() {
   const credentials = new InstagramCredentials();

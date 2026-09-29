@@ -88,6 +88,7 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         Meta returned one total for this window; provider reporting boundaries and daily values were not returned.
       </p>}
       <p className="mt-3 text-sm text-[#6e6e73]">Last successful sync: {report?.lastSuccessfulSync || 'Never'}.</p>
+      <p className="mt-1 text-sm text-[#6e6e73]">Last attempt: {report?.lastAttempt || 'Never'}.</p>
       <p className="mt-1 text-xs text-[#86868b]">Instagram reach is separate from website visitors, signups, and app installs.</p>
     </div>
     <div className={cn(appleCard, 'p-5 sm:p-8')}>

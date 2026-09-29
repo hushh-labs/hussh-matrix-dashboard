@@ -6,7 +6,9 @@ import { INSTAGRAM_CAPABILITIES } from '../src/server/instagram/capabilities';
 
 const accountId = '17841436775785807';
 const sevenDays = completedSevenDayWindow(new Date('2026-09-29T12:00:00Z'));
-const reachResponse = { data: [{ name: 'reach', period: 'day', total_value: { value: 4869 }, title: 'स्थानीय शीर्षक' }] };
+// The historical manual response did not include known request timestamps.
+const historicalReachFixture = { data: [{ name: 'reach', period: 'day', total_value: { value: 4869 }, title: 'स्थानीय शीर्षक' }] };
+const syntheticReachResponse = { data: [{ name: 'reach', period: 'day', total_value: { value: 42 } }] };
 
 function response(body: unknown, status = 200, headers?: HeadersInit): Response {
   return new Response(JSON.stringify(body), { status, headers });
@@ -31,15 +33,18 @@ class MemoryStore implements InstagramStore {
 }
 
 describe('Instagram reach vertical slice', () => {
-  it('preserves the observed total as one requested-window observation and ignores localized labels', () => {
-    const parsed = parseReach(reachResponse, sevenDays.since, sevenDays.until);
+  it('parses the historical value and localized labels without claiming a historical reporting date', () => {
+    const parsed = parseReach(historicalReachFixture, sevenDays.since, sevenDays.until);
     expect(parsed.value).toBe(4869);
     expect(parsed.metricType).toBe('total_value');
-    expect(parsed.requestedSince).toBe('2026-09-22T00:00:00.000Z');
-    expect(parsed.requestedUntil).toBe('2026-09-29T00:00:00.000Z');
     expect(parsed.providerSince).toBeNull();
     expect(parsed.providerUntil).toBeNull();
     expect(parsed).not.toHaveProperty('dailyValues');
+  });
+  it('records exact boundaries only for a synthetic request window', () => {
+    const parsed = parseReach(syntheticReachResponse, sevenDays.since, sevenDays.until);
+    expect(parsed.requestedSince).toBe('2026-09-22T00:00:00.000Z');
+    expect(parsed.requestedUntil).toBe('2026-09-29T00:00:00.000Z');
   });
   it('distinguishes missing from a genuine zero', () => {
     expect(parseReach({ data: [{ name: 'reach', period: 'day', total_value: { value: 0 } }] }, sevenDays.since, sevenDays.until).status).toBe('available');
@@ -51,11 +56,11 @@ describe('Instagram reach vertical slice', () => {
       const url = new URL(String(input)); urls.push(url);
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer private-token' });
       expect(url.searchParams.has('access_token')).toBe(false);
-      return response(url.pathname.endsWith('/me') ? { user_id: accountId, username: 'hussh.ai' } : reachResponse);
+      return response(url.pathname.endsWith('/me') ? { user_id: accountId, username: 'hussh.ai' } : syntheticReachResponse);
     });
     const client = new InstagramClient('private-token', 'v26.0', transport as typeof fetch);
     expect((await client.identity()).userId).toBe(accountId);
-    expect((await client.reach(accountId, sevenDays.since, sevenDays.until)).value).toBe(4869);
+    expect((await client.reach(accountId, sevenDays.since, sevenDays.until)).value).toBe(42);
     expect(urls[1].pathname).toContain(accountId);
     expect(urls[1].searchParams.get('since')).toBe(String(sevenDays.since.getTime() / 1000));
     expect(urls[1].searchParams.get('until')).toBe(String(sevenDays.until.getTime() / 1000));
@@ -66,6 +71,14 @@ describe('Instagram reach vertical slice', () => {
     await expect(client.identity()).rejects.toMatchObject({ kind: 'rate_limited' });
     expect(transport).toHaveBeenCalledTimes(3);
     try { await client.identity(); } catch (error) { expect(String(error)).not.toContain('private-token'); }
+  });
+  it('backs off on transient errors when Retry-After is absent', async () => {
+    const sleeps: number[] = [];
+    const transport = vi.fn(async () => response({ error: { code: 4 } }, 500));
+    const client = new InstagramClient('private-token', 'v26.0', transport as typeof fetch,
+      async (milliseconds) => { sleeps.push(milliseconds); });
+    await expect(client.identity()).rejects.toMatchObject({ kind: 'transient' });
+    expect(sleeps).toEqual([250, 500]);
   });
   it('stops on invalid credentials and treats unverified optional metrics independently', async () => {
     const transport = vi.fn(async () => response({ error: { message: 'private-token', code: 190 } }, 401));
@@ -87,12 +100,12 @@ describe('Instagram reach vertical slice', () => {
     expect((await syncInstagram({ enabled: true, accountId, apiVersion: 'v26.0', token: 'private-token', store, now: new Date('2026-09-29T12:00:00Z'), client: wrong })).state).toBe('failed');
     expect(store.rows.size).toBe(0);
     expect(store.verified).toBe(false);
-    const client = { identity: async () => ({ userId: accountId, username: 'hussh.ai' }), reach: async () => parseReach(reachResponse, sevenDays.since, sevenDays.until) } as unknown as InstagramClient;
+    const client = { identity: async () => ({ userId: accountId, username: 'hussh.ai' }), reach: async () => parseReach(syntheticReachResponse, sevenDays.since, sevenDays.until) } as unknown as InstagramClient;
     const options = { enabled: true, accountId, apiVersion: 'v26.0', token: 'private-token', store, now: new Date('2026-09-29T12:00:00Z'), client };
     expect((await syncInstagram(options)).state).toBe('success');
     expect((await syncInstagram(options)).state).toBe('success');
     expect(store.rows.size).toBe(1);
-    expect([...store.rows.values()]).toEqual([4869]);
+    expect([...store.rows.values()]).toEqual([42]);
   });
   it('preserves old data on failure and avoids overlapping runs', async () => {
     const store = new MemoryStore();
