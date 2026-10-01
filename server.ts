@@ -2097,7 +2097,7 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
   },
   {
     key: 'ria',
-    label: 'RIA',
+    label: 'Advisor',
     deliberate: [
       'ria_onboarding_submitted', 'ria_request_created', 'ria_workspace_opened',
       'ria_verification_status_changed', 'persona_switched',

@@ -93,8 +93,8 @@ const capabilityMetadata: Record<
     auditExplanation: 'Separates Gmail connection attempts from completed OAuth connections, and sync requests from accepted sync jobs. It does not claim that a queued sync finished.',
   },
   ria: {
-    title: 'RIA Agent',
-    description: 'Registered Investment Advisor onboarding, verification status, and workspace interaction.',
+    title: 'Advisor Agent',
+    description: 'Advisor onboarding, verification status, and workspace interaction.',
     icon: Briefcase,
     auditExplanation: 'Tracks advisor verification changes, workspace visits, and request creation.',
   },
@@ -379,7 +379,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'workspace_visited',
-      label: 'RIA Workspace Visit',
+      label: 'Advisor Workspace Visit',
       icon: Users,
       status: 'active',
       badgeLabel: 'Verified Active',
