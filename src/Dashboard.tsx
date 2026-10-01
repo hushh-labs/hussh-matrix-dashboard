@@ -2466,7 +2466,7 @@ export default function Dashboard() {
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
               <StepReachCard title="Investor Journey Step Reach" steps={investorFunnel} />
-              <StepReachCard title="RIA Journey Step Reach" steps={riaFunnel} />
+              <StepReachCard title="Advisor Journey Step Reach" steps={riaFunnel} />
             </section>
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
