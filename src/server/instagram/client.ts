@@ -12,9 +12,11 @@ export interface ReachObservation {
   requestedUntil: string;
   providerSince: string | null;
   providerUntil: string | null;
+  fetchedAt?: string | null;
 }
 
 export type AccountInsightName = 'reach' | 'views' | 'total_interactions' | 'accounts_engaged';
+export type AccountWindowDays = 7 | 30 | 90;
 export type MediaInsightName = 'reach' | 'saved' | 'shares' | 'views';
 export interface AccountProfile { userId: string; username: string; followersCount: number | null; mediaCount: number | null }
 export interface InstagramMedia {
@@ -106,9 +108,14 @@ export function parseMediaList(payload: unknown): { items: InstagramMedia[]; aft
   return { items, after: body.paging?.next ? after : null };
 }
 
-export function completedSevenDayWindow(now = new Date()): { since: Date; until: Date } {
+export function completedAccountWindow(days: AccountWindowDays, now = new Date()): { since: Date; until: Date } {
+  if (![7, 30, 90].includes(days) || !Number.isFinite(now.getTime())) throw new InstagramApiError('invalid_response');
   const until = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  return { since: new Date(until.getTime() - 7 * 86_400_000), until };
+  return { since: new Date(until.getTime() - days * 86_400_000), until };
+}
+
+export function completedSevenDayWindow(now = new Date()): { since: Date; until: Date } {
+  return completedAccountWindow(7, now);
 }
 
 export class InstagramClient {

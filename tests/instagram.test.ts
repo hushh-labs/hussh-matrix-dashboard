@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { InstagramClient, InstagramApiError, completedSevenDayWindow, parseReach, parseAccountInsight, parseMediaInsight, parseMediaList } from '../src/server/instagram/client';
-import { observationKey, type InstagramStore, type InstagramSummary, type MediaInsightWrite } from '../src/server/instagram/store';
+import { InstagramClient, InstagramApiError, completedAccountWindow, completedSevenDayWindow, parseReach, parseAccountInsight, parseMediaInsight, parseMediaList } from '../src/server/instagram/client';
+import { BigQueryInstagramStore, observationKey, type InstagramStore, type InstagramSummary, type MediaInsightWrite } from '../src/server/instagram/store';
 import { syncInstagram } from '../src/server/instagram/sync';
 import { INSTAGRAM_CAPABILITIES } from '../src/server/instagram/capabilities';
 
@@ -63,6 +63,12 @@ describe('Instagram reach vertical slice', () => {
     const parsed = parseReach(syntheticReachResponse, sevenDays.since, sevenDays.until);
     expect(parsed.requestedSince).toBe('2026-09-22T00:00:00.000Z');
     expect(parsed.requestedUntil).toBe('2026-09-29T00:00:00.000Z');
+  });
+  it('defines completed 30- and 90-day UTC windows without deriving reach from seven-day totals', () => {
+    const now = new Date('2026-10-02T18:00:00Z');
+    expect(completedAccountWindow(30, now)).toEqual({ since: new Date('2026-09-02T00:00:00Z'), until: new Date('2026-10-02T00:00:00Z') });
+    expect(completedAccountWindow(90, now)).toEqual({ since: new Date('2026-07-04T00:00:00Z'), until: new Date('2026-10-02T00:00:00Z') });
+    expect(() => completedAccountWindow(91 as 90, now)).toThrow(InstagramApiError);
   });
   it('distinguishes missing from a genuine zero', () => {
     expect(parseReach({ data: [{ name: 'reach', period: 'day', total_value: { value: 0 } }] }, sevenDays.since, sevenDays.until).status).toBe('available');
@@ -143,6 +149,74 @@ describe('Instagram reach vertical slice', () => {
     expect((await syncInstagram({ ...options, scheduled: true })).state).toBe('already_synced_today');
     expect(store.locked).toBe(false);
     expect(client.identity).not.toHaveBeenCalled();
+  });
+  it('fetches and stores independent 7-, 30-, and 90-day totals idempotently', async () => {
+    const store = new MemoryStore();
+    const received: Array<{ name: string; since: string; until: string }> = [];
+    const client = {
+      identity: async () => ({ userId: accountId, username: 'hussh.ai' }),
+      reach: async (_id: string, since: Date, until: Date) => {
+        received.push({ name: 'reach', since: since.toISOString(), until: until.toISOString() });
+        return parseReach(syntheticReachResponse, since, until);
+      },
+      accountInsight: async (_id: string, name: 'views' | 'total_interactions' | 'accounts_engaged', since: Date, until: Date) => {
+        received.push({ name, since: since.toISOString(), until: until.toISOString() });
+        return parseAccountInsight({ data: [{ name, period: 'day', total_value: { value: 1 } }] }, name, since, until);
+      },
+    } as unknown as InstagramClient;
+    const options = { enabled: true, accountId, apiVersion: 'v26.0', token: 'private-token', store, client, now: new Date('2026-10-02T18:00:00Z') };
+    expect((await syncInstagram(options)).state).toBe('success');
+    expect(store.rows.size).toBe(3);
+    expect(received.filter((item) => item.name === 'reach').map((item) => item.since)).toEqual([
+      '2026-09-25T00:00:00.000Z', '2026-09-02T00:00:00.000Z', '2026-07-04T00:00:00.000Z',
+    ]);
+    expect(received).toHaveLength(12);
+    expect((await syncInstagram(options)).state).toBe('success');
+    expect(store.rows.size).toBe(3);
+  });
+  it('preserves a successful seven-day reach when one historical window is unavailable', async () => {
+    const store = new MemoryStore();
+    const client = {
+      identity: async () => ({ userId: accountId, username: 'hussh.ai' }),
+      reach: async (_id: string, since: Date, until: Date) => {
+        if (until.getTime() - since.getTime() === 30 * 86_400_000) throw new InstagramApiError('not_supported', 400, 100);
+        return parseReach(syntheticReachResponse, since, until);
+      },
+    } as unknown as InstagramClient;
+    const result = await syncInstagram({ enabled: true, accountId, apiVersion: 'v26.0', token: 'private-token', store, client, now: new Date('2026-10-02T18:00:00Z') });
+    expect(result.state).toBe('success');
+    expect(result.optionalResults?.['account.30.reach']).toBe('not_supported');
+    expect(result.optionalResults?.['account.90.reach']).toBe('available');
+    expect(store.rows.size).toBe(2);
+  });
+});
+
+describe('stored account reporting windows', () => {
+  it('returns exact provider totals by window and never mixes optional metrics from another interval', async () => {
+    const fetchedAt = new Date();
+    const metric = (name: string, days: 7 | 30 | 90, value: number, since: string, until = '2026-10-02T00:00:00Z') => ({
+      metric_name: name, value, value_status: 'available', period: 'day', metric_type: 'total_value',
+      unit: name === 'views' ? 'views' : 'accounts', requested_since: since, requested_until: until,
+      provider_since: null, provider_until: null, fetched_at: fetchedAt, window_days: days,
+    });
+    const query = vi.fn(async ({ query: sql }: { query: string }) => {
+      if (sql.includes("FROM `hushh-ai-prod.instagram_analytics.account_metrics`")) return [[
+        metric('reach', 7, 70, '2026-09-25T00:00:00Z'),
+        metric('reach', 30, 300, '2026-09-02T00:00:00Z'),
+        metric('views', 30, 900, '2026-09-01T00:00:00Z', '2026-10-01T00:00:00Z'),
+        metric('reach', 90, 900, '2026-07-04T00:00:00Z'),
+      ]];
+      if (sql.includes('SELECT username,last_success_at')) return [[{ username: 'hussh.ai', connection_state: 'connected' }]];
+      return [[]];
+    });
+    const store = new BigQueryInstagramStore('hushh-ai-prod', 'instagram_analytics', 'hushh-ai-prod', { query } as any);
+    const summary = await store.summary(accountId);
+    expect(summary.reach?.value).toBe(70);
+    expect(summary.accountWindows?.[30]?.reach?.value).toBe(300);
+    expect(summary.accountWindows?.[30]?.reach?.requestedSince).toBe('2026-09-02T00:00:00.000Z');
+    expect(summary.accountWindows?.[30]?.accountMetrics.views).toBeUndefined();
+    expect(summary.accountWindows?.[90]?.reach?.value).toBe(900);
+    expect(query.mock.calls.some(([call]) => call.query.includes('TIMESTAMP_DIFF(requested_until,requested_since,DAY) IN (7,30,90)'))).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { completedSevenDayWindow, InstagramApiError, InstagramClient } from './client';
-import type { AccountInsightName, InsightStatus, MediaInsightName } from './client';
+import { completedAccountWindow, InstagramApiError, InstagramClient } from './client';
+import type { AccountInsightName, AccountWindowDays, InsightStatus, MediaInsightName } from './client';
 import type { InstagramStore, MediaInsightWrite } from './store';
 
 export interface SyncResult {
@@ -22,7 +22,7 @@ export async function syncInstagram(options: {
   const optionalDeadline = Date.now() + 240_000;
   const runId = randomUUID();
   if (!await store.acquire(runId)) return { state: 'already_running', reachStatus: 'unknown' };
-  const { since, until } = completedSevenDayWindow(options.now);
+  const { since, until } = completedAccountWindow(7, options.now);
   let started = false;
   let state: SyncResult['state'] = 'failed';
   let reachStatus = 'sync_failed';
@@ -70,19 +70,32 @@ export async function syncInstagram(options: {
           if (kind === 'reconnect_required' || kind === 'rate_limited') stopOptionalReads = true;
         }
       };
+      // Each reach value is a provider total for its own exact window. Never
+      // add rolling totals together or derive a longer total from seven days.
+      for (const days of [30, 90] as AccountWindowDays[]) {
+        await capture(`account.${days}.reach`, async () => {
+          const window = completedAccountWindow(days, options.now);
+          const metric = await client.reach(accountId, window.since, window.until);
+          if (metric.status === 'available') await store.saveReach(runId, accountId, metric, apiVersion);
+          return metric.status;
+        });
+      }
       if (store.saveProfile && typeof client.profile === 'function') await capture('account.current_counts', async () => {
         const profile = await client.profile();
         if (profile.userId !== accountId) throw new InstagramApiError('invalid_response');
         await store.saveProfile!(accountId, profile);
         return profile.followersCount === null && profile.mediaCount === null ? 'not_yet_available' : 'available';
       });
-      for (const name of ['views', 'total_interactions', 'accounts_engaged'] as AccountInsightName[]) {
-        if (!store.saveAccountMetric || typeof client.accountInsight !== 'function') break;
-        await capture(`account.${name}`, async () => {
-          const metric = await client.accountInsight(accountId, name, since, until);
-          if (metric.status === 'available') await store.saveAccountMetric!(runId, accountId, metric, apiVersion);
-          return metric.status;
-        });
+      for (const days of [7, 30, 90] as AccountWindowDays[]) {
+        for (const name of ['views', 'total_interactions', 'accounts_engaged'] as AccountInsightName[]) {
+          if (!store.saveAccountMetric || typeof client.accountInsight !== 'function') break;
+          await capture(days === 7 ? `account.${name}` : `account.${days}.${name}`, async () => {
+            const window = completedAccountWindow(days, options.now);
+            const metric = await client.accountInsight(accountId, name, window.since, window.until);
+            if (metric.status === 'available') await store.saveAccountMetric!(runId, accountId, metric, apiVersion);
+            return metric.status;
+          });
+        }
       }
       if (store.saveMediaInventory && store.saveMediaInsightsBatch && typeof client.recentMedia === 'function' && typeof client.mediaInsights === 'function') {
         let inventory: Awaited<ReturnType<InstagramClient['recentMedia']>> | null = null;
