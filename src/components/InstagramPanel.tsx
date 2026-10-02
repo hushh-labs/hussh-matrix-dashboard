@@ -5,14 +5,16 @@ import { cn } from '../lib/utils';
 import { buildInstagramCampaignLink, INSTAGRAM_DESTINATIONS } from '../lib/instagram-campaign';
 import { contentLabel, contentTotals, filterContent, type InstagramProductType } from '../lib/instagram-content';
 
+interface AccountMetric {
+  value: number | null; status: string; requestedSince: string; requestedUntil: string; fetchedAt?: string | null;
+}
+
 interface InstagramReport {
   state: 'not_configured' | 'empty' | 'available' | 'stale' | 'sync_failed' | 'reconnect_required' | 'permission_missing' | 'sync_in_progress';
   username: string | null;
-  reach: {
-    value: number | null; status: string; metricType: string; period: string;
-    requestedSince: string; requestedUntil: string;
-  } | null;
-  accountMetrics?: Record<string, { value: number | null; status: string; requestedSince: string; requestedUntil: string }>;
+  reach: AccountMetric | null;
+  accountMetrics?: Record<string, AccountMetric>;
+  accountWindows?: Partial<Record<7 | 30 | 90, { reach: AccountMetric | null; accountMetrics: Record<string, AccountMetric> }>>;
   followersCount?: number | null;
   mediaCount?: number | null;
   countsObservedAt?: string | null;
@@ -50,6 +52,7 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const [mediaSort, setMediaSort] = useState<'publishedAt' | 'reach' | 'views' | 'likes' | 'comments' | 'saves' | 'shares'>('publishedAt');
   const [mediaFilter, setMediaFilter] = useState<'all' | InstagramProductType>('all');
   const [mediaRange, setMediaRange] = useState<7 | 30 | 90 | 365>(365);
+  const [accountRange, setAccountRange] = useState<7 | 30 | 90>(7);
   const [mediaPage, setMediaPage] = useState(0);
   const mediaRows = useMemo(() => filterContent(report?.media || [], mediaRange, new Date())
     .filter((item) => mediaFilter === 'all' || item.productType === mediaFilter).sort((a, b) => {
@@ -62,6 +65,10 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   }), [report?.media, mediaSort, mediaFilter, mediaRange]);
   const mediaTotals = useMemo(() => contentTotals(mediaRows), [mediaRows]);
   const inventoryTotals = useMemo(() => contentTotals(report?.media || []), [report?.media]);
+  const selectedReach = accountRange === 7 ? report?.accountWindows?.[7]?.reach || report?.reach || null
+    : report?.accountWindows?.[accountRange]?.reach || null;
+  const selectedAccountMetrics = accountRange === 7 ? report?.accountWindows?.[7]?.accountMetrics || report?.accountMetrics
+    : report?.accountWindows?.[accountRange]?.accountMetrics;
   const mediaPages = Math.max(1, Math.ceil(mediaRows.length / 10));
   const visibleMedia = mediaRows.slice(Math.min(mediaPage, mediaPages - 1) * 10, (Math.min(mediaPage, mediaPages - 1) + 1) * 10);
   const metricValue = (value: number | null | undefined, status?: string) => status === 'available' && value !== null && value !== undefined ? value.toLocaleString() : '—';
@@ -138,29 +145,45 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       <p className="mt-1 text-xs text-[#86868b]">Likes and views above add the latest per-item lifetime snapshots. Content views are not deduplicated account reach or seven-day account views.</p>
     </div>
     <div className={cn(applePanel, 'p-5 sm:p-8')}>
-      <p className="text-xs font-bold uppercase tracking-widest text-[#86868b]">Reach · requested seven-day total</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs font-bold uppercase tracking-widest text-[#86868b]">Reach · requested {accountRange}-day total</p>
+        <label className="text-sm text-[#6e6e73]">Account reporting window
+          <select aria-label="Account reporting window" value={accountRange} onChange={(event) => setAccountRange(Number(event.target.value) as typeof accountRange)}
+            className="ml-2 min-h-10 rounded-lg border border-black/10 bg-white px-2">
+            <option value={7}>Past 7 days</option><option value={30}>Past 30 days</option><option value={90}>Past 90 days</option>
+          </select>
+        </label>
+      </div>
       <p className="mt-2 text-4xl font-semibold tabular-nums">
-        {report?.reach?.status === 'available' && report.reach.value !== null
-          ? report.reach.value.toLocaleString() : '—'}
+        {metricValue(selectedReach?.value, selectedReach?.status)}
       </p>
-      {report?.reach && <p className="mt-3 text-sm leading-6 text-[#6e6e73]">
-        Requested since: {report.reach.requestedSince}; until: {report.reach.requestedUntil} (UTC).
+      {selectedReach ? <p className="mt-3 text-sm leading-6 text-[#6e6e73]">
+        Requested since: {selectedReach.requestedSince}; until: {selectedReach.requestedUntil} (UTC).
         Meta returned one total for this window; provider reporting boundaries and daily values were not returned.
+        {selectedReach.fetchedAt ? ` Fetched: ${selectedReach.fetchedAt} (UTC).` : ''}
+      </p> : <p role="status" className="mt-3 text-sm text-[#946200]">
+        No stored {accountRange}-day reach total yet. The next sync will request this exact window.
+        {report?.metricResults?.[`account.${accountRange}.reach`] ? ` Last attempt: ${report.metricResults[`account.${accountRange}.reach`]}.` : ''}
       </p>}
+      {selectedReach && accountRange !== 7 && report?.metricResults?.[`account.${accountRange}.reach`] &&
+        report.metricResults[`account.${accountRange}.reach`] !== 'available' &&
+        <p className="mt-2 text-sm text-[#946200]">Latest {accountRange}-day refresh: {report.metricResults[`account.${accountRange}.reach`]}. The prior stored total remains visible.</p>}
       <p className="mt-3 text-sm text-[#6e6e73]">Last successful sync: {report?.lastSuccessfulSync || 'Never'}.</p>
       <p className="mt-1 text-sm text-[#6e6e73]">Last attempt: {report?.lastAttempt || 'Never'}.</p>
       <p className="mt-1 text-xs text-[#86868b]">Instagram reach is separate from website visitors, signups, and app installs.</p>
     </div>
     <div className={cn(appleCard, 'p-5 sm:p-8')}>
       <h3 className="text-xl font-semibold">Account activity</h3>
-      <p className="mt-2 text-sm text-[#6e6e73]">Requested seven-day totals for the same UTC window as reach. These are native Instagram metrics and may include paid activity.</p>
+      <p className="mt-2 text-sm text-[#6e6e73]">Requested {accountRange}-day totals for the same UTC window as reach. These are native Instagram metrics and may include paid activity.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         {([['views', 'Views'], ['total_interactions', 'Total interactions'], ['accounts_engaged', 'Accounts engaged']] as const).map(([name, label]) => {
-          const metric = report?.accountMetrics?.[name];
+          const metric = selectedAccountMetrics?.[name];
+          const latestStatus = report?.metricResults?.[accountRange === 7 ? `account.${name}` : `account.${accountRange}.${name}`];
           return <div key={name} className="rounded-xl border border-black/10 p-4">
             <p className="text-sm text-[#6e6e73]">{label}</p>
             <p className="mt-2 text-2xl font-semibold tabular-nums">{metricValue(metric?.value, metric?.status)}</p>
-            <p className="mt-1 text-xs text-[#86868b]">{report?.metricResults?.[`account.${name}`] || metric?.status || 'Not yet collected'}</p>
+            <p className="mt-1 text-xs text-[#86868b]">{metric?.status || latestStatus || 'Not yet collected'}
+              {metric && latestStatus && latestStatus !== 'available' ? ` · latest refresh: ${latestStatus}` : ''}</p>
           </div>;
         })}
       </div>

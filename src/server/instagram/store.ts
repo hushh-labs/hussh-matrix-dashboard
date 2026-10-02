@@ -1,6 +1,6 @@
 import { BigQuery } from '@google-cloud/bigquery';
 import { createHash } from 'node:crypto';
-import type { AccountProfile, InstagramMedia, MediaInventory, MediaObservation, MediaInsightName, ReachObservation, AccountInsightName, InsightStatus } from './client';
+import type { AccountProfile, InstagramMedia, MediaInventory, MediaObservation, MediaInsightName, ReachObservation, AccountInsightName, AccountWindowDays, InsightStatus } from './client';
 
 export interface MediaInsightWrite { mediaId: string; publishedAt: string; observation: MediaObservation }
 
@@ -14,6 +14,7 @@ export interface InstagramSummary {
   username: string | null;
   reach: ReachObservation | null;
   accountMetrics?: Partial<Record<AccountInsightName, ReachObservation>>;
+  accountWindows?: Partial<Record<AccountWindowDays, { reach: ReachObservation | null; accountMetrics: Partial<Record<AccountInsightName, ReachObservation>> }>>;
   followersCount?: number | null;
   mediaCount?: number | null;
   countsObservedAt?: string | null;
@@ -244,10 +245,13 @@ export class BigQueryInstagramStore implements InstagramStore {
           inventory_window_since,inventory_complete,inventory_count,inventory_at FROM ${this.table('accounts')}
         WHERE account_id=@accountId LIMIT 1`, { accountId }),
       this.query(`SELECT metric_name,value,value_status,period,metric_type,unit,requested_since,requested_until,
-          provider_since,provider_until,fetched_at FROM ${this.table('account_metrics')}
+          provider_since,provider_until,fetched_at,
+          TIMESTAMP_DIFF(requested_until,requested_since,DAY) window_days FROM ${this.table('account_metrics')}
         WHERE account_id=@accountId AND metric_name IN ('reach','views','total_interactions','accounts_engaged')
           AND requested_until >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY metric_name ORDER BY requested_until DESC)=1`, { accountId }),
+          AND TIMESTAMP_DIFF(requested_until,requested_since,DAY) IN (7,30,90)
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY metric_name,TIMESTAMP_DIFF(requested_until,requested_since,DAY)
+          ORDER BY requested_until DESC,fetched_at DESC)=1`, { accountId }),
       this.query(`SELECT status,error_kind,started_at,metric_results_json FROM ${this.table('sync_runs')}
         WHERE account_id=@accountId AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
         ORDER BY started_at DESC LIMIT 1`, { accountId }),
@@ -266,23 +270,35 @@ export class BigQueryInstagramStore implements InstagramStore {
         WHERE M.account_id=@accountId AND M.metric_name IN ('reach','saved','shares','views')
         LIMIT 300`, { accountId }),
     ]);
-    const account = accounts[0]; const metric = metrics.find((row) => row.metric_name === 'reach'); const run = runs[0];
-    const reach: ReachObservation | null = metric ? {
-      name: 'reach', period: 'day', metricType: 'total_value', unit: 'accounts',
-      value: typeof metric.value === 'number' ? metric.value : null,
-      status: metric.value_status, requestedSince: timestamp(metric.requested_since)!,
-      requestedUntil: timestamp(metric.requested_until)!, providerSince: timestamp(metric.provider_since), providerUntil: timestamp(metric.provider_until),
-    } : null;
-    const accountMetrics: Partial<Record<AccountInsightName, ReachObservation>> = {};
+    const account = accounts[0]; const run = runs[0];
+    const accountWindows: NonNullable<InstagramSummary['accountWindows']> = {};
+    const latestReach = new Map<AccountWindowDays, ReachObservation>();
+    const asObservation = (row: any): ReachObservation => ({
+      name: row.metric_name, period: 'day', metricType: 'total_value', unit: row.unit,
+      value: typeof row.value === 'number' ? row.value : null, status: row.value_status as InsightStatus,
+      requestedSince: timestamp(row.requested_since)!, requestedUntil: timestamp(row.requested_until)!,
+      providerSince: timestamp(row.provider_since), providerUntil: timestamp(row.provider_until), fetchedAt: timestamp(row.fetched_at),
+    });
     for (const row of metrics) {
       if (!['reach','views','total_interactions','accounts_engaged'].includes(row.metric_name)) continue;
-      accountMetrics[row.metric_name as AccountInsightName] = {
-        name: row.metric_name, period: 'day', metricType: 'total_value', unit: row.unit,
-        value: typeof row.value === 'number' ? row.value : null, status: row.value_status as InsightStatus,
-        requestedSince: timestamp(row.requested_since)!, requestedUntil: timestamp(row.requested_until)!,
-        providerSince: timestamp(row.provider_since), providerUntil: timestamp(row.provider_until),
-      };
+      const days = Number(row.window_days) as AccountWindowDays;
+      if (![7, 30, 90].includes(days) || row.metric_name !== 'reach') continue;
+      latestReach.set(days, asObservation(row));
     }
+    for (const days of [7, 30, 90] as AccountWindowDays[]) {
+      const reach = latestReach.get(days) || null;
+      const accountMetrics: Partial<Record<AccountInsightName, ReachObservation>> = {};
+      if (reach) for (const row of metrics) {
+        if (Number(row.window_days) !== days || row.metric_name === 'reach') continue;
+        const observation = asObservation(row);
+        if (observation.requestedSince === reach.requestedSince && observation.requestedUntil === reach.requestedUntil) {
+          accountMetrics[row.metric_name as AccountInsightName] = observation;
+        }
+      }
+      accountWindows[days] = { reach, accountMetrics };
+    }
+    const reach = accountWindows[7]?.reach || null;
+    const accountMetrics = accountWindows[7]?.accountMetrics || {};
     const mediaMetrics = new Map<string, MediaReport['insights']>();
     for (const row of mediaMetricRows) {
       if (!['reach','saved','shares','views'].includes(row.metric_name)) continue;
@@ -298,14 +314,15 @@ export class BigQueryInstagramStore implements InstagramStore {
       likeCount: typeof row.like_count === 'number' ? row.like_count : null,
       commentsCount: typeof row.comments_count === 'number' ? row.comments_count : null,
       fetchedAt: timestamp(row.fetched_at)!, insights: mediaMetrics.get(row.media_id) || {} }));
-    let state: InstagramSummary['state'] = metric ? 'available' : 'empty';
+    let state: InstagramSummary['state'] = reach ? 'available' : 'empty';
     if (run?.status === 'not_configured') state = 'not_configured';
     else if (account?.connection_state === 'reconnect_required' || run?.status === 'reconnect_required') state = 'reconnect_required';
     else if (account?.connection_state === 'permission_missing') state = 'permission_missing';
     else if (run?.status === 'permission_missing') state = 'permission_missing';
     else if (run?.status === 'running') state = 'sync_in_progress';
     else if (run?.status === 'failed') state = 'sync_failed';
-    else if (metric && Date.now() - new Date(timestamp(metric.fetched_at)!).getTime() > 36 * 3_600_000) state = 'stale';
+    else if (metrics.some((row) => row.metric_name === 'reach' && Number(row.window_days) === 7 &&
+      Date.now() - new Date(timestamp(row.fetched_at)!).getTime() > 36 * 3_600_000)) state = 'stale';
     let metricResults: Record<string, InsightStatus> = {};
     try {
       const raw = JSON.parse(run?.metric_results_json || '{}');
@@ -315,7 +332,7 @@ export class BigQueryInstagramStore implements InstagramStore {
       complete: account.inventory_complete === true, windowSince: timestamp(account.inventory_window_since)!,
       count: Number(account.inventory_count) || 0, scannedAt: timestamp(account.inventory_at)!,
     } : null;
-    return { state, username: account?.username || null, reach, accountMetrics, metricResults, inventory,
+    return { state, username: account?.username || null, reach, accountMetrics, accountWindows, metricResults, inventory,
       followersCount: typeof account?.followers_count === 'number' ? account.followers_count : null,
       mediaCount: typeof account?.media_count === 'number' ? account.media_count : null,
       countsObservedAt: timestamp(account?.counts_observed_at), media,
