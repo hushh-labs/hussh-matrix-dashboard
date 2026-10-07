@@ -1,3 +1,4 @@
+import { MetricsSkeleton } from './MetricsLoading';
 import type { ReactNode } from 'react';
 
 import { cn } from '../lib/utils';
@@ -30,6 +31,7 @@ import type {
  * re-implemented) except the App Store Connect card, which is new.
  */
 interface AppsPanelProps {
+  loading?: boolean;
   one: OneAppSummary | null;
   oneUat: OneAppSummary | null;
   appStoreConnect: AppStoreConnectEnvironments | null;
@@ -37,7 +39,8 @@ interface AppsPanelProps {
   dateControl?: ReactNode;
 }
 
-export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateControl }: AppsPanelProps) {
+export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateControl, loading = false }: AppsPanelProps) {
+  if (loading) return <main className="space-y-6"><div className="flex justify-end">{dateControl}</div><MetricsSkeleton /></main>;
   return (
     <main className="space-y-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

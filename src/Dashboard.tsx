@@ -1,3 +1,5 @@
+import { useMetricsResource } from './lib/use-metrics-resource';
+import { MetricsSkeleton, MetricsUpdateStatus } from './components/MetricsLoading';
 import HusshInsightsAgent from './components/HusshInsightsAgent';
 import { motion } from 'motion/react';
 import {
@@ -39,8 +41,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { fetchAllAnalytics, fetchGrowthCompare, formatNumber } from './lib/analytics-service';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
+import { buildAnalyticsUrl, normalizeAnalytics, type AllAnalyticsResponse, formatNumber } from './lib/analytics-service';
 import {
   locationAnalyticsPath,
   parseLocationAnalyticsPath,
@@ -81,12 +83,12 @@ const iconMap: Record<string, typeof Activity> = {
 };
 
 import { appleCard, applePanel, appleLabel, dashboardBand } from './lib/theme';
-import { ComparePanel } from './components/ComparePanel';
-import { GrowthPanel } from './components/GrowthPanel';
-import { OneAppPanel } from './components/OneAppPanel';
-import { AppsPanel } from './components/AppsPanel';
+const ComparePanel = lazy(() => import('./components/ComparePanel').then(module => ({ default: module.ComparePanel })));
+const GrowthPanel = lazy(() => import('./components/GrowthPanel').then(module => ({ default: module.GrowthPanel })));
+const OneAppPanel = lazy(() => import('./components/OneAppPanel').then(module => ({ default: module.OneAppPanel })));
+const AppsPanel = lazy(() => import('./components/AppsPanel').then(module => ({ default: module.AppsPanel })));
 import { FounderBriefingPanel } from './components/FounderBriefingPanel';
-import { InstagramPanel } from './components/InstagramPanel';
+const InstagramPanel = lazy(() => import('./components/InstagramPanel').then(module => ({ default: module.InstagramPanel })));
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
@@ -724,6 +726,9 @@ function DateRangeControl({
   ariaLabelPrefix?: string;
   refreshing?: boolean;
 }) {
+  const [draft, setDraft] = useState(range);
+  useLayoutEffect(() => { setDraft(range); }, [range.startDate, range.endDate, range.preset]);
+  const pending = draft.startDate !== range.startDate || draft.endDate !== range.endDate;
   const today = toDateInputValue(new Date());
   const presets: DatePreset[] = [7, 14, 30, 90];
 
@@ -749,8 +754,6 @@ function DateRangeControl({
             </button>
           ))}
         </div>
-        {/* The fetch behind a range change takes ten seconds or more. Without
-            an acknowledgement right here, the click reads as ignored. */}
         <span
           className={cn(
             'inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold text-[#6e6e73] transition-opacity',
@@ -768,9 +771,9 @@ function DateRangeControl({
           <CalendarDays className="h-3.5 w-3.5 shrink-0" />
           <input
             type="date"
-            value={range.startDate}
+            value={draft.startDate}
             max={today}
-            onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', startDate: event.target.value }))}
+            onInput={(event) => setDraft({ ...draft, preset: 'custom', startDate: event.currentTarget.value })}
             className="min-w-0 flex-1 bg-transparent text-xs font-bold text-[#1d1d1f] outline-none"
             aria-label={`${ariaLabelPrefix} start date`}
           />
@@ -778,14 +781,15 @@ function DateRangeControl({
         <label className="flex min-h-10 items-center rounded-lg bg-[#f5f5f7] px-2 text-xs font-bold text-[#6e6e73]">
           <input
             type="date"
-            value={range.endDate}
+            value={draft.endDate}
             max={today}
-            onChange={(event) => onCustomRange(normalizeCustomRange({ ...range, preset: 'custom', endDate: event.target.value }))}
+            onInput={(event) => setDraft({ ...draft, preset: 'custom', endDate: event.currentTarget.value })}
             className="min-w-0 flex-1 bg-transparent text-xs font-bold text-[#1d1d1f] outline-none"
             aria-label={`${ariaLabelPrefix} end date`}
           />
         </label>
       </div>
+      {pending && <button type="button" onClick={() => { const next = normalizeCustomRange(draft); setDraft(next); onCustomRange(next); }} disabled={!draft.startDate || !draft.endDate} className="min-h-9 rounded-lg bg-[#007aff] px-3 text-xs font-bold text-white disabled:opacity-50">Apply dates</button>}
     </div>
   );
 }
@@ -1184,30 +1188,27 @@ export default function Dashboard() {
   // 7-day window reads as noise rather than a trend.
   const [oneRange, setOneRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(30));
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [compareRefreshKey, setCompareRefreshKey] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [usingMock, setUsingMock] = useState(false);
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
-  // Three fixed-window growth summaries for the over-time tab. Loaded on first
-  // visit to that tab rather than with everything else: it is three more
-  // BigQuery passes, and most sessions never open it.
-  const [compare, setCompare] = useState<GrowthCompare | null>(null);
-  const [compareLoading, setCompareLoading] = useState(false);
-  const [compareError, setCompareError] = useState<string | null>(null);
-  // The full-screen "Loading live metrics" overlay is for the first paint
-  // only. A date-range change used to go through the same path, so every
-  // preset click blurred the whole page for the ten-plus seconds the fetch
-  // takes and then, on the growth tab, came back looking identical (the
-  // audience curve is deliberately all-time). Once data is on screen, every
-  // later load -- range change, manual refresh, auto refresh -- keeps the page
-  // visible and reports through `isRefreshing` instead.
-  const hasLoadedRef = useRef(false);
-  // Range clicks can outrun the fetch. Without this, clicking 14D and then 30D
-  // let the slower 14D response land last and overwrite the 30D data while the
-  // toggle still said 30D.
-  const requestSeqRef = useRef(0);
+  const scope = ['one', 'growth', 'apps', 'overview', 'platforms'].includes(activeTab) ? activeTab as 'one' | 'growth' | 'apps' | 'overview' | 'platforms' : null;
+  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one', oneStartDate: range.startDate, oneEndDate: range.endDate,
+    ...((scope === 'overview' || scope === 'platforms') ? { kaiStartDate: kaiRange.startDate, kaiEndDate: kaiRange.endDate, hushhAiStartDate: hushhAiRange.startDate, hushhAiEndDate: hushhAiRange.endDate } : {}) });
+  const resource = useMetricsResource<AllAnalyticsResponse>(scope ? buildAnalyticsUrl(rangeOptions()) : null, {
+    refreshKey, refreshIntervalMs: autoRefresh ? 30_000 : undefined,
+    prefetchUrls: scope && scope !== 'overview' && scope !== 'platforms' ? ([7, 14, 30, 90] as DatePreset[]).map(days => buildAnalyticsUrl(rangeOptions(rangeForPreset(days)))) : [],
+  });
+  const data = useMemo(() => resource.data ? normalizeAnalytics(resource.data) : null, [resource.data]);
+  const loading = resource.loading;
+  const isRefreshing = resource.refreshing;
+  const usingMock = resource.error || Boolean(data?.error);
+  const loadData = () => setRefreshKey(key => key + 1);
+  const comparison = useMetricsResource<GrowthCompare>(activeTab === 'compare' ? '/api/analytics/growth/compare' : null, { refreshKey: compareRefreshKey, refreshIntervalMs: autoRefresh ? 30_000 : undefined });
+  const compare = comparison.data;
+  const compareLoading = comparison.loading;
+  const compareError = comparison.error ? 'Comparison temporarily unavailable.' : compare?.error ?? null;
+  const loadCompare = () => setCompareRefreshKey(key => key + 1);
 
   const changeDashboardTab = useCallback((tab: DashboardTab) => {
     if (locationRoute) {
@@ -1272,61 +1273,6 @@ export default function Dashboard() {
     document.title = `One Location ${locationRoute.environment === 'uat' ? 'UAT' : 'Production'}${section} | Hussh Matrix`;
   }, [locationRoute]);
 
-  const loadData = useCallback(async () => {
-    const requestId = ++requestSeqRef.current;
-    if (hasLoadedRef.current) {
-      setIsRefreshing(true);
-    } else {
-      setLoading(true);
-    }
-    const result = await fetchAllAnalytics({
-      kaiStartDate: kaiRange.startDate,
-      kaiEndDate: kaiRange.endDate,
-      oneStartDate: oneRange.startDate,
-      oneEndDate: oneRange.endDate,
-      hushhAiStartDate: hushhAiRange.startDate,
-      hushhAiEndDate: hushhAiRange.endDate,
-    });
-    if (requestId !== requestSeqRef.current) return;
-    hasLoadedRef.current = true;
-    setUsingMock(Boolean(result.error));
-    setData(result);
-    setLoading(false);
-    setIsRefreshing(false);
-  }, [hushhAiRange.endDate, hushhAiRange.startDate, kaiRange.endDate, kaiRange.startDate, oneRange.endDate, oneRange.startDate]);
-
-  useEffect(() => {
-    if ((activeTab !== 'briefing' && activeTab !== 'instagram') || locationRoute) void loadData();
-  }, [activeTab, locationRoute, loadData]);
-
-  const loadCompare = useCallback(async () => {
-    setCompareLoading(true);
-    const result = await fetchGrowthCompare();
-    setCompare(result);
-    setCompareError(result ? result.error : 'Failed to fetch the comparison. Is the server running?');
-    setCompareLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (activeTab !== 'compare' || compare || compareLoading) return;
-    void loadCompare();
-    // `compare`/`compareLoading` are read, not depended on: this should fire
-    // on entering the tab, not again when the load it started resolves.
-  }, [activeTab, loadCompare]);
-
-  const liveRefreshSeconds = Math.min(
-    data?.kaiProduction?.freshness?.refreshIntervalSeconds ?? 30,
-    data?.hushhAi?.freshness?.refreshIntervalSeconds ?? 30,
-  );
-
-  useEffect(() => {
-    if (!autoRefresh || activeTab === 'briefing' || activeTab === 'instagram') return undefined;
-    const refreshId = window.setInterval(() => {
-      void loadData();
-    }, liveRefreshSeconds * 1000);
-    return () => window.clearInterval(refreshId);
-  }, [activeTab, autoRefresh, liveRefreshSeconds, loadData]);
-
   const platforms = data?.platforms ?? [];
   const sourceGroups = data?.sourceGroups ?? [];
   const kpiStats = data?.kpiStats ?? [];
@@ -1380,7 +1326,7 @@ export default function Dashboard() {
     ? 'Instagram reporting · stored observations'
     : activeTab === 'briefing'
     ? 'One production briefing · choose dates below'
-    : usingMock ? 'Metrics are syncing from connected sources' : 'Live metrics loaded from connected sources';
+    : loading ? 'Loading the selected period' : usingMock ? 'Metrics temporarily unavailable · details below' : isRefreshing ? 'Updating metrics in the background' : 'Metrics ready · selected dates below';
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
 
   const ga4SummaryRows = () => {
@@ -1767,24 +1713,15 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#cce4ff] selection:text-[#003b76]">
-      {loading && activeTab !== 'briefing' && activeTab !== 'instagram' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#f5f5f7]/80 backdrop-blur-xl">
-          <div className={cn(appleCard, 'flex items-center gap-3 px-5 py-3')}>
-            <Loader2 className="h-5 w-5 animate-spin text-[#007aff]" />
-            <p className="text-sm font-bold text-[#1d1d1f]">Loading live metrics</p>
-          </div>
-        </div>
-      )}
-
       <div className="mx-auto max-w-[1320px] px-3 pb-10 pt-3 sm:px-6 sm:pb-12 sm:pt-6 lg:px-8">
         <div className="relative z-30 mb-6 rounded-2xl border border-white/80 bg-white/90 p-2.5 shadow-[0_8px_30px_rgba(15,23,42,0.09)] backdrop-blur-2xl sm:sticky sm:top-3 sm:mb-8 sm:p-3">
           <div className="flex flex-col gap-2.5">
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className={cn(
                 'flex min-h-10 min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold leading-5 sm:flex-1 sm:text-sm',
-                activeTab === 'briefing' || activeTab === 'instagram' || usingMock ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
+                activeTab === 'briefing' || activeTab === 'instagram' || usingMock || loading || isRefreshing ? 'border-black/[0.06] bg-[#f5f5f7] text-[#6e6e73]' : 'border-[#1f7a36]/15 bg-[#ecfdf3]/80 text-[#1f7a36]',
               )}>
-                {activeTab !== 'briefing' && activeTab !== 'instagram' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                {activeTab !== 'briefing' && activeTab !== 'instagram' && (loading || isRefreshing ? <Clock className="h-4 w-4 shrink-0" /> : <CheckCircle2 className="h-4 w-4 shrink-0" />)}
                 <span className="min-w-0 break-words">{statusText}</span>
               </div>
               <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
@@ -1794,8 +1731,7 @@ export default function Dashboard() {
                     if (activeTab === 'briefing') setBriefRefreshKey((key) => key + 1);
                     else if (activeTab === 'instagram') setInstagramRefreshKey((key) => key + 1);
                     else {
-                      void loadData();
-                      if (compare) void loadCompare();
+                      if (activeTab === 'compare') loadCompare(); else loadData();
                     }
                   }}
                   className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1d1d1f] px-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#323236] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 sm:px-4"
@@ -1874,12 +1810,15 @@ export default function Dashboard() {
           </div>
         </header>}
 
+        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One ${oneRange.startDate} to ${oneRange.endDate} · web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} loading={loading} refreshing={isRefreshing} error={usingMock} />}
+        <Suspense fallback={<MetricsSkeleton label="Opening this metrics section" />} >
         {activeTab === 'briefing' ? (
           <FounderBriefingPanel refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />
         ) : activeTab === 'instagram' ? (
           <InstagramPanel refreshKey={instagramRefreshKey} />
         ) : activeTab === 'growth' ? (
           <GrowthPanel
+            loading={loading}
             growth={data?.growth ?? null}
             costPerActiveUser={data?.costPerActiveUser ?? null}
             monthlyActive={data?.one?.activeUsers?.mau ?? null}
@@ -1903,16 +1842,7 @@ export default function Dashboard() {
           />
         ) : activeTab === 'one' ? (
           <OneAppPanel
-            // `data` is null for the whole of the first load, and that load
-            // takes ten seconds or more. The loading state here is an OVERLAY,
-            // not an early return, so this subtree renders underneath it with
-            // nothing in hand -- `data.one` threw on the very first paint and
-            // took the entire dashboard down to a white screen.
-            //
-            // The overview tab never showed this because it reads through
-            // `data?.sourceGroups ?? []`; this tab is only the default one
-            // since the One app became the growth focus, which is what made a
-            // pre-existing hazard the first thing every visitor hit.
+            loading={loading}
             one={data?.one ?? null}
             oneUat={data?.oneUat ?? null}
             healthMetrics={data?.oneHealthMetrics ?? []}
@@ -1933,6 +1863,7 @@ export default function Dashboard() {
           />
         ) : activeTab === 'apps' ? (
           <AppsPanel
+            loading={loading}
             one={data?.one ?? null}
             oneUat={data?.oneUat ?? null}
             appStoreConnect={data?.appStoreConnect ?? null}
@@ -1948,13 +1879,19 @@ export default function Dashboard() {
             )}
           />
         ) : activeTab === 'overview' ? (
-          <main className="space-y-10">
-            <SourceMatrix groups={sourceGroups} onMetricClick={handleSourceMetricClick} />
+          loading ? <main className="space-y-6">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <DateRangeControl range={kaiRange} onPreset={days => setKaiRange(rangeForPreset(days))} onCustomRange={setKaiRange} ariaLabelPrefix="One web" />
+              <DateRangeControl range={hushhAiRange} onPreset={days => setHushhAiRange(rangeForPreset(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hushh AI" />
+            </div>
+            <MetricsSkeleton />
+          </main> : <main className="space-y-10">
+            {loading ? <MetricsSkeleton /> : <SourceMatrix groups={sourceGroups} onMetricClick={handleSourceMetricClick} />}
 
             <section className={dashboardBand}>
               <SectionHeader kicker="Current selected ranges" title="Key metrics" />
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {kpiStats.map((stat, index) => (
+                {!loading && kpiStats.map((stat, index) => (
                   <div key={stat.label}>
                     <MetricCard stat={stat} index={index} />
                   </div>
@@ -2452,7 +2389,7 @@ export default function Dashboard() {
             </section>
           </main>
         ) : (
-          <main className="space-y-10">
+          loading ? <MetricsSkeleton /> : <main className="space-y-10">
             <section className={dashboardBand}>
               <SectionHeader kicker="Platforms" title="Source health" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -2513,6 +2450,7 @@ export default function Dashboard() {
             </section>
           </main>
         )}
+        </Suspense>
       </div>
 
       <MetricDetailDialog detail={metricDetail} onClose={closeMetricDetail} />

@@ -1,3 +1,4 @@
+import { MetricsSkeleton } from './MetricsLoading';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -52,6 +53,7 @@ import { MetricCalculationGuide } from './MetricCalculationGuide';
 import { exactCount, eventVolumeExplanation, featureActivityLabel } from '../lib/feature-measurement';
 
 interface AgentCapabilityAnalyticsPanelProps {
+  loading?: boolean;
   capabilityKey: string;
   one: OneAppSummary | null;
   uat: OneAppSummary | null;
@@ -563,6 +565,7 @@ function MetricValue({ value, waiting = false }: { value: number | null; waiting
 
 export function AgentCapabilityAnalyticsPanel({
   capabilityKey,
+  loading = false,
   one,
   uat,
   rangeLabel,
@@ -737,6 +740,7 @@ export function AgentCapabilityAnalyticsPanel({
         </div>
       </div>
 
+      {loading ? <MetricsSkeleton /> : <>
       {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className={cn(appleCard, 'p-5')}>
@@ -895,6 +899,7 @@ export function AgentCapabilityAnalyticsPanel({
           </div>
         </div>
       </details>
+      </>}
     </div>
   );
 }

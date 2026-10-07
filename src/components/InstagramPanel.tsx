@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMetricsResource } from '../lib/use-metrics-resource';
+import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
+import { useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { appleCard, applePanel } from '../lib/theme';
 import { cn } from '../lib/utils';
@@ -41,8 +43,10 @@ const stateCopy: Record<InstagramReport['state'], string> = {
 };
 
 export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
-  const [report, setReport] = useState<InstagramReport | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [syncRefreshKey, setSyncRefreshKey] = useState(0);
+  const resource = useMetricsResource<InstagramReport>('/api/analytics/instagram', { refreshKey: refreshKey + syncRefreshKey, refreshIntervalMs: 30_000 });
+  const report = resource.data;
+  const loading = resource.loading;
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [destination, setDestination] = useState<string>(INSTAGRAM_DESTINATIONS[0].url);
@@ -77,30 +81,21 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     catch { return null; }
   };
   const campaignLink = buildInstagramCampaignLink(destination, campaign, content);
-  const load = useCallback(async () => {
-    try {
-      const response = await fetch('/api/analytics/instagram', { cache: 'no-store' });
-      if (!response.ok) throw new Error('request failed');
-      setReport(await response.json());
-      setMessage(null);
-    } catch {
-      setMessage('Instagram reporting is temporarily unavailable.');
-    } finally { setLoading(false); }
-  }, []);
-  useEffect(() => { void load(); }, [load, refreshKey]);
-
   const sync = async () => {
     setSyncing(true);
     try {
       const response = await fetch('/api/instagram/sync', { method: 'POST', headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error('sync failed');
-      await load();
+      setSyncRefreshKey(key => key + 1);
+      setMessage(null);
     } catch {
       setMessage('Sync could not complete. Try again after the cooldown.');
     } finally { setSyncing(false); }
   };
 
   return <section className="space-y-5" aria-labelledby="instagram-title">
+    <MetricsUpdateStatus updatedAt={resource.updatedAt} loading={loading} refreshing={resource.refreshing} error={resource.error} />
+    {loading && <MetricsSkeleton label="Loading Instagram reporting" />}
     <div className={cn(appleCard, 'p-5 sm:p-8')}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
