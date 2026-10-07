@@ -10,6 +10,7 @@
     "start": "tsx server.ts",
     "test": "vitest run",
     "test:prod:auth": "node scripts/check-auth-production.mjs",
+    "test:prod:performance": "node scripts/check-metrics-performance.mjs",
     "test:prod:founder": "node scripts/check-founder-briefing-contract.mjs",
     "clean": "rm -rf dist",
     "ingest:search-console": "node scripts/ingest-hushhtech-search-console.mjs",
@@ -48,6 +49,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "clsx": "^2.1.1",
+    "compression": "^1.8.2",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "google-auth-library": "^10.6.2",
@@ -60,6 +62,7 @@
     "vite": "^6.2.0"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/supertest": "^7.2.1",

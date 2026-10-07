@@ -38,7 +38,7 @@ import type {
 
 const API_BASE = '/api';
 
-interface AllAnalyticsResponse {
+export interface AllAnalyticsResponse {
   kai: {
     uat: { environment: string; rows: FeedRow[]; error?: string | null };
     production: { environment: string; rows: FeedRow[]; error?: string | null };
@@ -57,7 +57,8 @@ interface AllAnalyticsResponse {
   fetchedAt: string;
 }
 
-interface FetchAllAnalyticsOptions {
+export interface FetchAllAnalyticsOptions {
+  view?: 'one' | 'growth' | 'apps' | 'overview' | 'platforms';
   hushhAiStartDate?: string;
   hushhAiEndDate?: string;
   kaiStartDate?: string;
@@ -66,8 +67,9 @@ interface FetchAllAnalyticsOptions {
   oneEndDate?: string;
 }
 
-function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
+export function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
   const params = new URLSearchParams();
+  if (options?.view) params.set('view', options.view);
   if (options?.hushhAiStartDate) params.set('hushh_ai_start_date', options.hushhAiStartDate);
   if (options?.hushhAiEndDate) params.set('hushh_ai_end_date', options.hushhAiEndDate);
   if (options?.kaiStartDate) params.set('kai_start_date', options.kaiStartDate);
@@ -1647,6 +1649,10 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     return emptyDashboard('Failed to fetch analytics data. Is the server running?', null);
   }
 
+  return normalizeAnalytics(result);
+}
+
+export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData {
   const uatRows = result.kai.uat.rows ?? [];
   const prodRows = result.kai.production.rows ?? [];
   // Production only.
@@ -1697,7 +1703,7 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
     result.appStoreConnect?.error,
   ].filter((value): value is string => Boolean(value));
 
-  if (activeRows.length === 0 && !hushhTech) {
+  if (activeRows.length === 0 && !hushhTech && !one && !oneUat && !growth && !result.appStoreConnect?.data) {
     return {
       ...emptyDashboard('Analytics feeds are unavailable. Check BigQuery ADC/IAM, the hushhtech.com endpoint, and the Express server logs.', result.fetchedAt),
       feedWarnings,

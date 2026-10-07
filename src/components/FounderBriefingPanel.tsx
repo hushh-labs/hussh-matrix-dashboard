@@ -1,5 +1,7 @@
+import { useMetricsResource } from '../lib/use-metrics-resource';
+import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
 import { ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Clock3, Info, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { FounderAgent, FounderBriefingData, FounderMeasure, FounderPeriod } from '../lib/founder-briefing';
 import {
@@ -109,34 +111,14 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
   const [draftStart, setDraftStart] = useState(() => founderPresetRange(30).startDate);
   const [draftEnd, setDraftEnd] = useState(() => founderPresetRange(30).endDate);
   const [rangeError, setRangeError] = useState<string | null>(null);
-  const [brief, setBrief] = useState<FounderBriefingData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [chartMode, setChartMode] = useState<ChartMode>('accounts');
   const latestComplete = founderLatestCompleteDate();
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    setError(false);
-    const query = new URLSearchParams({ start_date: period.startDate, end_date: period.endDate });
-    fetch(`/api/analytics/founder?${query}`, {
-      cache: 'no-store', headers: { Accept: 'application/json' }, signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Briefing source unavailable');
-        return response.json() as Promise<FounderBriefingData>;
-      })
-      .then((result) => {
-        if (!result?.period || !result.one?.platforms || !result.one?.agents || !result.one?.daily || !result.search) {
-          throw new Error('Briefing response incomplete');
-        }
-        setBrief(result);
-      })
-      .catch(() => { if (!controller.signal.aborted) setError(true); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [period.startDate, period.endDate, refreshKey]);
+  const briefingUrl = (range: FounderPeriod) => '/api/analytics/founder?' + new URLSearchParams({ start_date: range.startDate, end_date: range.endDate });
+  const resource = useMetricsResource<FounderBriefingData>(briefingUrl(period), { refreshKey, refreshIntervalMs: 30_000,
+    prefetchUrls: [7, 30, 90].map(days => briefingUrl(founderPresetRange(days as 7 | 30 | 90))) });
+  const brief = resource.data?.period && resource.data.one?.platforms && resource.data.one?.agents && resource.data.one?.daily && resource.data.search ? resource.data : null;
+  const loading = resource.loading || resource.refreshing;
+  const error = resource.error || Boolean(resource.data && !brief);
 
   const applyRange = (next: FounderPeriod | null, kind: Selection) => {
     if (!next) {
@@ -234,7 +216,8 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
       </div>
     </section>
 
-    {loading && !brief ? <div role="status" className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">Preparing the One briefing…</div>
+    <MetricsUpdateStatus period={rangeLabel(period)} updatedAt={brief ? resource.updatedAt : null} loading={resource.loading} refreshing={resource.refreshing} error={error} />
+    {resource.loading && !brief ? <MetricsSkeleton label="Loading the selected briefing period" />
       : error && !brief ? <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">The production briefing is temporarily unavailable. No estimate is shown.</div>
         : brief ? <>
           {error && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Refresh failed; the previous period remains visible.</p>}

@@ -1,25 +1,15 @@
 import type { OneAppSummary } from '../lib/types';
-import { useEffect, useState } from 'react';
+import { useMetricsResource } from '../lib/use-metrics-resource';
+import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
 
 const count = (value: number | null | undefined) => typeof value === 'number' ? value.toLocaleString('en-US') : 'Not available';
 
 export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one: OneAppSummary; environment?: 'production'|'uat' }) {
   const data = one.androidCapture;
-  const [report, setReport] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
   const startDate = one.range?.startDate;
   const endDate = one.range?.endDate;
-  useEffect(() => {
-    if (!startDate || !endDate || environment !== 'production') {setReport(null);return;}
-    const controller = new AbortController();setLoading(true);setError(false);setReport(null);
-    const params = new URLSearchParams({start_date:startDate,end_date:endDate});
-    fetch(`/api/analytics/one/android?${params}`, {credentials:'same-origin',signal:controller.signal})
-      .then(response => {if(!response.ok)throw new Error('Reporting unavailable');return response.json();})
-      .then(value => {if(!controller.signal.aborted)setReport(value);}).catch(() => {if(!controller.signal.aborted)setError(true);})
-      .finally(() => {if(!controller.signal.aborted)setLoading(false);});
-    return () => controller.abort();
-  }, [startDate,endDate,environment]);
+  const resource = useMetricsResource<any>(startDate && endDate && environment === 'production' ? '/api/analytics/one/android?' + new URLSearchParams({ start_date: startDate, end_date: endDate }) : null, { refreshIntervalMs: 30_000 });
+  const { data: report, loading, error } = resource;
   return <section className="mb-5 rounded-2xl border border-black/5 bg-white p-5" aria-label="Android capture and release diagnostics">
     <h3 className="text-lg font-semibold">Android app analytics</h3>
     <p className="mt-1 text-xs text-[#6e6e73]">com.hussh.app · Firebase app analytics, separate from Google Play downloads</p>
@@ -41,13 +31,14 @@ export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one
       {data.releases.some((row) => row.environment === 'uat') && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Some Android events came from a build using the UAT backend. These measurements are not evidence of production-backend customers. Untagged automatic events do not establish backend environment.</p>}
     </>}
     <p className="mt-3 text-xs leading-5 text-[#6e6e73]">Screen activity, activation, retention and feature use are in the One sections below. Firebase first_open counts a first launch after installation or reinstallation, not a Play Store download. Export data starts when the stream is included; missing historical raw events are not reconstructed.</p>
+    <MetricsUpdateStatus period={startDate && endDate ? `${startDate} to ${endDate}` : undefined} updatedAt={resource.updatedAt} loading={loading} refreshing={resource.refreshing} error={error} />
     {environment==='production' ? <AndroidProviderReport report={report} loading={loading} error={error} /> : <p className="mt-4 text-xs text-[#6e6e73]">Play Store and historical production-property reports are available in the production reporting view.</p>}
   </section>;
 }
 
 const statusLabel = (state: string | undefined) => ({available:'Available',not_configured:'Not configured',permission_missing:'Read permission needed',not_yet_available:'Not yet available',sync_failed:'Source unavailable',privacy_limited:'Privacy limited'}[state ?? ''] ?? 'Source unavailable');
 export function AndroidProviderReport({report,loading,error}: {report:any;loading?:boolean;error?:boolean}) {
-  if(loading)return <p className="mt-4 text-sm" role="status">Loading Android history and Play reports…</p>;
+  if(loading)return <MetricsSkeleton label="Loading Android history and Play reports" />;
   if(error)return <p className="mt-4 text-sm text-amber-900" role="status">Android history and Play reporting are temporarily unavailable. Existing app measurements remain visible.</p>;
   if(!report)return null;
   const history=report.history;

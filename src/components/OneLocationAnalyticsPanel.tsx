@@ -1,3 +1,4 @@
+import { MetricsSkeleton } from './MetricsLoading';
 import { useState, useMemo } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import {
@@ -318,6 +319,7 @@ function SourceCompleteness({
 }
 
 export function OneLocationAnalyticsPanel({
+  loading = false,
   one,
   uat,
   environment,
@@ -328,6 +330,7 @@ export function OneLocationAnalyticsPanel({
   onEnvironmentChange,
   onTabChange,
 }: {
+  loading?: boolean;
   one: OneAppSummary | null;
   uat: OneAppSummary | null;
   environment: LocationAnalyticsEnvironment;
@@ -422,7 +425,7 @@ export function OneLocationAnalyticsPanel({
         </div>
       </section>
 
-      {(!selectedOne || !selectedOne.available || !locationAnalytics) ? (
+      {loading ? <MetricsSkeleton /> : (!selectedOne || !selectedOne.available || !locationAnalytics) ? (
         <section className={cn(applePanel, 'p-8 text-center')}>
           <p className="text-base font-bold text-[#1d1d1f]">
             {environment === 'production' ? 'Production' : 'UAT/test'} analytics are unavailable.
