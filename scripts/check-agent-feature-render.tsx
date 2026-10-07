@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { AgentCapabilityAnalyticsPanel } from '../src/components/AgentCapabilityAnalyticsPanel';
 import { OneLocationAnalyticsPanel } from '../src/components/OneLocationAnalyticsPanel';
+import { FeatureUserBreakdownPanel } from '../src/components/FeatureUserBreakdownPanel';
 import type { OneAppSummary } from '../src/lib/types';
 
 function render(capabilityKey: string): string {
@@ -20,25 +21,23 @@ const gmail = render('gmail');
 const finance = render('finance');
 const location = render('location');
 assert.match(gmail, /Connection attempts/);
-assert.match(gmail, /Google Account Connection/);
+assert.match(gmail, /Gmail connection results/);
 assert.match(gmail, /Sync requests/);
-assert.match(gmail, /Sync jobs accepted/);
-assert.match(gmail, /Receipt sync completed/);
+assert.match(gmail, /Sync queue results/);
+assert.match(gmail, /Sync processing results/);
 assert.match(gmail, /Mail sign-in screen views/);
-assert.match(gmail, /<th[^>]*>Identified accounts<\/th>/);
-assert.match(gmail, /<th[^>]*>Successful<\/th>/);
-assert.match(gmail, /<th[^>]*>Canceled \/ no-op<\/th>/);
-assert.match(gmail, /<th[^>]*>Failed<\/th>/);
-assert.match(finance, /Portfolio import parsed/);
-assert.match(finance, /Portfolio import saved/);
-assert.match(finance, /<th[^>]*>Identified accounts<\/th>/);
-assert.match(finance, /<th[^>]*>Successful<\/th>/);
-assert.match(location, /<th[^>]*>Successful<\/th>/);
-assert.match(location, /<th[^>]*>Failed<\/th>/);
+assert.match(finance, /Import parsing results/);
+assert.match(finance, /Import saving results/);
+for (const key of ['location', 'finance', 'consent', 'gmail', 'ria', 'marketplace', 'memory', 'wallet', 'calendar', 'kyc', 'connected_systems', 'onboarding']) {
+  const page = render(key);
+  assert.match(page, /<th[^>]*>Devices \/ browsers<\/th>/);
+  assert.match(page, /<th[^>]*>Times recorded<\/th>/);
+  assert.match(page, /View details/);
+  assert.match(page, /How to read these KPIs/);
+  assert.doesNotMatch(page, /<th[^>]*>(Successful|Failed|Event name)<\/th>/);
+}
 assert.match(location, /Shared location views/);
-assert.match(location, /How these metrics are calculated/);
-assert.match(location, /Recorded events/);
-assert.match(location, /Events \/ device/);
+assert.match(location, /One device opening a shared location five times/);
 
 const summary = {
   available: true, capabilitiesAvailable: true, locationBehaviorAvailable: true, featureUsageAvailable: true,
@@ -61,9 +60,17 @@ function renderLocation(one: OneAppSummary) {
   }));
 }
 const measuredLocation = renderLocation(summary);
-assert.match(measuredLocation, /6,653 recorded events from 11 distinct device\/browser IDs/);
-assert.match(measuredLocation, /25 recorded events from 6 distinct device\/browser IDs/);
-assert.match(measuredLocation, /604\.8 events per device/);
+assert.match(measuredLocation, /6,653 records from 11 device\/browser IDs/);
+assert.match(measuredLocation, /25 records from 6 device\/browser IDs/);
+assert.doesNotMatch(measuredLocation, /604\.8/); // The average belongs in the optional details.
 assert.doesNotMatch(measuredLocation, /Non-error share|100%/);
-assert.match(renderLocation({ ...summary, locationBehaviorAvailable: false }), /Source unavailable/);
-console.log(JSON.stringify({ ok: true, checkedAt: new Date().toISOString(), target: 'One agent feature table', checks: ['gmail distinct stages', 'finance distinct import steps', 'identified-account and device units separated', 'outcome columns shown consistently'] }, null, 2));
+assert.match(renderLocation({ ...summary, locationBehaviorAvailable: false }), /Data unavailable/);
+const detail = renderToStaticMarkup(createElement(FeatureUserBreakdownPanel, {
+  featureLabel: 'Shared location views', totalDevices: 11, totalEvents: 6653,
+  successes: 6650, expectedErrors: 1, failures: 1,
+}));
+assert.match(detail, /604\.8/);
+assert.match(detail, /Results at this step/);
+assert.match(detail, /Result not reported/);
+assert.match(detail, /Technical details/);
+console.log(JSON.stringify({ ok: true, checkedAt: new Date().toISOString(), target: 'One team KPI view', checks: ['all 12 agents use the same simple units', 'separate views and confirmations', 'stages retain distinct labels', 'averages and results remain in details', 'unavailable data is explicit'] }, null, 2));

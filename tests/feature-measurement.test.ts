@@ -4,7 +4,8 @@ import { exactCount, eventsPerDevice, eventVolumeExplanation, featureMeasurement
 describe('feature metric units', () => {
   it('shows the exact value hidden by compact rounding', () => {
     expect(exactCount(6678)).toBe('6,678');
-    expect(eventVolumeExplanation(6678, 12)).toContain('556.5 events per device');
+    expect(eventVolumeExplanation(6678, 12)).toContain('6,678 records from 12 device/browser IDs');
+    expect(eventVolumeExplanation(6678, 12)).toContain('Repeats count again');
     expect(eventsPerDevice(25, 6)).toBe('4.2');
   });
 

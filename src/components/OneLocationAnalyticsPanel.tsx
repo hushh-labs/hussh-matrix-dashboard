@@ -1,10 +1,9 @@
-import { useState, useMemo, Fragment } from 'react';
+import { useState, useMemo } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import {
   Activity,
   ArrowLeft,
   CheckCircle2,
-  ChevronDown,
   CircleDot,
   ContactRound,
   Info,
@@ -13,7 +12,6 @@ import {
   MessageCircleMore,
   Radio,
   ShieldCheck,
-  Users,
   UsersRound,
 } from 'lucide-react';
 import {
@@ -38,9 +36,9 @@ import type {
   OneLocationBehaviorMetric,
   OneLocationJourneyMetric,
 } from '../lib/types';
-import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
+import { FeatureActivityTable } from './FeatureActivityTable';
 import { MetricCalculationGuide } from './MetricCalculationGuide';
-import { exactCount, eventsPerDevice, eventVolumeExplanation, featureMeasurementNote, unclassifiedEvents } from '../lib/feature-measurement';
+import { exactCount, eventVolumeExplanation, featureActivityLabel } from '../lib/feature-measurement';
 
 const tabs: Array<{ key: LocationAnalyticsTab; label: string }> = [
   { key: 'overview', label: 'Overview' },
@@ -123,25 +121,25 @@ function StatCard({
 
 function featureAudit(feature: OneLocationBehaviorMetric, environment: LocationAnalyticsEnvironment, sourceAvailable: boolean) {
   if (!sourceAvailable) return {
-    badgeLabel: 'Source unavailable', badgeClass: 'bg-amber-50 text-amber-800',
-    explanation: 'The aggregate query is unavailable. No zero is inferred.',
+    badgeLabel: 'Data unavailable', badgeClass: 'bg-amber-50 text-amber-800',
+    explanation: 'We could not read this count. A dash does not mean zero activity.',
   };
   if (!feature.instrumented) {
     return {
-      badgeLabel: 'Not measured',
+      badgeLabel: 'Not tracked yet',
       badgeClass: 'bg-amber-50 text-amber-800',
       explanation: `No matching ${environment === 'production' ? 'production' : 'UAT/test'} event has been observed. This is not proof of zero use.`,
     };
   }
   if (!feature.events) {
     return {
-      badgeLabel: 'No signals in range',
+      badgeLabel: 'No activity recorded',
       badgeClass: 'bg-slate-100 text-slate-600',
-      explanation: 'No matching event was found in the selected date range. A live flow test is still needed.',
+      explanation: 'No matching activity was recorded in this period.',
     };
   }
   return {
-    badgeLabel: 'Recorded activity',
+    badgeLabel: 'Data available',
     badgeClass: 'bg-emerald-50 text-emerald-800',
     explanation: eventVolumeExplanation(feature.events, feature.users),
   };
@@ -156,223 +154,31 @@ function FeatureTable({
   environment: LocationAnalyticsEnvironment;
   summary: OneAppSummary;
 }) {
-  const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
-
   const sortedFeatures = useMemo(() => {
-    const FIXED_ORDER = [
-      'auth_started',
-      'daily_signin',
-      'live_sharing',
-      'location_viewed',
-      'request_location',
-      'public_sharing',
-      'contact_sync',
-      'circle_engagement',
-      'sms_safety',
-      'invitations',
-      'check_in',
-      'check_out',
-    ];
+    const order = ['auth_started', 'daily_signin', 'live_sharing', 'location_viewed', 'request_location', 'public_sharing', 'contact_sync', 'circle_engagement', 'sms_safety', 'invitations', 'check_in', 'check_out'];
     return [...features].sort((a, b) => {
-      const idxA = FIXED_ORDER.indexOf(a.key);
-      const idxB = FIXED_ORDER.indexOf(b.key);
-      return (idxA !== -1 ? idxA : 99) - (idxB !== -1 ? idxB : 99);
+      const first = order.indexOf(a.key);
+      const second = order.indexOf(b.key);
+      return (first < 0 ? 99 : first) - (second < 0 ? 99 : second);
     });
   }, [features]);
 
-  return (
-    <>
-      <div className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs">
-        <div className="flex items-center gap-2 font-bold text-[#1d1d1f]">
-          <Info className="h-4 w-4 text-[#007aff]" />
-          <span>What these feature counts show</span>
-        </div>
-        <p className="mt-1 text-[#6e6e73]">
-          Recorded events include repeats. Sharing confirmations and shared-location views are separate. Success refers to the recorded stage, not end-to-end completion. Open a device count for its calculation and source events.
-        </p>
-      </div>
-
-      <div className="space-y-3 sm:hidden">
-        {sortedFeatures.map((feature) => {
-          const Icon = featureIcon[feature.key] ?? Activity;
-          const waiting = !feature.instrumented || !summary.locationBehaviorAvailable;
-          const audit = featureAudit(feature, environment, summary.locationBehaviorAvailable);
-          const isExpanded = expandedFeatureKey === feature.key;
-          const values = [
-            { label: 'Devices', value: feature.users },
-            { label: 'Recorded events', value: feature.events },
-            { label: 'Successful', value: feature.successes },
-            { label: 'Canceled / no-op', value: feature.expectedErrors },
-            { label: 'Failed', value: feature.failures },
-            { label: 'No result', value: unclassifiedEvents(feature.events, feature.successes, feature.expectedErrors, feature.failures) },
-          ];
-          return (
-            <article key={feature.key} className={cn(applePanel, 'p-4')}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#007aff] shadow-sm">
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
-                      {audit && (
-                        <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', audit.badgeClass)}>
-                          {audit.badgeLabel}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">
-                      {audit.explanation}
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
-                  aria-label={`View calculations for ${feature.label}`}
-                  aria-expanded={isExpanded}
-                  className="shrink-0 inline-flex items-center gap-1 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
-                >
-                  <Users className="h-3 w-3" />
-                  <span>Devices</span>
-                  <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
-                </button>
-              </div>
-              <dl className="mt-4 grid grid-cols-2 gap-2">
-                {values.map((item) => (
-                  <div key={item.label} className="rounded-xl bg-white/75 p-3">
-                    <dt className="text-[10px] font-bold uppercase tracking-wide text-[#86868b]">{item.label}</dt>
-                    <dd className="mt-1 text-base font-bold text-[#1d1d1f]">
-                      <MetricValue value={item.value} waiting={waiting} />
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="mt-3 text-xs font-semibold text-[#6e6e73]">
-                Events / device: <span className="font-bold text-[#1d1d1f]">{waiting ? '—' : eventsPerDevice(feature.events, feature.users)}</span>
-              </p>
-
-              {isExpanded && (
-                <div className="mt-3 border-t border-black/5 pt-3">
-                    <FeatureUserBreakdownPanel
-                      featureLabel={feature.label}
-                      totalDevices={feature.users ?? undefined}
-                      totalEvents={feature.events}
-                      successes={feature.successes}
-                      expectedErrors={feature.expectedErrors}
-                      failures={feature.failures}
-                      measurementNote={featureMeasurementNote(feature.key)}
-                      eventBreakdown={summary.featureUsageAvailable ? summary.featureUsage[feature.key]?.eventBreakdown : undefined}
-                    onClose={() => setExpandedFeatureKey(null)}
-                  />
-                </div>
-              )}
-            </article>
-          );
-        })}
-      </div>
-      <div className={cn(applePanel, 'hidden overflow-hidden sm:block')}>
-        <div className="overflow-x-auto">
-        <table className="w-full min-w-[1000px] border-collapse text-left">
-          <thead>
-            <tr className="border-b border-black/[0.06] bg-white/55 text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">
-              <th className="px-5 py-3">Feature & Telemetry Audit</th>
-              <th className="px-4 py-3 text-right">Devices</th>
-              <th className="px-4 py-3 text-right">Recorded events</th>
-              <th className="px-4 py-3 text-right">Events / device</th>
-              <th className="px-4 py-3 text-right">Successful</th>
-              <th className="px-4 py-3 text-right">Canceled / no-op</th>
-              <th className="px-4 py-3 text-right">Failed</th>
-              <th className="px-5 py-3 text-right">No result</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedFeatures.map((feature) => {
-              const Icon = featureIcon[feature.key] ?? Activity;
-              const waiting = !feature.instrumented || !summary.locationBehaviorAvailable;
-              const audit = featureAudit(feature, environment, summary.locationBehaviorAvailable);
-              const isExpanded = expandedFeatureKey === feature.key;
-              return (
-                <Fragment key={feature.key}>
-                  <tr className="border-b border-black/[0.05] last:border-b-0 hover:bg-black/[0.01]">
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-3">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f2f2f7] text-[#007aff]">
-                          <Icon className="h-4 w-4" />
-                        </span>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
-                            {audit && (
-                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', audit.badgeClass)}>
-                                {audit.badgeLabel}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-0.5 text-xs font-medium text-[#86868b]">
-                            {audit.explanation}
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                      <button
-                        type="button"
-                        onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
-                        className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
-                        aria-label={`View calculations for ${feature.label}`}
-                        aria-expanded={isExpanded}
-                        title="View calculations and source events"
-                      >
-                        <Users className="h-3 w-3" />
-                        <span><MetricValue value={feature.users} waiting={waiting} /></span>
-                        <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
-                      </button>
-                    </td>
-                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                      <MetricValue value={feature.events} waiting={waiting} />
-                    </td>
-                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">{waiting ? '—' : eventsPerDevice(feature.events, feature.users)}</td>
-                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                      <MetricValue value={feature.successes} waiting={waiting} />
-                    </td>
-                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]"><MetricValue value={feature.expectedErrors} waiting={waiting} /></td>
-                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                      <MetricValue value={feature.failures} waiting={waiting} />
-                    </td>
-                    <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
-                      <MetricValue value={unclassifiedEvents(feature.events, feature.successes, feature.expectedErrors, feature.failures)} waiting={waiting} />
-                    </td>
-                  </tr>
-
-                  {isExpanded && (
-                    <tr key={`${feature.key}-users`}>
-                      <td colSpan={8} className="bg-[#f5f9ff] p-4 border-b border-black/10">
-                        <FeatureUserBreakdownPanel
-                          featureLabel={feature.label}
-                          totalDevices={feature.users ?? undefined}
-                          totalEvents={feature.events}
-                          successes={feature.successes}
-                          expectedErrors={feature.expectedErrors}
-                          failures={feature.failures}
-                          measurementNote={featureMeasurementNote(feature.key)}
-                          eventBreakdown={summary.featureUsageAvailable ? summary.featureUsage[feature.key]?.eventBreakdown : undefined}
-                          onClose={() => setExpandedFeatureKey(null)}
-                        />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-        </div>
-      </div>
-    </>
-  );
+  return <FeatureActivityTable rows={sortedFeatures.map(feature => {
+    const audit = featureAudit(feature, environment, summary.locationBehaviorAvailable);
+    return {
+      key: feature.key,
+      label: featureActivityLabel(feature.key, feature.label),
+      icon: featureIcon[feature.key] ?? Activity,
+      devices: feature.users,
+      events: feature.events,
+      successes: feature.successes,
+      expectedErrors: feature.expectedErrors,
+      failures: feature.failures,
+      measured: feature.instrumented && summary.locationBehaviorAvailable,
+      ...audit,
+      eventBreakdown: summary.featureUsageAvailable ? summary.featureUsage[feature.key]?.eventBreakdown : undefined,
+    };
+  })} />;
 }
 
 function JourneyReach({ rows }: { rows: OneLocationJourneyMetric[] }) {
@@ -629,18 +435,18 @@ export function OneLocationAnalyticsPanel({
         <>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Active Location devices" value={locationCapability?.devices ?? null} detail="distinct IDs with deliberate Location events in this range" icon={MapPin} />
-        <StatCard label="Successful share confirmations" value={byKey.get('live_sharing')?.successes ?? null} detail="confirmation records, including Check-In shares; views excluded" icon={Radio} waiting={!selectedOne.locationBehaviorAvailable} />
+        <StatCard label="Devices using Location" value={locationCapability?.devices ?? null} detail="Different app or browser IDs with recorded Location use in this period" icon={MapPin} />
+        <StatCard label="Sharing confirmed" value={byKey.get('live_sharing')?.successes ?? null} detail="Successful confirmation records, including Check-In shares. Views are separate." icon={Radio} waiting={!selectedOne.locationBehaviorAvailable} />
         <StatCard
-          label="Fulfilled request actions"
+          label="Location requests fulfilled"
           value={requestFulfilled?.successes ?? null}
           detail={requestFulfilled?.observed
-            ? `encrypted updates published · ${formatNumber(requestFulfilled.users ?? 0)} devices · ${formatNumber(requestFulfilled.failures ?? 0)} failed attempts`
-            : 'no fulfilment telemetry observed in this environment and range'}
+            ? `Successful fulfilment records · ${exactCount(requestFulfilled.users)} device/browser IDs · ${exactCount(requestFulfilled.failures)} failed records`
+            : 'No fulfilment records found in this period'}
           icon={CheckCircle2}
           waiting={!requestFulfilled?.observed}
         />
-        <StatCard label="Circle engagement" value={circleEngaged?.users ?? null} detail="devices reaching a Circle action" icon={UsersRound} waiting={!circleEngaged?.instrumented} />
+        <StatCard label="Devices using Circles" value={circleEngaged?.users ?? null} detail="Different app or browser IDs with Circle activity" icon={UsersRound} waiting={!circleEngaged?.instrumented} />
       </div>
 
       <MetricCalculationGuide summary={selectedOne} />
@@ -680,7 +486,7 @@ export function OneLocationAnalyticsPanel({
                   <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#86868b' }} axisLine={false} tickLine={false} minTickGap={24} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#86868b' }} axisLine={false} tickLine={false} />
                   <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid rgba(0,0,0,0.08)', fontSize: 12 }} />
-                  <Area type="monotone" dataKey="active" name="Active Location devices" stroke="#007aff" strokeWidth={2.4} fill="url(#location-active)" isAnimationActive={false} />
+                  <Area type="monotone" dataKey="active" name="Devices using Location" stroke="#007aff" strokeWidth={2.4} fill="url(#location-active)" isAnimationActive={false} />
                   <Area type="monotone" dataKey="sharing" name="Live sharing devices" stroke="#34c759" strokeWidth={2} fill="transparent" isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
