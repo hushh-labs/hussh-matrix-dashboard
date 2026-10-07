@@ -39,6 +39,8 @@ import type {
   OneLocationJourneyMetric,
 } from '../lib/types';
 import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
+import { MetricCalculationGuide } from './MetricCalculationGuide';
+import { exactCount, eventsPerDevice, eventVolumeExplanation, featureMeasurementNote, unclassifiedEvents } from '../lib/feature-measurement';
 
 const tabs: Array<{ key: LocationAnalyticsTab; label: string }> = [
   { key: 'overview', label: 'Overview' },
@@ -57,15 +59,15 @@ const environments: Array<{
   {
     key: 'production',
     label: 'Production',
-    sourceLabel: 'one.hushh.ai · public apps',
-    description: 'Production web plus public iOS and Android builds. Tester traffic is excluded.',
+    sourceLabel: 'one.hushh.ai · One native streams',
+    description: 'Production GA4 property with the exact production web host and One native app streams. Native build channel and backend environment are not verified by property selection.',
     waitingNote: 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.',
   },
   {
     key: 'uat',
     label: 'UAT / Test builds',
-    sourceLabel: 'uat.one.hushh.ai · beta apps',
-    description: 'UAT web plus iOS TestFlight and Android internal. Production traffic is excluded.',
+    sourceLabel: 'uat.one.hushh.ai · One native streams',
+    description: 'UAT GA4 property with the exact UAT web host and native app streams when exported to this property. Build channel and backend environment are separate dimensions.',
     waitingNote: 'The detailed journey event has not reached the UAT export yet. TestFlight, Android internal and UAT web events will appear after the next GA4 export.',
   },
 ];
@@ -83,16 +85,11 @@ const featureIcon: Record<string, typeof MapPin> = {
   circle_engagement: CircleDot,
 };
 
-function ratio(numerator: number | null, denominator: number | null): string {
-  if (numerator === null || denominator === null || denominator <= 0) return '—';
-  return `${Math.round((numerator / denominator) * 100)}%`;
-}
-
 function MetricValue({ value, waiting = false }: { value: number | null; waiting?: boolean }) {
   if (waiting || value === null) {
-    return <span className="text-xs font-semibold text-[#86868b]">Measuring after rollout</span>;
+    return <span className="text-xs font-semibold text-[#86868b]">—</span>;
   }
-  return <>{formatNumber(value)}</>;
+  return <>{exactCount(value)}</>;
 }
 
 function StatCard({
@@ -124,7 +121,11 @@ function StatCard({
   );
 }
 
-function featureAudit(feature: OneLocationBehaviorMetric, environment: LocationAnalyticsEnvironment) {
+function featureAudit(feature: OneLocationBehaviorMetric, environment: LocationAnalyticsEnvironment, sourceAvailable: boolean) {
+  if (!sourceAvailable) return {
+    badgeLabel: 'Source unavailable', badgeClass: 'bg-amber-50 text-amber-800',
+    explanation: 'The aggregate query is unavailable. No zero is inferred.',
+  };
   if (!feature.instrumented) {
     return {
       badgeLabel: 'Not measured',
@@ -142,16 +143,18 @@ function featureAudit(feature: OneLocationBehaviorMetric, environment: LocationA
   return {
     badgeLabel: 'Recorded activity',
     badgeClass: 'bg-emerald-50 text-emerald-800',
-    explanation: `${formatNumber(feature.events)} event signals recorded across ${formatNumber(feature.users)} ${feature.users === 1 ? 'device' : 'devices'} in this range.`,
+    explanation: eventVolumeExplanation(feature.events, feature.users),
   };
 }
 
 function FeatureTable({
   features,
   environment,
+  summary,
 }: {
   features: OneLocationBehaviorMetric[];
   environment: LocationAnalyticsEnvironment;
+  summary: OneAppSummary;
 }) {
   const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
 
@@ -160,6 +163,7 @@ function FeatureTable({
       'auth_started',
       'daily_signin',
       'live_sharing',
+      'location_viewed',
       'request_location',
       'public_sharing',
       'contact_sync',
@@ -184,21 +188,23 @@ function FeatureTable({
           <span>What these feature counts show</span>
         </div>
         <p className="mt-1 text-[#6e6e73]">
-          Counts come from matching analytics events in the selected date range. Zero means no matching event was found; it does not prove nobody used the feature. A newly shipped event needs a live flow test and time to reach the export.
+          Recorded events include repeats. Sharing confirmations and shared-location views are separate. Success refers to the recorded stage, not end-to-end completion. Open a device count for its calculation and source events.
         </p>
       </div>
 
       <div className="space-y-3 sm:hidden">
         {sortedFeatures.map((feature) => {
           const Icon = featureIcon[feature.key] ?? Activity;
-          const waiting = !feature.instrumented;
-          const audit = featureAudit(feature, environment);
+          const waiting = !feature.instrumented || !summary.locationBehaviorAvailable;
+          const audit = featureAudit(feature, environment, summary.locationBehaviorAvailable);
           const isExpanded = expandedFeatureKey === feature.key;
           const values = [
             { label: 'Devices', value: feature.users },
-            { label: 'Signals', value: feature.events },
+            { label: 'Recorded events', value: feature.events },
             { label: 'Successful', value: feature.successes },
+            { label: 'Canceled / no-op', value: feature.expectedErrors },
             { label: 'Failed', value: feature.failures },
+            { label: 'No result', value: unclassifiedEvents(feature.events, feature.successes, feature.expectedErrors, feature.failures) },
           ];
           return (
             <article key={feature.key} className={cn(applePanel, 'p-4')}>
@@ -225,6 +231,8 @@ function FeatureTable({
                 <button
                   type="button"
                   onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
+                  aria-label={`View calculations for ${feature.label}`}
+                  aria-expanded={isExpanded}
                   className="shrink-0 inline-flex items-center gap-1 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
                 >
                   <Users className="h-3 w-3" />
@@ -243,7 +251,7 @@ function FeatureTable({
                 ))}
               </dl>
               <p className="mt-3 text-xs font-semibold text-[#6e6e73]">
-                Non-error share: <span className="font-bold text-[#1d1d1f]">{waiting ? '—' : ratio(feature.successes, feature.events)}</span>
+                Events / device: <span className="font-bold text-[#1d1d1f]">{waiting ? '—' : eventsPerDevice(feature.events, feature.users)}</span>
               </p>
 
               {isExpanded && (
@@ -251,6 +259,12 @@ function FeatureTable({
                     <FeatureUserBreakdownPanel
                       featureLabel={feature.label}
                       totalDevices={feature.users ?? undefined}
+                      totalEvents={feature.events}
+                      successes={feature.successes}
+                      expectedErrors={feature.expectedErrors}
+                      failures={feature.failures}
+                      measurementNote={featureMeasurementNote(feature.key)}
+                      eventBreakdown={summary.featureUsageAvailable ? summary.featureUsage[feature.key]?.eventBreakdown : undefined}
                     onClose={() => setExpandedFeatureKey(null)}
                   />
                 </div>
@@ -261,22 +275,24 @@ function FeatureTable({
       </div>
       <div className={cn(applePanel, 'hidden overflow-hidden sm:block')}>
         <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] border-collapse text-left">
+        <table className="w-full min-w-[1000px] border-collapse text-left">
           <thead>
             <tr className="border-b border-black/[0.06] bg-white/55 text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">
               <th className="px-5 py-3">Feature & Telemetry Audit</th>
               <th className="px-4 py-3 text-right">Devices</th>
-              <th className="px-4 py-3 text-right">Signals</th>
+              <th className="px-4 py-3 text-right">Recorded events</th>
+              <th className="px-4 py-3 text-right">Events / device</th>
               <th className="px-4 py-3 text-right">Successful</th>
+              <th className="px-4 py-3 text-right">Canceled / no-op</th>
               <th className="px-4 py-3 text-right">Failed</th>
-              <th className="px-5 py-3 text-right">Non-error share</th>
+              <th className="px-5 py-3 text-right">No result</th>
             </tr>
           </thead>
           <tbody>
             {sortedFeatures.map((feature) => {
               const Icon = featureIcon[feature.key] ?? Activity;
-              const waiting = !feature.instrumented;
-              const audit = featureAudit(feature, environment);
+              const waiting = !feature.instrumented || !summary.locationBehaviorAvailable;
+              const audit = featureAudit(feature, environment, summary.locationBehaviorAvailable);
               const isExpanded = expandedFeatureKey === feature.key;
               return (
                 <Fragment key={feature.key}>
@@ -306,7 +322,9 @@ function FeatureTable({
                         type="button"
                         onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
                         className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
-                        title="View aggregate device definition"
+                        aria-label={`View calculations for ${feature.label}`}
+                        aria-expanded={isExpanded}
+                        title="View calculations and source events"
                       >
                         <Users className="h-3 w-3" />
                         <span><MetricValue value={feature.users} waiting={waiting} /></span>
@@ -316,23 +334,31 @@ function FeatureTable({
                     <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                       <MetricValue value={feature.events} waiting={waiting} />
                     </td>
+                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">{waiting ? '—' : eventsPerDevice(feature.events, feature.users)}</td>
                     <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                       <MetricValue value={feature.successes} waiting={waiting} />
                     </td>
+                    <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]"><MetricValue value={feature.expectedErrors} waiting={waiting} /></td>
                     <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                       <MetricValue value={feature.failures} waiting={waiting} />
                     </td>
                     <td className="px-5 py-4 text-right text-sm font-bold text-[#1d1d1f]">
-                      {waiting ? '—' : ratio(feature.successes, feature.events)}
+                      <MetricValue value={unclassifiedEvents(feature.events, feature.successes, feature.expectedErrors, feature.failures)} waiting={waiting} />
                     </td>
                   </tr>
 
                   {isExpanded && (
                     <tr key={`${feature.key}-users`}>
-                      <td colSpan={6} className="bg-[#f5f9ff] p-4 border-b border-black/10">
+                      <td colSpan={8} className="bg-[#f5f9ff] p-4 border-b border-black/10">
                         <FeatureUserBreakdownPanel
                           featureLabel={feature.label}
                           totalDevices={feature.users ?? undefined}
+                          totalEvents={feature.events}
+                          successes={feature.successes}
+                          expectedErrors={feature.expectedErrors}
+                          failures={feature.failures}
+                          measurementNote={featureMeasurementNote(feature.key)}
+                          eventBreakdown={summary.featureUsageAvailable ? summary.featureUsage[feature.key]?.eventBreakdown : undefined}
                           onClose={() => setExpandedFeatureKey(null)}
                         />
                       </td>
@@ -447,13 +473,13 @@ function SourceCompleteness({
   const sources = environment === 'production'
     ? [
         { platform: 'WEB', label: 'Production web' },
-        { platform: 'IOS', label: 'Public iOS' },
-        { platform: 'ANDROID', label: 'Public Android' },
+        { platform: 'IOS', label: 'iOS app stream' },
+        { platform: 'ANDROID', label: 'Android app stream' },
       ]
     : [
         { platform: 'WEB', label: 'UAT web' },
-        { platform: 'IOS', label: 'iOS TestFlight' },
-        { platform: 'ANDROID', label: 'Android internal' },
+        { platform: 'IOS', label: 'iOS app stream' },
+        { platform: 'ANDROID', label: 'Android app stream' },
       ];
   const sourcesWithActivity = sources.filter((source) => seen.has(source.platform)).length;
   return (
@@ -603,8 +629,8 @@ export function OneLocationAnalyticsPanel({
         <>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Active Location devices" value={locationCapability?.devices ?? 0} detail="deliberate One Location use in this range" icon={MapPin} />
-        <StatCard label="Successful share actions" value={byKey.get('live_sharing')?.successes ?? 0} detail="completed live-location share events" icon={Radio} />
+        <StatCard label="Active Location devices" value={locationCapability?.devices ?? null} detail="distinct IDs with deliberate Location events in this range" icon={MapPin} />
+        <StatCard label="Successful share confirmations" value={byKey.get('live_sharing')?.successes ?? null} detail="confirmation records, including Check-In shares; views excluded" icon={Radio} waiting={!selectedOne.locationBehaviorAvailable} />
         <StatCard
           label="Fulfilled request actions"
           value={requestFulfilled?.successes ?? null}
@@ -616,6 +642,8 @@ export function OneLocationAnalyticsPanel({
         />
         <StatCard label="Circle engagement" value={circleEngaged?.users ?? null} detail="devices reaching a Circle action" icon={UsersRound} waiting={!circleEngaged?.instrumented} />
       </div>
+
+      <MetricCalculationGuide summary={selectedOne} />
 
       {!locationAnalytics.journeyActionSeen && (
         <div className="flex items-start gap-3 rounded-2xl border border-[#f0d8a8] bg-[#fff8ea] p-4 text-[#6a4600]">
@@ -630,7 +658,7 @@ export function OneLocationAnalyticsPanel({
             <p className={appleLabel}>Feature adoption</p>
             <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What devices actually use</h3>
           </div>
-          <FeatureTable features={locationAnalytics.features} environment={environment} />
+          <FeatureTable features={locationAnalytics.features} environment={environment} summary={selectedOne} />
         </section>
       )}
 

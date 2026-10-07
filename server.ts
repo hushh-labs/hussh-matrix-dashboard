@@ -1932,7 +1932,8 @@ const ONE_LOCATION_FUNNEL_STEPS: Array<{ key: string; label: string }> = [
 ];
 
 const ONE_LOCATION_BEHAVIOR_FEATURES = [
-  { key: 'live_sharing', label: 'Live sharing' },
+  { key: 'live_sharing', label: 'Sharing confirmations' },
+  { key: 'location_viewed', label: 'Shared location views' },
   { key: 'check_in', label: 'Check-In' },
   { key: 'check_out', label: 'Check-Out' },
   { key: 'sms_safety', label: 'Save My Soul SMS' },
@@ -2608,7 +2609,7 @@ ${capabilitySql.isDeliberate}
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'contact_sync_%' THEN 'contact_sync'
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'public_link_%' THEN 'public_sharing'
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_request_%' THEN 'request_location'
-          WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'location_share_%' THEN 'live_sharing'
+          WHEN eventName = 'one_location_journey_action' AND actionName = 'location_share_viewed' THEN 'location_viewed'
           WHEN eventName = 'one_location_journey_action' AND actionName LIKE 'circle_%' THEN 'circle_engagement'
           ELSE NULL
         END AS featureKey,
@@ -3176,6 +3177,7 @@ ${capabilitySql.isDeliberate}
   const featureUsageQuery = `
     WITH classified AS (
       SELECT
+        event_name AS eventName,
         ${deviceKeySql} AS deviceKey,
         NULLIF(user_id, '') AS accountKey,
         (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') AS result,
@@ -3195,10 +3197,10 @@ ${capabilitySql.isDeliberate}
           WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'contact_sync_%' THEN 'contact_sync'
           WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'public_link_%' THEN 'public_sharing'
           WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'location_request_%' THEN 'request_location'
-          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'location_share_%' THEN 'live_sharing'
+          WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'location_share_viewed' THEN 'location_viewed'
           WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') LIKE 'circle_%' THEN 'circle_engagement'
           WHEN event_name IN ('auth_started', 'one_auth_started') THEN 'auth_started'
-          WHEN event_name IN ('auth_completed', 'one_auth_login_completed', 'one_auth_google_signed_in', 'one_auth_phone_verified', 'one_phone_verified', 'auth_succeeded') THEN 'daily_signin'
+          WHEN event_name IN ('auth_completed', 'one_auth_login_completed', 'auth_succeeded') THEN 'daily_signin'
           WHEN event_name IN ('phone_verification_started', 'phone_verification_completed', 'one_auth_phone_verified', 'one_phone_verified') THEN 'phone_verified'
           WHEN event_name IN ('google_sign_in_started', 'google_sign_in_completed', 'one_auth_google_signed_in') THEN 'google_signin'
           WHEN event_name IN ('profile_created', 'one_auth_profile_created') THEN 'profile_created'
@@ -3208,8 +3210,11 @@ ${capabilitySql.isDeliberate}
           WHEN event_name IN ('analysis_stream_started', 'one_finance_analysis_started') THEN 'analysis_stream'
           WHEN event_name = 'import_parse_completed' THEN 'receipt_parsed'
           WHEN event_name = 'import_save_completed' THEN 'import_saved'
-          WHEN event_name IN ('consent_action_submitted', 'one_consent_preferences_updated', 'consent_pending_loaded') THEN 'preferences_updated'
-          WHEN event_name IN ('one_consent_data_unlocked', 'data_unlocked', 'one_consent_data_unlock_requested', 'consent_action_result') THEN 'data_unlock'
+          WHEN event_name = 'one_consent_preferences_updated' THEN 'preferences_updated'
+          WHEN event_name = 'consent_action_submitted' THEN 'consent_action_submitted'
+          WHEN event_name = 'consent_pending_loaded' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'load_surface') = 'screen' THEN 'consent_screen_viewed'
+          WHEN event_name = 'consent_action_result' THEN 'consent_action_outcome'
+          WHEN event_name IN ('one_consent_data_unlocked', 'data_unlocked', 'one_consent_data_unlock_requested') THEN 'data_unlock'
           WHEN event_name IN ('permission_granted', 'one_consent_permission_granted') THEN 'permission_granted'
           WHEN event_name = 'gmail_connect_started' THEN 'account_connect_started'
           WHEN event_name = 'gmail_connect_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'complete' THEN 'account_connected'
@@ -3236,7 +3241,7 @@ ${capabilitySql.isDeliberate}
         END AS feature_key
       FROM ${table}
       WHERE ${dateFilter}
-    )
+    ), feature_totals AS (
     SELECT
       feature_key AS featureKey,
       COUNT(DISTINCT accountKey) AS accounts,
@@ -3249,6 +3254,23 @@ ${capabilitySql.isDeliberate}
     FROM classified
     WHERE feature_key IS NOT NULL
     GROUP BY feature_key
+    ), event_counts AS (
+      SELECT feature_key AS featureKey, eventName,
+        COUNT(*) AS signals,
+        COUNTIF(result = 'success') AS successes,
+        COUNTIF(result = 'expected_error') AS expectedErrors,
+        COUNTIF(result = 'error') AS failures
+      FROM classified
+      WHERE feature_key IS NOT NULL
+      GROUP BY feature_key, eventName
+    ), breakdowns AS (
+      SELECT featureKey,
+        ARRAY_AGG(STRUCT(eventName, signals, successes, expectedErrors, failures)
+          ORDER BY signals DESC, eventName) AS eventBreakdown
+      FROM event_counts GROUP BY featureKey
+    )
+    SELECT feature_totals.*, breakdowns.eventBreakdown
+    FROM feature_totals LEFT JOIN breakdowns USING (featureKey)
   `;
 
   const queryProject = BQ_JOB_PROJECT || projectId;
@@ -3648,11 +3670,11 @@ ${capabilitySql.isDeliberate}
             key: spec.key,
             label: spec.label,
             instrumented: true,
-            users: toNumber(row?.users),
-            events: toNumber(row?.events),
-            successes: toNumber(row?.successes),
-            expectedErrors: toNumber(row?.expectedErrors),
-            failures: toNumber(row?.failures),
+            users: locationBehavior.error ? null : toNumber(row?.users),
+            events: locationBehavior.error ? null : toNumber(row?.events),
+            successes: locationBehavior.error ? null : toNumber(row?.successes),
+            expectedErrors: locationBehavior.error ? null : toNumber(row?.expectedErrors),
+            failures: locationBehavior.error ? null : toNumber(row?.failures),
             daily: dateSpine(range).map((date) => {
               const point = byDate.get(date) ?? {};
               return {
@@ -3721,6 +3743,13 @@ ${capabilitySql.isDeliberate}
           expectedErrors: toNumber(row.expectedErrors),
           failures: toNumber(row.failures),
           outcomeSignals: toNumber(row.outcomeSignals),
+          eventBreakdown: Array.isArray(row.eventBreakdown) ? row.eventBreakdown.map((event: Record<string, unknown>) => ({
+            eventName: String(event.eventName),
+            signals: toNumber(event.signals),
+            successes: toNumber(event.successes),
+            expectedErrors: toNumber(event.expectedErrors),
+            failures: toNumber(event.failures),
+          })) : [],
         },
       ])),
       platformsAvailable: !platforms.error,
@@ -5584,7 +5613,7 @@ ${capabilitySql.isDeliberate}
     const agentRows = new Map(agentsResult.rows.map((row) => [`${row.period}:${row.capability}`, row]));
     const dailyRows = new Map(dailyResult.rows.map((row) => [String(row.day), row]));
     const previousDates = dateSpine(previous);
-    const platforms = (['IOS', 'WEB'] as const).map((key) => {
+    const platforms = (['IOS', 'WEB'] as const).map<FounderBriefingData['one']['platforms'][number]>((key) => {
       const currentRow = platformRows.get(`current:${key}`);
       const previousRow = platformRows.get(`previous:${key}`);
       const tracked = toNumber(currentRow?.tracked_identifiers);

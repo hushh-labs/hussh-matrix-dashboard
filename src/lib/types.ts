@@ -935,6 +935,15 @@ export interface OneLocationBehaviorMetric {
   daily: OneLocationMetricPoint[];
 }
 
+/** Aggregate source-event composition. Repeated records are retained. */
+export interface OneFeatureEventCount {
+  eventName: string;
+  signals: number;
+  successes: number;
+  expectedErrors: number;
+  failures: number;
+}
+
 export interface OneLocationJourneyMetric {
   key: string;
   label: string;
@@ -1061,6 +1070,8 @@ export interface OneAppSummary {
     expectedErrors: number;
     failures: number;
     outcomeSignals: number;
+    /** Optional while older API revisions are still in use. */
+    eventBreakdown?: OneFeatureEventCount[];
   }>;
   platformsAvailable: boolean;
   platforms: OnePlatformUsage[];
