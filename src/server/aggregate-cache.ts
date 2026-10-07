@@ -25,6 +25,7 @@ export class AggregateCache<T> {
           this.retryAt.delete(oldest);
         }
       }
+      this.entries.delete(key);
       this.entries.set(key, { value, at, usedAt: previous?.usedAt ?? at, load: loader });
       this.retryAt.delete(key);
       return { value, at };
@@ -43,6 +44,8 @@ export class AggregateCache<T> {
     if (hit && now - hit.at <= this.options.maxAgeMs) {
       hit.usedAt = now;
       hit.load = loader;
+      this.entries.delete(key);
+      this.entries.set(key, hit);
       if ((force || now - hit.at >= this.options.freshMs) && (this.retryAt.get(key) ?? 0) <= now) {
         void this.load(key, loader).catch(() => {});
       }
@@ -84,6 +87,7 @@ export class AggregateCache<T> {
 
 export function canonicalAnalyticsKey(originalUrl: string) {
   const url = new URL(originalUrl, 'http://analytics.internal');
+  if (url.pathname === '/api/analytics/all' && url.searchParams.get('view') === 'platforms') url.searchParams.set('view', 'overview');
   url.searchParams.sort();
   return `${url.pathname}${url.search}`;
 }

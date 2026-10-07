@@ -1193,11 +1193,18 @@ export default function Dashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
   const scope = ['one', 'growth', 'apps', 'overview', 'platforms'].includes(activeTab) ? activeTab as 'one' | 'growth' | 'apps' | 'overview' | 'platforms' : null;
-  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one', oneStartDate: range.startDate, oneEndDate: range.endDate,
-    ...((scope === 'overview' || scope === 'platforms') ? { kaiStartDate: kaiRange.startDate, kaiEndDate: kaiRange.endDate, hushhAiStartDate: hushhAiRange.startDate, hushhAiEndDate: hushhAiRange.endDate } : {}) });
+  const overviewScope = scope === 'overview' || scope === 'platforms';
+  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one',
+    ...(overviewScope ? { kaiStartDate: kaiRange.startDate, kaiEndDate: kaiRange.endDate, hushhAiStartDate: hushhAiRange.startDate, hushhAiEndDate: hushhAiRange.endDate }
+      : { oneStartDate: range.startDate, oneEndDate: range.endDate }) });
+  const presets: DatePreset[] = [7, 14, 30, 90];
+  const prefetchUrls = overviewScope ? presets.flatMap(days => {
+    const range = rangeForPreset(days), current = rangeOptions();
+    return [buildAnalyticsUrl({ ...current, kaiStartDate: range.startDate, kaiEndDate: range.endDate }),
+      buildAnalyticsUrl({ ...current, hushhAiStartDate: range.startDate, hushhAiEndDate: range.endDate })];
+  }) : scope ? presets.map(days => buildAnalyticsUrl(rangeOptions(rangeForPreset(days)))) : [];
   const resource = useMetricsResource<AllAnalyticsResponse>(scope ? buildAnalyticsUrl(rangeOptions()) : null, {
-    refreshKey, refreshIntervalMs: autoRefresh ? 30_000 : undefined,
-    prefetchUrls: scope && scope !== 'overview' && scope !== 'platforms' ? ([7, 14, 30, 90] as DatePreset[]).map(days => buildAnalyticsUrl(rangeOptions(rangeForPreset(days)))) : [],
+    refreshKey, refreshIntervalMs: autoRefresh ? 30_000 : undefined, prefetchUrls,
   });
   const data = useMemo(() => resource.data ? normalizeAnalytics(resource.data) : null, [resource.data]);
   const loading = resource.loading;
@@ -1810,7 +1817,7 @@ export default function Dashboard() {
           </div>
         </header>}
 
-        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One ${oneRange.startDate} to ${oneRange.endDate} · web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} loading={loading} refreshing={isRefreshing} error={usingMock} />}
+        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} loading={loading} refreshing={isRefreshing} error={usingMock} />}
         <Suspense fallback={<MetricsSkeleton label="Opening this metrics section" />} >
         {activeTab === 'briefing' ? (
           <FounderBriefingPanel refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />

@@ -47,6 +47,24 @@ try {
     assert.equal(result.body.period.startDate, selected.startDate); assert.equal(result.body.period.endDate, selected.endDate);
     rows.push({ view: 'briefing', days, ms: result.ms, ok: result.ms <= budget });
   }
+  for (const kaiDays of [7,14,30,90]) for (const hushhDays of [7,14,30,90]) {
+    const kai = range(kaiDays), hushh = range(hushhDays);
+    const query = new URLSearchParams({ view: 'overview', kai_start_date: kai.startDate, kai_end_date: kai.endDate, hushh_ai_start_date: hushh.startDate, hushh_ai_end_date: hushh.endDate });
+    const path = '/api/analytics/all?' + query;
+    await request(path); const result = await request(path);
+    assert.equal(result.body.one?.data?.production, null, 'Overview must not wait for unused app queries');
+    assert.equal(result.body.growth?.data, null); assert.equal(result.body.appStoreConnect?.data, null);
+    const source = result.body.hushhAi?.data;
+    assert.equal(result.body.kai?.ga4?.data?.range?.startDate, kai.startDate);
+    assert.equal(result.body.kai?.ga4?.data?.range?.endDate, kai.endDate);
+    assert.equal(source?.gcp?.startDate, hushh.startDate);
+    assert.equal(source?.gcp?.endDate, hushh.endDate);
+    rows.push({ view: 'overview', kaiDays, hushhDays, ms: result.ms, ok: result.ms <= budget });
+    if (kaiDays === 7 && hushhDays === 7) {
+      query.set('view', 'platforms'); const platform = await request('/api/analytics/all?' + query);
+      rows.push({ view: 'platforms', ms: platform.ms, ok: platform.ms <= budget });
+    }
+  }
   console.log(JSON.stringify({ ok: rows.every(row => row.ok), budgetMs: budget, results: rows }, null, 2));
   process.exitCode = rows.every(row => row.ok) ? 0 : 1;
 } catch (error) {
