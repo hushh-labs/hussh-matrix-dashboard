@@ -23,7 +23,7 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
-import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult } from './src/server/one-scope.mjs';
+import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage } from './src/server/one-scope.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
@@ -5555,6 +5555,8 @@ ${capabilitySql.isDeliberate}
         CAST(MIN(IF(platform = 'ANDROID' AND accountId IS NOT NULL, day, NULL)) AS STRING) AS android_identity_observed_since,
         COUNTIF(day ${currentSql} AND platform = 'ANDROID') AS current_android_events,
         COUNTIF(day ${currentSql} AND platform = 'ANDROID' AND accountId IS NOT NULL) AS current_android_bound_events,
+        COUNTIF(day ${previousSql} AND platform = 'ANDROID') AS previous_android_events,
+        COUNTIF(day ${previousSql} AND platform = 'ANDROID' AND accountId IS NOT NULL) AS previous_android_bound_events,
         CAST(MAX(IF(day ${currentSql}, day, NULL)) AS STRING) AS latest_event_date,
         COUNTIF(day ${currentSql} AND platform = 'IOS' AND LOWER(eventEnvironment) = 'uat') AS mislabeled_native_events
       FROM events
@@ -5650,12 +5652,12 @@ ${capabilitySql.isDeliberate}
       ? oneRow.identity_observed_since : null;
     const oneComparisonReady = oneAvailable && identityObservedSince !== null
       && identityObservedSince < previous.startDate
-      && (toNumber(oneRow.current_android_bound_events) === 0 || previous.startDate >= '2026-10-07');
+      && androidComparisonCoverage(oneRow.current_android_bound_events, oneRow.previous_android_bound_events, previous.startDate);
     // The public event catalogue has a bounded trustworthy history. A 90-day
     // selection can move its comparison window before that history; zero rows
     // there are missing history, not evidence of a decline.
     const interactionComparisonReady = oneAvailable && previous.startDate >= FOUNDER_EARLIEST_DATE
-      && (toNumber(oneRow.current_android_events) === 0 || previous.startDate >= '2026-10-07');
+      && androidComparisonCoverage(oneRow.current_android_events, oneRow.previous_android_events, previous.startDate);
     const platformRows = new Map(platformsResult.rows.map((row) => [`${row.period}:${row.platform}`, row]));
     const agentRows = new Map(agentsResult.rows.map((row) => [`${row.period}:${row.capability}`, row]));
     const dailyRows = new Map(dailyResult.rows.map((row) => [String(row.day), row]));

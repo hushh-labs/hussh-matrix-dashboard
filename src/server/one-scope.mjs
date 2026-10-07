@@ -2,6 +2,12 @@
 export const ONE_ANDROID_PACKAGE = 'com.hussh.app';
 export const ONE_ANDROID_STREAMS = { production: '15395548050', uat: '15395713075' };
 export const ONE_ANDROID_TIMEZONE = 'Etc/GMT+8';
+// Export membership changed during October 7; October 8 is the first full day.
+export const ONE_ANDROID_COMPLETE_FROM = '2026-10-08';
+export function androidComparisonCoverage(currentEvents, previousEvents, previousStartDate) {
+  return (Number(currentEvents ?? 0) === 0 && Number(previousEvents ?? 0) === 0)
+    || previousStartDate >= ONE_ANDROID_COMPLETE_FROM;
+}
 
 const literal = (value) => `'${String(value).replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
 

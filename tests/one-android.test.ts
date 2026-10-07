@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { oneAndroidSql, oneSurfaceSql, oneFounderSurfaceSql, androidCaptureResult } from '../src/server/one-scope.mjs';
+import { oneAndroidSql, oneSurfaceSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage } from '../src/server/one-scope.mjs';
 
 describe('One Android reporting contract', () => {
+  it('guards incomplete Android history when either period contributes, including the partial cutover day',()=>{
+    expect(androidComparisonCoverage(0,3,'2026-10-06')).toBe(false);
+    expect(androidComparisonCoverage(3,0,'2026-10-07')).toBe(false);
+    expect(androidComparisonCoverage(3,0,'2026-10-08')).toBe(true);
+    expect(androidComparisonCoverage(0,0,'2026-09-28')).toBe(true);
+  });
   it('separates new Android package and stream from iOS and legacy Android', () => {
     expect(oneAndroidSql()).toContain("app_info.id = 'com.hussh.app'");
     expect(oneAndroidSql()).toContain("stream_id = '15395548050'");
