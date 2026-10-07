@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { AndroidProviderReport, AndroidAnalyticsPanel } from '../src/components/AndroidAnalyticsPanel';
 import { PlatformsAtAGlance } from '../src/components/OneAppPanel';
 import type { OneAppSummary } from '../src/lib/types';
 
@@ -40,4 +41,14 @@ assert.match(withScreens, /<details/);
 assert.match(withScreens, /Screen activity details/);
 assert.match(withScreens, /Visits can repeat and are not user counts/);
 
-console.log(JSON.stringify({ ok: true, checks: ['previous-schema', 'missing-screen-ranking', 'uat-source-host', 'anonymous-account-state', 'screen-diagnostics-deemphasized'] }));
+
+
+const waitingAndroid = renderToStaticMarkup(createElement(AndroidAnalyticsPanel, {one:{androidCapture:{state:'waiting',note:'No new Android app events were exported'}} as OneAppSummary}));
+assert.match(waitingAndroid,/No new Android app events/);
+assert.doesNotMatch(waitingAndroid,/First opens \/ reinstalls<\/dt>/);
+const emptyVitals = renderToStaticMarkup(createElement(AndroidProviderReport,{report:{history:{state:'permission_missing'},downloads:{installs:{state:'not_configured'},store:{state:'not_configured'}},vitals:{state:'not_yet_available',metrics:{userPerceivedCrashRate:{state:'not_yet_available',daily:[]}}}}}));
+assert.match(emptyVitals,/Read permission needed/);assert.match(emptyVitals,/Not yet available/);assert.doesNotMatch(emptyVitals,/0 crashes/);
+
+const missingFirstOpens=renderToStaticMarkup(createElement(AndroidProviderReport,{report:{history:{state:'available',daily:[{date:'2026-10-05',event:'first_open',events:null}]},downloads:{},vitals:{state:'not_yet_available'}}}));
+assert.match(missingFirstOpens,/First-open events<\/dt><dd[^>]*>Not available/);
+console.log(JSON.stringify({ok:true,checks:['previous-schema','missing-screen-ranking','uat-source-host','anonymous-account-state','screen-diagnostics-deemphasized','android-waiting','provider-unavailable','missing-first-open']}));

@@ -1051,6 +1051,15 @@ export interface OneAppSummary {
   capabilitiesAvailable: boolean;
   capabilities: OneCapabilityUsage[];
   surfaces: OneSurfaceRow[];
+  androidCapture?: {
+    state: 'unavailable' | 'waiting' | 'observed';
+    packageId: string; source: string; reportingTimezone: string;
+    startDate: string; endDate: string; observedSince: string | null; latestEventAt: string | null;
+    events: number | null; activeAppIds: number | null; identifiedAccounts: number | null;
+    firstOpens: number | null; routeVisits: number | null;
+    releases: Array<{version: string; installer: string; environment: string; events: number; appIds: number}>;
+    note: string;
+  };
   nativeEnvironments?: Array<{
     platform: string;
     environment: string;

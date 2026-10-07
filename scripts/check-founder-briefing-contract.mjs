@@ -44,7 +44,7 @@ try {
   check('one_source_available', one.available === true);
   check('identity_comparison_flag', typeof one.comparisonReady === 'boolean');
   check('interaction_comparison_flag', typeof one.interactionComparisonReady === 'boolean');
-  check('interaction_history_guard', one.interactionComparisonReady === (one.available && previous.startDate >= '2026-05-01'));
+  check('interaction_history_guard', !one.interactionComparisonReady || (one.available && previous.startDate >= '2026-05-01'));
   for (const name of ['activeAccounts', 'firstObservedAccounts', 'activatedAccounts', 'agentEngagedAccounts']) {
     check(`one_${name}`, validMeasure(one[name], one.available, one.comparisonReady));
   }
@@ -56,10 +56,10 @@ try {
   check('source_date', one.latestEventDate === null || date(one.latestEventDate));
 
   const platforms = Array.isArray(one.platforms) ? one.platforms : [];
-  check('ios_and_web_only', platforms.length === 2
-    && platforms.some((item) => item.key === 'IOS') && platforms.some((item) => item.key === 'WEB'));
+  check('ios_android_web', platforms.length === 3
+    && ['IOS','ANDROID','WEB'].every(key => platforms.some(item => item.key === key)));
   for (const platform of platforms) {
-    check(`${platform.key}_accounts`, validMeasure(platform.identifiedAccounts, one.available, one.comparisonReady));
+    check(`${platform.key}_accounts`, platform.key === 'ANDROID' ? (platform.identifiedAccounts?.current === null || integer(platform.identifiedAccounts?.current)) && (platform.identifiedAccounts?.previous === null || (previous.startDate >= '2026-10-07' && integer(platform.identifiedAccounts?.previous))) : validMeasure(platform.identifiedAccounts, one.available, one.comparisonReady));
     check(`${platform.key}_coverage`, platform.identityCoverage === null
       || (typeof platform.identityCoverage === 'number' && platform.identityCoverage >= 0 && platform.identityCoverage <= 1));
     check(`${platform.key}_identity_diagnostics`, !one.available
@@ -100,7 +100,7 @@ try {
       || agent.successes.current + agent.expectedErrors.current + agent.failures.current === agent.outcomeSignals.current);
     check(`agent_${agent.key}_platform_reconciles`, !agent.instrumented || !one.available
       || (integer(agent.iosInteractions) && integer(agent.webInteractions)
-        && agent.iosInteractions + agent.webInteractions === agent.interactions.current));
+        && agent.iosInteractions + agent.webInteractions + (agent.androidInteractions ?? 0) === agent.interactions.current));
     check(`agent_${agent.key}_bounded`, !agent.instrumented || !one.available
       || (agent.identifiedAccounts.current <= one.activeAccounts.current
         && agent.successfulAccounts.current <= one.activeAccounts.current));

@@ -88,7 +88,7 @@ function AgentRow({ agent }: { agent: FounderAgent; key?: string }) {
     <td className="py-4 pr-5 text-right text-sm font-semibold text-slate-900">{number(agent.successfulAccounts.current)}</td>
     <td className="py-4 pr-5 text-right">
       <span className="block text-sm font-semibold text-slate-900">{number(agent.interactions.current)}</span>
-      <span className="mt-1 block text-[11px] text-slate-500">iOS {number(agent.iosInteractions)} · web {number(agent.webInteractions)}</span>
+      <span className="mt-1 block text-[11px] text-slate-500">iOS {number(agent.iosInteractions)} · Android {number(agent.androidInteractions ?? null)} · web {number(agent.webInteractions)}</span>
     </td>
     <td className="py-4 pr-5 text-right"><OutcomeHealth agent={agent} /></td>
     <td className="py-4 text-right">{agent.instrumented ? <ChangeBadge measure={agent.interactions} neutralWhenNew />
@@ -160,6 +160,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
     || (b.identifiedAccounts.current ?? 0) - (a.identifiedAccounts.current ?? 0)
     || (b.interactions.current ?? 0) - (a.interactions.current ?? 0));
   const ios = brief?.one.platforms.find((item) => item.key === 'IOS');
+  const android = brief?.one.platforms.find((item) => item.key === 'ANDROID');
   const web = brief?.one.platforms.find((item) => item.key === 'WEB');
   const { measure: webMeasure, currentGap: webIdentityGap, previousGap: webPreviousIdentityGap } = founderWebIdentityMeasure(web);
   const lowCoverage = brief?.one.accountCoverage !== null && brief?.one.accountCoverage !== undefined
@@ -224,7 +225,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
           <Sparkles className="h-3.5 w-3.5" /> One app · founder briefing
         </p>
         <h1 className="mt-5 text-3xl font-semibold tracking-tight sm:text-5xl">Who is using One—and what do they do?</h1>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-200 sm:text-base">A clear production view of identifiable users on iOS and web, the features they use, and how behaviour changes over time.</p>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-200 sm:text-base">A clear production view of identifiable users on iOS, Android and web, the features they use, and how behaviour changes over time.</p>
         {brief && <div className="mt-6 flex flex-wrap gap-2 text-xs font-medium text-slate-200">
           <span className="rounded-full bg-white/10 px-3 py-1.5">{rangeLabel(brief.period)} · {brief.period.days} days</span>
           <span className="rounded-full bg-white/10 px-3 py-1.5">vs {rangeLabel(brief.previousPeriod)}</span>
@@ -239,7 +240,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
           {error && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Refresh failed; the previous period remains visible.</p>}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <MetricCard eyebrow="One · all platforms" label="Identifiable active accounts" measure={brief.one.activeAccounts}
-              note="A signed-in account is counted once across iOS and web, even if it uses both." />
+              note="A signed-in account is counted once across iOS, Android and web when an account identifier is available." />
             <MetricCard eyebrow="One · audience growth" label="Newly observed active accounts" measure={brief.one.firstObservedAccounts}
               note="Signed-in accounts seen for the first time in available One analytics history. This is not a registration count." />
             <MetricCard eyebrow="One · audience loyalty" label="Returning active accounts" measure={returningAccounts}
@@ -248,6 +249,9 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
               note="Distinct signed-in accounts with at least one measured feature action—not a sum of agent rows." />
             <MetricCard eyebrow="One · iOS" label="iOS app users we can identify" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
               note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
+            <MetricCard eyebrow="One · Android" label="Android accounts using production"
+              measure={android?.identifiedAccounts ?? {current:null,previous:null}}
+              note={android?.captureState === 'observed' ? 'Distinct signed-in Android accounts with a production backend tag. Platform audiences overlap.' : 'Awaiting exported Android activity with a production backend tag. The current public build used UAT; missing history is not zero.'} />
             <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Web users we can identify'}
               measure={webMeasure}
               note={webIdentityGap
@@ -292,7 +296,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Founder readout</p>
               <h2 className="mt-1 text-xl font-semibold text-slate-950">What stands out</h2>
               <ul className="mt-5 space-y-4 text-sm leading-6 text-slate-700">
-                <li><strong className="text-slate-900">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} identified accounts; <strong className="text-slate-900">web:</strong> {webIdentityGap ? 'user total unverified' : `${number(web?.identifiedAccounts.current ?? null)} identified accounts`}. These platform populations can overlap.</li>
+                <li><strong className="text-slate-900">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} identified accounts; <strong className="text-slate-900">web:</strong> {webIdentityGap ? 'user total unverified' : `${number(web?.identifiedAccounts.current ?? null)} identified accounts`}. <strong className="text-slate-900"> Android:</strong> {number(android?.identifiedAccounts.current ?? null)} identified accounts. These platform populations can overlap.</li>
                 <li>{mostAccounts ? <><strong className="text-slate-900">Most identified accounts used {mostAccounts.label}:</strong> {number(mostAccounts.identifiedAccounts.current)} in this period.</>
                   : 'No agent has a verifiable signed-in audience in this range yet.'}</li>
                 <li>{mostInteractions ? <><strong className="text-slate-900">Most measured interactions:</strong> {mostInteractions.label} had {number(mostInteractions.interactions.current)}. Repeats count; this is not a user count.</>
@@ -344,13 +348,13 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                 {webIdentityGap && <li>Web identity tracking needs repair: {number(web?.signInIdentifiers ?? null)} browser identifiers recorded a successful sign-in, but only {number(web?.signedInBoundIdentifiers ?? null)} of those later carried an account ID in this period. Sign-ins and browsers are <strong>not</strong> unique people. The web user total and its growth percentage are withheld.</li>}
                 {!webIdentityGap && webPreviousIdentityGap && <li>The earlier web period had {number(web?.previousSignedInBoundIdentifiers ?? null)} account-bound identifiers after {number(web?.previousSignInIdentifiers ?? null)} signed-in identifiers. Its identified-account count is not a reliable baseline, so web growth is withheld.</li>}
                 {lowCoverage && <li>Only {Math.round((brief.one.accountCoverage ?? 0) * 100)}% of tracked app/browser identifiers are linked to an account. Unlinked people cannot be uniquely counted.</li>}
-                {brief.one.available && !brief.one.comparisonReady && <li>Account tagging began within the earlier period. Account-growth percentages are withheld until both periods are fully comparable.</li>}
-                {brief.one.available && !brief.one.interactionComparisonReady && <li>The earlier agent-interaction period predates reliable event history. Its comparisons are withheld, not treated as zero.</li>}
+                {brief.one.available && !brief.one.comparisonReady && <li>Account tagging or Android export coverage is incomplete for the earlier period. Account-growth percentages are withheld until both periods are fully comparable.</li>}
+                {brief.one.available && !brief.one.interactionComparisonReady && <li>The earlier agent-interaction period predates reliable event history for a contributing platform. Its comparisons are withheld, not treated as zero.</li>}
                 {brief.one.hasNativeEnvironmentConflict && <li>Some public iOS events still carry a test-environment label. They are not described as production-backend customers.</li>}
                 {!brief.one.available && <li>The One GA4 source could not be verified for this selection.</li>}
                 {!lowCoverage && brief.one.comparisonReady && !brief.one.hasNativeEnvironmentConflict && brief.one.available && <li>Account-linked coverage and comparison history meet this briefing’s checks. Anonymous activity remains outside person counts.</li>}
               </ul>
-              <p className="mt-3 flex items-start gap-1.5 text-xs leading-5 text-amber-900"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Android testing traffic is not included in the public iOS/web founder audience.</p>
+              <p className="mt-3 flex items-start gap-1.5 text-xs leading-5 text-amber-900"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Android requires a production backend tag. UAT and debug Android traffic is excluded from the founder audience.</p>
             </div>
           </section>
         </> : null}
