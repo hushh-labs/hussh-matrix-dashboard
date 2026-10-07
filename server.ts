@@ -15,6 +15,8 @@ import { gunzipSync } from 'node:zlib';
 import express from 'express';
 import path from 'path';
 import { promisify } from 'node:util';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import compression from 'compression';
 import { fileURLToPath } from 'url';
 import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromValue } from './src/lib/agent-product-routing';
 import type { ProductKey } from './src/lib/agent-product-routing';
@@ -25,6 +27,7 @@ import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
 import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange } from './src/server/one-scope.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
+import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -230,9 +233,18 @@ const HUSHH_AI_LIVE_REFRESH_SECONDS = Math.max(
 // Keep upstream analytics calls from being repeated by every browser refresh.
 // Clients still receive `no-store`; this is a short-lived, aggregate-only
 // process cache keyed by the complete URL, including the selected date range.
-const ANALYTICS_RESPONSE_CACHE_TTL_MS = 30_000;
-const ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES = 100;
-const analyticsResponseCache = new Map<string, { expiresAt: number; body: unknown }>();
+const analyticsQueryContext = new AsyncLocalStorage<{ refresh: boolean }>();
+const bigQueryClients = new Map<string, import('@google-cloud/bigquery').BigQuery>();
+const queryCache = new AggregateCache<BigQueryFeedResult>({ freshMs: 30_000, maxAgeMs: 30_000, maxEntries: 128 });
+
+async function bigQueryClient(projectId: string) {
+  const existing = bigQueryClients.get(projectId);
+  if (existing) return existing;
+  const { BigQuery } = await import('@google-cloud/bigquery');
+  const client = bigQueryClients.get(projectId) ?? new BigQuery({ projectId });
+  bigQueryClients.set(projectId, client);
+  return client;
+}
 
 const PUBLIC_OMIT_KEYS = new Set([
   'sourceProjectId',
@@ -487,10 +499,9 @@ async function queryBigQuerySqlWithCli(
   return JSON.parse(stdout) as Record<string, unknown>[];
 }
 
-async function queryBigQuerySql(queryJobProject: string, query: string): Promise<BigQueryFeedResult> {
+async function queryBigQuerySqlUncached(queryJobProject: string, query: string): Promise<BigQueryFeedResult> {
   try {
-    const { BigQuery } = await import('@google-cloud/bigquery');
-    const bq = new BigQuery({ projectId: queryJobProject });
+    const bq = await bigQueryClient(queryJobProject);
     const [rows] = await bq.query({ query, location: 'US' });
     return { rows: rows as Record<string, unknown>[], error: null };
   } catch (err: unknown) {
@@ -510,6 +521,22 @@ async function queryBigQuerySql(queryJobProject: string, query: string): Promise
   }
 }
 
+async function queryBigQuerySql(queryJobProject: string, query: string): Promise<BigQueryFeedResult> {
+  const key = `${queryJobProject}:${crypto.createHash('sha256').update(query).digest('hex')}`;
+  // A manual refresh reads upstream again rather than renewing old query results.
+  if (analyticsQueryContext.getStore()?.refresh) return queryBigQuerySqlUncached(queryJobProject, query);
+  try {
+    const result = await queryCache.read(key, async () => {
+      const value = await queryBigQuerySqlUncached(queryJobProject, query);
+      if (value.error) throw value;
+      return value;
+    });
+    return result.value;
+  } catch (error) {
+    return error as BigQueryFeedResult;
+  }
+}
+
 async function queryBigQuery(
   projectId: string,
   dataset: string,
@@ -517,8 +544,7 @@ async function queryBigQuery(
   range?: HushhAiDateRange,
 ): Promise<BigQueryFeedResult> {
   try {
-    const { BigQuery } = await import('@google-cloud/bigquery');
-    const bq = new BigQuery({ projectId: BQ_JOB_PROJECT || projectId });
+    const bq = await bigQueryClient(BQ_JOB_PROJECT || projectId);
     const dateFilter = range
       ? `WHERE metric_date IS NULL OR DATE(metric_date) BETWEEN DATE(${sqlStringLiteral(range.startDate)}) AND DATE(${sqlStringLiteral(range.endDate)})`
       : '';
@@ -5509,7 +5535,7 @@ const founderBriefingCache = new Map<string, { expiresAt: number; promise: Promi
 function fetchFounderBriefing(current: HushhAiDateRange, previous: HushhAiDateRange): Promise<FounderBriefingData> {
   const cacheKey = `${current.startDate}:${current.endDate}`;
   const cached = founderBriefingCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  if (cached && cached.expiresAt > Date.now() && !analyticsQueryContext.getStore()?.refresh) return cached.promise;
   const table = `\`${ONE_APP_GA4_PROJECT}.${ONE_APP_GA4_DATASET}.events_*\``;
   const surface = oneFounderSurfaceSql(ONE_APP_HOST);
   const meaningful = `event_name NOT IN (${sqlNameList(ONE_BACKGROUND_EVENTS)})`;
@@ -5786,7 +5812,7 @@ ${capabilitySql.isDeliberate}
     };
   })();
   if (founderBriefingCache.size >= 15) founderBriefingCache.delete(founderBriefingCache.keys().next().value as string);
-  founderBriefingCache.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, promise });
+  founderBriefingCache.set(cacheKey, { expiresAt: Date.now() + 30_000, promise });
   void promise.catch(() => { founderBriefingCache.delete(cacheKey); });
   return promise;
 }
@@ -5796,7 +5822,76 @@ ${capabilitySql.isDeliberate}
 // ---------------------------------------------------------------------------
 
 function registerAnalyticsRoutes(app: express.Express): void {
-  app.get('/api/analytics/founder', async (req, res) => {
+  const snapshots = new AggregateCache<{ status: number; body: unknown }>({ freshMs: 60_000, maxAgeMs: 10 * 60_000, maxEntries: 100 });
+  const handlers = new Map<string, express.RequestHandler>();
+  const capture = (handler: express.RequestHandler, req: express.Request, refresh = false) => new Promise<{ status: number; body: unknown }>((resolve, reject) => {
+    let status = 200;
+    const response = {
+      status(code: number) { status = code; return response; },
+      json(body: unknown) { const value = { status, body }; if (status === 200) resolve(value); else reject(value); return response; },
+    };
+    void analyticsQueryContext.run({ refresh }, async () => {
+      try { await handler(req, response as unknown as express.Response, reject); } catch (error) { reject(error); }
+    });
+  });
+  const api = {
+    get(paths: string | string[], handler: express.RequestHandler) {
+      for (const path of Array.isArray(paths) ? paths : [paths]) handlers.set(path, handler);
+      app.get(paths, async (req, res) => {
+        try {
+          const refresh = req.get('X-Metrics-Refresh') === '1';
+          // Aggregate handlers need only query parameters; do not retain a session or cookie in cached loaders.
+          const sourceRequest = { query: req.query } as express.Request;
+          const result = await snapshots.read(canonicalAnalyticsKey(req.originalUrl), () => capture(handler, sourceRequest, refresh), refresh);
+          res.set('X-Metrics-Cache', result.state);
+          res.set('X-Metrics-Updated-At', new Date(result.at).toISOString());
+          res.set('X-Metrics-Refreshing', result.refreshing ? '1' : '0');
+          res.set('X-Metrics-Refresh-Error', result.refreshError ? '1' : '0');
+          res.status(result.value.status).json(result.value.body);
+        } catch (error) {
+          const failure = error as { status?: number; body?: unknown };
+          res.status(failure.status ?? 503).json(failure.body ?? { error: 'Metrics are temporarily unavailable.' });
+        }
+      });
+    },
+  };
+  if (process.env.K_SERVICE && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+    const refreshTimer = setInterval(() => { void snapshots.refreshActive(); }, 30_000);
+    refreshTimer.unref();
+    // Start after routes are registered. Only the selected aggregate is fetched.
+    let warming = false;
+    const warm = async () => {
+      if (warming) return;
+      warming = true;
+      try {
+      const overviewRange = trailingDateRange(7), oneDefault = trailingDateRange(30);
+      const overview = new URLSearchParams({ view: 'overview', one_start_date: oneDefault.startDate, one_end_date: oneDefault.endDate, kai_start_date: overviewRange.startDate, kai_end_date: overviewRange.endDate, hushh_ai_start_date: overviewRange.startDate, hushh_ai_end_date: overviewRange.endDate });
+      const warmPaths: string[] = [];
+      for (const days of [30, 7, 14, 90]) {
+        const range = trailingDateRange(days);
+        const one = new URLSearchParams({ one_start_date: range.startDate, one_end_date: range.endDate });
+        for (const view of ['one', 'growth', 'apps']) warmPaths.push(`/api/analytics/all?view=${view}&${one}`);
+        if (days !== 14) {
+          const period = founderPresetRange(days as 7 | 30 | 90);
+          warmPaths.push(`/api/analytics/founder?start_date=${period.startDate}&end_date=${period.endDate}`);
+        }
+      }
+      warmPaths.push('/api/analytics/all?' + overview, '/api/analytics/growth/compare');
+      for (const url of warmPaths) {
+        const parsed = new URL(url, 'http://analytics.internal');
+        const handler = handlers.get(parsed.pathname);
+        if (!handler) continue;
+        const req = { query: Object.fromEntries(parsed.searchParams) } as unknown as express.Request;
+        try { await snapshots.warm(canonicalAnalyticsKey(url), () => capture(handler, req)); } catch { /* Source state stays explicit. */ }
+      }
+      } finally { warming = false; }
+    };
+    const warmTimer = setTimeout(() => { void warm(); }, 0);
+    warmTimer.unref();
+    const presetTimer = setInterval(() => { void warm(); }, 5 * 60_000);
+    presetTimer.unref();
+  }
+  api.get('/api/analytics/founder', async (req, res) => {
     const periods = founderPeriods(req.query as Record<string, unknown>);
     if (!periods) {
       res.status(400).json({ error: 'Choose a valid completed date range of 1–90 days, from 2026-05-01 onward.' });
@@ -5810,7 +5905,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
     }
   });
 
-  app.get(['/api/analytics/one/uat', '/api/analytics/kai/uat'], async (_req, res) => {
+  api.get(['/api/analytics/one/uat', '/api/analytics/kai/uat'], async (_req, res) => {
   const result = await queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW);
   res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
     environment: 'uat',
@@ -5820,7 +5915,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
   }));
 });
 
-app.get(['/api/analytics/one/production', '/api/analytics/kai/production'], async (_req, res) => {
+api.get(['/api/analytics/one/production', '/api/analytics/kai/production'], async (_req, res) => {
   const result = await queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW);
   res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
     environment: 'production',
@@ -5830,7 +5925,7 @@ app.get(['/api/analytics/one/production', '/api/analytics/kai/production'], asyn
   }));
 });
 
-app.get('/api/analytics/hushhtech', async (req, res) => {
+api.get('/api/analytics/hushhtech', async (req, res) => {
   const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
   const result = await fetchHushhTechAnalytics(hushhTechRange);
   res.status(result.error ? 502 : 200).json(sanitizePublicPayload({
@@ -5841,7 +5936,7 @@ app.get('/api/analytics/hushhtech', async (req, res) => {
   }));
 });
 
-app.get(['/api/analytics/one/ga4', '/api/analytics/kai/ga4'], async (_req, res) => {
+api.get(['/api/analytics/one/ga4', '/api/analytics/kai/ga4'], async (_req, res) => {
   const result = await fetchKaiGa4Summary();
   res.status(result.error && !result.data ? 502 : 200).json(sanitizePublicPayload({
     platform: 'one.hushh.ai',
@@ -5851,7 +5946,7 @@ app.get(['/api/analytics/one/ga4', '/api/analytics/kai/ga4'], async (_req, res) 
   }));
 });
 
-app.get(['/api/analytics/one', '/api/analytics/kai'], async (req, res) => {
+api.get(['/api/analytics/one', '/api/analytics/kai'], async (req, res) => {
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
   const [production, uat, uatGa4, productionGa4, gcp, productionSearchConsole, uatSearchConsole] = await Promise.all([
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
@@ -5896,7 +5991,7 @@ app.get(['/api/analytics/one', '/api/analytics/kai'], async (req, res) => {
   }));
 });
 
-app.get('/api/analytics/hushhai', async (req, res) => {
+api.get('/api/analytics/hushhai', async (req, res) => {
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
   const [gcp, searchConsole, ga4] = await Promise.all([
     fetchHushhAiCloudRun(hushhAiRange),
@@ -6820,7 +6915,7 @@ async function fetchAppStoreConnectSummary(range: HushhAiDateRange): Promise<Dat
   };
 }
 
-app.get('/api/analytics/app-store-connect', async (req, res) => {
+api.get('/api/analytics/app-store-connect', async (req, res) => {
   const range = parseAppStoreConnectDateRange(req.query as Record<string, unknown>);
   const result = await fetchAppStoreConnectSummary(range);
   res.status(result.error && !result.data ? 502 : 200).json(sanitizePublicPayload({
@@ -6844,7 +6939,7 @@ const androidReporting = boundedReportingCache(async (range: {startDate:string;e
   return {packageId:'com.hussh.app',range,history,downloads,vitals,fetchedAt:new Date().toISOString()};
 });
 
-app.get('/api/analytics/one/android', async (req, res) => {
+api.get('/api/analytics/one/android', async (req, res) => {
   if (req.query.environment && req.query.environment !== 'production') {
     res.status(400).json({error:'Provider Android reports support the production property only.'});return;
   }
@@ -6859,7 +6954,7 @@ app.get('/api/analytics/one/android', async (req, res) => {
   catch {res.status(503).json({error:'Android reporting is temporarily unavailable. Retry later.'});}
 });
 
-app.get('/api/analytics/one/app', async (req, res) => {
+api.get('/api/analytics/one/app', async (req, res) => {
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
   const [production, uat] = await Promise.all([
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
@@ -6875,7 +6970,7 @@ app.get('/api/analytics/one/app', async (req, res) => {
   }));
 });
 
-app.get('/api/analytics/growth', async (req, res) => {
+api.get('/api/analytics/growth', async (req, res) => {
   const range = parseOneAppDateRange(req.query as Record<string, unknown>);
   const growth = await fetchGrowthSummary(range);
   res.status(growth.error && !growth.data ? 502 : 200).json(sanitizePublicPayload({
@@ -6889,7 +6984,7 @@ app.get('/api/analytics/growth', async (req, res) => {
 // The same organisation-level summary over three fixed windows, side by side.
 // Fetched on its own rather than folded into /all because it is three more
 // growth scans and only one tab reads it.
-app.get('/api/analytics/growth/compare', async (_req, res) => {
+api.get('/api/analytics/growth/compare', async (_req, res) => {
   const windows = [
     { key: '30d', label: 'Last 30 days', range: trailingDateRange(30) },
     { key: '90d', label: 'Last 90 days', range: trailingDateRange(90) },
@@ -6911,12 +7006,18 @@ app.get('/api/analytics/growth/compare', async (_req, res) => {
   }));
 });
 
-app.get('/api/analytics/all', async (req, res) => {
+api.get('/api/analytics/all', async (req, res) => {
+  const view = typeof req.query.view === 'string' ? req.query.view : 'overview';
+  if (!['one', 'growth', 'apps', 'overview', 'platforms'].includes(view)) { res.status(400).json({ error: 'Choose a valid metrics section.' }); return; }
+  const full = view === 'overview' || view === 'platforms';
+  const relatedHealth = full || view === 'one';
+  const optional = async <T,>(enabled: boolean, loader: () => Promise<{ data: T | null; error: string | null }>) => enabled ? loader() : { data: null, error: null };
+  const feed = async (project: string, dataset: string, table: string, range: HushhAiDateRange) => full ? queryBigQuery(project, dataset, table, range) : { rows: [], error: null };
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
   const kaiRange = parseKaiDateRange(req.query as Record<string, unknown>);
   const hushhTechRange = parseHushhTechDateRange(req.query as Record<string, unknown>);
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
-  const appStoreConnectRange = parseAppStoreConnectDateRange(req.query as Record<string, unknown>);
+  const appStoreConnectRange = view === 'apps' ? oneRange : parseAppStoreConnectDateRange(req.query as Record<string, unknown>);
   const [
     uat,
     production,
@@ -6934,21 +7035,21 @@ app.get('/api/analytics/all', async (req, res) => {
     growth,
     appStoreConnect,
   ] = await Promise.all([
-    queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW, kaiRange),
-    queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW, kaiRange),
-    fetchKaiGa4Summary(kaiRange),
-    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true, ONE_PROD_GA4_PROPERTY_ID),
-    fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'One production'),
-    fetchKaiProductionSearchConsole(kaiRange),
-    fetchKaiUatSearchConsole(kaiRange),
-    fetchHushhAiCloudRun(hushhAiRange),
-    fetchHushhAiSearchConsole(hushhAiRange),
-    fetchHushhAiGa4Summary(hushhAiRange),
-    fetchHushhTechAnalytics(hushhTechRange),
+    feed(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW, kaiRange),
+    feed(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW, kaiRange),
+    optional(full, () => fetchKaiGa4Summary(kaiRange)),
+    optional(relatedHealth, () => fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true, ONE_PROD_GA4_PROPERTY_ID)),
+    optional(relatedHealth, () => fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'One production')),
+    optional(full, () => fetchKaiProductionSearchConsole(kaiRange)),
+    optional(full, () => fetchKaiUatSearchConsole(kaiRange)),
+    optional(full, () => fetchHushhAiCloudRun(hushhAiRange)),
+    optional(full, () => fetchHushhAiSearchConsole(hushhAiRange)),
+    optional(full, () => fetchHushhAiGa4Summary(hushhAiRange)),
+    optional(full, () => fetchHushhTechAnalytics(hushhTechRange)),
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
     fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST),
-    fetchGrowthSummary(oneRange),
-    fetchAppStoreConnectSummary(appStoreConnectRange),
+    optional(full || view === 'growth', () => fetchGrowthSummary(oneRange)),
+    optional(full || view === 'apps', () => fetchAppStoreConnectSummary(appStoreConnectRange)),
   ]);
   const fetchedAt = new Date().toISOString();
   const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);
@@ -9129,6 +9230,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
 
   // 1. Reverse Proxy Trust
   app.set('trust proxy', 1);
+  app.use(compression({ threshold: 1024 }));
 
   // 2. Body Parsing
   app.use(express.json({ limit: '64kb' }));
@@ -9157,38 +9259,6 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
       return res.status(401).json({ error: 'Authentication required' });
     }
     next();
-  });
-
-  // 6. Analytics Cache Middleware
-  app.use('/api/analytics', (req, res, next) => {
-    // Instagram includes authorization-dependent operator capability. Never
-    // put it in the shared aggregate response cache.
-    if (req.path === '/instagram') return next();
-    if (req.method !== 'GET') return next();
-    const key = req.originalUrl;
-    const cached = analyticsResponseCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) {
-      res.set('X-Metrics-Cache', 'HIT');
-      return res.json(cached.body);
-    }
-    if (cached) analyticsResponseCache.delete(key);
-
-    const sendJson = res.json.bind(res);
-    res.json = ((body: unknown) => {
-      if (res.statusCode < 500) {
-        if (analyticsResponseCache.size >= ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES) {
-          const oldestKey = analyticsResponseCache.keys().next().value as string | undefined;
-          if (oldestKey) analyticsResponseCache.delete(oldestKey);
-        }
-        analyticsResponseCache.set(key, {
-          expiresAt: Date.now() + ANALYTICS_RESPONSE_CACHE_TTL_MS,
-          body,
-        });
-        res.set('X-Metrics-Cache', 'MISS');
-      }
-      return sendJson(body);
-    }) as typeof res.json;
-    return next();
   });
 
   // 5. Auth Endpoint Handlers

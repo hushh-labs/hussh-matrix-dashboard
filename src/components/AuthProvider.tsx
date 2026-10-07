@@ -1,3 +1,4 @@
+import { clearMetricsCache } from '../lib/metrics-resource';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -63,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = async () => {
+    clearMetricsCache();
     await logoutUser();
     setUser(null);
     window.location.href = '/login';

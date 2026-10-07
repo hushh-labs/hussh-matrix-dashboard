@@ -1,3 +1,4 @@
+import { MetricsSkeleton } from './MetricsLoading';
 import { AndroidAnalyticsPanel } from './AndroidAnalyticsPanel';
 import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
@@ -1199,6 +1200,7 @@ function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rang
 export function OneAppPanel({
   one,
   oneUat,
+  loading = false,
   healthMetrics,
   rangeLabel,
   dateControl,
@@ -1207,6 +1209,7 @@ export function OneAppPanel({
   onCloseLocation,
   onLocationRouteChange,
 }: {
+  loading?: boolean;
   one: OneAppSummary | null;
   oneUat: OneAppSummary | null;
   healthMetrics: BreakdownMetric[];
@@ -1229,11 +1232,11 @@ export function OneAppPanel({
     (row) => row.environment === 'uat' && row.events > 0,
   );
 
-  if ((!one || !one.available) && !locationRoute && !selectedAgentCapability) {
+  if ((loading || !one || !one.available) && !locationRoute && !selectedAgentCapability) {
     return (
       <main className="space-y-10">
         <div className="flex justify-end">{dateControl}</div>
-        <div className={cn(applePanel, 'p-8 text-center')}>
+        {loading ? <MetricsSkeleton /> : <div className={cn(applePanel, 'p-8 text-center')}>
           <p className="text-base font-semibold text-[#1d1d1f]">
             No One app data for this window yet.
           </p>
@@ -1241,7 +1244,7 @@ export function OneAppPanel({
             This view reads the production GA4 export. If it stays empty, check that the
             dashboard&rsquo;s service account can read the analytics dataset.
           </p>
-        </div>
+        </div>}
       </main>
     );
   }
@@ -1249,6 +1252,7 @@ export function OneAppPanel({
   if (selectedAgentCapability) {
     return (
       <AgentCapabilityAnalyticsPanel
+        loading={loading}
         capabilityKey={selectedAgentCapability}
         one={one}
         uat={oneUat}
@@ -1265,6 +1269,7 @@ export function OneAppPanel({
   if (locationRoute) {
     return (
       <OneLocationAnalyticsPanel
+        loading={loading}
         one={one}
         uat={oneUat}
         environment={locationRoute.environment}

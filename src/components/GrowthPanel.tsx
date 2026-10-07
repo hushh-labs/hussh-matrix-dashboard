@@ -1,3 +1,4 @@
+import { MetricsSkeleton } from './MetricsLoading';
 import { Fragment, useMemo, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle, Info } from 'lucide-react';
@@ -766,29 +767,31 @@ function InstrumentationHealth({ growth }: { growth: GrowthSummary }) {
 }
 
 export function GrowthPanel({
+  loading = false,
   growth,
   costPerActiveUser,
   monthlyActive,
   rangeLabel,
   dateControl,
 }: {
+  loading?: boolean;
   growth: GrowthSummary | null;
   costPerActiveUser: number | null;
   monthlyActive: number | null;
   rangeLabel: string;
   dateControl: ReactNode;
 }) {
-  if (!growth) {
+  if (loading || !growth) {
     return (
       <main className="space-y-10">
         <div className="flex justify-end">{dateControl}</div>
-        <div className={cn(applePanel, 'p-8 text-center')}>
-          <p className="text-base font-semibold text-[#1d1d1f]">Growth data is still loading.</p>
+        {loading ? <MetricsSkeleton /> : <div className={cn(applePanel, 'p-8 text-center')}>
+          <p className="text-base font-semibold text-[#1d1d1f]">Growth data is temporarily unavailable.</p>
           <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-[#6e6e73]">
             This view reads the GA4 export, the billing export and Search Console. If it stays
             empty, check that the dashboard&rsquo;s service account can read all three.
           </p>
-        </div>
+        </div>}
       </main>
     );
   }
