@@ -11,6 +11,13 @@ and production stream `15395548050` (UAT `15395713075`). iOS remains
 `server.ts` adds bounded aggregate capture diagnostics to One and Android to the
 founder briefing. Founder Android customers require an explicit production
 backend tag; automatic or UAT-tagged events do not establish that classification.
+Raw production capture diagnostics only scan dates on or after the export repair,
+7 October 2026. Earlier-only windows return an explicit waiting state without a
+new diagnostic query; requested report dates remain unchanged. Historical GA4
+aggregate reads still cover the selected range. October 7 is a partial capture
+day; October 8 is the first full day. The 100 MB scan cap can make a larger raw
+range unavailable rather than spend beyond the bound.
+
 Incomplete Android comparison history suppresses aggregate growth comparisons
 when Android contributes. Final daily exports take precedence over overlapping
 intraday exports. No person-level records leave these endpoints.
@@ -68,6 +75,37 @@ from Play Console authorization. Runtime vitals access and report-bucket access
 must be tested independently. No attached Android device was available during
 the implementation; installed-device sign-in/activation/retention proof remains
 required. Native metadata/reviewer-guard changes require a new app release.
+
+### Observed production verification
+
+Dashboard PR [#94](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/94)
+landed as `e24dd0b90aa6bffeb83455882b768877b11058b2`. Manual Cloud Build
+`bdacf8f5-f6a6-4a87-9518-f68d90ac135d` succeeded; Cloud Run revision
+`hushh-matrix-dashboard-00235-jin` was tested at zero traffic and then promoted.
+The preceding ready revision was `hushh-matrix-dashboard-00234-wut`.
+
+- September 28–October 4: runtime history returned **21 active app users,
+  21 tracked app users and 4,279 events**, exactly matching an independent
+  read-only GA4 request for stream `15395548050` and the same window.
+- The repeated endpoint read returned the identical cached report. This is
+  aggregate report reconciliation, not event ingestion or account deduplication
+  proof for the missing historical raw rows.
+- Anonymous access, invalid dates, ranges over 90 days and UAT provider scope
+  rejection passed. Existing One production checks (seven sections), founder
+  contract (148 checks), and stored Instagram reads passed on the candidate.
+- The production endpoint repeated the same-window match. The signed-in live
+  One page displayed historical Android reporting on desktop and at 390×844,
+  without page-wide horizontal overflow. The 7-day preset loaded October 1–7:
+  28 active app users, 28 tracked app users and 4,994 events.
+- Runtime Play vitals returned `permission_missing`; install/listing reports
+  returned `not_configured`. Their counts were not fabricated.
+- The new stream's export membership is verified, but fresh package-specific
+  exported events and a physical-device sign-in/Location journey remain pending.
+  The user chose to perform that device test later.
+
+These are dated observations, not fixture values or expected future totals.
+The native source changes have not been shipped in a new Play binary. Native
+release and real-device proof must be recorded separately from dashboard release.
 
 ## Private configuration
 

@@ -35,7 +35,7 @@ export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one
       <div className="mt-4 overflow-x-auto">
         <table className="w-full text-left text-xs"><caption className="mb-2 text-left font-semibold">Observed app versions and backend environments</caption>
           <thead><tr><th scope="col" className="py-2 pr-3">Native version</th><th scope="col" className="pr-3">Installer</th><th scope="col" className="pr-3">Backend tag</th><th scope="col" className="text-right">Events</th></tr></thead>
-          <tbody>{data.releases.map((row, index) => <tr key={index} className="border-t border-black/5"><td className="py-2 pr-3">{row.version}</td><td className="pr-3">{row.installer === 'com.android.vending' ? 'Google Play' : row.installer === 'unknown' ? 'Unknown' : 'Other / sideload'}</td><td className="pr-3">{row.environment}</td><td className="text-right">{count(Number(row.events))}</td></tr>)}</tbody>
+          <tbody>{data.releases.map((row, index) => <tr key={index} className="border-t border-black/5"><td className="py-2 pr-3">{row.version}</td><td className="pr-3">{row.installer === 'com.android.vending' ? 'Google Play' : row.installer === 'unknown' ? 'Unknown' : 'Other / sideload'}</td><td className="pr-3">{row.environment}</td><td className="text-right">{count(row.events)}</td></tr>)}</tbody>
         </table>
       </div>
       {data.releases.some((row) => row.environment === 'uat') && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Some Android events came from a build using the UAT backend. These measurements are not evidence of production-backend customers. Untagged automatic events do not establish backend environment.</p>}

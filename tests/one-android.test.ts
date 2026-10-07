@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { oneAndroidSql, oneSurfaceSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage } from '../src/server/one-scope.mjs';
+import { oneAndroidSql, oneSurfaceSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange } from '../src/server/one-scope.mjs';
 
 describe('One Android reporting contract', () => {
+  it('bounds production raw reads to the repaired export history without changing the requested reporting window',()=>{
+    const before={startDate:'2026-09-28',endDate:'2026-10-04'};
+    const spanning={startDate:'2026-07-10',endDate:'2026-10-07'};
+    expect(androidCaptureQueryRange(before)).toBeNull();
+    expect(androidCaptureQueryRange(spanning)).toEqual({startDate:'2026-10-07',endDate:'2026-10-07'});
+    expect(spanning.startDate).toBe('2026-07-10');
+    expect(androidCaptureQueryRange(before,'uat')).toEqual(before);
+    expect(androidCaptureQueryRange({startDate:'2026-10-08',endDate:'2026-10-09'})).toEqual({startDate:'2026-10-08',endDate:'2026-10-09'});
+  });
   it('guards incomplete Android history when either period contributes, including the partial cutover day',()=>{
     expect(androidComparisonCoverage(0,3,'2026-10-06')).toBe(false);
     expect(androidComparisonCoverage(3,0,'2026-10-07')).toBe(false);

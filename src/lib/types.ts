@@ -1057,7 +1057,7 @@ export interface OneAppSummary {
     startDate: string; endDate: string; observedSince: string | null; latestEventAt: string | null;
     events: number | null; activeAppIds: number | null; identifiedAccounts: number | null;
     firstOpens: number | null; routeVisits: number | null;
-    releases: Array<{version: string; installer: string; environment: string; events: number; appIds: number}>;
+    releases: Array<{version: string; installer: string; environment: string; events: number | null}>;
     note: string;
   };
   nativeEnvironments?: Array<{
