@@ -69,7 +69,7 @@ export interface FetchAllAnalyticsOptions {
 
 export function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
   const params = new URLSearchParams();
-  if (options?.view) params.set('view', options.view);
+  if (options?.view) params.set('view', options.view === 'platforms' ? 'overview' : options.view);
   if (options?.hushhAiStartDate) params.set('hushh_ai_start_date', options.hushhAiStartDate);
   if (options?.hushhAiEndDate) params.set('hushh_ai_end_date', options.hushhAiEndDate);
   if (options?.kaiStartDate) params.set('kai_start_date', options.kaiStartDate);

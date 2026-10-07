@@ -41,5 +41,6 @@ describe('aggregate snapshot freshness and isolation', () => {
   it('canonicalizes query order without combining dates or view scope', () => {
     expect(canonicalAnalyticsKey('/api/analytics/all?view=one&one_start_date=2026-10-01')).toBe(canonicalAnalyticsKey('/api/analytics/all?one_start_date=2026-10-01&view=one'));
     expect(canonicalAnalyticsKey('/api/analytics/all?view=one')).not.toBe(canonicalAnalyticsKey('/api/analytics/all?view=growth'));
+    expect(canonicalAnalyticsKey('/api/analytics/all?view=platforms&kai_start_date=2026-10-01')).toBe(canonicalAnalyticsKey('/api/analytics/all?kai_start_date=2026-10-01&view=overview'));
   });
 });

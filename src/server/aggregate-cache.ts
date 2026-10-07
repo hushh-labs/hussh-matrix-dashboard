@@ -84,6 +84,7 @@ export class AggregateCache<T> {
 
 export function canonicalAnalyticsKey(originalUrl: string) {
   const url = new URL(originalUrl, 'http://analytics.internal');
+  if (url.pathname === '/api/analytics/all' && url.searchParams.get('view') === 'platforms') url.searchParams.set('view', 'overview');
   url.searchParams.sort();
   return `${url.pathname}${url.search}`;
 }
