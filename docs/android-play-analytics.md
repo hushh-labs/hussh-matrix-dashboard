@@ -84,6 +84,24 @@ landed as `e24dd0b90aa6bffeb83455882b768877b11058b2`. Manual Cloud Build
 `hushh-matrix-dashboard-00235-jin` was tested at zero traffic and then promoted.
 The preceding ready revision was `hushh-matrix-dashboard-00234-wut`.
 
+The follow-up PR [#97](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/97)
+landed as `20511f06f4a6395142d353fe93a5ba733ab535fd`, preserving the intervening
+dashboard changes. Manual Cloud Build `07216028-fbd5-4d83-9f36-0ac5544eafb8`
+succeeded. Revision `hushh-matrix-dashboard-00240-hud` passed zero-traffic
+verification and now serves 100% of production traffic. The release rollback
+target is `hushh-matrix-dashboard-00238-vin`; use a fresh traffic snapshot before
+any later rollback rather than assuming an older revision is still appropriate.
+
+This follow-up bounds raw diagnostics to the export repair date and preserves
+missing release-event counts as unavailable rather than zero. Its unit suite
+passed 121 tests in 14 files, plus type checking, build and One render checks.
+The candidate passed 148 founder contract checks and the seven-section One
+production checks. Interactive Google sign-in, existing web/iOS and stored
+Instagram reads, and the same-window independent GA4 comparison were verified.
+The production 30- and 90-day presets loaded real aggregate history, with no
+horizontal page overflow at desktop or 390-pixel mobile width. These observations
+do not establish that Play reporting permissions or a new device export work.
+
 - September 28–October 4: runtime history returned **21 active app users,
   21 tracked app users and 4,279 events**, exactly matching an independent
   read-only GA4 request for stream `15395548050` and the same window.
