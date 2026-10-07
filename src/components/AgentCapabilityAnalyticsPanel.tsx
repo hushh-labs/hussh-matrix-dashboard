@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Activity,
@@ -8,7 +8,6 @@ import {
   Briefcase,
   Calendar,
   CheckCircle2,
-  ChevronDown,
   CircleDot,
   ContactRound,
   Database,
@@ -45,12 +44,12 @@ import {
 } from 'recharts';
 
 import { formatNumber } from '../lib/analytics-service';
-import { appleCard, appleLabel, applePanel } from '../lib/theme';
+import { appleCard, appleLabel } from '../lib/theme';
 import { cn } from '../lib/utils';
 import type { OneAppSummary } from '../lib/types';
-import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
+import { FeatureActivityTable } from './FeatureActivityTable';
 import { MetricCalculationGuide } from './MetricCalculationGuide';
-import { exactCount, eventsPerDevice, eventVolumeExplanation, featureMeasurementNote } from '../lib/feature-measurement';
+import { exactCount, eventVolumeExplanation, featureActivityLabel } from '../lib/feature-measurement';
 
 interface AgentCapabilityAnalyticsPanelProps {
   capabilityKey: string;
@@ -571,7 +570,6 @@ export function AgentCapabilityAnalyticsPanel({
   onBack,
 }: AgentCapabilityAnalyticsPanelProps) {
   const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
-  const [expandedFeatureKey, setExpandedFeatureKey] = useState<string | null>(null);
 
   const activeSummary = environment === 'production' ? one : uat;
   const capability = activeSummary?.capabilities?.find((c) => c.key === capabilityKey);
@@ -639,31 +637,23 @@ export function AgentCapabilityAnalyticsPanel({
     const accounts = measured ? (aggregateMetric?.accounts ?? null) : null;
     const devices = measured ? (aggregateMetric?.devices ?? 0) : null;
     const signals = measured ? (aggregateMetric?.signals ?? 0) : null;
-    const hasOutcomes = measured && (aggregateMetric?.outcomeSignals ?? 0) > 0;
-    const successful = hasOutcomes ? (aggregateMetric?.successes ?? 0) : null;
-    const expectedErrors = hasOutcomes ? (aggregateMetric?.expectedErrors ?? 0) : null;
-    const failed = hasOutcomes ? (aggregateMetric?.failures ?? 0) : null;
     const explanation =
       wasObserved
         ? eventVolumeExplanation(signals, devices)
         : isGap
-          ? spec.explanation
+          ? 'This activity is not tracked yet.'
           : !sourceAvailable
-            ? 'The aggregate source is temporarily unavailable. No zero is inferred.'
-            : 'The event is defined and the export was read successfully, but no matching signal appeared in this date range.';
+            ? 'We could not read this count. A dash does not mean zero activity.'
+            : 'No matching activity was recorded in this period.';
 
     return {
       ...spec,
-      badgeLabel: isGap ? 'Not instrumented' : !sourceAvailable ? 'Source unavailable' : wasObserved ? 'Observed in export' : 'No signal in range',
+      label: featureActivityLabel(spec.key, spec.label),
+      badgeLabel: isGap ? 'Not tracked yet' : !sourceAvailable ? 'Data unavailable' : wasObserved ? 'Data available' : 'No activity recorded',
       badgeClass: isGap || !sourceAvailable ? 'bg-amber-50 text-amber-800' : wasObserved ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-100 text-slate-600',
       accounts,
       devices,
       signals,
-      successful,
-      expectedErrors,
-      failed,
-      eventsPerDevice: eventsPerDevice(signals, devices),
-      noResult: measured ? Math.max(0, (signals ?? 0) - (aggregateMetric?.outcomeSignals ?? 0)) : null,
       resultCounts: aggregateMetric,
       eventBreakdown: featureUsageMetric?.eventBreakdown,
       measured,
@@ -690,10 +680,10 @@ export function AgentCapabilityAnalyticsPanel({
                 <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#007aff]/10 text-[#007aff]">
                   <Icon className="h-4 w-4" />
                 </span>
-                <p className={appleLabel}>{meta.title} &middot; Detailed Analytics &middot; {rangeLabel}</p>
+                <p className={appleLabel}>{meta.title} &middot; Activity &middot; {rangeLabel}</p>
               </div>
               <h1 className="mt-1 text-2xl font-bold text-[#1d1d1f] sm:text-3xl">
-                {meta.title} Deep-Dive
+                {meta.title} activity
               </h1>
               <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
                 {meta.description}
@@ -741,8 +731,8 @@ export function AgentCapabilityAnalyticsPanel({
           </div>
           <p className="text-xs font-semibold leading-5 text-[#6e6e73]">
             {environment === 'production'
-              ? 'Production GA4 property: production web plus public iOS and Android build traffic. Native rows can carry env=uat while those builds use the UAT backend, so they are not described as production-backend users.'
-              : 'UAT GA4 property: UAT web validation traffic. Native rows appear only when an explicit UAT native build sends them. Counts never mix across GA4 properties.'}
+              ? 'Production analytics source: One production web and native app activity. Native build and backend environment are not verified by this selection.'
+              : 'UAT analytics source: test activity recorded in the UAT property. Production and UAT counts are kept separate.'}
           </p>
         </div>
       </div>
@@ -751,14 +741,14 @@ export function AgentCapabilityAnalyticsPanel({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className={cn(appleCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Identified accounts</p>
+            <p className="text-sm font-semibold text-[#6e6e73]">Signed-in accounts</p>
             <UserCheck className="h-4 w-4 text-[#007aff]" />
           </div>
           <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
             <MetricValue value={instrumented && capabilitySourceAvailable ? identifiedAccounts : null} />
           </p>
           <p className="mt-1 text-xs font-semibold text-[#86868b]">
-            Distinct signed-in One account IDs; anonymous activity excluded
+            Different signed-in account IDs using this feature
           </p>
         </div>
 
@@ -771,26 +761,26 @@ export function AgentCapabilityAnalyticsPanel({
             <MetricValue value={instrumented && capabilitySourceAvailable ? deviceUsers : null} />
           </p>
           <p className="mt-1 text-xs font-semibold text-[#86868b]">
-            Unique GA4 device/browser identifiers; not unique people
+            Different app or browser IDs using this feature
           </p>
         </div>
 
         <div className={cn(appleCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Deliberate actions</p>
+            <p className="text-sm font-semibold text-[#6e6e73]">Recorded actions</p>
             <Zap className="h-4 w-4 text-[#1f7a36]" />
           </div>
           <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
             <MetricValue value={instrumented && capabilitySourceAvailable ? deliberateEvents : null} />
           </p>
           <p className="mt-1 text-xs font-semibold text-[#86868b]">
-            Repeat actions count again; this is not a user total
+            Recorded feature-use steps; repeated actions count again
           </p>
         </div>
 
         <div className={cn(appleCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Telemetry Status</p>
+            <p className="text-sm font-semibold text-[#6e6e73]">Data status</p>
             {observed ? (
               <CheckCircle2 className="h-4 w-4 text-[#1f7a36]" />
             ) : (
@@ -806,17 +796,17 @@ export function AgentCapabilityAnalyticsPanel({
                   : 'bg-[#ff9500]/10 text-[#b36b00]'
               )}
             >
-              {!instrumented ? 'Not instrumented' : !capabilitySourceAvailable ? 'Source unavailable' : observed ? 'Observed in export' : 'Defined; awaiting signal'}
+              {!instrumented ? 'Not tracked yet' : !capabilitySourceAvailable ? 'Data unavailable' : observed ? 'Data available' : 'No activity recorded'}
             </span>
           </div>
           <p className="mt-2 text-xs font-semibold text-[#86868b]">
             {!instrumented
-              ? capability?.note || 'No event is emitted in app code'
+              ? 'Activity tracking is not available yet'
               : !capabilitySourceAvailable
-                ? 'The export query failed; no zero is inferred'
+                ? 'We could not read this count'
                 : observed
-                  ? 'At least one matching aggregate row exists in this date range'
-                  : 'The event is shipped, but no matching row exists in this date range'}
+                  ? 'Activity was recorded in this period'
+                  : 'No matching activity was recorded in this period'}
           </p>
         </div>
       </div>
@@ -827,9 +817,9 @@ export function AgentCapabilityAnalyticsPanel({
       {instrumented && observed && daily.length > 0 && (
         <div className={cn(appleCard, 'p-6')}>
           <div className="mb-4">
-            <h3 className="text-lg font-bold text-[#1d1d1f]">Daily Deliberate Active Devices</h3>
+            <h3 className="text-lg font-bold text-[#1d1d1f]">Devices active each day</h3>
             <p className="mt-0.5 text-xs font-semibold text-[#6e6e73]">
-              Daily count of device/browser identifiers deliberately interacting with {meta.title} ({rangeLabel})
+              Different device/browser IDs using {meta.title} ({rangeLabel})
             </p>
           </div>
           <div className="h-64 w-full">
@@ -873,123 +863,22 @@ export function AgentCapabilityAnalyticsPanel({
           <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">Recorded activity by feature in {meta.title}</h3>
         </div>
 
-        <div className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs">
-          <div className="flex items-center gap-2 font-bold text-[#1d1d1f]">
-            <Info className="h-4 w-4 text-[#007aff]" />
-            <span>Recorded events and outcomes</span>
-          </div>
-          <p className="mt-1 text-[#6e6e73]">
-            Repeat records count again. Success refers to the event’s stage, which may be a view, request or completion. Open a device count for its calculation and source events. A successful query with no records shows zero; an unavailable query shows a dash.
-          </p>
-        </div>
-
-        <div className={cn(applePanel, 'overflow-hidden')}>
-          <div className="overflow-x-auto">
-            <table className="min-w-[1100px] w-full border-collapse text-left">
-              <thead>
-                <tr className="border-b border-black/[0.06] bg-white/55 text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">
-                  <th className="px-5 py-3">Feature & Telemetry Audit</th>
-                  <th className="px-4 py-3 text-right">Identified accounts</th>
-                  <th className="px-4 py-3 text-right">Devices</th>
-                  <th className="px-4 py-3 text-right">Recorded events</th>
-                  <th className="px-4 py-3 text-right">Events / device</th>
-                  <th className="px-4 py-3 text-right">Successful</th>
-                  <th className="px-4 py-3 text-right">Canceled / no-op</th>
-                  <th className="px-5 py-3 text-right">Failed</th>
-                  <th className="px-4 py-3 text-right">No result</th>
-                </tr>
-              </thead>
-              <tbody>
-                {computedFeatures.map((feature) => {
-                  const FeatureIcon = feature.icon;
-                  const waiting = !feature.measured;
-                  const isExpanded = expandedFeatureKey === feature.key;
-                  return (
-                    <Fragment key={feature.key}>
-                      <tr className="border-b border-black/[0.05] last:border-b-0 hover:bg-black/[0.01]">
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-3">
-                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f2f2f7] text-[#007aff]">
-                              <FeatureIcon className="h-4 w-4" />
-                            </span>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-bold text-[#1d1d1f]">{feature.label}</p>
-                                <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', feature.badgeClass)}>
-                                  {feature.badgeLabel}
-                                </span>
-                              </div>
-                              <p className="mt-0.5 text-xs font-medium text-[#86868b]">
-                                {feature.explanation}
-                              </p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                          <MetricValue value={feature.accounts} waiting={waiting} />
-                        </td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                          <button
-                            type="button"
-                            onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
-                            className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
-                            aria-label={`View calculations for ${feature.label}`}
-                            aria-expanded={isExpanded}
-                            title="View calculations and source events"
-                          >
-                            <Users className="h-3 w-3" />
-                            <span><MetricValue value={feature.devices} waiting={waiting} /></span>
-                            <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
-                          </button>
-                        </td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                          <MetricValue value={feature.signals} waiting={waiting} />
-                        </td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">{feature.eventsPerDevice}</td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                          <MetricValue value={feature.successful} waiting={waiting} />
-                        </td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                          <MetricValue value={feature.expectedErrors} waiting={waiting} />
-                        </td>
-                        <td className="px-5 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
-                          <MetricValue value={feature.failed} waiting={waiting} />
-                        </td>
-                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]"><MetricValue value={feature.noResult} waiting={waiting} /></td>
-                      </tr>
-
-                      {isExpanded && (
-                        <tr key={`${feature.key}-users`}>
-                          <td colSpan={9} className="bg-[#f5f9ff] p-4 border-b border-black/10">
-                            <FeatureUserBreakdownPanel
-                              featureLabel={feature.label}
-                              totalDevices={feature.devices ?? undefined}
-                              totalEvents={feature.signals}
-                              successes={feature.resultCounts?.successes}
-                              expectedErrors={feature.resultCounts?.expectedErrors}
-                              failures={feature.resultCounts?.failures}
-                              measurementNote={featureMeasurementNote(feature.key)}
-                              eventBreakdown={feature.eventBreakdown}
-                              onClose={() => setExpandedFeatureKey(null)}
-                            />
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <FeatureActivityTable rows={computedFeatures.map(feature => ({
+          ...feature,
+          events: feature.signals,
+          successes: feature.resultCounts?.successes,
+          expectedErrors: feature.resultCounts?.expectedErrors,
+          failures: feature.resultCounts?.failures,
+        }))} />
       </div>
 
       {/* Telemetry Audit & Explanation */}
-      <div className={cn(appleCard, 'p-6')}>
-        <div className="flex items-start gap-3">
+      <details className={cn(appleCard, 'p-6')}>
+        <summary className="cursor-pointer text-sm font-semibold text-[#1d1d1f]">Tracking details</summary>
+        <div className="mt-3 flex items-start gap-3">
           <Info className="h-5 w-5 text-[#007aff] shrink-0 mt-0.5" />
           <div>
-            <h3 className="text-base font-bold text-[#1d1d1f]">Telemetry Audit & Instrumentation Justification</h3>
+            <h3 className="text-base font-bold text-[#1d1d1f]">About activity tracking</h3>
             <p className="mt-1 text-xs font-semibold leading-5 text-[#6e6e73]">
               {meta.auditExplanation}
             </p>
@@ -1005,7 +894,7 @@ export function AgentCapabilityAnalyticsPanel({
             )}
           </div>
         </div>
-      </div>
+      </details>
     </div>
   );
 }

@@ -13,8 +13,76 @@ export function unclassifiedEvents(events: number | null, successes: number | nu
 }
 
 export function eventVolumeExplanation(events: number | null, devices: number | null): string {
-  const average = eventsPerDevice(events, devices);
-  return `${exactCount(events)} recorded events from ${exactCount(devices)} distinct device/browser IDs${average === '—' ? '.' : ` · ${average} events per device on average.`}`;
+  return `${exactCount(events)} records from ${exactCount(devices)} device/browser IDs in this period. Repeats count again.`;
+}
+
+const activityDescriptions: Record<string, string> = {
+  live_sharing: 'Sharing confirmations, including shares made during Check-In. Location views are counted separately.',
+  location_viewed: 'Times a shared location was viewed. Repeat views count again.',
+  check_in: 'Check-in steps and results. A check-in can also create a sharing confirmation.',
+  check_out: 'Times a check-out was recorded.',
+  sms_safety: 'SOS triggers recorded. Message delivery is measured separately.',
+  request_location: 'Location request steps, including sending, approval, denial and fulfilment.',
+  public_sharing: 'Public-link activity, including creation, opening, sharing and removal.',
+  contact_sync: 'Contact-sync activity, including automatic syncs. This counts activity, not contacts.',
+  invitations: 'Invitation creation and sharing steps. Acceptance is a separate step.',
+  circle_engagement: 'Circle activity, including creation, opening, joining and removal.',
+  auth_started: 'Times a sign-in was started.',
+  daily_signin: 'Sign-ins recorded. Repeat sign-ins count again.',
+  phone_verified: 'Phone verification steps, including starts and results.',
+  google_signin: 'Google sign-in steps, including starts and results.',
+  profile_created: 'Profile creation recorded. Repeat records count again.',
+  onboarding_completed: 'Account setup completions recorded.',
+  portfolio_view: 'Times a portfolio was viewed.',
+  ai_recommendation: 'Times a recommendation was viewed.',
+  analysis_stream: 'Analysis starts recorded. Completion is a separate step.',
+  receipt_parsed: 'Import parsing results. Saving the import is counted separately.',
+  import_saved: 'Import saving results. Parsing is counted separately.',
+  preferences_updated: 'Privacy preference updates recorded.',
+  consent_action_submitted: 'Consent choices submitted. Their results are counted separately.',
+  consent_action_outcome: 'Results of submitted consent choices.',
+  consent_screen_viewed: 'Times the consent screen was loaded. Background loading is excluded.',
+  data_unlock: 'Data access requests and results. One request can produce several records.',
+  permission_granted: 'Permission grants recorded.',
+  revocation_submitted: 'Consent withdrawal is not tracked yet.',
+  account_connect_started: 'Times a Gmail connection was started.',
+  account_connected: 'Gmail connection results. Check the details for successful and failed results.',
+  receipt_sync_requested: 'Gmail sync requests recorded.',
+  receipt_sync: 'Sync queue results. Acceptance means processing can start.',
+  receipt_sync_completed: 'Finished sync processing results, including success and failure.',
+  mail_signin_screen_view: 'Times the Mail sign-in screen was viewed.',
+  inbox_viewed: 'Times the signed-in inbox was viewed.',
+  autocategory_applied: 'Receipt categorization activity recorded.',
+  verification_checked: 'Advisor verification checks and status changes.',
+  workspace_visited: 'Times the advisor workspace was visited.',
+  strategy_requested: 'Advisor and strategy requests recorded.',
+  client_handoff: 'Client handoffs are not tracked yet.',
+  marketplace_browsed: 'Marketplace browsing recorded.',
+  profile_viewed: 'Times a marketplace profile was viewed.',
+  subscription_started: 'Subscriptions are not tracked yet.',
+};
+
+export function featureActivityDescription(key: string): string {
+  if (activityDescriptions[key]) return activityDescriptions[key];
+  for (const agent of ['memory', 'wallet', 'calendar', 'kyc', 'crm']) {
+    if (key.startsWith(`${agent}_`)) return `Recorded ${key.slice(agent.length + 1).replaceAll('_', ' ')} activity. Repeated records count again.`;
+  }
+  return 'Matching activity recorded during the selected period.';
+}
+
+const activityLabels: Record<string, string> = {
+  auth_started: 'Sign-in started', phone_verified: 'Phone verification steps', google_signin: 'Google sign-in steps',
+  profile_created: 'Profile creation', onboarding_completed: 'Account setup completed',
+  portfolio_view: 'Portfolio views', ai_recommendation: 'Recommendation views',
+  receipt_parsed: 'Import parsing results', import_saved: 'Import saving results',
+  data_unlock: 'Data access requests & results', permission_granted: 'Permissions granted',
+  revocation_submitted: 'Consent withdrawal', account_connected: 'Gmail connection results',
+  receipt_sync: 'Sync queue results', receipt_sync_completed: 'Sync processing results',
+  inbox_viewed: 'Inbox views', autocategory_applied: 'Receipt categorization',
+};
+
+export function featureActivityLabel(key: string, fallback: string): string {
+  return activityLabels[key] ?? fallback;
 }
 
 const featureNotes: Record<string, string> = {
