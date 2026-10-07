@@ -49,6 +49,8 @@ import { appleCard, appleLabel, applePanel } from '../lib/theme';
 import { cn } from '../lib/utils';
 import type { OneAppSummary } from '../lib/types';
 import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
+import { MetricCalculationGuide } from './MetricCalculationGuide';
+import { exactCount, eventsPerDevice, eventVolumeExplanation, featureMeasurementNote } from '../lib/feature-measurement';
 
 interface AgentCapabilityAnalyticsPanelProps {
   capabilityKey: string;
@@ -256,9 +258,12 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
   ],
   consent: [
+    actionSpec('consent_screen_viewed', 'Consent screen views', ShieldCheck),
+    actionSpec('consent_action_submitted', 'Consent actions submitted', ShieldCheck),
+    actionSpec('consent_action_outcome', 'Consent action outcomes', ShieldCheck),
     {
       key: 'preferences_updated',
-      label: 'Data Consent Preferences',
+      label: 'Preference updates',
       icon: ShieldCheck,
       status: 'active',
       badgeLabel: 'Verified Active',
@@ -467,13 +472,14 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
   location: [
     {
       key: 'live_sharing',
-      label: 'Live sharing',
+      label: 'Sharing confirmations',
       icon: Radio,
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: 'Confirmed live-location sharing events recorded across active devices.',
+      explanation: 'Confirmation records; shared-location views are reported separately.',
     },
+    actionSpec('location_viewed', 'Shared location views', MapPin),
     {
       key: 'check_in',
       label: 'Check-In',
@@ -535,7 +541,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: '74 Circle engagement event signals recorded across 18 active devices in this window.',
+      explanation: 'Circle creation and engagement records.',
     },
     {
       key: 'invitations',
@@ -544,7 +550,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
-      explanation: '6 circle invite handoff events recorded across active devices in this window.',
+      explanation: 'Invitation creation and handoff records.',
     },
   ],
 };
@@ -553,7 +559,7 @@ function MetricValue({ value, waiting = false }: { value: number | null; waiting
   if (waiting || value === null) {
     return <span className="text-xs font-semibold text-[#86868b]">—</span>;
   }
-  return <>{formatNumber(value)}</>;
+  return <>{exactCount(value)}</>;
 }
 
 export function AgentCapabilityAnalyticsPanel({
@@ -639,7 +645,7 @@ export function AgentCapabilityAnalyticsPanel({
     const failed = hasOutcomes ? (aggregateMetric?.failures ?? 0) : null;
     const explanation =
       wasObserved
-        ? `${formatNumber(signals)} event signals recorded across ${formatNumber(devices)} active ${devices === 1 ? 'device' : 'devices'} in this window.`
+        ? eventVolumeExplanation(signals, devices)
         : isGap
           ? spec.explanation
           : !sourceAvailable
@@ -656,6 +662,10 @@ export function AgentCapabilityAnalyticsPanel({
       successful,
       expectedErrors,
       failed,
+      eventsPerDevice: eventsPerDevice(signals, devices),
+      noResult: measured ? Math.max(0, (signals ?? 0) - (aggregateMetric?.outcomeSignals ?? 0)) : null,
+      resultCounts: aggregateMetric,
+      eventBreakdown: featureUsageMetric?.eventBreakdown,
       measured,
       explanation,
     };
@@ -811,6 +821,8 @@ export function AgentCapabilityAnalyticsPanel({
         </div>
       </div>
 
+      <MetricCalculationGuide summary={activeSummary} />
+
       {/* Daily Active Trend Chart */}
       {instrumented && observed && daily.length > 0 && (
         <div className={cn(appleCard, 'p-6')}>
@@ -858,31 +870,33 @@ export function AgentCapabilityAnalyticsPanel({
       <div className="space-y-4">
         <div>
           <p className={appleLabel}>Feature adoption</p>
-          <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What people and devices do in {meta.title}</h3>
+          <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">Recorded activity by feature in {meta.title}</h3>
         </div>
 
         <div className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs">
           <div className="flex items-center gap-2 font-bold text-[#1d1d1f]">
             <Info className="h-4 w-4 text-[#007aff]" />
-            <span>Telemetry & Feature Zero Justification Audit</span>
+            <span>Recorded events and outcomes</span>
           </div>
           <p className="mt-1 text-[#6e6e73]">
-            Accounts are distinct signed-in One IDs. Devices are GA4 app/browser identifiers and can count one person more than once. A successful source with no matching row shows zero; a failed source shows a dash.
+            Repeat records count again. Success refers to the event’s stage, which may be a view, request or completion. Open a device count for its calculation and source events. A successful query with no records shows zero; an unavailable query shows a dash.
           </p>
         </div>
 
         <div className={cn(applePanel, 'overflow-hidden')}>
           <div className="overflow-x-auto">
-            <table className="min-w-[960px] w-full border-collapse text-left">
+            <table className="min-w-[1100px] w-full border-collapse text-left">
               <thead>
                 <tr className="border-b border-black/[0.06] bg-white/55 text-[11px] font-bold uppercase tracking-[0.08em] text-[#86868b]">
                   <th className="px-5 py-3">Feature & Telemetry Audit</th>
                   <th className="px-4 py-3 text-right">Identified accounts</th>
                   <th className="px-4 py-3 text-right">Devices</th>
-                  <th className="px-4 py-3 text-right">Signals</th>
+                  <th className="px-4 py-3 text-right">Recorded events</th>
+                  <th className="px-4 py-3 text-right">Events / device</th>
                   <th className="px-4 py-3 text-right">Successful</th>
                   <th className="px-4 py-3 text-right">Canceled / no-op</th>
                   <th className="px-5 py-3 text-right">Failed</th>
+                  <th className="px-4 py-3 text-right">No result</th>
                 </tr>
               </thead>
               <tbody>
@@ -919,7 +933,9 @@ export function AgentCapabilityAnalyticsPanel({
                             type="button"
                             onClick={() => setExpandedFeatureKey(isExpanded ? null : feature.key)}
                             className="inline-flex items-center gap-1.5 rounded-full bg-[#007aff]/10 px-2.5 py-1 text-xs font-bold text-[#007aff] hover:bg-[#007aff]/20 transition-colors"
-                            title="View aggregate device definition"
+                            aria-label={`View calculations for ${feature.label}`}
+                            aria-expanded={isExpanded}
+                            title="View calculations and source events"
                           >
                             <Users className="h-3 w-3" />
                             <span><MetricValue value={feature.devices} waiting={waiting} /></span>
@@ -929,6 +945,7 @@ export function AgentCapabilityAnalyticsPanel({
                         <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.signals} waiting={waiting} />
                         </td>
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">{feature.eventsPerDevice}</td>
                         <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.successful} waiting={waiting} />
                         </td>
@@ -938,14 +955,21 @@ export function AgentCapabilityAnalyticsPanel({
                         <td className="px-5 py-4 text-right text-sm font-semibold text-[#1d1d1f]">
                           <MetricValue value={feature.failed} waiting={waiting} />
                         </td>
+                        <td className="px-4 py-4 text-right text-sm font-semibold text-[#1d1d1f]"><MetricValue value={feature.noResult} waiting={waiting} /></td>
                       </tr>
 
                       {isExpanded && (
                         <tr key={`${feature.key}-users`}>
-                          <td colSpan={7} className="bg-[#f5f9ff] p-4 border-b border-black/10">
+                          <td colSpan={9} className="bg-[#f5f9ff] p-4 border-b border-black/10">
                             <FeatureUserBreakdownPanel
                               featureLabel={feature.label}
                               totalDevices={feature.devices ?? undefined}
+                              totalEvents={feature.signals}
+                              successes={feature.resultCounts?.successes}
+                              expectedErrors={feature.resultCounts?.expectedErrors}
+                              failures={feature.resultCounts?.failures}
+                              measurementNote={featureMeasurementNote(feature.key)}
+                              eventBreakdown={feature.eventBreakdown}
                               onClose={() => setExpandedFeatureKey(null)}
                             />
                           </td>

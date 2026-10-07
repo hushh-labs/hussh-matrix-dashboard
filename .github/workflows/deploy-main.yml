@@ -140,7 +140,7 @@ jobs:
             --region="${REGION}" \
             --image="${IMAGE}" \
             --service-account="${RUNTIME_SERVICE_ACCOUNT}" \
-            --update-env-vars="^@^GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}@GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}@ALLOWED_EMAIL_DOMAINS=hushh.ai,hushhtech.com,hushh.labs,hush1one.com@REQUIRE_AUTH=true@INSTAGRAM_ANALYTICS_ENABLED=true@INSTAGRAM_USER_ID=${INSTAGRAM_ACCOUNT_ID}@INSTAGRAM_CREDENTIAL_SECRET=${INSTAGRAM_CREDENTIAL_RESOURCE}@INSTAGRAM_ANALYTICS_ADMIN_EMAILS=${INSTAGRAM_ADMIN_EMAIL}" \
+            --update-env-vars="^|^GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}|GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}|ALLOWED_EMAIL_DOMAINS=hushh.ai,hushhtech.com,hushh.labs,hush1one.com|REQUIRE_AUTH=true|INSTAGRAM_ANALYTICS_ENABLED=true|INSTAGRAM_USER_ID=${INSTAGRAM_ACCOUNT_ID}|INSTAGRAM_CREDENTIAL_SECRET=${INSTAGRAM_CREDENTIAL_RESOURCE}|INSTAGRAM_ANALYTICS_ADMIN_EMAILS=${INSTAGRAM_ADMIN_EMAIL}" \
             --update-secrets="GOOGLE_CLIENT_SECRET=metrics-dashboard-google-client-secret:latest,SESSION_SECRET=metrics-dashboard-session-secret:latest,ALLOWED_EMAILS=metrics-dashboard-allowed-emails:latest" \
             --allow-unauthenticated \
             --port=8080 \

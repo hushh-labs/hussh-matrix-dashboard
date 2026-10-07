@@ -11,6 +11,7 @@
 
 const FEATURE_KEYS = [
   'live_sharing',
+  'location_viewed',
   'check_in',
   'check_out',
   'sms_safety',
@@ -119,12 +120,18 @@ async function main() {
       ...(location?.circleKinds ?? []),
       ...(location?.platforms ?? []),
     ];
-    const numericFields = ['users', 'events', 'successes', 'failures', 'creators', 'circlesCreated'];
+    const numericFields = ['users', 'events', 'successes', 'expectedErrors', 'failures', 'creators', 'circlesCreated'];
     const invalidNumbers = metricRows.flatMap((row) => numericFields
       .filter((field) => field in row && !finiteOrNull(row[field]))
       .map((field) => `${row.key ?? row.kind ?? row.platform}.${field}`));
     record(`${environment}_aggregate_numbers_valid`, invalidNumbers.length === 0,
       invalidNumbers.length ? `invalid=${invalidNumbers.join(',')}` : `${metricRows.length} aggregate rows validated`);
+
+    for (const [key, feature] of Object.entries(summary?.featureUsage ?? {})) {
+      const breakdown = feature.eventBreakdown;
+      record(`${environment}_${key}_result_partition`, feature.outcomeSignals === feature.successes + feature.expectedErrors + feature.failures && feature.outcomeSignals <= feature.signals, 'classified outcomes fit inside recorded events');
+      record(`${environment}_${key}_source_events_reconcile`, Array.isArray(breakdown) && ['signals', 'successes', 'expectedErrors', 'failures'].every((field) => breakdown.reduce((sum, row) => sum + Number(row[field]), 0) === feature[field]), 'source-event subtotals equal feature totals');
+    }
 
     const fulfilled = (location?.journey ?? []).find((row) => row.key === 'request_fulfilled');
     record(`${environment}_request_fulfilment_semantics_explicit`,
