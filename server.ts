@@ -23,7 +23,7 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
-import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage } from './src/server/one-scope.mjs';
+import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange } from './src/server/one-scope.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
@@ -2815,15 +2815,17 @@ ${capabilitySql.isDeliberate}
     ORDER BY platform, events DESC
   `;
 
-  // Bounded aggregate metadata only; no event payloads or account IDs leave this query.
+  // Bounded aggregate metadata only; do not scan unavailable production history.
+  const androidEnvironment = webHost === ONE_APP_UAT_HOST ? 'uat' : 'production';
+  const androidReadRange = androidCaptureQueryRange(range, androidEnvironment);
   const androidQuery = `
     WITH scoped AS (
       SELECT event_name, event_timestamp, event_date, user_pseudo_id, NULLIF(user_id, '') AS accountId,
         COALESCE(app_info.version, 'unknown') AS version,
         COALESCE(app_info.install_source, 'unknown') AS installer,
         COALESCE((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env'), 'unlabeled') AS environment
-      FROM ${table} WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true, projectId, dataset)}
-        AND ${oneAndroidSql(webHost === ONE_APP_UAT_HOST ? 'uat' : 'production')}
+      FROM ${table} WHERE ${ga4ExportSuffixFilter(androidReadRange?.startDate ?? range.startDate, range.endDate, true, projectId, dataset)}
+        AND ${oneAndroidSql(androidEnvironment)}
     ), releases AS (
       SELECT version, installer, environment, COUNT(*) AS events,
         COUNT(DISTINCT user_pseudo_id) AS appIds FROM scoped GROUP BY version, installer, environment
@@ -3361,7 +3363,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
     queryBigQuerySql(queryProject, nativeEnvironmentQuery),
-    queryAndroidCapture(queryProject, androidQuery),
+    androidReadRange ? queryAndroidCapture(queryProject, androidQuery) : Promise.resolve({rows:[{events:0}],error:null}),
     fetchOneRegisteredAccounts(range),
   ]);
 
@@ -3569,7 +3571,7 @@ ${capabilitySql.isDeliberate}
             ? 'App-install IDs and route-level page_view events from the One iOS bundle in this reporting property. Product screens use safe route IDs; automatic UIKit screen_view events remain a separate diagnostic.'
             : 'No One iOS app events are available in this reporting property and selected range.',
       },
-      androidCapture: androidCaptureResult(androidCapture, range),
+      androidCapture: androidCaptureResult(androidCapture, range, androidEnvironment),
       registeredAccounts: registeredAccounts.data,
       // The install cohort funnel, per native platform. Stages nest because
       // every one is measured against the same devices that installed inside

@@ -2,8 +2,15 @@
 export const ONE_ANDROID_PACKAGE = 'com.hussh.app';
 export const ONE_ANDROID_STREAMS = { production: '15395548050', uat: '15395713075' };
 export const ONE_ANDROID_TIMEZONE = 'Etc/GMT+8';
+export const ONE_ANDROID_EXPORT_FROM = '2026-10-07';
 // Export membership changed during October 7; October 8 is the first full day.
 export const ONE_ANDROID_COMPLETE_FROM = '2026-10-08';
+/** Do not scan unavailable production history or imply it was backfilled. */
+export function androidCaptureQueryRange(range, environment = 'production') {
+  if (environment !== 'production') return range;
+  if (range.endDate < ONE_ANDROID_EXPORT_FROM) return null;
+  return {...range, startDate: range.startDate < ONE_ANDROID_EXPORT_FROM ? ONE_ANDROID_EXPORT_FROM : range.startDate};
+}
 export function androidComparisonCoverage(currentEvents, previousEvents, previousStartDate) {
   return (Number(currentEvents ?? 0) === 0 && Number(previousEvents ?? 0) === 0)
     || previousStartDate >= ONE_ANDROID_COMPLETE_FROM;
@@ -33,7 +40,7 @@ export function oneFounderSurfaceSql(webHost) {
 }
 
 /** Empty telemetry is not evidence of zero customers. */
-export function androidCaptureResult(result, range) {
+export function androidCaptureResult(result, range, environment = 'production') {
   const row = result.rows?.[0];
   const available = !result.error && !!row;
   const observed = available && Number(row.events) > 0;
@@ -53,10 +60,10 @@ export function androidCaptureResult(result, range) {
       version: /^\d+\.\d+[\w.+-]{0,40}$/.test(release.version ?? '') ? release.version : 'unknown',
       installer: release.installer === 'com.android.vending' ? 'com.android.vending' : release.installer === 'unknown' ? 'unknown' : 'other',
       environment: ['production','uat','development','test','unlabeled'].includes(release.environment) ? release.environment : 'unknown',
-      events: Number.isSafeInteger(Number(release.events)) && Number(release.events)>=0 ? Number(release.events) : null,
+      events: release.events != null && release.events !== '' && Number.isSafeInteger(Number(release.events)) && Number(release.events)>=0 ? Number(release.events) : null,
     })) : [],
     note: !available ? 'Android export query unavailable; no zero is inferred.'
-      : observed ? 'New Android package only. App IDs are not people. Backend environment and installer are shown separately; first opens are not store downloads.'
-        : 'No new Android app events were exported for these dates. Export membership was repaired on 7 October 2026; earlier raw events cannot be assumed recoverable.',
+      : observed ? `New Android package only. ${environment === 'production' ? 'Raw production export history starts on 7 October 2026 (a partial day); earlier dates are not backfilled. ' : ''}App IDs are not people. Backend environment and installer are shown separately; first opens are not store downloads.`
+        : `No new Android app events were exported for these dates. ${environment === 'production' ? 'Export membership was repaired on 7 October 2026; ' : ''}Earlier raw events cannot be assumed recoverable.`,
   };
 }
