@@ -22,6 +22,9 @@ const cases = [
   ['calendar_action_is_classified', "event_name = 'one_calendar_action'"],
   ['kyc_action_is_classified', "event_name = 'one_kyc_action'"],
   ['crm_action_is_classified', "event_name = 'one_crm_action'"],
+  ['viewing_has_its_own_feature', "= 'location_share_viewed' THEN 'location_viewed'"],
+  ['consent_screen_loads_separate', "= 'screen' THEN 'consent_screen_viewed'"],
+  ['exact_event_composition_is_returned', 'ARRAY_AGG(STRUCT(eventName, signals, successes, expectedErrors, failures)'],
 ];
 const results = cases.map(([name, fragment]) => ({ name, ok: query.includes(fragment) }));
 const finance = source.match(/key: 'finance',[\s\S]*?key: 'consent'/)?.[0] || '';
@@ -46,6 +49,11 @@ const locationQuery = source.match(/const locationBehaviorQuery = `([\s\S]*?)`;/
 results.push({ name: 'location_expected_outcomes_are_separate', ok: locationQuery.includes("COUNTIF(result = 'expected_error') AS expectedErrors") });
 results.push({ name: 'location_failures_are_true_errors', ok: locationQuery.includes("COUNTIF(result = 'error') AS failures") });
 results.push({ name: 'location_source_availability_is_explicit', ok: source.includes('locationBehaviorAvailable: !locationBehavior.error') });
+results.push({ name: 'location_views_not_counted_as_shares', ok: locationQuery.includes("actionName = 'location_share_viewed' THEN 'location_viewed'") && !locationQuery.includes("actionName LIKE 'location_share_%' THEN 'live_sharing'") });
+results.push({ name: 'feature_views_not_counted_as_shares', ok: !query.includes("LIKE 'location_share_%' THEN 'live_sharing'") });
+results.push({ name: 'sign_in_does_not_swallow_phone_or_google_steps', ok: query.includes("WHEN event_name IN ('auth_completed', 'one_auth_login_completed', 'auth_succeeded') THEN 'daily_signin'") });
+results.push({ name: 'consent_prefetches_not_counted_as_preference_changes', ok: query.includes("WHEN event_name = 'one_consent_preferences_updated' THEN 'preferences_updated'") });
+results.push({ name: 'consent_submissions_and_outcomes_are_separate', ok: query.includes("WHEN event_name = 'consent_action_submitted' THEN 'consent_action_submitted'") && query.includes("WHEN event_name = 'consent_action_result' THEN 'consent_action_outcome'") });
 const ok = results.every((result) => result.ok);
 console.log(JSON.stringify({ ok, checkedAt: new Date().toISOString(), target: 'One agent feature classification', checks: results }, null, 2));
 if (!ok) process.exitCode = 1;
