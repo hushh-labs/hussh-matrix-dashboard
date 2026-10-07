@@ -60,7 +60,7 @@ export function androidCaptureResult(result, range, environment = 'production') 
       version: /^\d+\.\d+[\w.+-]{0,40}$/.test(release.version ?? '') ? release.version : 'unknown',
       installer: release.installer === 'com.android.vending' ? 'com.android.vending' : release.installer === 'unknown' ? 'unknown' : 'other',
       environment: ['production','uat','development','test','unlabeled'].includes(release.environment) ? release.environment : 'unknown',
-      events: Number.isSafeInteger(Number(release.events)) && Number(release.events)>=0 ? Number(release.events) : null,
+      events: release.events != null && release.events !== '' && Number.isSafeInteger(Number(release.events)) && Number(release.events)>=0 ? Number(release.events) : null,
     })) : [],
     note: !available ? 'Android export query unavailable; no zero is inferred.'
       : observed ? `New Android package only. ${environment === 'production' ? 'Raw production export history starts on 7 October 2026 (a partial day); earlier dates are not backfilled. ' : ''}App IDs are not people. Backend environment and installer are shown separately; first opens are not store downloads.`
