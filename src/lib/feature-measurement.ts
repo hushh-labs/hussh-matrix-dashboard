@@ -21,7 +21,7 @@ const activityDescriptions: Record<string, string> = {
   location_viewed: 'Times a shared location was viewed. Repeat views count again.',
   check_in: 'Check-in steps and results. A check-in can also create a sharing confirmation.',
   check_out: 'Times a check-out was recorded.',
-  sms_safety: 'SOS triggers recorded. Message delivery is measured separately.',
+  sms_safety: 'SOS triggers recorded. This count does not confirm message delivery.',
   request_location: 'Location request steps, including sending, approval, denial and fulfilment.',
   public_sharing: 'Public-link activity, including creation, opening, sharing and removal.',
   contact_sync: 'Contact-sync activity, including automatic syncs. This counts activity, not contacts.',
