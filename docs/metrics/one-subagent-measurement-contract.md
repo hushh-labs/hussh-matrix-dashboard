@@ -1,5 +1,11 @@
 # One subagent measurement contract
 
+For a simple overview to share with the team, start with the
+[One KPI team guide](./one-kpi-team-guide.md). The main feature view shows
+**Devices / browsers** and **Times recorded**. Results, averages and source
+events are available under **View details**; event names are under
+**Technical details**.
+
 ## Why the 6.7k Live sharing row was confusing
 
 A read-only production GA4 audit on 2026-10-07, using finalized daily exports
@@ -51,10 +57,10 @@ as periodic location updates without separately verifying the emitting code.
 5. `/api/analytics/one/app` and `/api/analytics/all` return aggregate counts,
    availability flags, date/freshness metadata and per-feature source-event
    subtotals. No individual identity or location rows are returned.
-6. The frontend renders exact feature counts, **Events / device**, result
-   partitions and availability. Open the device-count button to see the
-   formula, feature-specific definition and contributing event names.
-   **How these metrics are calculated** is available on every subagent view.
+6. The frontend renders exact device and activity counts with short feature
+   definitions. Open **View details** for averages, result partitions and
+   contributing event names. **How to read these KPIs** is available on every
+   subagent view.
 
 Streaming data is provisional and has export latency. The UI polls on its
 configured refresh interval (normally 30 seconds), and aggregate API responses
@@ -69,8 +75,8 @@ UTC if the property has a different reporting timezone.
 | --- | --- | --- |
 | Identified accounts | `COUNT(DISTINCT NULLIF(user_id, ''))` | Signed-in account IDs; anonymous records excluded; not necessarily unique humans |
 | Devices | `COUNT(DISTINCT CONCAT(platform, ':', user_pseudo_id))` | Platform-scoped app-instance/browser IDs; not physical devices or people |
-| Recorded events | `COUNT(*)` | Every matching exported record, including repeats and stages |
-| Events / device | events / distinct IDs | Whole-range average; dash when denominator is zero/unavailable |
+| Times recorded | `COUNT(*)` | Every matching exported record, including repeats and stages |
+| Average per device | events / distinct IDs | Whole-range average; dash when denominator is zero/unavailable |
 | Successful | `COUNTIF(result = 'success')` | Success at the emitting stage, which can be a view or request |
 | Canceled / no-op | `COUNTIF(result = 'expected_error')` | Expected blocks/cancellations/no-op outcomes; not true failures |
 | Failed | `COUNTIF(result = 'error')` | Recorded true errors at this stage |
@@ -78,7 +84,7 @@ UTC if the property has a different reporting timezone.
 
 The former **Non-error share** was actually successes / all records. It
 excluded expected errors and used a denominator that could contain events
-with no result. It has been replaced with Events / device. There is no
+with no result. The activity count and an average in View details replace it. There is no
 request-level completion percentage without matched requests and outcomes.
 
 One ID can be used by several accounts, and one account can use several IDs.

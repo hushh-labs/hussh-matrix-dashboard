@@ -17,6 +17,7 @@ import {
 import { cn } from '../lib/utils';
 import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
 import { formatNumber } from '../lib/analytics-service';
+import { exactCount } from '../lib/feature-measurement';
 import type { LocationAnalyticsRoute } from '../lib/location-analytics-route';
 import { OneLocationAnalyticsPanel } from './OneLocationAnalyticsPanel';
 import { AgentCapabilityAnalyticsPanel } from './AgentCapabilityAnalyticsPanel';
@@ -1026,16 +1027,15 @@ export function Activation({ one }: { one: OneAppSummary }) {
 function CapabilityCard({
   capability,
   index,
+  sourceAvailable,
 }: {
   capability: OneCapabilityUsage;
   index: number;
+  sourceAvailable: boolean;
 }): ReactElement {
   const {
-    label, instrumented, note, devices, deliberateEvents, totalUsers, totalEvents, daily,
+    label, instrumented, devices, deliberateEvents, accounts, daily,
   } = capability;
-  const inflation = instrumented && (deliberateEvents ?? 0) > 0 && totalEvents > (deliberateEvents ?? 0)
-    ? totalEvents / (deliberateEvents ?? 1)
-    : null;
 
   return (
     <motion.div
@@ -1048,24 +1048,21 @@ function CapabilityCard({
         <p className="text-base font-semibold text-[#1d1d1f]">{label}</p>
         {!instrumented && (
           <span className="shrink-0 rounded-md bg-[#fff4e5] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#8a5a04]">
-            Not instrumented
+            Not tracked yet
           </span>
         )}
       </div>
 
-      {instrumented ? (
+      {instrumented && sourceAvailable ? (
         <>
           <p className="mt-3 text-4xl font-semibold leading-none text-[#1d1d1f]">
-            {formatNumber(devices ?? 0)}
+            {exactCount(devices)}
           </p>
           <p className="mt-1.5 text-xs font-semibold text-[#6e6e73]">
-            {plural(devices ?? 0, 'device', 'devices')} used it deliberately
+            device/browser IDs used this feature
           </p>
           <p className="mt-1 text-xs font-medium text-[#86868b]">
-            {formatNumber(totalUsers)} seen in total
-            {inflation && inflation >= 1.5 && (
-              <> · {inflation.toFixed(1)}× the events are background</>
-            )}
+            {exactCount(accounts)} signed-in accounts · {exactCount(deliberateEvents)} recorded actions
           </p>
 
           <div className="mt-4 h-14 w-full">
@@ -1103,7 +1100,7 @@ function CapabilityCard({
       ) : (
         <div className="mt-3 flex flex-1 flex-col justify-between gap-3">
           <p className="text-4xl font-semibold leading-none text-[#c7c7cc]">—</p>
-          <p className="text-xs font-medium leading-5 text-[#6e6e73]">{note}</p>
+          <p className="text-xs font-medium leading-5 text-[#6e6e73]">{!instrumented ? 'This activity is not tracked yet.' : 'Data is unavailable. A dash does not mean zero activity.'}</p>
           <p className="mt-2 text-xs font-bold text-[#007aff] group-hover:underline">View detailed analytics →</p>
         </div>
       )}
@@ -1436,7 +1433,7 @@ export function OneAppPanel({
                   }}
                   className="h-full rounded-2xl text-left transition-all duration-200 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] focus-visible:ring-offset-2"
                 >
-                  <CapabilityCard capability={capability} index={index} />
+                  <CapabilityCard capability={capability} index={index} sourceAvailable={activeData.capabilitiesAvailable} />
                 </button>
               </Fragment>
             ))}
