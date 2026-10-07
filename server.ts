@@ -23,6 +23,8 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
+import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult } from './src/server/one-scope.mjs';
+import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -2238,13 +2240,7 @@ const ONE_APP_HOST = process.env.ONE_APP_WEB_HOST || 'one.hushh.ai';
 const ONE_APP_UAT_HOST = process.env.ONE_APP_UAT_WEB_HOST || 'uat.one.hushh.ai';
 
 function oneAppSurfaceFilter(webHost: string): string {
-  return `(
-      (platform IN ('IOS', 'ANDROID') AND app_info.id = 'com.hushh.app')
-      OR (
-        platform = 'WEB'
-        AND NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) = ${sqlStringLiteral(webHost)}
-      )
-    )`;
+  return oneSurfaceSql(webHost, webHost === ONE_APP_UAT_HOST ? 'uat' : 'production');
 }
 
 interface FirebaseAuthAccountRecord {
@@ -2476,6 +2472,22 @@ function buildOneLocationFunnel(usersByStep: Map<string, number>): OneAppFunnelS
   });
 }
 
+// Added aggregate: hard scan cap, finite cache and per-replica job budget.
+const androidCaptureCache = new Map<string, {at:number;promise:Promise<BigQueryFeedResult>}>();
+let androidCaptureBudget = {at:0,attempts:0};
+function queryAndroidCapture(projectId:string,query:string):Promise<BigQueryFeedResult> {
+  const key=`${projectId}:${query}`;const now=Date.now();const hit=androidCaptureCache.get(key);
+  if(hit && now-hit.at<300_000)return hit.promise;
+  if(now-androidCaptureBudget.at>600_000)androidCaptureBudget={at:now,attempts:0};
+  if(++androidCaptureBudget.attempts>12)return Promise.resolve({rows:[],error:'Android capture request budget reached'});
+  while(androidCaptureCache.size>=32)androidCaptureCache.delete(androidCaptureCache.keys().next().value!);
+  const promise=import('@google-cloud/bigquery').then(async({BigQuery})=>{
+    try {const [rows]=await new BigQuery({projectId}).query({query,location:'US',maximumBytesBilled:'100000000',jobTimeoutMs:30_000});return {rows:rows as Record<string,unknown>[],error:null};}
+    catch {return {rows:[],error:'Android capture query unavailable'};}
+  });
+  androidCaptureCache.set(key,{at:now,promise});return promise;
+}
+
 async function fetchOneAppSummary(
   projectId: string,
   dataset: string,
@@ -2570,7 +2582,7 @@ ${capabilitySql.isDeliberate}
   const locationBehaviorQuery = `
     WITH raw AS (
       SELECT
-        CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
+        CAST(PARSE_DATE('%Y%m%d', event_date) AS STRING) AS eventDate,
         ${deviceKeySql} AS deviceKey,
         COALESCE(platform, 'UNKNOWN') AS platform,
         event_name AS eventName,
@@ -2736,7 +2748,7 @@ ${capabilitySql.isDeliberate}
     SELECT eventDate, capability, COUNT(DISTINCT deviceKey) AS users
     FROM (
       SELECT
-        CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
+        CAST(PARSE_DATE('%Y%m%d', event_date) AS STRING) AS eventDate,
         ${deviceKeySql} AS deviceKey,
 ${capabilitySql.capability},
 ${capabilitySql.isDeliberate}
@@ -2797,8 +2809,33 @@ ${capabilitySql.isDeliberate}
     FROM ${table}
     WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true, projectId, dataset)}
       AND platform IN ('IOS', 'ANDROID')
+      AND ${surfaceFilter}
     GROUP BY platform, environment
     ORDER BY platform, events DESC
+  `;
+
+  // Bounded aggregate metadata only; no event payloads or account IDs leave this query.
+  const androidQuery = `
+    WITH scoped AS (
+      SELECT event_name, event_timestamp, event_date, user_pseudo_id, NULLIF(user_id, '') AS accountId,
+        COALESCE(app_info.version, 'unknown') AS version,
+        COALESCE(app_info.install_source, 'unknown') AS installer,
+        COALESCE((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env'), 'unlabeled') AS environment
+      FROM ${table} WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true, projectId, dataset)}
+        AND ${oneAndroidSql(webHost === ONE_APP_UAT_HOST ? 'uat' : 'production')}
+    ), releases AS (
+      SELECT version, installer, environment, COUNT(*) AS events,
+        COUNT(DISTINCT user_pseudo_id) AS appIds FROM scoped GROUP BY version, installer, environment
+    ), totals AS (
+      SELECT COUNT(*) AS events,
+        COUNT(DISTINCT IF(${meaningful}, user_pseudo_id, NULL)) AS activeAppIds,
+        COUNT(DISTINCT IF(${meaningful}, accountId, NULL)) AS identifiedAccounts,
+        COUNT(DISTINCT IF(${meaningful} AND accountId IS NOT NULL, user_pseudo_id, NULL)) AS boundAppIds,
+        COUNTIF(event_name = 'first_open') AS firstOpens,
+        COUNTIF(event_name = 'page_view') AS routeVisits,
+        CAST(MIN(PARSE_DATE('%Y%m%d', event_date)) AS STRING) AS observedSince,
+        MAX(TIMESTAMP_MICROS(event_timestamp)) AS latestEventAt FROM scoped
+    ) SELECT *, ARRAY(SELECT AS STRUCT * FROM releases ORDER BY events DESC LIMIT 20) AS releases FROM totals
   `;
 
   const acquisitionQuery = `
@@ -2815,7 +2852,7 @@ ${capabilitySql.isDeliberate}
 
   const dailyQuery = `
     SELECT
-      CAST(DATE(TIMESTAMP_MICROS(event_timestamp)) AS STRING) AS eventDate,
+      CAST(PARSE_DATE('%Y%m%d', event_date) AS STRING) AS eventDate,
       COUNT(DISTINCT ${deviceKeySql}) AS users,
       COUNT(DISTINCT IF(event_name LIKE 'one_location%', ${deviceKeySql}, NULL)) AS locationUsers,
       COUNT(*) AS events
@@ -2926,7 +2963,7 @@ ${capabilitySql.isDeliberate}
         user_pseudo_id,
         event_name,
         PARSE_DATE('%Y%m%d', event_date) AS day,
-        DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
+        DATE(TIMESTAMP_MICROS(user_first_touch_timestamp), 'Etc/GMT+8') AS firstDay
       FROM ${table}
       WHERE ${dateFilter} AND platform IN ('IOS', 'ANDROID')
     ),
@@ -3017,7 +3054,7 @@ ${capabilitySql.isDeliberate}
     WITH devices AS (
       SELECT
         ${deviceKeySql} AS deviceKey,
-        MIN(DATE(TIMESTAMP_MICROS(user_first_touch_timestamp))) AS firstTouch
+        MIN(DATE(TIMESTAMP_MICROS(user_first_touch_timestamp), 'Etc/GMT+8')) AS firstTouch
       FROM ${table}
       WHERE ${dateFilter} AND ${meaningful}
       GROUP BY deviceKey
@@ -3146,7 +3183,7 @@ ${capabilitySql.isDeliberate}
       SELECT
         ${deviceKeySql} AS deviceKey,
         PARSE_DATE('%Y%m%d', event_date) AS day,
-        DATE(TIMESTAMP_MICROS(user_first_touch_timestamp)) AS firstDay
+        DATE(TIMESTAMP_MICROS(user_first_touch_timestamp), 'Etc/GMT+8') AS firstDay
       FROM ${table}
       WHERE ${ga4ExportSuffixFilter(retentionStart, range.endDate, true, projectId, dataset)} AND ${surfaceFilter} AND ${meaningful}
     )
@@ -3276,6 +3313,7 @@ ${capabilitySql.isDeliberate}
     activationStages,
     featureUsage,
     nativeEnvironments,
+    androidCapture,
     registeredAccounts,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
@@ -3301,6 +3339,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
     queryBigQuerySql(queryProject, nativeEnvironmentQuery),
+    queryAndroidCapture(queryProject, androidQuery),
     fetchOneRegisteredAccounts(range),
   ]);
 
@@ -3328,6 +3367,7 @@ ${capabilitySql.isDeliberate}
     activationStages.error,
     featureUsage.error,
     nativeEnvironments.error,
+    androidCapture.error,
     registeredAccounts.error,
   ].filter(Boolean);
 
@@ -3507,6 +3547,7 @@ ${capabilitySql.isDeliberate}
             ? 'App-install IDs and route-level page_view events from the One iOS bundle in this reporting property. Product screens use safe route IDs; automatic UIKit screen_view events remain a separate diagnostic.'
             : 'No One iOS app events are available in this reporting property and selected range.',
       },
+      androidCapture: androidCaptureResult(androidCapture, range),
       registeredAccounts: registeredAccounts.data,
       // The install cohort funnel, per native platform. Stages nest because
       // every one is measured against the same devices that installed inside
@@ -3527,7 +3568,7 @@ ${capabilitySql.isDeliberate}
           platform: String(row.platform ?? 'UNKNOWN'),
           installed,
           stages: [
-            stage('installed', 'Installed the app', installed),
+            stage('installed', 'First opened the app', installed),
             stage('tried_sign_in', 'Tried to sign in', toNumber(row.triedSignIn)),
             stage('signed_in', 'Signed in', toNumber(row.signedIn)),
             stage('onboarded', 'Finished onboarding', toNumber(row.onboarded)),
@@ -5439,10 +5480,10 @@ function fetchFounderBriefing(current: HushhAiDateRange, previous: HushhAiDateRa
   const cached = founderBriefingCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
   const table = `\`${ONE_APP_GA4_PROJECT}.${ONE_APP_GA4_DATASET}.events_*\``;
-  const surface = oneAppSurfaceFilter(ONE_APP_HOST);
+  const surface = oneFounderSurfaceSql(ONE_APP_HOST);
   const meaningful = `event_name NOT IN (${sqlNameList(ONE_BACKGROUND_EVENTS)})`;
-  const platformScope = `platform IN ('IOS', 'WEB')`;
-  const boundedSuffix = `REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') BETWEEN ${sqlStringLiteral(previous.startDate.replaceAll('-', ''))} AND ${sqlStringLiteral(current.endDate.replaceAll('-', ''))}`;
+  const platformScope = `platform IN ('IOS', 'ANDROID', 'WEB')`;
+  const boundedSuffix = ga4ExportSuffixFilter(previous.startDate, current.endDate, true, ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET);
   const capabilitySql = oneCapabilitySql();
   const currentSql = `BETWEEN DATE(${sqlStringLiteral(current.startDate)}) AND DATE(${sqlStringLiteral(current.endDate)})`;
   const previousSql = `BETWEEN DATE(${sqlStringLiteral(previous.startDate)}) AND DATE(${sqlStringLiteral(previous.endDate)})`;
@@ -5482,6 +5523,9 @@ ${capabilitySql.isDeliberate}
         COUNT(DISTINCT IF(day ${currentSql}, deviceKey, NULL)) AS current_devices,
         COUNT(DISTINCT IF(day ${currentSql} AND accountId IS NOT NULL, deviceKey, NULL)) AS identified_devices,
         CAST(MIN(IF(accountId IS NOT NULL, day, NULL)) AS STRING) AS identity_observed_since,
+        CAST(MIN(IF(platform = 'ANDROID' AND accountId IS NOT NULL, day, NULL)) AS STRING) AS android_identity_observed_since,
+        COUNTIF(day ${currentSql} AND platform = 'ANDROID') AS current_android_events,
+        COUNTIF(day ${currentSql} AND platform = 'ANDROID' AND accountId IS NOT NULL) AS current_android_bound_events,
         CAST(MAX(IF(day ${currentSql}, day, NULL)) AS STRING) AS latest_event_date,
         COUNTIF(day ${currentSql} AND platform = 'IOS' AND LOWER(eventEnvironment) = 'uat') AS mislabeled_native_events
       FROM events
@@ -5535,6 +5579,7 @@ ${capabilitySql.isOutcome}
       COUNT(DISTINCT IF(is_outcome AND result = 'success', accountId, NULL)) AS successful_accounts,
       COUNTIF(is_deliberate) AS interactions,
       COUNTIF(is_deliberate AND platform = 'IOS') AS ios_interactions,
+      COUNTIF(is_deliberate AND platform = 'ANDROID') AS android_interactions,
       COUNTIF(is_deliberate AND platform = 'WEB') AS web_interactions,
       COUNTIF(is_outcome AND result = 'success') AS successes,
       COUNTIF(is_outcome AND result = 'expected_error') AS expected_errors,
@@ -5575,26 +5620,30 @@ ${capabilitySql.isDeliberate}
     const identityObservedSince = typeof oneRow.identity_observed_since === 'string'
       ? oneRow.identity_observed_since : null;
     const oneComparisonReady = oneAvailable && identityObservedSince !== null
-      && identityObservedSince < previous.startDate;
+      && identityObservedSince < previous.startDate
+      && (toNumber(oneRow.current_android_bound_events) === 0 || previous.startDate >= '2026-10-07');
     // The public event catalogue has a bounded trustworthy history. A 90-day
     // selection can move its comparison window before that history; zero rows
     // there are missing history, not evidence of a decline.
-    const interactionComparisonReady = oneAvailable && previous.startDate >= FOUNDER_EARLIEST_DATE;
+    const interactionComparisonReady = oneAvailable && previous.startDate >= FOUNDER_EARLIEST_DATE
+      && (toNumber(oneRow.current_android_events) === 0 || previous.startDate >= '2026-10-07');
     const platformRows = new Map(platformsResult.rows.map((row) => [`${row.period}:${row.platform}`, row]));
     const agentRows = new Map(agentsResult.rows.map((row) => [`${row.period}:${row.capability}`, row]));
     const dailyRows = new Map(dailyResult.rows.map((row) => [String(row.day), row]));
     const previousDates = dateSpine(previous);
-    const platforms = (['IOS', 'WEB'] as const).map((key) => {
+    const platforms = (['IOS', 'ANDROID', 'WEB'] as const).map<FounderBriefingData['one']['platforms'][number]>((key) => {
       const currentRow = platformRows.get(`current:${key}`);
       const previousRow = platformRows.get(`previous:${key}`);
       const tracked = toNumber(currentRow?.tracked_identifiers);
       const previousTracked = toNumber(previousRow?.tracked_identifiers);
+      const androidHistory = typeof oneRow.android_identity_observed_since === 'string' && oneRow.android_identity_observed_since < previous.startDate;
       return {
         key,
-        label: key === 'IOS' ? 'iOS app' : 'Web app',
+        label: key === 'IOS' ? 'iOS app' : key === 'ANDROID' ? 'Android app' : 'Web app',
+        captureState: !oneAvailable ? 'unavailable' : currentRow ? 'observed' : 'waiting',
         identifiedAccounts: {
-          current: oneAvailable ? toNumber(currentRow?.identified_accounts) : null,
-          previous: oneComparisonReady ? toNumber(previousRow?.identified_accounts) : null,
+          current: oneAvailable && (key !== 'ANDROID' || toNumber(currentRow?.bound_identifiers) > 0) ? toNumber(currentRow?.identified_accounts) : null,
+          previous: oneComparisonReady && (key !== 'ANDROID' || (androidHistory && toNumber(previousRow?.bound_identifiers) > 0)) ? toNumber(previousRow?.identified_accounts) : null,
         },
         identityCoverage: oneAvailable && tracked > 0 ? toNumber(currentRow?.bound_identifiers) / tracked : null,
         trackedIdentifiers: oneAvailable ? tracked : null,
@@ -5646,6 +5695,7 @@ ${capabilitySql.isDeliberate}
         },
         iosInteractions: oneAvailable && instrumented ? toNumber(currentRow?.ios_interactions) : null,
         webInteractions: oneAvailable && instrumented ? toNumber(currentRow?.web_interactions) : null,
+        androidInteractions: oneAvailable && instrumented ? toNumber(currentRow?.android_interactions) : null,
       };
     });
     const daily = dateSpine(current).map((day, index) => {
@@ -6746,6 +6796,34 @@ app.get('/api/analytics/app-store-connect', async (req, res) => {
     error: result.error,
     fetchedAt: new Date().toISOString(),
   }));
+});
+
+const androidHistoryReader = process.env.ONE_GA4_IMPERSONATE_SERVICE_ACCOUNT
+  ? googleReader(process.env.ONE_GA4_IMPERSONATE_SERVICE_ACCOUNT, ['https://www.googleapis.com/auth/analytics.readonly']) : null;
+const playReader = process.env.GOOGLE_PLAY_IMPERSONATE_SERVICE_ACCOUNT
+  ? googleReader(process.env.GOOGLE_PLAY_IMPERSONATE_SERVICE_ACCOUNT, ['https://www.googleapis.com/auth/playdeveloperreporting','https://www.googleapis.com/auth/devstorage.read_only']) : null;
+const androidReporting = boundedReportingCache(async (range: {startDate:string;endDate:string}) => {
+  const [history, downloads, vitals] = await Promise.all([
+    androidHistoryReader ? fetchAndroidHistory(androidHistoryReader, range) : {state:'not_configured',daily:[],note:'Historical GA4 reader is not configured.'},
+    playReader ? fetchPlayDownloads(playReader, process.env.GOOGLE_PLAY_REPORTS_BUCKET || '', range) : {installs:{state:'not_configured'},store:{state:'not_configured'}},
+    playReader ? fetchPlayVitals(playReader, range) : {state:'not_configured',metrics:{},note:'Google Play read-only reporting access is not configured.'},
+  ]);
+  return {packageId:'com.hussh.app',range,history,downloads,vitals,fetchedAt:new Date().toISOString()};
+});
+
+app.get('/api/analytics/one/android', async (req, res) => {
+  if (req.query.environment && req.query.environment !== 'production') {
+    res.status(400).json({error:'Provider Android reports support the production property only.'});return;
+  }
+  const startDate = firstQueryValue(req.query.start_date);
+  const endDate = firstQueryValue(req.query.end_date);
+  const validDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date)) && new Date(date).toISOString().slice(0,10) === date;
+  const days = (Date.parse(endDate) - Date.parse(startDate)) / 86_400_000 + 1;
+  if (!validDate(startDate) || !validDate(endDate) || days < 1 || days > 90 || endDate > new Date().toISOString().slice(0,10)) {
+    res.status(400).json({error:'Select valid start_date and end_date within a maximum of 90 days.'});return;
+  }
+  try {res.json(sanitizePublicPayload(await androidReporting({startDate,endDate})));}
+  catch {res.status(503).json({error:'Android reporting is temporarily unavailable. Retry later.'});}
 });
 
 app.get('/api/analytics/one/app', async (req, res) => {

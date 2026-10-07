@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { oneSurfaceSql } from '../src/server/one-scope.mjs';
 /**
  * Read-only reconciliation probe for One adoption metrics.
  *
@@ -90,8 +91,7 @@ function completeUtcWindow(days) {
 }
 
 function surfaceFilter(webHost) {
-  const literal = `'${String(webHost).replace(/'/g, "\\'")}'`;
-  return `(platform IN ('IOS','ANDROID') OR NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key='page_location')) = ${literal})`;
+  return oneSurfaceSql(webHost);
 }
 
 const BACKGROUND_EVENTS = [

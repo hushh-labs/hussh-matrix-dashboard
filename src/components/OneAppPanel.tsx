@@ -1,3 +1,4 @@
+import { AndroidAnalyticsPanel } from './AndroidAnalyticsPanel';
 import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle, ChevronDown, Info, ShieldCheck, Users } from 'lucide-react';
@@ -371,7 +372,7 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
   const platformCards = [
     { key: 'WEB', title: 'One web', scope: `${one.sourceWebHost ?? (environment === 'uat' ? 'uat.one.hushh.ai' : 'one.hushh.ai')} browsers only` },
     { key: 'IOS', title: 'One iOS', scope: 'com.hushh.app iOS app instances' },
-    { key: 'ANDROID', title: 'One Android', scope: 'com.hushh.app Android app instances · release status unverified' },
+    { key: 'ANDROID', title: 'One Android', scope: 'com.hussh.app Android app instances · verified Firebase stream' },
   ];
 
   return (
@@ -411,7 +412,7 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
                   {!accountsMeasured && <p className="mt-2 text-xs font-semibold text-[#8a5a04]">No stable account ID was observed here; the app/browser IDs cannot be converted into a user count.</p>}
                 </>
               )}
-              {key === 'ANDROID' && <p className="mt-4 rounded-xl bg-[#fffaf0] p-3 text-xs font-semibold leading-5 text-[#72510b]">Android release status is not connected. Per the product team, current activity is pre-launch/test telemetry; do not treat these IDs as public users or downloads.</p>}
+              {key === 'ANDROID' && <p className="mt-4 rounded-xl bg-[#fffaf0] p-3 text-xs font-semibold leading-5 text-[#72510b]">Android app activity is separate from store downloads. Check the native version, installer and backend environment below; test-labelled activity is not production-backend customer evidence.</p>}
             </div>
           );
         })}
@@ -697,7 +698,7 @@ export function Retention({ one }: { one: OneAppSummary }) {
  * Every stage here counts the same devices that installed inside the window,
  * so the stages nest and the percentages are real conversions.
  *
- * Percentages are share of installs rather than of the previous stage. The
+ * Percentages are share of first opens rather than of the previous stage. The
  * question is "of everyone who installed, how many got here", and step-to-step
  * ratios flatter a funnel by hiding how steep the first drop is.
  */
@@ -707,7 +708,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
     return (
       <div className={cn(applePanel, 'p-6 text-center')}>
         <p className="text-sm font-semibold text-[#6e6e73]">
-          No native app installs (iOS/Android) recorded in this window.
+          No native first-open events (iOS/Android) recorded in this window.
         </p>
       </div>
     );
@@ -720,7 +721,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
           iOS & Android native only
         </span>
         <span className="text-xs font-medium text-[#86868b]">
-          Web has no app install to cohort on and is excluded
+          Web has no native first-open cohort and is excluded
         </span>
       </div>
 
@@ -742,7 +743,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
               <div>
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-semibold text-[#6e6e73]">
-                    {platformLabel(funnel.platform)} &mdash; 6-stage install retention funnel
+                    {platformLabel(funnel.platform)} &mdash; 6-stage first-open retention funnel
                   </p>
                 </div>
                 <div className="mt-1 flex flex-wrap items-end gap-x-3">
@@ -750,7 +751,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
                     {formatNumber(last.users)}
                   </p>
                   <p className="pb-1 text-base font-semibold text-[#86868b]">
-                    returned in week 1 of {formatNumber(funnel.installed)} who installed &middot;{' '}
+                    returned in week 1 of {formatNumber(funnel.installed)} first-open app IDs &middot;{' '}
                     {percentText(last.shareOfInstalls, 1)}
                   </p>
                 </div>
@@ -785,7 +786,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
                         {formatNumber(stage.users)}
                         {index > 0 && (
                           <span className="ml-2 text-[#86868b]">
-                            ({percentText(stage.shareOfInstalls, 0)} of installs
+                            ({percentText(stage.shareOfInstalls, 0)} of first opens
                             {dropRate !== null && dropRate > 0 && (
                               <span className="text-[#8a5a04]"> &middot; {percentText(dropRate, 0)} drop</span>
                             )})
@@ -1353,6 +1354,7 @@ export function OneAppPanel({
         </div>
         <OneAtAGlance one={activeData} />
         <PlatformsAtAGlance one={activeData} environment={environment} />
+        <AndroidAnalyticsPanel one={activeData} environment={environment} />
         <details className={cn(appleCard, 'mb-4 p-4 text-sm leading-6 text-[#3a3a3c]')}>
           <summary className="cursor-pointer font-semibold text-[#1d1d1f]">Plain-English guide to the numbers on this page</summary>
           <div className="mt-3 grid gap-x-6 gap-y-2 md:grid-cols-2">
@@ -1361,7 +1363,7 @@ export function OneAppPanel({
             <p><strong>First observed / returning:</strong> the account’s first tagged activity in the available export is inside / before the selected dates. First observed is not the same as a new registration.</p>
             <p><strong>Active devices:</strong> distinct app-install or browser identifiers with meaningful activity. One person can have several; anonymous visits are included. These are not unique people.</p>
             <p><strong>Daily / weekly / monthly:</strong> activity over 1 / 7 / 30 days, ending on the date printed on the tile. GA4’s finalized daily export may lag behind today or the selected end date.</p>
-            <p><strong>Installs, activation, retention and agents:</strong> these describe device journeys, first value, week-1 return, and deliberate feature use. Their percentages use the stated device cohort as the denominator; they are not account growth.</p>
+            <p><strong>First opens, activation, retention and agents:</strong> these describe device journeys, first value, week-1 return, and deliberate feature use. Their percentages use the stated device cohort as the denominator; they are not account growth.</p>
           </div>
           <p className="mt-3 border-t border-black/5 pt-3 text-xs font-semibold text-[#6e6e73]">
             Production and UAT are reporting-property selections, not a claim about which backend a mobile build calls. Public iOS builds can appear in the production GA4 property while still using the UAT backend.
@@ -1397,9 +1399,9 @@ export function OneAppPanel({
       </Block>
 
       <Block
-        kicker="App installs"
-        title="What happens after a device installs the app?"
-        hint="A true cohort: every stage counts the same device identifiers that installed in this window, so the percentages are real conversions. Web has no install to measure."
+        kicker="App first opens"
+        title="What happens after the first app launch?"
+        hint="Every stage follows app-instance identifiers first opened in this window after installation or reinstallation. This is not a Play Store download count. Web is excluded from this native cohort."
       >
         <InstallFunnel funnels={activeData.installFunnel} />
         <FunnelDropoffAgentDiagnostic one={activeData} />

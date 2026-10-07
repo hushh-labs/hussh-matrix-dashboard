@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Independently reconcile selected-range One web/iOS/Android aggregate cards. */
 import { BigQuery } from '@google-cloud/bigquery';
+import { oneSurfaceSql } from '../src/server/one-scope.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -41,9 +42,7 @@ const query = `
     WHERE REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') BETWEEN '${startSuffix}' AND '${endSuffix}'
       AND (NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
         OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (SELECT suffix FROM finalized_dates))
-      AND ((platform = 'WEB' AND NET.HOST((SELECT value.string_value FROM UNNEST(event_params)
-        WHERE key = 'page_location')) = '${webHost}')
-        OR (platform IN ('IOS', 'ANDROID') AND app_info.id = 'com.hushh.app'))
+      AND ${oneSurfaceSql(webHost, environment)}
   ), valid_routes AS (
     SELECT platform, route_id FROM scoped
     WHERE event_name = 'page_view' AND REGEXP_CONTAINS(route_id, r'^[a-z][a-z0-9_]{0,60}$')

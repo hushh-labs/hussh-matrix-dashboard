@@ -21,7 +21,8 @@ export function founderReturningAccounts(active: FounderMeasure, firstObserved: 
 }
 
 export interface FounderPlatform {
-  key: 'IOS' | 'WEB';
+  key: 'IOS' | 'ANDROID' | 'WEB';
+  captureState?: 'unavailable' | 'waiting' | 'observed';
   label: string;
   identifiedAccounts: FounderMeasure;
   identityCoverage: number | null;
@@ -77,6 +78,7 @@ export interface FounderAgent {
   failures: FounderMeasure;
   outcomeSignals: FounderMeasure;
   iosInteractions: number | null;
+  androidInteractions?: number | null;
   webInteractions: number | null;
 }
 
