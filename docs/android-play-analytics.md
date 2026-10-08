@@ -142,10 +142,26 @@ Reader secrets identify the existing runtime service account. The bucket value
 must be the `gs://pubsite_prod…` URI shown in Play Console **Download reports**;
 enter it privately in Secret Manager's new-version form. Do not invent a URI,
 paste credentials in chat, add frontend variables or create service-account keys.
-The Play Console administrator must grant this runtime account read-only
-**View app information** for `com.hussh.app`, including the access required for
-bulk reports. The current team request is outstanding. The uploader's access
-does not establish the runtime reader's access.
+The Play Console administrator must add this existing runtime account through
+**Users and permissions → Invite new user**. Google requires **Account
+permissions → View app information (read-only)** at **Global** scope to read
+bulk reports. This provider requirement gives the reader access to nonfinancial
+app information across the developer account; obtain explicit approval for that
+scope before submitting the grant. The dashboard still requests reports only
+for `com.hussh.app`. For Android vitals, grant **View app quality information
+(read-only)** on `com.hussh.app` using app permissions where the Console allows
+it. Do not grant Admin, financial data, publishing, release management, or user
+management permissions. Do not generate a service-account private key.
+
+Read-only Console inspection on October 8, 2026 confirmed the human operator's
+Admin access, but the runtime account was absent from the user list. The
+`com.hussh.app` Statistics page displayed **No monthly reports available** for
+installs, crashes, and store performance. These observations do not mean zero
+installs or crashes. The reader grant and real bucket configuration remain
+pending; the uploader's access does not establish the runtime reader's access.
+Google documents a 3–7 day posting delay for these daily-captured monthly CSVs.
+Do not assume reports will appear immediately after the grant or infer their
+availability from the app's release date.
 
 ## Bounds, retention and cost
 
