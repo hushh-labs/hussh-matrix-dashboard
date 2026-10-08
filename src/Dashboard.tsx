@@ -1638,7 +1638,7 @@ export default function Dashboard() {
           rows: metricRows(hushhTechReportTotals),
         },
         {
-          title: 'Last 7 Days',
+          title: 'Selected reporting range',
           subtitle: 'Traffic values are shown only when the processed GA4 source is verified.',
           rows: metricRows(hushhTechSevenDayMetrics),
         },
@@ -2181,10 +2181,10 @@ export default function Dashboard() {
                   onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)}
                 />
                 <MetricListCard
-                  title="Last 7 Days"
+                  title="Selected reporting range"
                   subtitle="DAU, WAU, MAU, sessions, views, events, and engagement"
                   items={hushhTechSevenDayMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech 7D · ${item.label}`, item)}
+                  onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)}
                 />
               </div>
             </section>

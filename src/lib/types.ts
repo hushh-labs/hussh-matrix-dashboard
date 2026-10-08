@@ -886,9 +886,12 @@ export interface OneGrowthSplit {
 
 export interface OneRetentionCohort {
   cohortWeek: string;
-  cohortSize: number;
-  returnedW1: number;
+  cohortSize: number | null;
+  returnedW1: number | null;
   rateW1: number | null;
+  windowComplete?: boolean;
+  state?: 'available' | 'pending' | 'unavailable';
+  dataThrough?: string | null;
 }
 
 export interface OneActivationStage {
@@ -1050,6 +1053,7 @@ export interface OneAppSummary {
   installFunnel: OneInstallFunnel[];
   growth: OneGrowthSplit;
   retention: OneRetentionCohort[];
+  retentionRange?: { startDate: string; endDate: string; timezone: string };
   activationStages: OneActivationStage[];
   capabilitiesAvailable: boolean;
   capabilities: OneCapabilityUsage[];

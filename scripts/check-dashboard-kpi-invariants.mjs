@@ -158,8 +158,10 @@ function checkOneEnvironment(label, one) {
   const retention = Array.isArray(one.retention) ? one.retention : [];
   check(
     `${label}_retention_exact`,
-    retention.every((row) => row.returnedW1 <= row.cohortSize
-      && (row.cohortSize === 0 ? row.rateW1 == null : close(row.rateW1, row.returnedW1 / row.cohortSize))),
+    retention.every((row) => row.windowComplete === false
+      ? row.returnedW1 == null && row.rateW1 == null
+      : row.returnedW1 <= row.cohortSize
+        && (row.cohortSize === 0 ? row.rateW1 == null : close(row.rateW1, row.returnedW1 / row.cohortSize))),
     `${retention.length} cohort(s)`,
   );
 }
