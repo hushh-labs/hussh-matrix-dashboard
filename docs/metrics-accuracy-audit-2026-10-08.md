@@ -85,7 +85,43 @@ that is currently unavailable.
   eight cohort sizes and complete return counts/rates; both newest cohorts
   stayed pending with null rates. Production mature totals were 39 / 601,
   approximately 6.49%, rather than an unweighted average of cohort percentages.
-  The final date-label fixes require their own subsequent candidate verification.
+  The following final candidate verification includes the date-label fixes.
+
+## Production release evidence
+
+- Implementation PRs [107](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/107),
+  [108](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/108) and
+  [109](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/109) are merged.
+  Source: `051a673ff014caddf088935433815b6975deb419`.
+- Manual Cloud Build `f8b88fbb-b7c8-4328-8fea-62a87710f781` succeeded.
+  Image digest: `sha256:828f7a8aaff5984a55a263e22c31577e73e8c9e52be46048dfd80aea737f0b12`.
+  Candidate `hushh-matrix-dashboard-00252-rir` passed all nine existing release
+  checks before promotion. It is now Ready and serving 100% of production.
+  Secret bindings, runtime account, CPU/memory, scaling and session affinity
+  were compared with the captured service configuration and preserved.
+- Public-domain Hushh.ai, One and aggregate privacy checks passed after promotion.
+  The separate anonymous auth probe passed login redirect, protected endpoints,
+  PKCE/cookie settings and invalid callback rejection without an auth adapter.
+- Candidate Android history matched an independent GA4 request for
+  28 September–4 October: 21 active / 21 tracked app users, 4,279 events.
+  Repeat reads returned identical cached results; invalid dates/environment and
+  anonymous Android requests were rejected. These are app analytics, not installs.
+- All 70 stored media rows and 280 lifetime observations matched the Instagram
+  dashboard response; media observation keys were unique. One fresh Meta media
+  sample matched identity/type, likes/comments and reach/saves/shares/views.
+  A sample does not establish that every lifetime value remains unchanged since
+  its dated daily snapshot. All 12 account observations and fresh seven-day
+  reach reconciled again against the final candidate.
+- The authenticated production browser displayed the independently reconciled
+  retention table for 8 September–7 October, including both pending cohorts.
+  Desktop (1,136px) and mobile (390px) page widths stayed within the viewport.
+  Mobile section-menu open/select/close and date apply were exercised; browser
+  viewport overrides were reset. UI inspection supplements the API/source checks.
+- Dashboard deployment used Cloud Build/Run directly, as requested. Agent
+  commits and merges contain DCO signoffs and `[skip ci]`; no existing workflow
+  or mandatory check was weakened. Captured rollback for this release is
+  `hushh-matrix-dashboard-00248-doj=100`. Re-read current traffic before any
+  future rollback; do not overwrite a subsequent team's release.
 
 ## Remaining source and release limitations
 
