@@ -16,6 +16,18 @@ export function androidComparisonCoverage(currentEvents, previousEvents, previou
     || previousStartDate >= ONE_ANDROID_COMPLETE_FROM;
 }
 
+/** A return rate needs seven complete reporting days after the last first open. */
+export function nativeRetentionWindowComplete(latestFirstOpen, completeThrough, incompleteWindows) {
+  if (!Number.isSafeInteger(incompleteWindows) || incompleteWindows !== 0) return false;
+  const date = value => {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const time = Date.parse(`${value}T00:00:00Z`);
+    return Number.isFinite(time) && new Date(time).toISOString().slice(0,10) === value ? time : null;
+  };
+  const first = date(latestFirstOpen), through = date(completeThrough);
+  return first !== null && through !== null && through >= first + 7 * 86_400_000;
+}
+
 const literal = (value) => `'${String(value).replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
 
 export function oneAndroidSql(environment = 'production') {

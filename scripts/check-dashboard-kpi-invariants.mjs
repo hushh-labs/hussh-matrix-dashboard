@@ -149,7 +149,9 @@ function checkOneEnvironment(label, one) {
   check(
     `${label}_install_shares_exact`,
     installs.every((funnel) => (funnel.stages ?? []).every((stage) =>
-      funnel.installed === 0 ? stage.shareOfInstalls === 0 : close(stage.shareOfInstalls, stage.users / funnel.installed))),
+      stage.key === 'returned_w1' && funnel.retentionWindowComplete === false
+        ? stage.shareOfInstalls === null
+        : funnel.installed === 0 ? stage.shareOfInstalls === 0 : close(stage.shareOfInstalls, stage.users / funnel.installed))),
     `${installs.length} native funnel(s)`,
   );
 

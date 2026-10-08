@@ -1,7 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { oneAndroidSql, oneSurfaceSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange } from '../src/server/one-scope.mjs';
+import { oneAndroidSql, oneSurfaceSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, nativeRetentionWindowComplete } from '../src/server/one-scope.mjs';
 
 describe('One Android reporting contract', () => {
+  it('withholds a week-1 rate until seven complete reporting days follow every first open', () => {
+    expect(nativeRetentionWindowComplete('2026-10-07', '2026-10-13', 0)).toBe(false);
+    expect(nativeRetentionWindowComplete('2026-10-07', '2026-10-14', 0)).toBe(true);
+    expect(nativeRetentionWindowComplete('2026-10-08', '2026-10-14', 0)).toBe(false);
+    expect(nativeRetentionWindowComplete('2026-10-07', '2026-10-14', 1)).toBe(false);
+    expect(nativeRetentionWindowComplete('2026-10-07', '2026-10-14', null)).toBe(false);
+    expect(nativeRetentionWindowComplete('2026-10-07', null, 0)).toBe(false);
+    expect(nativeRetentionWindowComplete(null, '2026-10-14', 0)).toBe(false);
+    expect(nativeRetentionWindowComplete('2026-02-30', '2026-03-20', 0)).toBe(false);
+  });
   it('bounds production raw reads to the repaired export history without changing the requested reporting window',()=>{
     const before={startDate:'2026-09-28',endDate:'2026-10-04'};
     const spanning={startDate:'2026-07-10',endDate:'2026-10-07'};

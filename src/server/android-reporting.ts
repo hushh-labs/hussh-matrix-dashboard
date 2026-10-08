@@ -114,6 +114,7 @@ export function summarizePlayReports(rows: Record<string,string>[], range: Repor
 }
 
 export async function fetchPlayDownloads(send: Send, bucket: string, range: ReportingRange) {
+  bucket = bucket.trim(); // Secret Manager stdin entry may include a trailing newline.
   const none={state:'not_configured' as ReportingState,totals:{},daily:[],dataThrough:null,note:'Play Console report bucket is not configured. Firebase first opens are not used as downloads.'};
   const match=/^(?:gs:\/\/)?(pubsite_prod(?:_rev)?_[a-zA-Z0-9_-]+)\/?$/.exec(bucket);
   if(!bucket)return {installs:none,store:none};

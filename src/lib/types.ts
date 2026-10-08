@@ -871,6 +871,9 @@ export interface OneInstallStage {
 export interface OneInstallFunnel {
   platform: string;
   installed: number;
+  /** False means the selected export has not observed every cohort's full week. */
+  retentionWindowComplete?: boolean;
+  retentionDataThrough?: string | null;
   stages: OneInstallStage[];
 }
 
