@@ -201,11 +201,16 @@ availability from the app's release date.
 
 Provider requests: 10-second timeout, at most one retry for 429/selected 5xx,
 Retry-After capped at 3 seconds, no redirects, 10 MiB maximum response.
-At most two GA4 reports, four calendar months/eight CSV objects, and five vitals
+At most two GA4 reports, four calendar months/eight CSV objects, two exact-object
+metadata listings after an object 403, and five vitals
 requests per range. GA4 event history allows six named events/2,000 rows; vitals
 allows 1,000 rows and fails safely on unexpected pagination. Version filters
 allow 20 currently serving codes. CSVs allow 100,000 rows/16 KiB fields; malformed
 quotes and duplicate country/day rows reject the report rather than inflate it.
+The metadata fallback asks for at most one name using the exact requested
+company-package object prefix; it never lists other apps. Empty successful
+listing means no report yet; denied listing retains an access error. This avoids
+misreporting GCS's ambiguous absent-object 403 as a missing Console grant.
 
 Provider cache: one hour, 32 entries, coalesced requests, 12 new ranges per ten
 minutes per replica. Added raw capture aggregate: five-minute/32-entry cache,

@@ -32,6 +32,24 @@ describe('Android provider reporting',()=>{
       expect(url).not.toMatch(/\s/);
     }
   });
+  it('distinguishes absent reports from denied access using only an exact company object listing',async()=>{
+    const send=vi.fn(async(url:string)=>url.includes('alt=media')
+      ? Promise.reject({response:{status:403}}) : {items:[]});
+    const result=await fetchPlayDownloads(send,'gs://pubsite_prod_fixture',range);
+    expect(result.installs.state).toBe('not_yet_available');
+    expect(result.store.state).toBe('not_yet_available');
+    const listings=send.mock.calls.filter(([url])=>!url.includes('alt=media'));
+    expect(listings).toHaveLength(2);
+    for(const [url] of listings){
+      const params=new URL(url).searchParams;
+      expect(params.get('prefix')).toMatch(/^stats\/(installs|store_performance)\/.*_com\.hussh\.app_202609_country\.csv$/);
+      expect(params.get('maxResults')).toBe('1');
+      expect(params.get('fields')).toBe('items(name)');
+    }
+    send.mockImplementation(async(url:string)=>url.includes('alt=media')
+      ? Promise.reject({response:{status:403}}) : {items:[{name:new URL(url).searchParams.get('prefix')}]});
+    expect((await fetchPlayDownloads(send,'gs://pubsite_prod_fixture',range)).installs.state).toBe('permission_missing');
+  });
   it('bounds vitals to freshness and currently serving production versions, preserving zero and missing rates',async()=>{
     const send=vi.fn().mockResolvedValueOnce({tracks:[{type:'Production',displayName:'production',servingReleases:[{versionCodes:['10']}]}]})
       .mockResolvedValueOnce({freshnessInfo:{freshnesses:[{aggregationPeriod:'DAILY',latestEndTime:{year:2026,month:10,day:5}}]}})
