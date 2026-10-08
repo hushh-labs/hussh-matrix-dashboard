@@ -25,6 +25,8 @@ const cases = [
   ['viewing_has_its_own_feature', "= 'location_share_viewed' THEN 'location_viewed'"],
   ['consent_screen_loads_separate', "= 'screen' THEN 'consent_screen_viewed'"],
   ['exact_event_composition_is_returned', 'ARRAY_AGG(STRUCT(eventName, signals, successes, expectedErrors, failures)'],
+  ['google_provider_steps_keep_general_auth_totals', "SELECT * REPLACE ('google_signin' AS feature_key) FROM classified_base"],
+  ['google_provider_filter_excludes_apple_and_other_methods', "WHERE eventName IN ('auth_started', 'auth_succeeded', 'auth_failed') AND action = 'google'"],
 ];
 const results = cases.map(([name, fragment]) => ({ name, ok: query.includes(fragment) }));
 const finance = source.match(/key: 'finance',[\s\S]*?key: 'consent'/)?.[0] || '';

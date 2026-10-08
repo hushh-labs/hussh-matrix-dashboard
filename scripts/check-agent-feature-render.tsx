@@ -53,6 +53,29 @@ const summary = {
   },
   featureUsage: {},
 } as unknown as OneAppSummary;
+const gmailSummary = {
+  ...summary,
+  capabilities: [{ key: 'gmail', instrumented: true, observed: true, devices: 9, accounts: 8, deliberateEvents: 11 }],
+  featureUsage: { receipt_sync_completed: { signals: 292, devices: 9, accounts: 8, successes: 281, expectedErrors: 10, failures: 1, outcomeSignals: 292 } },
+} as unknown as OneAppSummary;
+function renderGmail(one: OneAppSummary) {
+  return renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, {
+    capabilityKey: 'gmail', one, uat: one, rangeLabel: 'Last 30 days', dateControl: null, onBack: () => {},
+  }));
+}
+const measuredGmail = renderGmail(gmailSummary);
+assert.match(measuredGmail, /292 records from 9 device\/browser IDs/);
+assert.match(measuredGmail, /Inbox visits are not separately tracked yet/);
+assert.match(measuredGmail, /Receipt categorization is not tracked yet/);
+assert.match(measuredGmail, /Mail sign-in screen visits are not tracked in One yet/);
+const desktopRows = (markup: string) => markup.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/)?.[1] ?? '';
+assert.equal((desktopRows(measuredGmail).match(/Not tracked yet/g) ?? []).length, 3);
+const withInboxEvidence = renderGmail({
+  ...gmailSummary,
+  featureUsage: { ...gmailSummary.featureUsage, inbox_viewed: { accounts: 1, devices: 1, signals: 2, successes: 0, expectedErrors: 0, failures: 0, outcomeSignals: 0 } },
+});
+assert.match(withInboxEvidence, /2 records from 1 device\/browser IDs/);
+assert.equal((desktopRows(withInboxEvidence).match(/Not tracked yet/g) ?? []).length, 2);
 function renderLocation(one: OneAppSummary) {
   return renderToStaticMarkup(createElement(OneLocationAnalyticsPanel, {
     one, uat: null, environment: 'production', tab: 'features', rangeLabel: 'Last 30 days', dateControl: null,
