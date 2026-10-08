@@ -8,10 +8,11 @@ export function oneRetentionSql({ table, tables, suffixFilter, surfaceFilter, me
         AND user_pseudo_id IS NOT NULL
     ),
     acquisitions AS (
-      SELECT deviceKey, platform, MIN(day) AS firstDay
+      SELECT deviceKey, platform,
+        MIN(IF((platform = 'WEB' AND event_name = 'first_visit')
+          OR (platform IN ('IOS', 'ANDROID') AND event_name = 'first_open'), day, NULL)) AS firstDay,
+        ARRAY_AGG(DISTINCT IF(meaningful, day, NULL) IGNORE NULLS) AS activeDays
       FROM scoped
-      WHERE (platform = 'WEB' AND event_name = 'first_visit')
-         OR (platform IN ('IOS', 'ANDROID') AND event_name = 'first_open')
       GROUP BY deviceKey, platform
     ),
     finalized_days AS (
@@ -22,11 +23,11 @@ export function oneRetentionSql({ table, tables, suffixFilter, surfaceFilter, me
     devices AS (
       SELECT a.deviceKey, a.platform, a.firstDay,
         DATE_TRUNC(a.firstDay, WEEK(SUNDAY)) AS cohortWeek,
-        COUNTIF(s.meaningful AND s.day BETWEEN DATE_ADD(a.firstDay, INTERVAL 1 DAY)
-          AND DATE_ADD(a.firstDay, INTERVAL 7 DAY)) > 0 AS returned
-      FROM acquisitions a LEFT JOIN scoped s USING (deviceKey)
+        EXISTS(SELECT 1 FROM UNNEST(a.activeDays) day
+          WHERE day BETWEEN DATE_ADD(a.firstDay, INTERVAL 1 DAY)
+          AND DATE_ADD(a.firstDay, INTERVAL 7 DAY)) AS returned
+      FROM acquisitions a
       WHERE DATE_TRUNC(a.firstDay, WEEK(SUNDAY)) >= DATE '${startDate}'
-      GROUP BY a.deviceKey, a.platform, a.firstDay
     ),
     cohort_totals AS (
       SELECT cohortWeek, COUNT(*) AS cohortSize, COUNTIF(returned) AS returnedW1,

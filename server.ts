@@ -504,7 +504,7 @@ async function queryBigQuerySqlWithCli(
 async function queryBigQuerySqlUncached(queryJobProject: string, query: string, bounded = false): Promise<BigQueryFeedResult> {
   try {
     const bq = await bigQueryClient(queryJobProject);
-    const [rows] = await bq.query({ query, location: 'US', ...(bounded ? { maximumBytesBilled: '100000000', jobTimeoutMs: 30_000 } : {}) });
+    const [rows] = await bq.query({ query, location: 'US', ...(bounded ? { maximumBytesBilled: '1000000000', jobTimeoutMs: 30_000 } : {}) });
     return { rows: rows as Record<string, unknown>[], error: null };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -537,6 +537,25 @@ async function queryBigQuerySql(queryJobProject: string, query: string, bounded 
   } catch (error) {
     return error as BigQueryFeedResult;
   }
+}
+
+// Retention uses one scan, a finite reporting cache and a cold-query budget.
+// The initial 100 MB candidate cap was below the measured existing export size.
+const retentionQueryCache = new AggregateCache<BigQueryFeedResult>({ freshMs: 300_000, maxAgeMs: 300_000, maxEntries: 32 });
+let retentionQueryBudget = { at: 0, attempts: 0 };
+async function queryOneRetention(project: string, query: string): Promise<BigQueryFeedResult> {
+  const key = `${project}:${crypto.createHash('sha256').update(query).digest('hex')}`;
+  try {
+    const result = await retentionQueryCache.read(key, async () => {
+      const now = Date.now();
+      if (now - retentionQueryBudget.at > 600_000) retentionQueryBudget = { at: now, attempts: 0 };
+      if (++retentionQueryBudget.attempts > 12) throw new Error('Retention query budget reached');
+      const value = await queryBigQuerySqlUncached(project, query, true);
+      if (value.error) throw new Error('Retention source unavailable');
+      return value;
+    }, analyticsQueryContext.getStore()?.refresh === true);
+    return result.value;
+  } catch { return { rows: [], error: 'Retention reporting unavailable' }; }
 }
 
 async function queryBigQuery(
@@ -3397,7 +3416,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, identifiedGrowthQuery),
     queryBigQuerySql(queryProject, iosIdentifiedGrowthQuery),
     queryBigQuerySql(queryProject, iosUsageQuery),
-    queryBigQuerySql(queryProject, retentionQuery, true),
+    queryOneRetention(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
     queryBigQuerySql(queryProject, nativeEnvironmentQuery),
