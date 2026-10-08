@@ -25,7 +25,9 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
-import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, nativeRetentionWindowComplete } from './src/server/one-scope.mjs';
+import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, nativeRetentionWindowComplete, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
+import { oneRetentionSql, oneRetentionCohort } from './src/server/one-retention.mjs';
+import { hushhTechWindowMatches } from './src/server/hushhtech-window.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 
@@ -499,15 +501,15 @@ async function queryBigQuerySqlWithCli(
   return JSON.parse(stdout) as Record<string, unknown>[];
 }
 
-async function queryBigQuerySqlUncached(queryJobProject: string, query: string): Promise<BigQueryFeedResult> {
+async function queryBigQuerySqlUncached(queryJobProject: string, query: string, bounded = false): Promise<BigQueryFeedResult> {
   try {
     const bq = await bigQueryClient(queryJobProject);
-    const [rows] = await bq.query({ query, location: 'US' });
+    const [rows] = await bq.query({ query, location: 'US', ...(bounded ? { maximumBytesBilled: '100000000', jobTimeoutMs: 30_000 } : {}) });
     return { rows: rows as Record<string, unknown>[], error: null };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('BigQuery SQL query failed:', message);
-    if (BQ_CLI_FALLBACK) {
+    if (BQ_CLI_FALLBACK && !bounded) {
       try {
         const rows = await queryBigQuerySqlWithCli(queryJobProject, query);
         return { rows, error: null };
@@ -521,13 +523,13 @@ async function queryBigQuerySqlUncached(queryJobProject: string, query: string):
   }
 }
 
-async function queryBigQuerySql(queryJobProject: string, query: string): Promise<BigQueryFeedResult> {
-  const key = `${queryJobProject}:${crypto.createHash('sha256').update(query).digest('hex')}`;
+async function queryBigQuerySql(queryJobProject: string, query: string, bounded = false): Promise<BigQueryFeedResult> {
+  const key = `${queryJobProject}:${bounded}:${crypto.createHash('sha256').update(query).digest('hex')}`;
   // A manual refresh reads upstream again rather than renewing old query results.
-  if (analyticsQueryContext.getStore()?.refresh) return queryBigQuerySqlUncached(queryJobProject, query);
+  if (analyticsQueryContext.getStore()?.refresh) return queryBigQuerySqlUncached(queryJobProject, query, bounded);
   try {
     const result = await queryCache.read(key, async () => {
-      const value = await queryBigQuerySqlUncached(queryJobProject, query);
+      const value = await queryBigQuerySqlUncached(queryJobProject, query, bounded);
       if (value.error) throw value;
       return value;
     });
@@ -579,8 +581,10 @@ async function queryBigQuery(
 
 function buildHushhTechUrl(range?: HushhAiDateRange): string {
   const url = new URL(HUSHHTECH_ENDPOINT);
-  if (!url.searchParams.has('window_days')) {
-    url.searchParams.set('window_days', String(range?.days ?? HUSHHTECH_WINDOW_DAYS));
+  url.searchParams.set('window_days', String(range?.days ?? HUSHHTECH_WINDOW_DAYS));
+  if (range) {
+    url.searchParams.set('start_date', range.startDate);
+    url.searchParams.set('end_date', range.endDate);
   }
   return url.toString();
 }
@@ -596,7 +600,11 @@ async function fetchHushhTechPublicAnalytics(range: HushhAiDateRange): Promise<D
       console.error(message);
       return { data: null, error: message };
     }
-    return { data: (await res.json()) as Record<string, unknown>, error: null };
+    const data = await res.json() as Record<string, unknown>;
+    if (!hushhTechWindowMatches(data, range)) {
+      return { data: null, error: 'HushhTech summary does not cover the requested dates.' };
+    }
+    return { data, error: null };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('hushhtech.com fetch failed:', message);
@@ -3215,31 +3223,16 @@ ${capabilitySql.isDeliberate}
     FROM ios_events
   `;
 
-  // Week-1 retention by acquisition cohort: of the people who first appeared in
-  // a given week, how many came back in the following seven days. Cohorts are
-  // read from a wider window than the selected range because a cohort has to be
-  // old enough to have had its week.
+  // Observe first_visit/first_open itself, including devices that never return.
+  // A lifetime first-touch on a later active device would bias the denominator.
+  // Require a complete acquisition week plus every seven-day return window.
   const retentionStart = formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -83));
-  const retentionQuery = `
-    SELECT
-      CAST(DATE_TRUNC(firstDay, WEEK) AS STRING) AS cohortWeek,
-      COUNT(DISTINCT deviceKey) AS cohortSize,
-      COUNT(DISTINCT IF(
-        day BETWEEN DATE_ADD(firstDay, INTERVAL 1 DAY) AND DATE_ADD(firstDay, INTERVAL 7 DAY),
-        deviceKey, NULL)) AS returnedW1
-    FROM (
-      SELECT
-        ${deviceKeySql} AS deviceKey,
-        PARSE_DATE('%Y%m%d', event_date) AS day,
-        DATE(TIMESTAMP_MICROS(user_first_touch_timestamp), 'Etc/GMT+8') AS firstDay
-      FROM ${table}
-      WHERE ${ga4ExportSuffixFilter(retentionStart, range.endDate, true, projectId, dataset)} AND ${surfaceFilter} AND ${meaningful}
-    )
-    WHERE firstDay IS NOT NULL
-    GROUP BY cohortWeek
-    ORDER BY cohortWeek DESC
-    LIMIT 8
-  `;
+  const retentionQuery = oneRetentionSql({
+    table, tables: `\`${projectId}.${dataset}.INFORMATION_SCHEMA.TABLES\``,
+    suffixFilter: ga4ExportSuffixFilter(retentionStart, range.endDate, true, projectId, dataset),
+    surfaceFilter, meaningful, deviceKeySql, startDate: retentionStart, endDate: range.endDate,
+    androidCompleteFrom: webHost === ONE_APP_HOST ? ONE_ANDROID_COMPLETE_FROM : null,
+  });
 
   // Onboarding to first value, as three counts rather than a ratio, so a stage
   // with no emitter cannot masquerade as a conversion collapse.
@@ -3404,7 +3397,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, identifiedGrowthQuery),
     queryBigQuerySql(queryProject, iosIdentifiedGrowthQuery),
     queryBigQuerySql(queryProject, iosUsageQuery),
-    queryBigQuerySql(queryProject, retentionQuery),
+    queryBigQuerySql(queryProject, retentionQuery, true),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
     queryBigQuerySql(queryProject, nativeEnvironmentQuery),
@@ -3681,17 +3674,10 @@ ${capabilitySql.isDeliberate}
         // "new", which is where it would flatter the number.
         unknownUsers: toNumber(growthRow.unknownUsers),
       },
-      retention: retention.rows
-        .map((row) => {
-          const cohortSize = toNumber(row.cohortSize);
-          const returned = toNumber(row.returnedW1);
-          return {
-            cohortWeek: String(row.cohortWeek),
-            cohortSize,
-            returnedW1: returned,
-            rateW1: cohortSize > 0 ? returned / cohortSize : null,
-          };
-        })
+      retentionRange: { startDate: retentionStart, endDate: range.endDate, timezone: 'Etc/GMT+8' },
+      retentionAvailable: !retention.error,
+      retention: (retention.error ? [] : retention.rows)
+        .map(oneRetentionCohort)
         // Oldest first, so the chart reads left to right like every other
         // trend on the page.
         .reverse(),

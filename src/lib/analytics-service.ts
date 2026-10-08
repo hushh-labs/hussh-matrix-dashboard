@@ -1495,11 +1495,9 @@ function buildHushhTechOpsMetrics(hushhTech: HushhTechMetricsSummary | null): Br
   ];
 }
 
-function buildHushhTechReportTotals(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+export function buildHushhTechReportTotals(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
   if (!hushhTech) return [];
   const business = hushhTech.businessFunnel.overview;
-  const traffic = verifiedHushhTechTrafficOverview(hushhTech);
-  const audience = hushhTech.audience;
   const coverage = hushhTech.dataCoverage ?? {};
   const search = hushhTech.searchPerformance?.overview;
   const legacyUsers = hushhTech.legacy?.overview.usersCreated;
@@ -1509,35 +1507,36 @@ function buildHushhTechReportTotals(hushhTech: HushhTechMetricsSummary | null): 
     supabaseTotals?.totalUsers,
     authUsers?.value,
     legacyUsers,
-    business.persistedUsers,
-    audience?.mau,
-    traffic?.active28DayUsers,
-  ) ?? 0;
+  );
   const windowLabel = `${hushhTech.window.startDate} to ${hushhTech.window.endDate}`;
   const totalUsersDetail = supabaseTotals?.totalUsers != null || authUsers?.value != null
     ? 'hushhtech.com Supabase auth.users at range end'
-    : asNumber(legacyUsers) > 0
+    : legacyUsers != null
       ? 'all-time user aggregate'
-      : `${hushhTech.window.days}d persisted fallback`;
+      : 'Registered account total unavailable';
+  const businessDisplay = isHushhTechSourceUnavailable(hushhTech.businessFunnel.source) ? 'Unavailable' : undefined;
+  const collectedAvailable = !isHushhTechSourceUnavailable(hushhTech.businessFunnel.source);
+  const optionalMetric = (label: string, value: number | null | undefined, detail: string) =>
+    value == null ? metric(label, 0, detail, 'Unavailable') : metric(label, value, detail);
 
   return [
-    metric('Total Users', totalUsers, totalUsersDetail),
-    metric('Total Signups', business.signups, windowLabel),
-    metric('Persisted Users', business.persistedUsers, windowLabel),
-    metric('Onboarding Started', business.onboardingStarted, windowLabel),
-    metric('Onboarding Completed', business.onboardingCompleted, windowLabel),
-    metric('Profiles Created', business.profilesCreated, windowLabel),
-    metric('Profiles Confirmed', business.profilesConfirmed, windowLabel),
-    metric('Cloud Run Requests', asNumber(hushhTech.gcp?.requestCount), windowLabel),
-    metric('Collected Events', asNumber(coverage.collectedEvents as number | undefined), 'first-party analytics'),
-    metric('Collected Sessions', asNumber(coverage.collectedSessions as number | undefined), 'first-party analytics'),
-    metric('Search Clicks', asNumber(search?.clicks), 'Search Console'),
-    metric('Search Impressions', asNumber(search?.impressions), 'Search Console'),
-    metric('Supabase Aggregate Tables', asNumber(coverage.supabaseAggregateTables as number | undefined), 'public-safe tables'),
+    optionalMetric('Total Users', totalUsers, totalUsersDetail),
+    metric('Signups', business.signups, windowLabel, businessDisplay),
+    metric('Persisted Users', business.persistedUsers, windowLabel, businessDisplay),
+    metric('Onboarding Started', business.onboardingStarted, windowLabel, businessDisplay),
+    metric('Onboarding Completed', business.onboardingCompleted, windowLabel, businessDisplay),
+    metric('Profiles Created', business.profilesCreated, windowLabel, businessDisplay),
+    metric('Profiles Confirmed', business.profilesConfirmed, windowLabel, businessDisplay),
+    optionalMetric('Cloud Run Requests', hushhTech.gcp?.available ? hushhTech.gcp.requestCount : null, windowLabel),
+    optionalMetric('Collected Events', collectedAvailable ? coverage.collectedEvents as number | undefined : null, 'first-party analytics'),
+    optionalMetric('Collected Sessions', collectedAvailable ? coverage.collectedSessions as number | undefined : null, 'first-party analytics'),
+    optionalMetric('Search Clicks', hushhTech.searchPerformance?.available ? search?.clicks : null, 'Search Console'),
+    optionalMetric('Search Impressions', hushhTech.searchPerformance?.available ? search?.impressions : null, 'Search Console'),
+    optionalMetric('Supabase Aggregate Tables', hushhTech.supabase ? coverage.supabaseAggregateTables as number | undefined : null, 'public-safe tables'),
   ];
 }
 
-function buildHushhTechSevenDayMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+export function buildHushhTechSevenDayMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
   if (!hushhTech) return [];
   const audience = hushhTech.audience;
   const traffic = verifiedHushhTechTrafficOverview(hushhTech);
@@ -1553,17 +1552,17 @@ function buildHushhTechSevenDayMetrics(hushhTech: HushhTechMetricsSummary | null
   );
 
   return [
-    trafficMetric('7d DAU', audience?.dau, traffic?.active1DayUsers),
-    trafficMetric('7d WAU', audience?.wau, traffic?.active7DayUsers),
-    trafficMetric('7d MAU', audience?.mau, traffic?.active28DayUsers),
-    trafficMetric('7d Sessions', audience?.sessions, traffic?.sessions, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
-    trafficMetric('7d Engaged Sessions', null, traffic?.engagedSessions, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
-    trafficMetric('7d Page Views', audience?.pageViews, traffic?.screenPageViews, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
-    trafficMetric('7d New Users', null, traffic?.newUsers, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
-    optionalMetric('7d Events', audience?.events, audience?.source ?? 'first-party analytics waiting'),
-    metric('7d Signups', business.signups, hushhTech.businessFunnel.source),
-    metric('7d Persisted Users', business.persistedUsers, hushhTech.businessFunnel.source),
-    metric('7d Cloud Run Requests', asNumber(hushhTech.gcp?.requestCount), hushhTech.gcp?.source),
+    trafficMetric('DAU', audience?.dau, traffic?.active1DayUsers),
+    trafficMetric('WAU', audience?.wau, traffic?.active7DayUsers),
+    trafficMetric('MAU', audience?.mau, traffic?.active28DayUsers),
+    trafficMetric('Sessions', audience?.sessions, traffic?.sessions, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
+    trafficMetric('Engaged Sessions', null, traffic?.engagedSessions, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
+    trafficMetric('Page Views', audience?.pageViews, traffic?.screenPageViews, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
+    trafficMetric('New Users', null, traffic?.newUsers, traffic ? hushhTech.traffic.source : 'GA4 traffic unverified'),
+    optionalMetric('Events', audience?.events, audience?.source ?? 'first-party analytics waiting'),
+    metric('Signups', business.signups, hushhTech.businessFunnel.source, isHushhTechSourceUnavailable(hushhTech.businessFunnel.source) ? 'Unavailable' : undefined),
+    metric('Persisted Users', business.persistedUsers, hushhTech.businessFunnel.source, isHushhTechSourceUnavailable(hushhTech.businessFunnel.source) ? 'Unavailable' : undefined),
+    optionalMetric('Cloud Run Requests', hushhTech.gcp?.available ? hushhTech.gcp.requestCount : null, hushhTech.gcp?.source),
     metric('Engagement Rate', asNumber(traffic?.engagementRate), traffic ? hushhTech.traffic.source : 'GA4 traffic unverified', traffic ? formatPercent(traffic.engagementRate) : 'Waiting'),
     metric('Avg Session Duration', asNumber(traffic?.averageSessionDuration), traffic ? hushhTech.traffic.source : 'GA4 traffic unverified', traffic ? formatDuration(traffic.averageSessionDuration) : 'Waiting'),
     metric('Search CTR', asNumber(search?.ctr), 'Search Console', formatPercent(search?.ctr)),

@@ -594,36 +594,34 @@ function GrowthQuality({ one }: { one: OneAppSummary }) {
 /**
  * 3. Retention.
  *
- * Week-1 by acquisition cohort. A cohort needs to be a week old before it has a
- * week-1 number, so the newest bar is always the least meaningful — it is drawn
- * paler rather than omitted, because dropping it would make the series look
- * like it ends earlier than it does.
+ * Week-1 by observed acquisition cohort. Availability comes from export
+ * coverage, including gaps, rather than the cohort's position in the chart.
  */
 export function Retention({ one }: { one: OneAppSummary }) {
   if (one.retention.length === 0) {
     return (
       <div className={cn(applePanel, 'p-6 text-center')}>
         <p className="text-sm font-semibold text-[#6e6e73]">
-          Not enough history in this window to measure return visits.
+          {one.retentionAvailable === false
+            ? 'Return-visit reporting is temporarily unavailable.'
+            : 'No observed first-visit / first-open cohorts in this reporting history.'}
         </p>
       </div>
     );
   }
 
-  const lastIndex = one.retention.length - 1;
-  // The newest cohort has not finished its week, so it is excluded from the
-  // headline average rather than dragging it down with a partial number.
-  const mature = one.retention.slice(0, lastIndex);
-  const averageRate = mature.length
-    ? mature.reduce((sum, c) => sum + (c.rateW1 ?? 0), 0) / mature.length
-    : null;
+  const mature = one.retention.filter(c => c.windowComplete === true && c.rateW1 != null
+    && c.cohortSize != null && c.returnedW1 != null);
+  const cohortTotal = mature.reduce((sum, c) => sum + c.cohortSize, 0);
+  const averageRate = cohortTotal > 0
+    ? mature.reduce((sum, c) => sum + c.returnedW1, 0) / cohortTotal : null;
+  const pendingCount = one.retention.length - mature.length;
 
-  const chartData = one.retention.map((cohort, index) => ({
+  const chartData = one.retention.map((cohort) => ({
     week: cohort.cohortWeek.slice(5),
-    rate: cohort.rateW1 === null ? 0 : cohort.rateW1 * 100,
+    rate: cohort.windowComplete === true && cohort.rateW1 != null ? cohort.rateW1 * 100 : null,
     cohortSize: cohort.cohortSize,
     returned: cohort.returnedW1,
-    immature: index === lastIndex,
   }));
 
   return (
@@ -631,15 +629,15 @@ export function Retention({ one }: { one: OneAppSummary }) {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm font-semibold text-[#6e6e73]">
-            Typical week-1 return rate
+            Week-1 return rate
           </p>
           <p className="mt-1 text-5xl font-semibold leading-none text-[#1d1d1f]">
             {percentText(averageRate, 0)}
           </p>
         </div>
         <p className="max-w-sm text-xs font-semibold leading-5 text-[#86868b]">
-          Of the devices that arrived in a given week, this many opened One again in the
-          following seven days.
+          Share of observed first-visit / first-open IDs that returned with activity
+          during days 1–7. Weighted by cohort size; only complete weeks contribute.
         </p>
       </div>
 
@@ -667,7 +665,7 @@ export function Retention({ one }: { one: OneAppSummary }) {
                 const point = entry?.payload as (typeof chartData)[number] | undefined;
                 return [
                   `${value.toFixed(0)}% — ${formatNumber(point?.returned ?? 0)} of ${formatNumber(point?.cohortSize ?? 0)}`,
-                  point?.immature ? 'Week 1 (still running)' : 'Returned in week 1',
+                  'Returned in week 1',
                 ];
               }}
             />
@@ -685,9 +683,24 @@ export function Retention({ one }: { one: OneAppSummary }) {
         </ResponsiveContainer>
       </div>
       <p className="mt-2 text-xs font-semibold text-[#86868b]">
-        Cohort by week of first visit. The most recent week is still inside its own
-        seven days, so its bar will only rise.
+        Observed cohorts start on Sunday. {one.retentionRange ? `${one.retentionRange.startDate} to ${one.retentionRange.endDate}, ${one.retentionRange.timezone} (UTC−8). ` : ''}
+        Up to eight weeks from the preceding 84 reporting days; this history is wider
+        than the selected range. Missing historical first arrivals are not reconstructed.
       </p>
+      {pendingCount > 0 && <p className="mt-2 text-xs font-semibold text-[#86868b]">
+        {pendingCount} cohort(s) await complete acquisition and return data; no rate or zero bar is inferred.
+      </p>}
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <caption className="sr-only">Observed weekly acquisition cohorts and reporting availability</caption>
+          <thead><tr className="text-[#86868b]"><th scope="col" className="py-2">Week of</th><th scope="col">First-arrival IDs</th><th scope="col">Week-1 return</th></tr></thead>
+          <tbody>{one.retention.map(cohort => <tr key={cohort.cohortWeek} className="border-t border-[#e8e8ed]">
+            <th scope="row" className="py-2 font-medium">{cohort.cohortWeek}</th>
+            <td>{cohort.cohortSize == null ? 'Unavailable' : formatNumber(cohort.cohortSize)}</td>
+            <td>{cohort.windowComplete === true && cohort.rateW1 != null ? percentText(cohort.rateW1, 1) : cohort.state === 'unavailable' ? 'Unavailable' : 'Awaiting complete data'}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
     </div>
   );
 }
