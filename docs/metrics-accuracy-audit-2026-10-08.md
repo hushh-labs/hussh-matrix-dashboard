@@ -55,7 +55,7 @@ that is currently unavailable.
   extended by editing metadata.
 - App Store Connect contract passed its **not connected** branch, with null
   production metrics. No Apple measurement reconciliation is claimed.
-- Local release checks: 145 tests / 18 files, TypeScript, Vite build, existing
+- Local release checks: 146 tests / 18 files, TypeScript, Vite build, existing
   10 platform render checks, whitespace and redacted secret scan passed.
   `node scripts/check-one-retention-fixture.mjs` also passed on BigQuery using
   only literal CTE fixtures; no production table/event was created.

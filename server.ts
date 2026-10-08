@@ -3675,6 +3675,7 @@ ${capabilitySql.isDeliberate}
         unknownUsers: toNumber(growthRow.unknownUsers),
       },
       retentionRange: { startDate: retentionStart, endDate: range.endDate, timezone: 'Etc/GMT+8' },
+      retentionAvailable: !retention.error,
       retention: (retention.error ? [] : retention.rows)
         .map(oneRetentionCohort)
         // Oldest first, so the chart reads left to right like every other

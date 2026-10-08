@@ -29,6 +29,11 @@ describe('retention measurement availability', () => {
     const html=renderToStaticMarkup(createElement(Retention,{one:{retention:[{cohortWeek:'2026-09-20',cohortSize:10,returnedW1:0,rateW1:0}]} as OneAppSummary}));
     expect(html).toContain('Awaiting complete data'); expect(html).not.toMatch(/>0(?:\.0)?%</);
   });
+  it('distinguishes a failed query from an empty observed cohort history', () => {
+    const render=(available:boolean)=>renderToStaticMarkup(createElement(Retention,{one:{retention:[],retentionAvailable:available} as OneAppSummary}));
+    expect(render(false)).toContain('temporarily unavailable');
+    expect(render(true)).toContain('No observed first-visit');
+  });
   it('anchors cohorts to observed acquisition, not lifetime first touch on surviving activity', () => {
     const sql=oneRetentionSql({table:'events',tables:'tables',suffixFilter:'TRUE',surfaceFilter:'scope',meaningful:'activity',deviceKeySql:'device',startDate:'2026-07-17',endDate:'2026-10-08',androidCompleteFrom:'2026-10-08'});
     expect(sql).toContain("event_name = 'first_visit'"); expect(sql).toContain("event_name = 'first_open'");

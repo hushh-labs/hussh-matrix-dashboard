@@ -1054,6 +1054,7 @@ export interface OneAppSummary {
   growth: OneGrowthSplit;
   retention: OneRetentionCohort[];
   retentionRange?: { startDate: string; endDate: string; timezone: string };
+  retentionAvailable?: boolean;
   activationStages: OneActivationStage[];
   capabilitiesAvailable: boolean;
   capabilities: OneCapabilityUsage[];

@@ -602,7 +602,9 @@ export function Retention({ one }: { one: OneAppSummary }) {
     return (
       <div className={cn(applePanel, 'p-6 text-center')}>
         <p className="text-sm font-semibold text-[#6e6e73]">
-          Not enough history in this window to measure return visits.
+          {one.retentionAvailable === false
+            ? 'Return-visit reporting is temporarily unavailable.'
+            : 'No observed first-visit / first-open cohorts in this reporting history.'}
         </p>
       </div>
     );
