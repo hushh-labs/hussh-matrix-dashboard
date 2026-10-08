@@ -45,7 +45,7 @@ try {
     const path = '/api/analytics/founder?' + new URLSearchParams({ start_date: selected.startDate, end_date: selected.endDate });
     await request(path); const result = await request(path);
     assert.equal(result.body.period.startDate, selected.startDate); assert.equal(result.body.period.endDate, selected.endDate);
-    rows.push({ view: 'briefing', days, ms: result.ms, ok: result.ms <= budget });
+    rows.push({ view: 'briefing', days, ms: result.ms, cache: result.response.headers.get('X-Metrics-Cache'), ok: result.ms <= budget });
   }
   for (const kaiDays of [7,14,30,90]) for (const hushhDays of [7,14,30,90]) {
     const kai = range(kaiDays), hushh = range(hushhDays);
@@ -59,10 +59,10 @@ try {
     assert.equal(result.body.kai?.ga4?.data?.range?.endDate, kai.endDate);
     assert.equal(source?.gcp?.startDate, hushh.startDate);
     assert.equal(source?.gcp?.endDate, hushh.endDate);
-    rows.push({ view: 'overview', kaiDays, hushhDays, ms: result.ms, ok: result.ms <= budget });
+    rows.push({ view: 'overview', kaiDays, hushhDays, ms: result.ms, cache: result.response.headers.get('X-Metrics-Cache'), ok: result.ms <= budget });
     if (kaiDays === 7 && hushhDays === 7) {
       query.set('view', 'platforms'); const platform = await request('/api/analytics/all?' + query);
-      rows.push({ view: 'platforms', ms: platform.ms, ok: platform.ms <= budget });
+      rows.push({ view: 'platforms', ms: platform.ms, cache: platform.response.headers.get('X-Metrics-Cache'), ok: platform.ms <= budget });
     }
   }
   console.log(JSON.stringify({ ok: rows.every(row => row.ok), budgetMs: budget, results: rows }, null, 2));
