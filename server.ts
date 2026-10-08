@@ -5864,8 +5864,6 @@ function registerAnalyticsRoutes(app: express.Express): void {
       if (warming) return;
       warming = true;
       try {
-      const overviewRange = trailingDateRange(7), oneDefault = trailingDateRange(30);
-      const overview = new URLSearchParams({ view: 'overview', one_start_date: oneDefault.startDate, one_end_date: oneDefault.endDate, kai_start_date: overviewRange.startDate, kai_end_date: overviewRange.endDate, hushh_ai_start_date: overviewRange.startDate, hushh_ai_end_date: overviewRange.endDate });
       const warmPaths: string[] = [];
       for (const days of [30, 7, 14, 90]) {
         const range = trailingDateRange(days);
@@ -5876,7 +5874,12 @@ function registerAnalyticsRoutes(app: express.Express): void {
           warmPaths.push(`/api/analytics/founder?start_date=${period.startDate}&end_date=${period.endDate}`);
         }
       }
-      warmPaths.push('/api/analytics/all?' + overview, '/api/analytics/growth/compare');
+      for (const kaiDays of [7, 14, 30, 90]) for (const hushhDays of [7, 14, 30, 90]) {
+        const kai = trailingDateRange(kaiDays), hushh = trailingDateRange(hushhDays);
+        const query = new URLSearchParams({ view: 'overview', kai_start_date: kai.startDate, kai_end_date: kai.endDate, hushh_ai_start_date: hushh.startDate, hushh_ai_end_date: hushh.endDate });
+        warmPaths.push('/api/analytics/all?' + query);
+      }
+      warmPaths.push('/api/analytics/growth/compare');
       for (const url of warmPaths) {
         const parsed = new URL(url, 'http://analytics.internal');
         const handler = handlers.get(parsed.pathname);
@@ -7009,6 +7012,9 @@ api.get('/api/analytics/growth/compare', async (_req, res) => {
 api.get('/api/analytics/all', async (req, res) => {
   const view = typeof req.query.view === 'string' ? req.query.view : 'overview';
   if (!['one', 'growth', 'apps', 'overview', 'platforms'].includes(view)) { res.status(400).json({ error: 'Choose a valid metrics section.' }); return; }
+  // The unscoped endpoint retains the complete external API contract.
+  const complete = req.query.view === undefined;
+  const appData = complete || ['one', 'growth', 'apps'].includes(view);
   const full = view === 'overview' || view === 'platforms';
   const relatedHealth = full || view === 'one';
   const optional = async <T,>(enabled: boolean, loader: () => Promise<{ data: T | null; error: string | null }>) => enabled ? loader() : { data: null, error: null };
@@ -7046,10 +7052,10 @@ api.get('/api/analytics/all', async (req, res) => {
     optional(full, () => fetchHushhAiSearchConsole(hushhAiRange)),
     optional(full, () => fetchHushhAiGa4Summary(hushhAiRange)),
     optional(full, () => fetchHushhTechAnalytics(hushhTechRange)),
-    fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
-    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST),
-    optional(full || view === 'growth', () => fetchGrowthSummary(oneRange)),
-    optional(full || view === 'apps', () => fetchAppStoreConnectSummary(appStoreConnectRange)),
+    optional(appData, () => fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true)),
+    optional(appData, () => fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST)),
+    optional(complete || view === 'growth', () => fetchGrowthSummary(oneRange)),
+    optional(complete || view === 'apps', () => fetchAppStoreConnectSummary(appStoreConnectRange)),
   ]);
   const fetchedAt = new Date().toISOString();
   const hushhAiProductEvents = buildHushhAiProductEvents(fetchedAt);

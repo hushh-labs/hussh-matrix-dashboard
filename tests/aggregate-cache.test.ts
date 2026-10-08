@@ -41,5 +41,13 @@ describe('aggregate snapshot freshness and isolation', () => {
   it('canonicalizes query order without combining dates or view scope', () => {
     expect(canonicalAnalyticsKey('/api/analytics/all?view=one&one_start_date=2026-10-01')).toBe(canonicalAnalyticsKey('/api/analytics/all?one_start_date=2026-10-01&view=one'));
     expect(canonicalAnalyticsKey('/api/analytics/all?view=one')).not.toBe(canonicalAnalyticsKey('/api/analytics/all?view=growth'));
+    expect(canonicalAnalyticsKey('/api/analytics/all?view=platforms&kai_start_date=2026-10-01')).toBe(canonicalAnalyticsKey('/api/analytics/all?kai_start_date=2026-10-01&view=overview'));
+  });
+  it('keeps a recently read period when custom ranges fill the cache', async () => {
+    const cache = new AggregateCache<number>({ freshMs: 60_000, maxAgeMs: 600_000, maxEntries: 2 });
+    await cache.read('a', async () => 1); await cache.read('b', async () => 2);
+    await cache.read('a', async () => 9); await cache.read('c', async () => 3);
+    expect((await cache.read('a', async () => 9)).value).toBe(1);
+    expect((await cache.read('b', async () => 4)).state).toBe('MISS');
   });
 });
