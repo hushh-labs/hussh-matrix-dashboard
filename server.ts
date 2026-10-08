@@ -27,7 +27,8 @@ import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
 import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, nativeRetentionWindowComplete, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
 import { oneRetentionSql, oneRetentionCohort } from './src/server/one-retention.mjs';
-import { hushhTechWindowMatches } from './src/server/hushhtech-window.mjs';
+import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushhtech-window.mjs';
+import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 
@@ -3968,6 +3969,7 @@ type Ga4RunReportRow = {
 
 type Ga4RunReportResponse = {
   rows?: Ga4RunReportRow[];
+  metadata?: { timeZone?: string };
 };
 
 function ga4Metric(row: Ga4RunReportRow | undefined, index: number): number {
@@ -4127,7 +4129,7 @@ async function fetchGa4DataApiSummary(
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const dateRanges = [{ startDate: range.startDate, endDate: range.endDate }];
-  const last7DateRanges = [{ startDate: '7daysAgo', endDate: 'today' }];
+  const last7DateRanges = [ga4RecentCalendarRange(7)];
   const last24DateRanges = [{ startDate: 'yesterday', endDate: 'today' }];
   const ga4Warnings = [
     'GA4 aggregate data only; no user-level/session-level rows.',
@@ -4301,6 +4303,10 @@ async function fetchGa4DataApiSummary(
     const lastDayProcessedTotals = ga4TotalsFromRow(lastDayRow);
     const last7Row = last7Totals.rows?.[0];
     const selectedTotals = ga4TotalsFromRow(totalsRow);
+    const reportingTimezone = typeof totals.metadata?.timeZone === 'string'
+      && /^[A-Za-z_]+(?:\/[A-Za-z0-9_+\-]+)*$/.test(totals.metadata.timeZone)
+      ? totals.metadata.timeZone : null;
+    if (reportingTimezone) ga4Warnings.push(`GA4 calendar dates use ${reportingTimezone}; they are not an exact rolling UTC interval.`);
     const hourlyByDateHour = new Map(
       (hourlySessions.rows ?? []).map((row) => [compactGa4DateHour(ga4Dimension(row, 0)), row]),
     );
@@ -4351,7 +4357,7 @@ async function fetchGa4DataApiSummary(
           last24Hours: {
             ...lastDayProcessedTotals,
             available: true,
-            label: 'Last Day Aggregate',
+            label: 'Yesterday + today (processed)',
             source: 'GA4 processed date report',
             note: 'GA4 Data API provides this as a processed yesterday-through-today date aggregate, not an exact rolling 24-hour unique-user window.',
           },
@@ -5033,7 +5039,12 @@ function buildHushhTechGa4SourceCard(summary: Record<string, unknown>) {
   const processedBlocker = needsVerification
     ? HUSHHTECH_GA4_ZERO_TRAFFIC_WARNING
     : String(traffic?.note ?? 'GA4 Data API is waiting or returned no traffic rows.');
-  const processedValue = (value: unknown) => (needsVerification ? null : value);
+  const processedValue = (value: unknown) => (available && !needsVerification ? value : null);
+  const periodValue = (value: unknown, days: number) => processedValue(hushhTechPeriodValue(summary, value, days));
+  const hasPeriod = (days: number) => processedStatus === 'delayed' && hushhTechPeriodValue(summary, true, days) === true;
+  const periodBlocker = (days: number) => hasPeriod(days) ? null : processedStatus === 'delayed'
+    ? `The provider exposes the selected reporting range, not a separate ${days}-day report.`
+    : processedBlocker;
   return {
     key: 'ga4',
     label: 'GA4',
@@ -5068,39 +5079,39 @@ function buildHushhTechGa4SourceCard(summary: Record<string, unknown>) {
       },
       {
         key: 'last_24_hours',
-        label: 'Last 24 Hours',
-        status: processedStatus,
-        stateClass: sourceStateClass(processedStatus),
+        label: 'Reported 1-day range',
+        status: hasPeriod(1) ? processedStatus : 'waiting',
+        stateClass: sourceStateClass(hasPeriod(1) ? processedStatus : 'waiting'),
         source: 'GA4 processed report',
         freshness: {
           generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
           expectedLagSeconds: 86_400,
         },
         metrics: [
-          sourceMetric('users', 'Users', processedValue(overview.active1DayUsers)),
-          sourceMetric('sessions', 'Sessions', processedValue(overview.sessions)),
-          sourceMetric('page_views', 'Page Views', processedValue(overview.screenPageViews)),
-          sourceMetric('new_users', 'New Users', processedValue(overview.newUsers)),
+          sourceMetric('users', 'Users', periodValue(overview.active1DayUsers, 1)),
+          sourceMetric('sessions', 'Sessions', periodValue(overview.sessions, 1)),
+          sourceMetric('page_views', 'Page Views', periodValue(overview.screenPageViews, 1)),
+          sourceMetric('new_users', 'New Users', periodValue(overview.newUsers, 1)),
         ],
-        blocker: processedStatus === 'delayed' ? null : processedBlocker,
+        blocker: periodBlocker(1),
       },
       {
         key: 'last_7_days',
-        label: 'Last 7 Days',
-        status: processedStatus,
-        stateClass: sourceStateClass(processedStatus),
+        label: 'Reported 7-day range',
+        status: hasPeriod(7) ? processedStatus : 'waiting',
+        stateClass: sourceStateClass(hasPeriod(7) ? processedStatus : 'waiting'),
         source: 'GA4 processed report',
         freshness: {
           generatedAt: String(summary.generatedAt ?? new Date().toISOString()),
           expectedLagSeconds: 86_400,
         },
         metrics: [
-          sourceMetric('users', 'Users', processedValue(overview.active7DayUsers)),
-          sourceMetric('sessions', 'Sessions', processedValue(overview.sessions)),
-          sourceMetric('page_views', 'Page Views', processedValue(overview.screenPageViews)),
-          sourceMetric('new_users', 'New Users', processedValue(overview.newUsers)),
+          sourceMetric('users', 'Users', periodValue(overview.active7DayUsers, 7)),
+          sourceMetric('sessions', 'Sessions', periodValue(overview.sessions, 7)),
+          sourceMetric('page_views', 'Page Views', periodValue(overview.screenPageViews, 7)),
+          sourceMetric('new_users', 'New Users', periodValue(overview.newUsers, 7)),
         ],
-        blocker: processedStatus === 'delayed' ? null : processedBlocker,
+        blocker: periodBlocker(7),
       },
       {
         key: 'selected_total',
@@ -5113,7 +5124,7 @@ function buildHushhTechGa4SourceCard(summary: Record<string, unknown>) {
           expectedLagSeconds: 86_400,
         },
         metrics: [
-          sourceMetric('users', 'Users', processedValue(overview.active7DayUsers)),
+          sourceMetric('users', 'Users', periodValue(overview.active7DayUsers, 7)),
           sourceMetric('sessions', 'Sessions', processedValue(overview.sessions)),
           sourceMetric('page_views', 'Page Views', processedValue(overview.screenPageViews)),
           sourceMetric('new_users', 'New Users', processedValue(overview.newUsers)),

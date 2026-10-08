@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { oneRetentionCohort, oneRetentionSql } from '../src/server/one-retention.mjs';
-import { hushhTechWindowMatches } from '../src/server/hushhtech-window.mjs';
+import { hushhTechWindowMatches, hushhTechPeriodValue } from '../src/server/hushhtech-window.mjs';
+import { ga4RecentCalendarRange } from '../src/server/ga4-windows.mjs';
 import { Retention } from '../src/components/OneAppPanel';
 import { buildHushhTechSevenDayMetrics, buildHushhTechReportTotals } from '../src/lib/analytics-service';
 import type { OneAppSummary, HushhTechMetricsSummary } from '../src/lib/types';
@@ -43,6 +44,20 @@ describe('retention measurement availability', () => {
 });
 
 describe('HushhTech reporting truth', () => {
+  it('does not copy selected-month totals into one-day or seven-day source cards', () => {
+    const month={window:{startDate:'2026-09-01',endDate:'2026-09-30',days:30}};
+    expect(hushhTechPeriodValue(month, 250, 1)).toBeNull();
+    expect(hushhTechPeriodValue(month, 250, 7)).toBeNull();
+    const week={window:{startDate:'2026-09-24',endDate:'2026-09-30',days:7}};
+    expect(hushhTechPeriodValue(week, 0, 7)).toBe(0);
+    expect(hushhTechPeriodValue(week, null, 7)).toBeNull();
+    expect(hushhTechPeriodValue(week, 250, 1)).toBeNull();
+  });
+  it('requires valid provider boundaries, not merely a claimed period length', () => {
+    for(const window of [{days:7},{startDate:'2026-09-01',endDate:'2026-09-30',days:7},{startDate:'2026-02-30',endDate:'2026-03-06',days:7}]) {
+      expect(hushhTechPeriodValue({window}, 100, 7)).toBeNull();
+    }
+  });
   it('does not relabel a rolling response as a historical interval', () => {
     const range={startDate:'2026-09-01',endDate:'2026-09-30'};
     expect(hushhTechWindowMatches({window:range},range)).toBe(true);
@@ -65,5 +80,16 @@ describe('HushhTech reporting truth', () => {
     for(const label of ['Total Users','Signups','Persisted Users','Cloud Run Requests','Collected Events','Search Clicks']) expect(rows.find(row=>row.label===label)?.displayValue).toBe('Unavailable');
     report.supabase={rangeTotals:{totalUsers:0},metrics:[]} as HushhTechMetricsSummary['supabase'];
     expect(buildHushhTechReportTotals(report).find(row=>row.label==='Total Users')).toMatchObject({value:0,displayValue:undefined});
+  });
+});
+
+describe('GA4 inclusive reporting days', () => {
+  it('requests exactly the labelled calendar-day count, including today', () => {
+    for(const days of [1,7,30,90]) {
+      const range=ga4RecentCalendarRange(days);
+      const daysBack=range.startDate==='today'?0:Number(range.startDate.replace('daysAgo',''));
+      expect(daysBack+1).toBe(days); expect(range.endDate).toBe('today');
+    }
+    for(const invalid of [0,91,1.5,NaN]) expect(()=>ga4RecentCalendarRange(invalid)).toThrow();
   });
 });
