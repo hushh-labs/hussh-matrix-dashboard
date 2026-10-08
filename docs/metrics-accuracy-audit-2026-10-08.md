@@ -91,9 +91,11 @@ that is currently unavailable.
 
 - Hushh.ai GA4 is currently unavailable in the runtime. Its structural release
   check passes the waiting branch; that is not numeric source reconciliation.
-  The independent configured-reader probe returned HTTP 403, so no Hushh.ai
+  The independent configured-reader authentication probe returned HTTP 403, so no Hushh.ai
   GA4 count comparison or live seven-day correction is claimed. Missing values
-  remain null / waiting. Property access must be restored by its administrator.
+  remain null / waiting. Reader impersonation/property access needs an
+  administrator's diagnosis; the failed authentication probe does not prove
+  that property-level Viewer access is missing.
 - HushhTech's own `/api/metrics/summary?window_days=7` currently returns 503.
   Its serving Cloud Run revision `hushh-tech-website-00225-gif` lacks
   `GCP_SERVER_ACTOR_UID`; the valid server identity is not established by this
