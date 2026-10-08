@@ -30,6 +30,15 @@ that is currently unavailable.
   remain unavailable in both reports; period reports are labelled with the
   selected range. Period persisted users / MAU cannot become total registered
   accounts. Missing infrastructure/search/collected counts do not become zero.
+- `src/server/ga4-windows.mjs` / `server.ts`: the seven-day Data API report now
+  requests `6daysAgo` through `today`, exactly seven inclusive calendar dates.
+  The processed two-calendar-day report is labelled "Yesterday + today",
+  separate from a true rolling 24-hour export. Provider timezone is shown in
+  report warnings when returned. Google documents inclusive endpoints and
+  property-timezone relative dates in its [DateRange reference](https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/DateRange).
+- HushhTech selected-range totals cannot populate independent 1-day/7-day source
+  cards unless both actual boundaries and reported length match that period.
+  Seven-day active users cannot stand in for selected-month active users.
 
 ## Evidence obtained before this release
 
@@ -60,7 +69,7 @@ that is currently unavailable.
   independently of a manual invocation; it does not prove token renewal.
 - App Store Connect contract passed its **not connected** branch, with null
   production metrics. No Apple measurement reconciliation is claimed.
-- Local release checks: 146 tests / 18 files, TypeScript, Vite build, existing
+- Local release checks: 149 tests / 18 files, TypeScript, Vite build, existing
   10 platform render checks, whitespace and redacted secret scan passed.
   `node scripts/check-one-retention-fixture.mjs` also passed on BigQuery using
   only literal CTE fixtures; no production table/event was created.
@@ -71,9 +80,22 @@ that is currently unavailable.
   window and enforces five-minute/32-entry caching plus 12 cold queries per ten
   minutes per replica. It never falls back to an unlimited query. These scans
   use existing infrastructure and may be billable; no free-usage guarantee.
+- Corrected candidate 00251-xiq passed all nine existing manual dashboard release
+  checks. Independent production and UAT retention queries matched each of its
+  eight cohort sizes and complete return counts/rates; both newest cohorts
+  stayed pending with null rates. Production mature totals were 39 / 601,
+  approximately 6.49%, rather than an unweighted average of cohort percentages.
+  The final date-label fixes require their own subsequent candidate verification.
 
 ## Remaining source and release limitations
 
+- Hushh.ai GA4 is currently unavailable in the runtime. Its structural release
+  check passes the waiting branch; that is not numeric source reconciliation.
+  The independent configured-reader authentication probe returned HTTP 403, so no Hushh.ai
+  GA4 count comparison or live seven-day correction is claimed. Missing values
+  remain null / waiting. Reader impersonation/property access needs an
+  administrator's diagnosis; the failed authentication probe does not prove
+  that property-level Viewer access is missing.
 - HushhTech's own `/api/metrics/summary?window_days=7` currently returns 503.
   Its serving Cloud Run revision `hushh-tech-website-00225-gif` lacks
   `GCP_SERVER_ACTOR_UID`; the valid server identity is not established by this
