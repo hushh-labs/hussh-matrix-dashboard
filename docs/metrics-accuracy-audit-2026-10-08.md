@@ -20,8 +20,8 @@ that is currently unavailable.
   position-based omission of the last cohort or missing-as-zero chart points.
   The preceding 84-day reporting window, timezone (Etc/GMT+8, UTC−8), up to eight
   observed weeks, partial states and counts are visible.
-- Retention query replaces the existing query, uses the existing bounded cache,
-  and now has a 100 MB scan cap/30-second job timeout. Unlimited CLI fallback is
+- Retention query replaces the existing query, uses a 32-entry/five-minute cache and a 12-cold-query/ten-minute budget per replica,
+  and now has a 1 GB scan cap/30-second job timeout. Unlimited CLI fallback is
   disabled for this bounded query. A cap failure produces unavailable history.
 - `src/server/hushhtech-window.mjs`: request explicit dates and reject a provider
   response that does not confirm that interval. A rolling response cannot be
@@ -53,12 +53,24 @@ that is currently unavailable.
   now says long-lived, issued 29 September, expiry 27 November. This audit did
   not exchange/refresh a token or observe unattended renewal; dates must not be
   extended by editing metadata.
+- Natural Scheduler execution `hushh-ai-search-console-ingest-jpg4s` started at
+  00:30 UTC and logged Instagram `success` / reach `available` at 00:38 UTC.
+  The 06:30 execution `hushh-ai-search-console-ingest-nbdpq` logged
+  `already_synced_today`. This proves scheduled ingestion and the daily guard,
+  independently of a manual invocation; it does not prove token renewal.
 - App Store Connect contract passed its **not connected** branch, with null
   production metrics. No Apple measurement reconciliation is claimed.
 - Local release checks: 146 tests / 18 files, TypeScript, Vite build, existing
   10 platform render checks, whitespace and redacted secret scan passed.
   `node scripts/check-one-retention-fixture.mjs` also passed on BigQuery using
   only literal CTE fixtures; no production table/event was created.
+- The first zero-traffic candidate (00250-dek) was withheld: its 100 MB
+  retention cap was too small for the existing export query. Source dry runs
+  measured approximately 376 MB production / 717 MB UAT. The corrected reader
+  aggregates reporting dates per ID, uses a 1 GB ceiling, retains the 84-day
+  window and enforces five-minute/32-entry caching plus 12 cold queries per ten
+  minutes per replica. It never falls back to an unlimited query. These scans
+  use existing infrastructure and may be billable; no free-usage guarantee.
 
 ## Remaining source and release limitations
 
