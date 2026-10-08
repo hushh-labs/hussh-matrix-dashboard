@@ -47,7 +47,8 @@ as periodic location updates without separately verifying the emitting code.
    This prevents daily/intraday overlap from doubling exported counts; it
    does not remove repeated client emissions or legacy/current emitters.
 3. `fetchOneAppSummary` in `server.ts` scopes events to the chosen property,
-   exact One web host, native app ID `com.hushh.app`, and selected export dates.
+   exact One web host, iOS app ID `com.hushh.app`, the verified Android
+   `com.hussh.app` stream (excluding debug events), and selected export dates.
    Production and UAT properties are queried separately. A native row's
    property does not establish its backend environment or release channel.
 4. `oneCapabilitySql` classifies capability-level deliberate/background
@@ -116,12 +117,24 @@ outcome-event allowlist; they are not sums of every feature result column.
 | CRM | `one_crm_action`, `record_created` / `record_updated` / `record_deleted` | Action records. Feature-flagged/UAT activity does not prove a publicly launched production feature. |
 | Sign-up & onboarding | Auth starts; Google sign-in starts/completions; phone verification starts/completions; profile creation; onboarding completion | Several stages per account; not new registered users. Phone/Google completion events now reach their own rows instead of being swallowed by the sign-in CASE branch. |
 
+The table above lists accepted mapping names, including legacy or proposed
+names. It is not proof that every listed name has a caller. The October 8
+audit in [agent tracking coverage](./one-agent-tracking-coverage.md) supersedes
+earlier instrumentation claims: Gmail sign-in/inbox/category, KYC workflow
+actions and several Consent/Marketplace/Onboarding rows lack emitters.
+Google-provider steps use current `auth_started`, `auth_succeeded` and
+`auth_failed` records with `action=google`, alongside legacy names. They
+overlap general authentication rows without removing records from those rows.
+
 Each detail panel shows the exact matching event names returned by BigQuery;
 action-based rows also explain their action filter. A known event definition
 and a matching exported record are separate facts. **Observed in export**
 means a record exists, not that the full product workflow was independently
 tested. A missing feature emitter remains unmeasured. A successful query with
-no matching record shows zero; a failed source shows unavailable/dashes.
+no matching record shows zero only for a measurement with tracking; a known
+missing emitter shows **Not tracked yet / —**, and a failed source shows
+unavailable/dashes. Actual exported evidence remains readable even when the
+current source inventory records an emitter gap.
 
 ## Dated audit examples beyond Location
 
@@ -136,6 +149,13 @@ and repeated/automatic jobs are retained. Memory had 6 preparation records
 and 5 save records; they are separate stages, not 11 saved memories.
 
 ## Verification
+
+- `npm run audit:metrics:agent-signals -- --repeat 3`: independent numeric
+  reconciliation of all 64 feature/diagnostic metrics (62 displayed rows)
+  and all 12 agent account/device/activity totals and daily charts, in both
+  properties. Supply a protected release session privately. Use `--app-repo`
+  and `--app-ref` to capture source references; definitions are excluded from
+  caller candidates. Use `--cli` when relying on the authenticated BQ CLI.
 
 - `npm test`: exact formatting, average-denominator handling, result partition
   and feature stage semantics, alongside the existing regression suite.

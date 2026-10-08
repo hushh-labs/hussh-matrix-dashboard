@@ -50,7 +50,8 @@ import { cn } from '../lib/utils';
 import type { OneAppSummary } from '../lib/types';
 import { FeatureActivityTable } from './FeatureActivityTable';
 import { MetricCalculationGuide } from './MetricCalculationGuide';
-import { exactCount, eventVolumeExplanation, featureActivityLabel } from '../lib/feature-measurement';
+import { exactCount, eventVolumeExplanation, featureActivityLabel, featureMeasurementState } from '../lib/feature-measurement';
+import { featureTrackingGap } from '../lib/agent-measurement-contract.mjs';
 
 interface AgentCapabilityAnalyticsPanelProps {
   loading?: boolean;
@@ -93,7 +94,7 @@ const capabilityMetadata: Record<
     title: 'Gmail Agent',
     description: 'Gmail account connection, email receipt syncing, and Hushh Mail integration.',
     icon: Mail,
-    auditExplanation: 'Separates Gmail connection attempts from completed OAuth connections, and sync requests from accepted sync jobs. It does not claim that a queued sync finished.',
+    auditExplanation: 'Tracks Gmail connection and sync stages separately. Mail screen visits and receipt categorization need separate tracking; syncing does not fill those rows.',
   },
   ria: {
     title: 'Advisor Agent',
@@ -123,13 +124,13 @@ const capabilityMetadata: Record<
     title: 'Calendar activity',
     description: 'Connections, disconnections and Calendar assistance handoffs—not calendar contents.',
     icon: Calendar,
-    auditExplanation: 'Privacy-safe Calendar actions are measured after the updated app reaches users.',
+    auditExplanation: 'Measures connection results, disconnections and assistance opens. Calendar event syncing, creation, changes and deletion are not measured by these rows.',
   },
   kyc: {
     title: 'KYC activity',
     description: 'Access decisions and draft/reply actions, without identity details or workflow contents.',
     icon: Lock,
-    auditExplanation: 'Privacy-safe KYC actions are measured after the updated app reaches users.',
+    auditExplanation: 'KYC event definitions exist, but the audited app has no calling emitters. Access decisions, drafts and replies are not measured yet.',
   },
   connected_systems: {
     title: 'CRM / Connected Systems',
@@ -141,7 +142,7 @@ const capabilityMetadata: Record<
     title: 'Sign-up & Onboarding Agent',
     description: 'Authentication flow, phone verification, and onboarding steps.',
     icon: UserCheck,
-    auditExplanation: 'Tracks auth start/success, Google sign-in, phone verification, and step completions.',
+    auditExplanation: 'Tracks authentication, Google-provider steps, phone verification and emitted onboarding completions. Google steps overlap general authentication rows. Profile creation has no separate emitter; registered accounts are counted separately.',
   },
 };
 
@@ -453,8 +454,8 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     actionSpec('wallet_card_deleted', 'Removed a card', Wallet),
   ],
   calendar: [
-    actionSpec('calendar_connected', 'Connected Calendar', Calendar),
-    actionSpec('calendar_disconnected', 'Disconnected Calendar', Calendar),
+    actionSpec('calendar_connected', 'Calendar connection results', Calendar),
+    actionSpec('calendar_disconnected', 'Calendar disconnection results', Calendar),
     actionSpec('calendar_chat_opened', 'Opened Calendar assistance', Calendar),
   ],
   kyc: [
@@ -611,7 +612,6 @@ export function AgentCapabilityAnalyticsPanel({
   ];
 
   const computedFeatures = specs.map((spec) => {
-    const isGap = spec.status === 'gap' || !instrumented;
     const locationMetric = capabilityKey === 'location'
       ? activeSummary?.locationAnalytics?.features?.find((item) => item.key === spec.key)
       : undefined;
@@ -635,8 +635,10 @@ export function AgentCapabilityAnalyticsPanel({
     const sourceAvailable = capabilityKey === 'location'
       ? Boolean(activeSummary?.locationBehaviorAvailable)
       : Boolean(activeSummary?.featureUsageAvailable);
-    const measured = !isGap && sourceAvailable;
-    const wasObserved = measured && Boolean(aggregateMetric) && (aggregateMetric?.signals ?? 0) > 0;
+    const state = featureMeasurementState(spec.key, sourceAvailable, instrumented, aggregateMetric?.signals, spec.status === 'gap');
+    const isGap = state === 'not_tracked';
+    const measured = state === 'observed' || state === 'empty';
+    const wasObserved = state === 'observed';
     const accounts = measured ? (aggregateMetric?.accounts ?? null) : null;
     const devices = measured ? (aggregateMetric?.devices ?? 0) : null;
     const signals = measured ? (aggregateMetric?.signals ?? 0) : null;
@@ -644,7 +646,7 @@ export function AgentCapabilityAnalyticsPanel({
       wasObserved
         ? eventVolumeExplanation(signals, devices)
         : isGap
-          ? 'This activity is not tracked yet.'
+          ? (featureTrackingGap(spec.key) ?? 'This activity is not tracked yet.')
           : !sourceAvailable
             ? 'We could not read this count. A dash does not mean zero activity.'
             : 'No matching activity was recorded in this period.';
@@ -903,4 +905,3 @@ export function AgentCapabilityAnalyticsPanel({
     </div>
   );
 }
-

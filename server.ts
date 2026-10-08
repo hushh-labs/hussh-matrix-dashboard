@@ -2209,8 +2209,8 @@ const ONE_CAPABILITIES: OneCapabilitySpec[] = [
     label: 'KYC',
     deliberate: ['one_kyc_action'],
     background: [],
-    instrumented: true,
-    note: 'KYC actions are being rolled out. Workflow content and identity data are never sent to analytics.',
+    instrumented: false,
+    note: 'KYC event definitions exist, but no calling emitter was found in the audited app source. Workflow usage cannot be measured yet.',
   },
   {
     key: 'connected_systems',
@@ -3272,12 +3272,13 @@ ${capabilitySql.isDeliberate}
   // Aggregate-only sub-feature adoption. This deliberately returns counts,
   // never person or device rows, and replaces the former UI-side estimates.
   const featureUsageQuery = `
-    WITH classified AS (
+    WITH classified_base AS (
       SELECT
         event_name AS eventName,
         ${deviceKeySql} AS deviceKey,
         NULLIF(user_id, '') AS accountKey,
         (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'result') AS result,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') AS action,
         CASE
           WHEN event_name = 'one_location_share_confirmed' THEN 'live_sharing'
           WHEN event_name = 'one_location_check_in_completed' OR event_name LIKE '%check_in%' THEN 'check_in'
@@ -3338,6 +3339,13 @@ ${capabilitySql.isDeliberate}
         END AS feature_key
       FROM ${table}
       WHERE ${dateFilter}
+    ), classified AS (
+      SELECT * FROM classified_base
+      UNION ALL
+      -- Provider steps overlap general auth starts/sign-ins. Preserve both
+      -- rows instead of moving Google events out of the general auth totals.
+      SELECT * REPLACE ('google_signin' AS feature_key) FROM classified_base
+      WHERE eventName IN ('auth_started', 'auth_succeeded', 'auth_failed') AND action = 'google'
     ), feature_totals AS (
     SELECT
       feature_key AS featureKey,
@@ -3713,7 +3721,7 @@ ${capabilitySql.isDeliberate}
       capabilities: ONE_CAPABILITIES.map((spec) => {
         const row = capabilityRows.get(spec.key);
         const observed = toNumber(row?.deliberateEvents) > 0;
-        const instrumented = spec.instrumented;
+        const instrumented = spec.instrumented || observed;
         const byDate = new Map(
           agentDaily.rows
             .filter((point) => String(point.capability) === spec.key)
@@ -5758,7 +5766,7 @@ ${capabilitySql.isDeliberate}
     const agents = ONE_CAPABILITIES.filter((spec) => spec.key !== 'onboarding').map((spec) => {
       const currentRow = agentRows.get(`current:${spec.key}`);
       const previousRow = agentRows.get(`previous:${spec.key}`);
-      const instrumented = spec.instrumented;
+      const instrumented = spec.instrumented || toNumber(currentRow?.interactions) > 0 || toNumber(previousRow?.interactions) > 0;
       return {
         key: spec.key,
         label: spec.label,

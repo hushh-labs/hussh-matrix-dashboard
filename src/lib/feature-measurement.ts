@@ -1,3 +1,12 @@
+import { featureTrackingGap } from './agent-measurement-contract.mjs';
+
+/** An exported record is evidence; an event declaration on its own is not. */
+export function featureMeasurementState(key: string, sourceAvailable: boolean, instrumented: boolean, signals: number | null | undefined, declaredGap = false) {
+  if (sourceAvailable && typeof signals === 'number' && signals > 0) return 'observed';
+  if (declaredGap || !instrumented || featureTrackingGap(key)) return 'not_tracked';
+  return sourceAvailable ? 'empty' : 'unavailable';
+}
+
 export function exactCount(value: number | null | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('en-US') : '—';
 }
@@ -30,7 +39,7 @@ const activityDescriptions: Record<string, string> = {
   auth_started: 'Times a sign-in was started.',
   daily_signin: 'Sign-ins recorded. Repeat sign-ins count again.',
   phone_verified: 'Phone verification steps, including starts and results.',
-  google_signin: 'Google sign-in steps, including starts and results.',
+  google_signin: 'Google sign-in starts and results recorded. One attempt can create several records.',
   profile_created: 'Profile creation recorded. Repeat records count again.',
   onboarding_completed: 'Account setup completions recorded.',
   portfolio_view: 'Times a portfolio was viewed.',
@@ -99,7 +108,7 @@ const featureNotes: Record<string, string> = {
   auth_started: 'Counts auth_started and one_auth_started records. These are sign-in starts, not new registered accounts.',
   daily_signin: 'Counts auth_completed, one_auth_login_completed and auth_succeeded records. Repeat sign-ins count again.',
   phone_verified: 'Counts phone-verification starts and completions, including one_auth_phone_verified and one_phone_verified. The total includes multiple stages.',
-  google_signin: 'Counts Google sign-in starts and completions. The total includes multiple stages; it is not a count of newly connected accounts.',
+  google_signin: 'Counts auth_started, auth_succeeded and auth_failed only with action=google, plus legacy Google sign-in events. These overlap general authentication rows. Starts and results are different records, not unique attempts or new accounts.',
   profile_created: 'Counts profile_created and one_auth_profile_created records. Registration totals come separately from Firebase Authentication.',
   onboarding_completed: 'Counts onboarding-completion records. Repeated records and legacy/current event names remain separate analytics records.',
   portfolio_view: 'Counts portfolio_viewed and one_finance_portfolio_viewed. These are screen views, not transactions or investment outcomes.',

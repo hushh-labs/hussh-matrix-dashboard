@@ -32,16 +32,16 @@ job means it was accepted. Neither alone proves the whole task finished.
 | --- | --- |
 | Location | Views, sharing confirmations, requests, Circle activity and safety triggers are separate steps. |
 | Finance | Portfolio/recommendation views, analysis starts, import parsing and import saving. |
-| Consent | Screen views, submitted choices, their results and preference updates. |
+| Consent | Screen views, submitted choices and their results. Separate preference, unlock, grant and withdrawal measurements are missing. |
 | Gmail | Connection starts/results, sync requests, queue results and processing results. |
 | Advisor | Verification checks, workspace visits and requests. |
-| Marketplace | Browsing and profile views. |
+| Marketplace | Profile-view tracking exists; browsing and subscription measurements are missing. |
 | Memory | Preparing, saving, editing, deleting and exporting memories. |
 | Wallet | Card additions/removals; these do not describe current card inventory. |
 | Calendar | Connections, disconnections and assistance opens. |
-| KYC | Access decisions, draft changes, replies and workflow refreshes. |
+| KYC | No workflow measurement emitters yet; definitions alone do not establish tracking. |
 | CRM | Record creation, updates and deletion. |
-| Sign-up & onboarding | Sign-in, verification, profile creation and account setup steps. |
+| Sign-up & onboarding | Authentication, Google-provider steps, verification and emitted account-setup steps. Profile creation has no separate event. |
 
 ## Why the old 6.7k row was confusing
 
@@ -60,5 +60,17 @@ The dated audit is an example, not a fixed live count.
 3. **Read 0 and — differently:** 0 means no matching activity was recorded; — means unavailable or not tracked yet.
 
 The counting path is **app activity → analytics record → matching feature → dashboard count**.
+Gmail sync results do not fill Mail sign-in, inbox-view or categorization rows.
+Calendar rows measure connection/disconnection results and assistance opens;
+they do not measure event syncing, creation, changes or deletion.
+
+The October 8 source audit found **17 missing feature measurements**. They
+show **Not tracked yet / —**, rather than imply nobody used the feature.
+Google sign-in was a mapping issue: current authentication events carry
+`action=google`. Its starts and results now appear together in the Google row
+and also retain their general authentication rows. Do not add those rows.
+
+For the complete coverage and repeat-check procedure, see
+[agent tracking coverage](./one-agent-tracking-coverage.md).
 For the exact formulas and data limitations, see the
 [measurement contract](./one-subagent-measurement-contract.md).
