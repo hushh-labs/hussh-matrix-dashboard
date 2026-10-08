@@ -15,7 +15,7 @@ Raw production capture diagnostics only scan dates on or after the export repair
 7 October 2026. Earlier-only windows return an explicit waiting state without a
 new diagnostic query; requested report dates remain unchanged. Historical GA4
 aggregate reads still cover the selected range. October 7 is a partial capture
-day; October 8 is the first full day. The 100 MB scan cap can make a larger raw
+day; a full daily export must be observed before claiming complete coverage. The 100 MB scan cap can make a larger raw
 range unavailable rather than spend beyond the bound.
 
 Incomplete Android comparison history suppresses aggregate growth comparisons
@@ -68,7 +68,7 @@ preserving the legacy streams, daily/streaming flags and excluded Voice stream.
 GA Admin validation subsequently passed. This is export configuration proof,
 not an observed new-package exported event or historical raw backfill.
 
-Play production and internal tracks both served build 10 / version 1.3.9. The
+On October 7, Play production and internal tracks both served build 10 / version 1.3.9. The
 September 28 release source `e633b369d383d366d68217cf97c21750b9b0272b` was built
 against UAT. Historical aggregate GA4 reads succeed. Vitals metadata and a
 read-only build-10 query succeed using the existing upload identity but return
@@ -94,8 +94,8 @@ The follow-up PR [#97](https://github.com/hushh-labs/hussh-matrix-dashboard/pull
 landed as `20511f06f4a6395142d353fe93a5ba733ab535fd`, preserving the intervening
 dashboard changes. Manual Cloud Build `07216028-fbd5-4d83-9f36-0ac5544eafb8`
 succeeded. Revision `hushh-matrix-dashboard-00240-hud` passed zero-traffic
-verification and now serves 100% of production traffic. The release rollback
-target is `hushh-matrix-dashboard-00238-vin`; use a fresh traffic snapshot before
+verification and served 100% of production traffic at that release. Its rollback
+target was `hushh-matrix-dashboard-00238-vin`; use a fresh traffic snapshot before
 any later rollback rather than assuming an older revision is still appropriate.
 
 This follow-up bounds raw diagnostics to the export repair date and preserves
@@ -150,6 +150,69 @@ that every store-installed event is production-backend customer activity. The
 user's controlled sign-in/One Location journey is still deferred. Native metadata
 and reviewer-guard changes remain in research PR #7599 awaiting release gates.
 
+### October 8 production release and current limits
+
+Dashboard PRs [#104](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/104)
+and [#105](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/105) landed
+with DCO signoffs. Exact main source
+`dc9ecc94097ce5a6aef63cf5790fcbca08c6cb33` was built by manual Cloud Build
+`550e7cc3-3763-4f21-a375-9c75d98f3154`. Candidate
+`hushh-matrix-dashboard-00248-doj` passed the release gates at zero traffic and
+was promoted to 100% on October 8. Its captured rollback target is
+`hushh-matrix-dashboard-00245-gac=100`. Take another traffic snapshot before a
+later rollout; an older ready revision is not automatically a rollback target.
+Existing session affinity, runtime identity, secrets, 1 CPU / 1 GiB,
+minimum zero and maximum three replicas were preserved.
+
+- Local dashboard verification: lint/type checking, 138 tests in 17 files,
+  10 One render checks, production build, whitespace and redacted secret scan
+  passed. Existing build chunk-size advice remains advisory.
+- Candidate verification passed the existing authentication, metrics-flow
+  (including GCP jobs/schedulers/datasets), Hushh AI, One, location, KPI,
+  public aggregate contract, registered-account and iOS/platform reconciliation
+  probes. Founder contracts passed default, August and 90-day windows; the
+  separate source-only reconciliation passed. The latter still reports existing
+  identity-coverage and missing-event gaps; those were not suppressed.
+- Public-site verification passed a genuinely anonymous authentication probe,
+  a fresh interactive Google sign-out/sign-in with the approved company account,
+  date/scope rejection, health, One web/iOS/UAT sections and stored Instagram.
+  A temporary authenticated QA cookie was used separately for CLI data probes;
+  it was never used as evidence of the Google callback.
+- The public September 28–October 4 Android history again matched the
+  independent same-window GA4 values (21 active users / 21 tracked users /
+  4,279 events). A repeated cached read was identical. These are dated
+  observations, not expected future values.
+- For October 7, fresh raw capture increased to 31 events, 7 app-instance IDs,
+  5 first opens and 2 route visits. Observed version 1.3.9 rows were 16 Play /
+  unlabeled backend, 8 other installer / production, 6 other / unlabeled and
+  1 Play / UAT. The last exported timestamp was
+  `2026-10-08T07:27:56.848918000Z`. This confirms exported current-package
+  activity, not a controlled physical-device journey or production-backend
+  classification for every Play-installed event.
+- The public October 7 native funnels correctly withheld week-one rates for
+  both Android and iOS (`retentionWindowComplete=false`, final share `null`).
+  Desktop and 390-pixel mobile views displayed the selected dates, version
+  diagnostics and pending states without page-wide horizontal overflow.
+- The report bucket is now secret-backed in the serving revision. Saved Console
+  scope was independently checked after submission. The runtime's Play API
+  successfully resolved current production version code **11**; this task did
+  not publish that build. Crash/ANR queries for September 28–October 4 returned
+  no rows (`not_yet_available`).
+- Runtime CSV object GET and exact-object metadata LIST still returned
+  `permission_missing`. No monthly reports appeared for the company app in
+  Console. The approved grant, configured bucket and readable vitals metadata
+  do not prove bulk-report access or a measured installation count. If denial
+  persists, ask Play support to check nonfinancial bulk-report provisioning for
+  the existing reader; do not add financial, Admin or publishing permissions.
+
+Native source remains separately tracked in
+[research PR #7599](https://github.com/hushh-labs/hushh-research/pull/7599).
+Independent maintainer review and the governed native release are still required;
+no new Android binary was published by this task. The user's physical-device
+sign-in/One Location test remains deferred. No new scheduler is needed for the
+bounded cached provider reads; existing export configuration, scheduled
+execution and a controlled app journey are distinct kinds of evidence.
+
 ## Private configuration
 
 Cloud Run: `hushh-ai-prod`, `us-central1`, `hushh-matrix-dashboard`; runtime:
@@ -161,7 +224,7 @@ Bind server-only configuration with Secret Manager references:
 | --- | --- |
 | `ONE_GA4_IMPERSONATE_SERVICE_ACCOUNT` | `metrics-dashboard-one-ga4-reader` |
 | `GOOGLE_PLAY_IMPERSONATE_SERVICE_ACCOUNT` | `metrics-dashboard-play-reporting-reader` |
-| `GOOGLE_PLAY_REPORTS_BUCKET` | Create `metrics-dashboard-play-reports-bucket` after the real bucket is supplied |
+| `GOOGLE_PLAY_REPORTS_BUCKET` | `metrics-dashboard-play-reports-bucket` |
 
 Reader secrets identify the existing runtime service account. The bucket value
 must be the `gs://pubsite_prod…` URI shown in Play Console **Download reports**;
@@ -190,8 +253,8 @@ runtime Secret Manager accessor access. Other apps' report data was not download
 Before runtime verification, the
 `com.hussh.app` Statistics page displayed **No monthly reports available** for
 installs, crashes, and store performance. These observations do not mean zero
-installs or crashes. Runtime reporting verification and candidate bucket binding
-are recorded below when completed; an active Console grant alone does not prove
+installs or crashes. Runtime reporting verification and production bucket binding
+are recorded below; an active Console grant alone does not prove
 the reporting API is available.
 Google documents a 3–7 day posting delay for these daily-captured monthly CSVs.
 Do not assume reports will appear immediately after the grant or infer their
