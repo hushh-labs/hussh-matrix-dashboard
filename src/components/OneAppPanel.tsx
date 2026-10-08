@@ -729,6 +729,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
 
       {meaningful.map((funnel) => {
         const last = funnel.stages[funnel.stages.length - 1];
+        const returnPending = funnel.retentionWindowComplete === false;
         const worst = funnel.stages.reduce(
           (acc, stage, index) => {
             if (index === 0) return acc;
@@ -737,7 +738,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
           },
           { lost: -1, fromIndex: -1 },
         );
-        const hasWorst = worst.fromIndex >= 0 && worst.lost > 0;
+        const hasWorst = !returnPending && worst.fromIndex >= 0 && worst.lost > 0;
 
         return (
           <div key={funnel.platform} className={cn(appleCard, 'p-6')}>
@@ -750,11 +751,10 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
                 </div>
                 <div className="mt-1 flex flex-wrap items-end gap-x-3">
                   <p className="text-5xl font-semibold leading-none text-[#1d1d1f]">
-                    {formatNumber(last.users)}
+                    {returnPending ? '—' : formatNumber(last.users)}
                   </p>
                   <p className="pb-1 text-base font-semibold text-[#86868b]">
-                    returned in week 1 of {formatNumber(funnel.installed)} first-open app IDs &middot;{' '}
-                    {percentText(last.shareOfInstalls, 1)}
+                    {returnPending ? 'Week-1 return window incomplete' : <>returned in week 1 of {formatNumber(funnel.installed)} first-open app IDs &middot;{' '}{percentText(last.shareOfInstalls, 1)}</>}
                   </p>
                 </div>
               </div>
@@ -768,8 +768,15 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
               )}
             </div>
 
+            {returnPending && <p className="mt-3 text-sm leading-5 text-[#6e6e73]" role="status">
+              Showing progress observed so far for {formatNumber(funnel.installed)} first-open app IDs.
+              A full seven-day return window is not available for every first open in these dates.
+              Later steps and final drop-off are still unknown.
+            </p>}
+
             <ol className="mt-6 flex flex-col gap-2.5">
               {funnel.stages.map((stage, index) => {
+                const pendingStage = returnPending && stage.key === 'returned_w1';
                 const previousUsers = index > 0 ? funnel.stages[index - 1].users : null;
                 const dropCount = previousUsers !== null ? Math.max(0, previousUsers - stage.users) : 0;
                 const dropRate = previousUsers && previousUsers > 0 ? dropCount / previousUsers : null;
@@ -785,23 +792,23 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
                         {index + 1}. {stage.label}
                       </span>
                       <span className="shrink-0 text-sm font-semibold tabular-nums text-[#6e6e73]">
-                        {formatNumber(stage.users)}
-                        {index > 0 && (
+                        {pendingStage ? 'Awaiting complete week' : formatNumber(stage.users)}
+                        {index > 0 && !pendingStage && (
                           <span className="ml-2 text-[#86868b]">
                             ({percentText(stage.shareOfInstalls, 0)} of first opens
-                            {dropRate !== null && dropRate > 0 && (
+                            {!returnPending && dropRate !== null && dropRate > 0 && (
                               <span className="text-[#8a5a04]"> &middot; {percentText(dropRate, 0)} drop</span>
                             )})
                           </span>
                         )}
                       </span>
                     </div>
-                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#f0f0f2]">
+                    {!pendingStage && <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#f0f0f2]">
                       <div
                         className={cn('h-full rounded-full', isWorst ? 'bg-[#8a5a04]' : 'bg-[#007aff]')}
                         style={{ width: `${width}%` }}
                       />
-                    </div>
+                    </div>}
                   </li>
                 );
               })}
@@ -827,7 +834,7 @@ function FunnelDropoffAgentDiagnostic({
 }: {
   one: OneAppSummary;
 }) {
-  const funnels = one?.installFunnel || [];
+  const funnels = (one?.installFunnel || []).filter(funnel => funnel.retentionWindowComplete !== false);
   const capabilities = one?.capabilities || [];
   const [expandedCapKey, setExpandedCapKey] = useState<string | null>(null);
 
@@ -871,11 +878,7 @@ function FunnelDropoffAgentDiagnostic({
       ? cohortDrops
       : activationDrops.length > 0
       ? activationDrops
-      : [
-          { platform: 'ALL', fromStage: 'Reached App', toStage: 'Onboarded', lost: 1209, rate: 0.86 },
-          { platform: 'ALL', fromStage: 'Onboarded', toStage: 'Activated', lost: 162, rate: 0.85 },
-          { platform: 'ALL', fromStage: 'Activated', toStage: 'Live Shared Location', lost: 8, rate: 0.28 },
-        ];
+      : [];
 
   return (
     <div className={cn(appleCard, 'mt-4 p-6')}>
@@ -896,6 +899,7 @@ function FunnelDropoffAgentDiagnostic({
         <div className="rounded-xl border border-black/5 bg-[#fafafa] p-4">
           <p className="text-xs font-bold uppercase tracking-wider text-[#86868b]">Where They Drop Off</p>
           <ul className="mt-3 flex flex-col gap-2.5 text-sm">
+            {effectiveDrops.length === 0 && <li>Not enough observed progress to report drop-off.</li>}
             {effectiveDrops.slice(0, 4).map((drop, idx) => (
               <li key={idx} className="flex items-center justify-between border-b border-black/5 pb-2.5 last:border-0 last:pb-0">
                 <span className="font-medium text-[#1d1d1f]">

@@ -36,6 +36,12 @@ production provider reports.
 - App-instance IDs: device/application identifiers, not unique people.
 - Firebase `first_open`: first launch following installation/reinstallation;
   not a download, store click or unique new account.
+- Native first-open funnels use the same One app/package/stream scope as other
+  One reports. The return window starts at the observed `first_open` reporting
+  date, not the SDK's lifetime first-touch timestamp. Week-1 percentages are
+  withheld until a finalized daily export covers seven days after every observed
+  first open in the cohort. Intraday data cannot close that window. Progress
+  counts remain visible; pending later steps are not reported as final drop-off.
 - GA4 historical active/total users: provider range totals, requested once.
   Daily users are never summed. Daily event counts are repeatable actions, not
   signups or reconstructed account/retention cohorts.
@@ -125,6 +131,25 @@ These are dated observations, not fixture values or expected future totals.
 The native source changes have not been shipped in a new Play binary. Native
 release and real-device proof must be recorded separately from dashboard release.
 
+### October 8 revalidation and fresh Android capture
+
+Serving revision `hushh-matrix-dashboard-00245-gac` was observed before and after
+read-only API revalidation. The September 28–October 4 history again matched an
+independent same-window GA4 read (21 active users / 4,279 events). Auth/date
+validation, cached repeat, existing One web/iOS/UAT sections, shared registered
+accounts, and stored Instagram reporting passed. Interactive signed-in One
+reporting was also opened with the company operator account.
+
+The October 7 raw capture response now contains 26 events, 6 app-instance IDs,
+1 identified account, 5 first opens and 1 route visit. The release table includes
+12 version-1.3.9 events with Play installer `com.android.vending` and an unlabeled
+backend environment, 8 with another installer and a production tag, and 6 with
+another installer and no backend tag. These are aggregate observations after
+the export repair, not invented historical rows, six unique people, or proof
+that every store-installed event is production-backend customer activity. The
+user's controlled sign-in/One Location journey is still deferred. Native metadata
+and reviewer-guard changes remain in research PR #7599 awaiting release gates.
+
 ## Private configuration
 
 Cloud Run: `hushh-ai-prod`, `us-central1`, `hushh-matrix-dashboard`; runtime:
@@ -148,17 +173,26 @@ permissions → View app information (read-only)** at **Global** scope to read
 bulk reports. This provider requirement gives the reader access to nonfinancial
 app information across the developer account; obtain explicit approval for that
 scope before submitting the grant. The dashboard still requests reports only
-for `com.hussh.app`. For Android vitals, grant **View app quality information
-(read-only)** on `com.hussh.app` using app permissions where the Console allows
-it. Do not grant Admin, financial data, publishing, release management, or user
+for `com.hussh.app`. In the inspected Console, the global app-information
+permission automatically checks and locks **View app quality information
+(read-only)** at global scope as an inherited permission; this cannot be narrowed
+to one app while retaining bulk-report access. Include that inherited scope in
+the approval. Do not grant Admin, financial data, publishing, release management, or user
 management permissions. Do not generate a service-account private key.
 
-Read-only Console inspection on October 8, 2026 confirmed the human operator's
-Admin access, but the runtime account was absent from the user list. The
+On October 8, 2026 the operator explicitly approved the global read-only grant,
+including inherited app-quality access. Console submission was completed and
+the runtime account was verified **Active / Never expires**. No Admin,
+financial, publishing, release-management or user-management access was granted.
+The real developer-account bucket root was copied using Console's report URI
+control, stored in `metrics-dashboard-play-reports-bucket`, and granted only
+runtime Secret Manager accessor access. Other apps' report data was not downloaded.
+Before runtime verification, the
 `com.hussh.app` Statistics page displayed **No monthly reports available** for
 installs, crashes, and store performance. These observations do not mean zero
-installs or crashes. The reader grant and real bucket configuration remain
-pending; the uploader's access does not establish the runtime reader's access.
+installs or crashes. Runtime reporting verification and candidate bucket binding
+are recorded below when completed; an active Console grant alone does not prove
+the reporting API is available.
 Google documents a 3–7 day posting delay for these daily-captured monthly CSVs.
 Do not assume reports will appear immediately after the grant or infer their
 availability from the app's release date.

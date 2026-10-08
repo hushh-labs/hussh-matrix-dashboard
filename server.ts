@@ -25,7 +25,7 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
-import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange } from './src/server/one-scope.mjs';
+import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, nativeRetentionWindowComplete } from './src/server/one-scope.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 
@@ -2991,29 +2991,48 @@ ${capabilitySql.isDeliberate}
         COALESCE(platform, 'UNKNOWN') AS platform,
         user_pseudo_id,
         event_name,
-        PARSE_DATE('%Y%m%d', event_date) AS day,
-        DATE(TIMESTAMP_MICROS(user_first_touch_timestamp), 'Etc/GMT+8') AS firstDay
+        PARSE_DATE('%Y%m%d', event_date) AS day
       FROM ${table}
-      WHERE ${dateFilter} AND platform IN ('IOS', 'ANDROID')
+      WHERE ${dateFilter} AND ${surfaceFilter} AND platform IN ('IOS', 'ANDROID')
     ),
     installs AS (
-      SELECT DISTINCT platform, user_pseudo_id, firstDay FROM scoped WHERE event_name = 'first_open'
+      -- Use the observed first_open reporting date, not a lifetime first-touch date.
+      SELECT platform, user_pseudo_id, MIN(day) AS firstDay
+      FROM scoped WHERE event_name = 'first_open' GROUP BY platform, user_pseudo_id
+    ),
+    finalized_days AS (
+      SELECT PARSE_DATE('%Y%m%d', SUBSTR(table_name, 8)) AS day
+      FROM \`${projectId}.${dataset}.INFORMATION_SCHEMA.TABLES\`
+      WHERE REGEXP_CONTAINS(table_name, r'^events_[0-9]{8}$')
+        AND table_name BETWEEN 'events_${range.startDate.replaceAll('-', '')}'
+                           AND 'events_${range.endDate.replaceAll('-', '')}'
+    ),
+    cohorts AS (
+      SELECT i.*, (SELECT COUNT(*) FROM finalized_days d
+        WHERE d.day BETWEEN DATE_ADD(i.firstDay, INTERVAL 1 DAY)
+                        AND DATE_ADD(i.firstDay, INTERVAL 7 DAY)) = 7 AS returnWindowComplete
+      FROM installs i
     ),
     progressed AS (
       SELECT
         i.platform,
         i.user_pseudo_id,
+        i.firstDay,
+        i.returnWindowComplete,
         MAX(IF(s.event_name IN ('auth_started', 'google_sign_in_started'), 1, 0)) AS triedSignIn,
         MAX(IF(s.event_name IN ('auth_succeeded', 'google_sign_in_completed'), 1, 0)) AS signedIn,
         MAX(IF(s.event_name = 'one_location_onboarding_completed', 1, 0)) AS onboarded,
         MAX(IF(s.event_name = 'one_location_activation_completed', 1, 0)) AS activated,
         MAX(IF(s.day BETWEEN DATE_ADD(i.firstDay, INTERVAL 1 DAY) AND DATE_ADD(i.firstDay, INTERVAL 7 DAY), 1, 0)) AS returnedW1
-      FROM installs i
+      FROM cohorts i
       JOIN scoped s USING (platform, user_pseudo_id)
-      GROUP BY i.platform, i.user_pseudo_id, i.firstDay
+      GROUP BY i.platform, i.user_pseudo_id, i.firstDay, i.returnWindowComplete
     )
     SELECT
       platform,
+      CAST(MAX(firstDay) AS STRING) AS latestFirstOpen,
+      CAST((SELECT MAX(day) FROM finalized_days) AS STRING) AS retentionDataThrough,
+      COUNTIF(NOT returnWindowComplete OR firstDay IS NULL) AS incompleteReturnWindows,
       COUNT(*) AS installed,
       SUM(triedSignIn) AS triedSignIn,
       SUM(IF(triedSignIn = 1 AND signedIn = 1, 1, 0)) AS signedIn,
@@ -3605,6 +3624,8 @@ ${capabilitySql.isDeliberate}
       // counts placed next to each other.
       installFunnel: installFunnel.rows.map((row) => {
         const installed = toNumber(row.installed);
+        const retentionWindowComplete = row.incompleteReturnWindows != null && row.incompleteReturnWindows !== ''
+          && nativeRetentionWindowComplete(row.latestFirstOpen, row.retentionDataThrough, Number(row.incompleteReturnWindows));
         const stage = (key: string, label: string, users: number) => ({
           key,
           label,
@@ -3612,11 +3633,14 @@ ${capabilitySql.isDeliberate}
           // Share of the install cohort, not of the previous stage: the
           // question this answers is "of everyone who installed, how many got
           // here", and step-to-step ratios hide how steep the first drop is.
-          shareOfInstalls: installed > 0 ? users / installed : null,
+          shareOfInstalls: installed > 0 && (key !== 'returned_w1' || retentionWindowComplete)
+            ? users / installed : null,
         });
         return {
           platform: String(row.platform ?? 'UNKNOWN'),
           installed,
+          retentionWindowComplete,
+          retentionDataThrough: row.retentionDataThrough ?? null,
           stages: [
             stage('installed', 'First opened the app', installed),
             stage('tried_sign_in', 'Tried to sign in', toNumber(row.triedSignIn)),

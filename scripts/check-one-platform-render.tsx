@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AndroidProviderReport, AndroidAnalyticsPanel } from '../src/components/AndroidAnalyticsPanel';
-import { PlatformsAtAGlance } from '../src/components/OneAppPanel';
+import { PlatformsAtAGlance, InstallFunnel } from '../src/components/OneAppPanel';
 import type { OneAppSummary } from '../src/lib/types';
 
 const render = (one: Partial<OneAppSummary>, environment: 'production' | 'uat') =>
@@ -51,4 +51,19 @@ assert.match(emptyVitals,/Read permission needed/);assert.match(emptyVitals,/Not
 
 const missingFirstOpens=renderToStaticMarkup(createElement(AndroidProviderReport,{report:{history:{state:'available',daily:[{date:'2026-10-05',event:'first_open',events:null}]},downloads:{},vitals:{state:'not_yet_available'}}}));
 assert.match(missingFirstOpens,/First-open events<\/dt><dd[^>]*>Not available/);
-console.log(JSON.stringify({ok:true,checks:['previous-schema','missing-screen-ranking','uat-source-host','anonymous-account-state','screen-diagnostics-deemphasized','android-waiting','provider-unavailable','missing-first-open']}));
+const cohort = {
+  platform: 'ANDROID', installed: 5,
+  stages: [
+    {key:'installed',label:'First opened the app',users:5,shareOfInstalls:1},
+    {key:'tried_sign_in',label:'Tried to sign in',users:0,shareOfInstalls:0},
+    {key:'returned_w1',label:'Returned in week 1',users:0,shareOfInstalls:null},
+  ],
+};
+const pending = renderToStaticMarkup(createElement(InstallFunnel,{funnels:[{...cohort,retentionWindowComplete:false}]}));
+assert.match(pending,/Week-1 return window incomplete/);
+assert.match(pending,/Awaiting complete week/);
+assert.doesNotMatch(pending,/0\.0%|Biggest drop:|100% drop/);
+const complete = renderToStaticMarkup(createElement(InstallFunnel,{funnels:[{...cohort,retentionWindowComplete:true,stages:cohort.stages.map(stage=>({...stage,shareOfInstalls:stage.users/5}))}]}));
+assert.match(complete,/returned in week 1 of 5 first-open app IDs/);
+assert.match(complete,/0\.0%/);
+console.log(JSON.stringify({ok:true,checks:['previous-schema','missing-screen-ranking','uat-source-host','anonymous-account-state','screen-diagnostics-deemphasized','android-waiting','provider-unavailable','missing-first-open','immature-native-cohort','completed-native-cohort-zero']}));

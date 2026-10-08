@@ -21,6 +21,17 @@ describe('Android provider reporting',()=>{
     const result=await fetchPlayDownloads(send,'gs://pubsite_prod_rev_fixture',range);
     expect(result.installs.state).toBe('permission_missing');expect(JSON.stringify(result)).not.toContain('secret');
   });
+  it('accepts private config whitespace and only requests the company package',async()=>{
+    const send=vi.fn().mockRejectedValue({response:{status:404}});
+    const result=await fetchPlayDownloads(send,'  gs://pubsite_prod_fixture\r\n',range);
+    expect(result.installs.state).toBe('not_yet_available');
+    expect(result.store.state).toBe('not_yet_available');
+    for(const [url] of send.mock.calls){
+      expect(new URL(url).hostname).toBe('storage.googleapis.com');
+      expect(decodeURIComponent(url)).toContain('com.hussh.app_');
+      expect(url).not.toMatch(/\s/);
+    }
+  });
   it('bounds vitals to freshness and currently serving production versions, preserving zero and missing rates',async()=>{
     const send=vi.fn().mockResolvedValueOnce({tracks:[{type:'Production',displayName:'production',servingReleases:[{versionCodes:['10']}]}]})
       .mockResolvedValueOnce({freshnessInfo:{freshnesses:[{aggregationPeriod:'DAILY',latestEndTime:{year:2026,month:10,day:5}}]}})
