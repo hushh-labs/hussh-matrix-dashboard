@@ -129,7 +129,19 @@ export async function fetchPlayDownloads(send: Send, bucket: string, range: Repo
       const prefix=kind==='installs'?'installs':'store_performance';
       const object=`stats/${prefix}/${prefix}_${ONE_ANDROID_PACKAGE}_${month}_country.csv`;
       try{const data=await send(`https://storage.googleapis.com/storage/v1/b/${match[1]}/o/${encodeURIComponent(object)}?alt=media`,undefined,true);rows.push(...parsePlayCsv(new Uint8Array(data)));}
-      catch(error){state=failed(error);break;}
+      catch(error){
+        state=failed(error);
+        if(state==='permission_missing'){
+          // GCS can return 403 for an absent object. A successful, exact-object
+          // listing proves bucket read access without listing other apps/files.
+          const params=new URLSearchParams({prefix:object,maxResults:'1',fields:'items(name)'});
+          try{
+            const listing=await send(`https://storage.googleapis.com/storage/v1/b/${match[1]}/o?${params}`);
+            if(!Array.isArray(listing.items) || !listing.items.some((item:any)=>item.name===object))state='not_yet_available';
+          }catch{/* Preserve the original unavailable-access state; no provider error escapes. */}
+        }
+        break;
+      }
     }
     try{output[kind]=state ? {...none,state,note:'Play report access or availability is incomplete; no total is inferred.'} : summarizePlayReports(rows,range,kind);}
     catch{output[kind]={...none,state:'sync_failed',note:'Play report schema or duplicate rows need review; no total is inferred.'};}
