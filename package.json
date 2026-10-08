@@ -31,6 +31,7 @@
     "test:ui:one-platforms": "tsx scripts/check-one-platform-render.tsx",
     "test:agent:product-routing": "tsx scripts/check-agent-product-routing.ts",
     "test:deploy:traffic-snapshot": "node scripts/check-cloud-run-traffic.mjs",
+    "test:deploy:release-fetch": "node scripts/check-release-auth-fetch.mjs",
     "test:metrics:one-registered-accounts": "node scripts/check-one-registered-accounts-reconciliation.mjs",
     "test:metrics:kpi-invariants": "node scripts/check-dashboard-kpi-invariants.mjs",
     "test:metrics:agent-feature-classification": "node scripts/check-agent-feature-classification.mjs",
