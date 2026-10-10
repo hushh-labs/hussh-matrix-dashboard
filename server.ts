@@ -9284,6 +9284,14 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
 
   // 1. Reverse Proxy Trust
   app.set('trust proxy', 1);
+  // The legacy "hussh" hostname serves this app, but Google's OAuth callback
+  // uses "hushh". A host-only PKCE cookie set on the legacy host is invisible
+  // to the callback, so move browsers to the canonical host before sign-in.
+  app.use((req, res, next) => {
+    if (req.hostname.toLowerCase() !== 'metrics.hussh.ai') return next();
+    res.set('Cache-Control', 'no-store');
+    return res.redirect(307, `https://metrics.hushh.ai${req.originalUrl}`);
+  });
   app.use(compression({ threshold: 1024 }));
 
   // 2. Body Parsing
