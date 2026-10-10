@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_DASHBOARD_URL = 'https://metrics.hushh.ai';
+const DEFAULT_DASHBOARD_URL = 'https://metrics.hussh.ai';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_PROJECT = 'hushh-ai-prod';
 const DEFAULT_REGION = 'us-central1';

@@ -2,7 +2,7 @@
 /** Read-only, anonymous production probe for the Google sign-in boundary. */
 import assert from 'node:assert/strict';
 
-const base = (process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai').replace(/\/$/, '');
+const base = (process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai').replace(/\/$/, '');
 const clientId = process.env.GOOGLE_CLIENT_ID;
 const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${base}/auth/callback`;
 assert(clientId, 'GOOGLE_CLIENT_ID is required for the OAuth release probe');

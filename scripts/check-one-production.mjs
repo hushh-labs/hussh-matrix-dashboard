@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { resolve4, resolveCname } from 'node:dns/promises';
 
-const DEFAULT_DASHBOARD_URL = 'https://metrics.hushh.ai';
+const DEFAULT_DASHBOARD_URL = 'https://metrics.hussh.ai';
 const DEFAULT_PRODUCT_URL = 'https://one.hushh.ai';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const HOST_ALIASES = new Map([

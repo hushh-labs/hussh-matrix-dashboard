@@ -12,7 +12,7 @@ const option = (name, fallback) => {
 
 const dashboardUrl = option(
   '--dashboard-url',
-  process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai',
+  process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai',
 ).replace(/\/$/, '');
 const projectId = option('--firebase-project', process.env.ONE_FIREBASE_AUTH_PROJECT || 'hushh-pda');
 const days = Math.max(1, Math.min(Number(option('--days', '30')) || 30, 90));

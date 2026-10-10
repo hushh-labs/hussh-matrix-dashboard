@@ -730,7 +730,7 @@ function mapCloudRunToHushhTechGcp(gcp: Record<string, unknown> | null): Record<
     p95LatencyMs,
     instanceCount,
     uptimeAvailability: errorRate == null ? null : 1 - errorRate,
-    note: 'Read directly by metrics.hushh.ai from Google Cloud Monitoring.',
+    note: 'Read directly by metrics.hussh.ai from Google Cloud Monitoring.',
   };
 }
 
@@ -1093,7 +1093,7 @@ async function fetchProductSearchConsoleFallback(
     pages.rows,
     countries.rows,
     devices.rows,
-    `Read by metrics.hushh.ai from GCP fallback Search Console tables. ${officialExportNote}`,
+    `Read by metrics.hussh.ai from GCP fallback Search Console tables. ${officialExportNote}`,
   );
   return { data, error: errors.length > 0 ? errors.join('; ') : null };
 }
@@ -1206,7 +1206,7 @@ async function fetchProductSearchConsole(
     pages.rows,
     countries.rows,
     devices.rows,
-    'Read by metrics.hushh.ai from the Search Console BigQuery bulk export.',
+    'Read by metrics.hussh.ai from the Search Console BigQuery bulk export.',
   );
   const fallback = await fetchProductSearchConsoleFallback(
     config,
@@ -1361,7 +1361,7 @@ async function fetchHushhTechSearchConsoleFallback(
         expectedLagSeconds: 86_400,
       },
       note: available
-        ? 'Read by metrics.hushh.ai from GCP fallback Search Console tables while the official bulk export is warming up.'
+        ? 'Read by metrics.hussh.ai from GCP fallback Search Console tables while the official bulk export is warming up.'
         : `Search Console GCP fallback returned no rows for this range. ${officialExportNote}`,
     },
     error: errors.length > 0 ? errors.join('; ') : null,
@@ -1536,7 +1536,7 @@ async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<Dat
         expectedLagSeconds: 86_400,
       },
       note: overview.clicks > 0 || overview.impressions > 0
-        ? 'Read by metrics.hushh.ai from the Search Console BigQuery bulk export.'
+        ? 'Read by metrics.hussh.ai from the Search Console BigQuery bulk export.'
         : 'Search Console bulk export returned no rows for this range.',
   };
   const fallback = await fetchHushhTechSearchConsoleFallback(
@@ -1560,7 +1560,7 @@ function mergeHushhTechCoverage(summary: Record<string, unknown>): Record<string
   coverage.supabaseAggregateTables = Array.isArray(supabase?.metrics)
     ? (supabase.metrics as unknown[]).length
     : toNumber(coverage.supabaseAggregateTables);
-  coverage.note = coverage.note ?? 'Provider coverage is assembled by metrics.hushh.ai.';
+  coverage.note = coverage.note ?? 'Provider coverage is assembled by metrics.hussh.ai.';
   return coverage;
 }
 
@@ -1601,7 +1601,7 @@ async function fetchHushhTechAnalytics(range: HushhAiDateRange): Promise<{ data:
       .filter((value): value is string => typeof value === 'string'),
   );
   if (publicSummary.error) warnings.add('HushhTech public summary endpoint is unavailable.');
-  if (gcp.error) warnings.add('Cloud Run Monitoring is unavailable to metrics.hushh.ai.');
+  if (gcp.error) warnings.add('Cloud Run Monitoring is unavailable to metrics.hussh.ai.');
   if (supabase.error) warnings.add('HushhTech Supabase database aggregates are unavailable.');
   if (searchConsole.data && asRecord(searchConsole.data)?.available === false) {
     warnings.add(String(asRecord(searchConsole.data)?.note ?? 'Search Console is waiting.'));
@@ -4489,7 +4489,7 @@ async function fetchHushhAiGa4Summary(range: HushhAiDateRange): Promise<DataResu
         range,
         HUSHH_AI_GA4_PROJECT,
         HUSHH_AI_GA4_DATASET,
-        `GA4 Data API property ID is not configured in metrics.hushh.ai yet for ${HUSHH_AI_GA4_MEASUREMENT_ID}.`,
+        `GA4 Data API property ID is not configured in metrics.hussh.ai yet for ${HUSHH_AI_GA4_MEASUREMENT_ID}.`,
       ),
       error: null,
     };
@@ -5206,7 +5206,7 @@ function buildHushhAiProductEvents(fetchedAt: string): Record<string, unknown> {
     generatedAt: fetchedAt,
     metrics: [],
     expectedEvents,
-    note: 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
+    note: 'Hushh AI DB aggregate source is not configured in metrics.hussh.ai yet.',
   };
 }
 
@@ -5222,7 +5222,7 @@ function buildHushhAiSourceCards(
     buildGa4SourceCard(
       ga4,
       hushhAiGa4SourceLabel(),
-      'Hushh AI GA4 source is not configured in metrics.hushh.ai yet.',
+      'Hushh AI GA4 source is not configured in metrics.hussh.ai yet.',
     ),
     {
       key: 'product_events',
@@ -8088,13 +8088,13 @@ function historyToGeminiContents(history: ChatHistoryMessage[]) {
   }));
 }
 
-const HUSSH_ANALYST_TOOL_PROMPT = `You are Hussh Insights AI, an analyst agent for metrics.hushh.ai.
+const HUSSH_ANALYST_TOOL_PROMPT = `You are Hussh Insights AI, an analyst agent for metrics.hussh.ai.
 Use tools before answering any metrics question. Only request aggregate metrics. Never request or expose raw users, emails, prompts, tokens, project ids, dataset ids, stack traces, or provider diagnostics.
 Prefer get_product_metrics for numeric questions and get_source_status for availability/freshness questions. Use get_metric_catalog if the requested metric name is ambiguous.
 For "last day", "past day", "last 24 hours", "24-hour report", or "what happened in the last day" requests, call get_product_metrics with window="last_24_hours" and rangeDays=1.
 Treat the metric catalog as the semantic field model: use field labels, descriptions, synonyms, caveats, and example questions to map business language to the right aggregate metric.`;
 
-const HUSSH_ANALYST_SYNTHESIS_PROMPT = `You are Hussh Insights AI, a detailed analyst for metrics.hushh.ai.
+const HUSSH_ANALYST_SYNTHESIS_PROMPT = `You are Hussh Insights AI, a detailed analyst for metrics.hussh.ai.
 Answer only from the provided aggregate tool results. Do not invent data.
 Return JSON matching the schema exactly.
 Every numeric claim in reply must appear in claims with a canonical metric id from the catalog when possible.
@@ -8983,7 +8983,7 @@ export interface AppConfig {
 
 export function loadAppConfig(overrides?: Partial<AppConfig>): AppConfig {
   const isProduction = overrides?.isProduction ?? (process.env.NODE_ENV === 'production');
-  const allowedDomainsEnv = process.env.ALLOWED_EMAIL_DOMAINS || 'hushh.ai,hushhtech.com,hushh.labs,hush1one.com';
+  const allowedDomainsEnv = process.env.ALLOWED_EMAIL_DOMAINS || 'hussh.ai,hushh.ai,hushhtech.com,hushh.labs,hush1one.com';
   const allowedEmailsEnv = process.env.ALLOWED_EMAILS || '';
   const defaultRedirectUri = isProduction ? '' : 'http://localhost:3001/auth/callback';
 
@@ -9284,13 +9284,13 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
 
   // 1. Reverse Proxy Trust
   app.set('trust proxy', 1);
-  // The legacy "hussh" hostname serves this app, but Google's OAuth callback
-  // uses "hushh". A host-only PKCE cookie set on the legacy host is invisible
-  // to the callback, so move browsers to the canonical host before sign-in.
+  // Keep OAuth initiation and callback on the same hostname. The PKCE state
+  // cookie is host-only, so send legacy-domain requests to the canonical host
+  // before any authentication cookie is created.
   app.use((req, res, next) => {
-    if (req.hostname.toLowerCase() !== 'metrics.hussh.ai') return next();
+    if (req.hostname.toLowerCase() !== 'metrics.hushh.ai') return next();
     res.set('Cache-Control', 'no-store');
-    return res.redirect(307, `https://metrics.hushh.ai${req.originalUrl}`);
+    return res.redirect(307, `https://metrics.hussh.ai${req.originalUrl}`);
   });
   app.use(compression({ threshold: 1024 }));
 

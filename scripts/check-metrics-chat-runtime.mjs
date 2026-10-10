@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_PROJECT = 'hushh-ai-prod';
 const DEFAULT_REGION = 'us-central1';
 const DEFAULT_SERVICE = 'hushh-matrix-dashboard';
-const DEFAULT_BASE_URL = 'https://metrics.hushh.ai';
+const DEFAULT_BASE_URL = 'https://metrics.hussh.ai';
 const SECRET_NAME = 'hushh-gemini-api-key';
 const RUNTIME_SERVICE_ACCOUNT = 'metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com';
 

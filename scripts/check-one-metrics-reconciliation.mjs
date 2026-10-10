@@ -26,7 +26,7 @@ function parseArgs(argv) {
     dataset: DEFAULT_DATASET,
     webHost: DEFAULT_WEB_HOST,
     jobProject: process.env.BQ_JOB_PROJECT || '',
-    dashboardUrl: process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai',
+    dashboardUrl: process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai',
     days: 30,
     // GA4's daily export lands a day or more after the day closes. Asserting
     // "latest table == yesterday" is red on a perfectly healthy pipeline.

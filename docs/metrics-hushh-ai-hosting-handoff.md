@@ -1,19 +1,19 @@
-# Hosted `metrics.hushh.ai` Handoff
+# Hosted `metrics.hussh.ai` Handoff
 
 This document is the operational handoff for running the Hushh Matrix
-Dashboard as the public aggregate metrics site at `https://metrics.hushh.ai`.
+Dashboard as the public aggregate metrics site at `https://metrics.hussh.ai`.
 
 ## Current Hosting State
 
-Last verified: 2026-04-29.
+Routing and certificate verified: 2026-10-11. Other observations in this handoff are dated operational history.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Cloud Run service | Deployed | `hushh-matrix-dashboard` in `hushh-ai-prod/us-central1` |
 | Public runtime URL | Healthy | `https://hushh-matrix-dashboard-yb3ojn3jxa-uc.a.run.app/api/health` returns `200` |
-| DNS | Configured | `metrics.hushh.ai` CNAME resolves to `ghs.googlehosted.com` |
-| Cloud Run domain mapping | Created | `metrics.hushh.ai` maps to `hushh-matrix-dashboard` |
-| HTTPS certificate | Ready | Cloud Run reports `CertificateProvisioned=True`; `https://metrics.hushh.ai` returns `200` |
+| DNS | Configured | `metrics.hussh.ai` resolves publicly; Cloud Run domain mapping expects `metrics` CNAME to `ghs.googlehosted.com` |
+| Cloud Run domain mapping | Created | `metrics.hussh.ai` maps to `hushh-matrix-dashboard` |
+| HTTPS certificate | Ready | Cloud Run reports `CertificateProvisioned=True`; anonymous dashboard requests redirect to login |
 
 The custom domain is the primary production URL. The Cloud Run `run.app` URL
 remains useful as a fallback verification endpoint if custom-domain routing is
@@ -25,13 +25,13 @@ The public route is:
 
 ```text
 Namecheap BasicDNS
-  -> metrics.hushh.ai CNAME ghs.googlehosted.com
+  -> metrics.hussh.ai CNAME ghs.googlehosted.com
   -> Google frontend
-  -> Cloud Run domain mapping for metrics.hushh.ai
+  -> Cloud Run domain mapping for metrics.hussh.ai
   -> Cloud Run service hushh-matrix-dashboard
 ```
 
-Namecheap remains authoritative for `hushh.ai`. No Cloud DNS migration is
+Namecheap remains authoritative for `hussh.ai`. No Cloud DNS migration is
 required for this subdomain.
 
 ## Production Service
@@ -71,7 +71,7 @@ Current platform sources:
 | One | Production Cloud Run Monitoring | `one.hushh.ai` requests, 5xx responses, p95 latency, instance count, and daily reliability from `hushh-pda/hushh-webapp` |
 | HushhTech | Public summary endpoint | `GET https://hushhtech.com/api/metrics/summary?window_days=7` for business funnel and GA4 traffic; all-zero processed GA4 traffic is shown as unverified until the HushhTech web tag/property is confirmed |
 | HushhTech | Supabase Management API | Top aggregate database metrics plus date-range daily status for new users, active users, sessions, exit signals, product usage, and analytics events |
-| HushhTech | Cloud Run Monitoring | `metrics.hushh.ai` reads `hushh-tech-prod/hushh-tech-website` directly through Google Cloud Monitoring |
+| HushhTech | Cloud Run Monitoring | `metrics.hussh.ai` reads `hushh-tech-prod/hushh-tech-website` directly through Google Cloud Monitoring |
 | HushhTech | Search Console BigQuery export | Preferred source. Search metrics appear when export tables are present in `hushh-ai-prod.searchconsole_hushhtech_com` |
 | HushhTech | Search Console API fallback | GCP-only aggregate fallback in `hushh-ai-prod.hushhtech_search_console_api`; populated by Cloud Run Job `hushhtech-search-console-ingest` while the official export is waiting |
 | Hussh Insights AI | Gemini API | Server-only runtime key from Secret Manager secret `hushh-gemini-api-key`; answers are tool-grounded on aggregate dashboard metrics and return structured claims, sources, warnings, and confidence |
@@ -94,7 +94,7 @@ This record must exist in Namecheap Advanced DNS for `hushh.ai`:
 Verify DNS:
 
 ```bash
-dig +short CNAME metrics.hushh.ai
+dig +short CNAME metrics.hussh.ai
 ```
 
 Expected output:
@@ -111,7 +111,7 @@ Run these checks before considering the hosted site fully live:
 gcloud beta run domain-mappings describe \
   --project=hushh-ai-prod \
   --region=us-central1 \
-  --domain=metrics.hushh.ai \
+  --domain=metrics.hussh.ai \
   --format="yaml(status.conditions,status.resourceRecords)"
 ```
 
@@ -124,14 +124,14 @@ Required Cloud Run domain states:
 Then verify the custom domain:
 
 ```bash
-curl -I https://metrics.hushh.ai
-curl -fsS https://metrics.hushh.ai/api/health
-curl -fsS https://metrics.hushh.ai/api/analytics/all
+curl -I https://metrics.hussh.ai
+curl -fsS https://metrics.hussh.ai/api/health
+curl -fsS https://metrics.hussh.ai/api/analytics/all
 ```
 
 Acceptance checks:
 
-- `https://metrics.hushh.ai` loads the dashboard.
+- `https://metrics.hussh.ai` loads the dashboard.
 - `/api/health` returns `status: "ok"`.
 - `/api/analytics/all` returns HTTP `200`.
 - HushhTech Supabase top metrics show aggregate counts only.
@@ -180,7 +180,7 @@ Check the custom domain:
 gcloud beta run domain-mappings describe \
   --project=hushh-ai-prod \
   --region=us-central1 \
-  --domain=metrics.hushh.ai
+  --domain=metrics.hussh.ai
 ```
 
 Rotate the HushhTech Supabase management token:
@@ -246,7 +246,7 @@ npm run test:prod:hushhtech-flow
 ```
 
 This probe checks the public HushhTech summary endpoint, the
-`metrics.hushh.ai` HushhTech and aggregate APIs, BigQuery fallback freshness,
+`metrics.hussh.ai` HushhTech and aggregate APIs, BigQuery fallback freshness,
 Cloud Run Job readiness, the latest completed ingestion execution, the
 Scheduler target, and the OAuth secret version without printing secret values.
 

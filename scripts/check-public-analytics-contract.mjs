@@ -10,7 +10,7 @@ const valueAfter = (flag, fallback) => {
   return fallback;
 };
 
-const baseUrl = valueAfter('--base-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai').replace(/\/$/, '');
+const baseUrl = valueAfter('--base-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai').replace(/\/$/, '');
 const timeoutMs = Number(valueAfter('--timeout-ms', process.env.METRICS_CONTRACT_TIMEOUT_MS || '120000'));
 const days = Math.max(1, Number(valueAfter('--days', '7')) || 7);
 const maxOneBytes = Number(valueAfter('--max-one-bytes', '750000'));

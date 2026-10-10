@@ -1,26 +1,27 @@
 ---
 name: metrics-hushh-ai-ops
-description: Operate, deploy, map, and extend metrics.hushh.ai. Use when working on the Hussh Matrix Dashboard, Cloud Run service hushh-matrix-dashboard, metrics.hushh.ai DNS/domain mapping, Namecheap CNAME, Google-managed certificate, Secret Manager runtime config, production probes, or new dashboard development that needs current production context.
+description: Operate, deploy, map, and extend metrics.hussh.ai. Use when working on the Hussh Matrix Dashboard, Cloud Run service hushh-matrix-dashboard, metrics.hussh.ai DNS/domain mapping, Namecheap CNAME, Google-managed certificate, Secret Manager runtime config, production probes, or new dashboard development that needs current production context.
 ---
 
-# metrics.hushh.ai Ops
+# metrics.hussh.ai Ops
 
 ## Goal
 
-Give Codex the production and development context needed to safely change, deploy, verify, and debug `metrics.hushh.ai` without rediscovering the Cloud Run, DNS, Secret Manager, and dashboard contracts each time.
+Give Codex the production and development context needed to safely change, deploy, verify, and debug `metrics.hussh.ai` without rediscovering the Cloud Run, DNS, Secret Manager, and dashboard contracts each time.
 
 ## Canonical Context
 
 - Product: Hushh Matrix Dashboard
 - Repo: `hushh-labs/hussh-matrix-dashboard`
-- Production URL: `https://metrics.hushh.ai`
+- Production URL: `https://metrics.hussh.ai`
 - GCP project: `hushh-ai-prod`
 - Region: `us-central1`
 - Cloud Run service: `hushh-matrix-dashboard`
 - Runtime service account: `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com`
 - Artifact Registry repo: `us-central1-docker.pkg.dev/hushh-ai-prod/website-images`
-- DNS provider: Namecheap BasicDNS for `hushh.ai`
-- Domain mapping: `metrics.hushh.ai` -> Cloud Run service `hushh-matrix-dashboard`
+- DNS provider: Namecheap BasicDNS for `hussh.ai`
+- Domain mapping: `metrics.hussh.ai` -> Cloud Run service `hushh-matrix-dashboard`
+- Legacy domain: `metrics.hushh.ai` redirects to `metrics.hussh.ai` before Google sign-in.
 - DNS record: `metrics` CNAME -> `ghs.googlehosted.com`
 
 ## Workflow
@@ -46,7 +47,7 @@ Give Codex the production and development context needed to safely change, deplo
 
 5. Verify production automatically.
    - Run `npm run test:prod:hushh-ai` and `npm run test:prod:one` when dashboard behavior changes.
-   - Also check `https://metrics.hushh.ai/api/health` and `https://metrics.hushh.ai/api/analytics/all`.
+   - Also check `https://metrics.hussh.ai/api/health` and `https://metrics.hussh.ai/api/analytics/all`.
    - Verify DNS/domain mapping when routing or certificate behavior changes.
 
 6. Publish skill or dashboard changes through GitHub.

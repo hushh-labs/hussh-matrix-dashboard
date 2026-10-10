@@ -15,7 +15,7 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDat
 const project = option('--project', process.env.ONE_APP_GA4_PROJECT || 'hushh-pda');
 const dataset = option('--dataset', process.env.ONE_APP_GA4_DATASET || 'analytics_526603671');
 const jobProject = option('--job-project', process.env.BQ_JOB_PROJECT || 'hushh-ai-prod');
-const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai');
+const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai');
 const startSuffix = startDate.replaceAll('-', '');
 const endSuffix = endDate.replaceAll('-', '');
 const ignored = [

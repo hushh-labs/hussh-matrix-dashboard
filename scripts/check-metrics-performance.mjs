@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-const base = (process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai').replace(/\/$/, '');
+const base = (process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai').replace(/\/$/, '');
 const budget = Number(process.env.METRICS_PERFORMANCE_BUDGET_MS || 2000);
 const date = value => value.toISOString().slice(0, 10);
 const range = (days, lag = 0) => { const end = new Date(); end.setUTCHours(0,0,0,0); end.setUTCDate(end.getUTCDate() - lag); return { startDate: date(new Date(end.getTime() - (days-1)*86400000)), endDate: date(end) }; };

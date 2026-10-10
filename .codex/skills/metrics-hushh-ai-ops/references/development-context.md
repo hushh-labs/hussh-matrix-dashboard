@@ -1,4 +1,4 @@
-# metrics.hushh.ai Development Context
+# metrics.hussh.ai Development Context
 
 ## Current Product Contract
 
