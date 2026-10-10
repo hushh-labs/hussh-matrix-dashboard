@@ -136,6 +136,24 @@ describe('Google OAuth 2.0 & Domain Protection Layer', () => {
   // 2. OAuth Initiation
   // -------------------------------------------------------------------------
   describe('OAuth Initiation Endpoint (/api/auth/google)', () => {
+    it('moves the legacy host to the callback host before creating a PKCE cookie', async () => {
+      const legacy = await request(app)
+        .get('/api/auth/google?returnTo=%2Foverview')
+        .set('Host', 'metrics.hussh.ai');
+
+      expect(legacy.status).toBe(307);
+      expect(legacy.headers.location).toBe('https://metrics.hushh.ai/api/auth/google?returnTo=%2Foverview');
+      expect(legacy.headers['cache-control']).toBe('no-store');
+      expect(getSetCookies(legacy)).toEqual([]);
+
+      const canonical = await request(app)
+        .get('/api/auth/google?returnTo=%2Foverview')
+        .set('Host', 'metrics.hushh.ai');
+      expect(canonical.status).toBe(302);
+      expect(new URL(canonical.headers.location).hostname).toBe('accounts.google.com');
+      expect(getSetCookies(canonical).some((cookie) => cookie.startsWith('oauth_pkce='))).toBe(true);
+    });
+
     it('sets PKCE cookie and redirects to Google auth URL with correct parameters (no hd parameter)', async () => {
       const { res, location } = await initiateOAuth();
       expect(res.status).toBe(302);
