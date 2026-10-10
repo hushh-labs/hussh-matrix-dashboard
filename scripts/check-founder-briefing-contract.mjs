@@ -5,7 +5,7 @@ const option = (name, fallback) => {
   const index = args.indexOf(name);
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 };
-const baseUrl = option('--base-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai').replace(/\/$/, '');
+const baseUrl = option('--base-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai').replace(/\/$/, '');
 const timeoutMs = Number(option('--timeout-ms', '120000'));
 const startDate = option('--start-date', '');
 const endDate = option('--end-date', '');

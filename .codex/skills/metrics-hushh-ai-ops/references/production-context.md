@@ -1,4 +1,4 @@
-# metrics.hushh.ai Production Context
+# metrics.hussh.ai Production Context
 
 ## Service
 
@@ -9,8 +9,8 @@
 | Service | `hushh-matrix-dashboard` |
 | Runtime identity | `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com` |
 | Artifact Registry | `us-central1-docker.pkg.dev/hushh-ai-prod/website-images` |
-| Domain | `metrics.hushh.ai` |
-| DNS provider | Namecheap BasicDNS for `hushh.ai` |
+| Domain | `metrics.hussh.ai` |
+| DNS provider | Namecheap BasicDNS for `hussh.ai` |
 
 ## Build And Deploy
 
@@ -54,7 +54,7 @@ Cloud Run mapping:
 gcloud beta run domain-mappings describe \
   --project=hushh-ai-prod \
   --region=us-central1 \
-  --domain=metrics.hushh.ai \
+  --domain=metrics.hussh.ai \
   --format="yaml(status.conditions,status.resourceRecords)"
 ```
 
@@ -65,7 +65,7 @@ gcloud beta run domain-mappings create \
   --project=hushh-ai-prod \
   --region=us-central1 \
   --service=hushh-matrix-dashboard \
-  --domain=metrics.hushh.ai
+  --domain=metrics.hussh.ai
 ```
 
 Namecheap Advanced DNS for `hushh.ai`:
@@ -83,10 +83,10 @@ Google-managed certificate readiness requires:
 ## Verification
 
 ```bash
-dig +short CNAME metrics.hushh.ai
-curl -I https://metrics.hushh.ai
-curl -fsS https://metrics.hushh.ai/api/health
-curl -fsS https://metrics.hushh.ai/api/analytics/all
+dig +short CNAME metrics.hussh.ai
+curl -I https://metrics.hussh.ai
+curl -fsS https://metrics.hussh.ai/api/health
+curl -fsS https://metrics.hussh.ai/api/analytics/all
 npm run test:prod:hushh-ai
 npm run test:prod:one
 ```

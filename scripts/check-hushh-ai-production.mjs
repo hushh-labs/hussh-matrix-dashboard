@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { resolve4, resolveCname } from 'node:dns/promises';
 
-const DEFAULT_BASE_URL = 'https://metrics.hushh.ai';
+const DEFAULT_BASE_URL = 'https://metrics.hussh.ai';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const HOST_ALIASES = new Map([
-  ['matrix.hush.ai', 'metrics.hushh.ai'],
-  ['matrix.hushh.ai', 'metrics.hushh.ai'],
-  ['metrics.hush.ai', 'metrics.hushh.ai'],
-  ['metric.hushh.ai', 'metrics.hushh.ai'],
+  ['metrics.hushh.ai', 'metrics.hussh.ai'],
+  ['matrix.hush.ai', 'metrics.hussh.ai'],
+  ['matrix.hushh.ai', 'metrics.hussh.ai'],
+  ['metrics.hush.ai', 'metrics.hussh.ai'],
+  ['metric.hushh.ai', 'metrics.hussh.ai'],
 ]);
 
 function parseArgs(argv) {

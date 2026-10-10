@@ -19,7 +19,7 @@ const project = option('--project', environment === 'uat' ? 'hushh-pda-uat' : (p
 const dataset = option('--dataset', environment === 'uat' ? 'analytics_533362555' : (process.env.ONE_APP_GA4_DATASET || 'analytics_526603671'));
 const webHost = environment === 'uat' ? 'uat.one.hushh.ai' : 'one.hushh.ai';
 const jobProject = option('--job-project', process.env.BQ_JOB_PROJECT || 'hushh-ai-prod');
-const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai');
+const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai');
 const excluded = [
   'api_request_completed', 'warmup_completed', 'startup_readiness_warmup_completed',
   'cache_resource_resolved', 'route_readiness_completed', 'route_refresh_completed',

@@ -5,13 +5,13 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_DASHBOARD_URL = 'https://metrics.hushh.ai';
+const DEFAULT_DASHBOARD_URL = 'https://metrics.hussh.ai';
 const DEFAULT_PRODUCT_URL = 'https://hushhtech.com';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_GCP_PROJECT = 'hushh-ai-prod';
 const DEFAULT_GCP_REGION = 'us-central1';
 const DEFAULT_CLOUD_RUN_SERVICE = 'hushh-matrix-dashboard';
-const DEFAULT_DOMAIN_MAPPING = 'metrics.hushh.ai';
+const DEFAULT_DOMAIN_MAPPING = 'metrics.hussh.ai';
 const HOST_ALIASES = new Map([
   ['hushh.tech', 'hushhtech.com'],
   ['www.hushhtech.com', 'hushhtech.com'],

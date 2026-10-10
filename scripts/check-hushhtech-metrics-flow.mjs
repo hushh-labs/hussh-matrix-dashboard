@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_DASHBOARD_URL = 'https://metrics.hushh.ai';
+const DEFAULT_DASHBOARD_URL = 'https://metrics.hussh.ai';
 const DEFAULT_PRODUCT_URL = 'https://hushhtech.com';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_PROJECT = 'hushh-ai-prod';
@@ -428,7 +428,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     product: 'hushhtech.com',
-    dashboard: 'metrics.hushh.ai',
+    dashboard: 'metrics.hussh.ai',
     checkedAt: new Date().toISOString(),
     config: {
       windowDays: options.windowDays,

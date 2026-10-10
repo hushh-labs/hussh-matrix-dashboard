@@ -52,7 +52,7 @@ const testConfig: AppConfig = {
   clientSecret: 'test-google-client-secret-1234567890',
   redirectUri: 'http://localhost:3001/auth/callback',
   sessionSecret: 'super-secret-key-that-is-at-least-32-characters-long!',
-  allowedDomains: ['hushh.ai', 'hushhtech.com', 'hushh.labs', 'hush1one.com'],
+  allowedDomains: ['hussh.ai', 'hushh.ai', 'hushhtech.com', 'hushh.labs', 'hush1one.com'],
   allowedEmails: ['person1@gmail.com', 'roopmannvaradharaj@gmail.com', 'abdulbeast4@gmail.com'],
   isProduction: false,
 };
@@ -139,16 +139,16 @@ describe('Google OAuth 2.0 & Domain Protection Layer', () => {
     it('moves the legacy host to the callback host before creating a PKCE cookie', async () => {
       const legacy = await request(app)
         .get('/api/auth/google?returnTo=%2Foverview')
-        .set('Host', 'metrics.hussh.ai');
+        .set('Host', 'metrics.hushh.ai');
 
       expect(legacy.status).toBe(307);
-      expect(legacy.headers.location).toBe('https://metrics.hushh.ai/api/auth/google?returnTo=%2Foverview');
+      expect(legacy.headers.location).toBe('https://metrics.hussh.ai/api/auth/google?returnTo=%2Foverview');
       expect(legacy.headers['cache-control']).toBe('no-store');
       expect(getSetCookies(legacy)).toEqual([]);
 
       const canonical = await request(app)
         .get('/api/auth/google?returnTo=%2Foverview')
-        .set('Host', 'metrics.hushh.ai');
+        .set('Host', 'metrics.hussh.ai');
       expect(canonical.status).toBe(302);
       expect(new URL(canonical.headers.location).hostname).toBe('accounts.google.com');
       expect(getSetCookies(canonical).some((cookie) => cookie.startsWith('oauth_pkce='))).toBe(true);
@@ -250,6 +250,14 @@ describe('Google OAuth 2.0 & Domain Protection Layer', () => {
   // 4. Authorization Denial Scenarios
   // -------------------------------------------------------------------------
   describe('Authorization Denials (HTTP 403 Forbidden & No Session Cookie)', () => {
+    it('accepts verified Google Workspace accounts on the new domain', () => {
+      expect(checkUserAuthorization(
+        { email: 'teammate@hussh.ai', hd: 'hussh.ai', email_verified: true },
+        testConfig.allowedDomains,
+        []
+      ).authorized).toBe(true);
+    });
+
     it('does not write account emails into authentication logs', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const log = vi.spyOn(console, 'log').mockImplementation(() => {});

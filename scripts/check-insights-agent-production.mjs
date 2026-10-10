@@ -9,11 +9,11 @@
  *
  * Usage:
  *   node scripts/check-insights-agent-production.mjs
- *   node scripts/check-insights-agent-production.mjs --base-url https://metrics.hushh.ai
+ *   node scripts/check-insights-agent-production.mjs --base-url https://metrics.hussh.ai
  *   node scripts/check-insights-agent-production.mjs --skip-live-chat
  */
 
-const DEFAULT_BASE_URL = 'https://metrics.hushh.ai';
+const DEFAULT_BASE_URL = 'https://metrics.hussh.ai';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const CHAT_TIMEOUT_MS = 45_000;
 

@@ -16,7 +16,7 @@ if (![start,end].every(date => /^\d{4}-\d{2}-\d{2}$/.test(date) && new Date(date
   || start > end || (Date.parse(end)-Date.parse(start))/86400000 > 365
   || !Number.isInteger(repeats) || repeats < 1 || repeats > 3) throw new Error('Invalid bounded audit dates or repetition count');
 const jobProject = process.env.BQ_JOB_PROJECT || 'hushh-ai-prod';
-const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hushh.ai');
+const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai');
 const appRepo = option('--app-repo', null);
 const appRef = option('--app-ref', 'HEAD');
 if (appRef.startsWith('-')) throw new Error('Invalid app ref');

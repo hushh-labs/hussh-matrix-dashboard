@@ -1,11 +1,15 @@
-# Deploy `metrics.hushh.ai`
+# Deploy `metrics.hussh.ai`
 
 This runbook deploys the Hussh Matrix Dashboard to Cloud Run as
-`https://metrics.hushh.ai`.
+`https://metrics.hussh.ai`.
+
+`metrics.hushh.ai` is the legacy domain. Redirect it to the canonical host
+before starting Google OAuth so the host-only PKCE cookie is available at the
+`https://metrics.hussh.ai/auth/callback` callback.
 
 For the hosted-site operating handoff, current go-live state, and post-DNS
 verification checklist, see
-[Hosted `metrics.hushh.ai` Handoff](./metrics-hushh-ai-hosting-handoff.md).
+[Hosted `metrics.hussh.ai` Handoff](./metrics-hushh-ai-hosting-handoff.md).
 
 ## Target
 
@@ -14,8 +18,8 @@ verification checklist, see
 - Cloud Run service: `hushh-matrix-dashboard`
 - Runtime service account: `metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com`
 - Artifact Registry repository: `us-central1-docker.pkg.dev/hushh-ai-prod/website-images`
-- Custom domain: `metrics.hushh.ai`
-- DNS provider: Namecheap BasicDNS for `hushh.ai`
+- Custom domain: `metrics.hussh.ai`
+- DNS provider: Namecheap BasicDNS for `hussh.ai`
 
 Useful links:
 
@@ -34,7 +38,7 @@ Useful links:
 PROJECT=hushh-ai-prod
 REGION=us-central1
 SERVICE=hushh-matrix-dashboard
-DOMAIN=metrics.hushh.ai
+DOMAIN=metrics.hussh.ai
 SA_NAME=metrics-dashboard-runtime
 SA_EMAIL="$SA_NAME@$PROJECT.iam.gserviceaccount.com"
 IMAGE="us-central1-docker.pkg.dev/$PROJECT/website-images/$SERVICE:$(git rev-parse --short HEAD)"
@@ -96,10 +100,10 @@ revision percentages, including a pre-existing canary split; it does not
 assume the latest ready revision was the previously serving one.
 
 The OAuth client's only authorized redirect URI is
-`https://metrics.hushh.ai/auth/callback`. Do not try to verify Google sign-in
+`https://metrics.hussh.ai/auth/callback`. Do not try to verify Google sign-in
 through a tagged `a.run.app` URL: its host-only state cookie would not be sent
 to the production callback. After all 0%-traffic checks pass, an operator may
-promote the candidate to `metrics.hushh.ai` for a tightly monitored interactive
+promote the candidate to `metrics.hussh.ai` for a tightly monitored interactive
 sign-in with an approved account. Check the dashboard and protected APIs, and
 restore the exact prior traffic allocation immediately if sign-in or product
 checks fail. Record the verified revision and image. The five personal Gmail
@@ -256,7 +260,7 @@ create_or_update_secret() {
 }
 
 create_or_update_secret metrics-dashboard-node-env production
-create_or_update_secret metrics-dashboard-app-url https://metrics.hushh.ai
+create_or_update_secret metrics-dashboard-app-url https://metrics.hussh.ai
 create_or_update_secret metrics-dashboard-bq-job-project hushh-ai-prod
 create_or_update_secret metrics-dashboard-bq-cli-fallback false
 create_or_update_secret "$GEMINI_API_KEY_SECRET" "$GEMINI_API_KEY"
@@ -332,7 +336,7 @@ create_or_update_secret "$HUSHHTECH_SEARCH_OAUTH_SECRET" "$HUSHHTECH_SEARCH_CONS
 ### Hushh AI GA4 Data API Access
 
 The GA4 Data API does not read from the web measurement ID directly. For
-`G-PPEF1CSJ5H`, metrics.hushh.ai must call the numeric GA4 property
+`G-PPEF1CSJ5H`, metrics.hussh.ai must call the numeric GA4 property
 `458078330` as `properties/458078330`.
 
 Production is configured to run Cloud Run as
@@ -431,7 +435,7 @@ gcloud run jobs execute "$HUSHHTECH_SEARCH_INGEST_JOB" \
 ```
 
 Schedule the recurring 16-day backfill. Search Console is still a daily
-aggregate source, but running the fallback every six hours lets metrics.hushh.ai
+aggregate source, but running the fallback every six hours lets metrics.hussh.ai
 pick up Google's newly published daily rows without waiting for the next
 single daily run:
 
@@ -575,7 +579,7 @@ gcloud beta run domain-mappings create \
   --project=hushh-ai-prod \
   --region=us-central1 \
   --service=hushh-matrix-dashboard \
-  --domain=metrics.hushh.ai
+  --domain=metrics.hussh.ai
 ```
 
 Get the DNS record Google expects:
@@ -584,7 +588,7 @@ Get the DNS record Google expects:
 gcloud beta run domain-mappings describe \
   --project=hushh-ai-prod \
   --region=us-central1 \
-  --domain=metrics.hushh.ai \
+  --domain=metrics.hussh.ai \
   --format="yaml(status.resourceRecords)"
 ```
 
@@ -614,14 +618,14 @@ bq ls "$PROJECT:$HUSHHTECH_SEARCH_FALLBACK_DATASET"
 After DNS:
 
 ```bash
-dig +short CNAME metrics.hushh.ai
-curl -I https://metrics.hushh.ai
-curl -fsS https://metrics.hushh.ai/api/health
+dig +short CNAME metrics.hussh.ai
+curl -I https://metrics.hussh.ai
+curl -fsS https://metrics.hussh.ai/api/health
 ```
 
 Acceptance checks:
 
-- `https://metrics.hushh.ai` loads the dashboard.
+- `https://metrics.hussh.ai` loads the dashboard.
 - `/api/analytics/all` returns HTTP 200.
 - Supabase top 10 database metrics show aggregate counts only.
 - HushhTech Search Console metrics come from the official GCP export or
