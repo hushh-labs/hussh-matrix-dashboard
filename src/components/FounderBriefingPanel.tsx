@@ -1,5 +1,6 @@
 import { useMetricsResource } from '../lib/use-metrics-resource';
 import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
+import { SingleDayPicker } from './SingleDayPicker';
 import { ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Clock3, Info, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -41,12 +42,10 @@ function rangeLabel(period: FounderPeriod): string {
 function ChangeBadge({ measure, neutralWhenNew = false }: { measure: FounderMeasure; neutralWhenNew?: boolean }) {
   const { trend } = founderTrend(measure);
   const neutral = trend === 'unavailable' || trend === 'flat' || (trend === 'new' && neutralWhenNew);
-  const style = neutral ? 'bg-slate-100 text-slate-600 ring-slate-200'
-    : trend === 'down' ? 'bg-rose-50 text-rose-800 ring-rose-200'
-      : 'bg-emerald-50 text-emerald-800 ring-emerald-200';
+  const style = neutral ? 'is-neutral' : trend === 'down' ? 'is-down' : 'is-up';
   const Icon = trend === 'up' ? ArrowUpRight : trend === 'down' ? ArrowDownRight : Clock3;
   const label = trend === 'new' && neutralWhenNew ? 'No % · earlier period had 0' : founderChangeLabel(measure);
-  return <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${style}`}>
+  return <span className={`change-badge ${style}`}>
     <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{label}
   </span>;
 }
@@ -54,51 +53,50 @@ function ChangeBadge({ measure, neutralWhenNew = false }: { measure: FounderMeas
 function MetricCard({ eyebrow, label, measure, note }: {
   eyebrow: string; label: string; measure: FounderMeasure; note: string;
 }) {
-  return <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.05)]">
-    <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-sky-700">{eyebrow}</p>
-    <h3 className="mt-3 text-sm font-semibold text-slate-700">{label}</h3>
-    <p className="mt-1 text-4xl font-semibold tracking-tight text-slate-950">{number(measure.current)}</p>
-    <div className="mt-3"><ChangeBadge measure={measure} /></div>
-    <p className="mt-4 text-sm leading-6 text-slate-600">{note}</p>
+  return <article className="dashboard-card founder-kpi">
+    <p className="dashboard-label">{eyebrow}</p>
+    <h3 className="mt-2">{label}</h3>
+    <div className="founder-kpi-value"><p>{number(measure.current)}</p><ChangeBadge measure={measure} /></div>
+    <details><summary>How this is counted</summary><p>{note}</p></details>
   </article>;
 }
 
 function OutcomeHealth({ agent }: { agent: FounderAgent }) {
   const health = founderOutcomeHealth(agent);
-  if (health.state === 'not_measured') return <span className="text-xs font-medium text-amber-800">Not measured</span>;
-  if (health.state === 'unavailable') return <span className="text-xs font-medium text-slate-500">Source unavailable</span>;
-  if (health.state === 'waiting') return <span className="text-xs font-medium text-slate-500">Awaiting a result event</span>;
+  if (health.state === 'not_measured') return <span className="text-xs font-medium text-warning">Not measured</span>;
+  if (health.state === 'unavailable') return <span className="text-xs font-medium text-muted">Source unavailable</span>;
+  if (health.state === 'waiting') return <span className="text-xs font-medium text-muted">Waiting for result data</span>;
   const { successRate: rate, successes, expectedErrors: expected, failures } = health;
-  const style = failures > 0 ? 'text-rose-800' : expected > 0 ? 'text-amber-800' : 'text-emerald-800';
+  const style = failures > 0 ? 'text-danger' : expected > 0 ? 'text-warning' : 'text-success';
   return <div className="min-w-40">
     <span className={`block text-sm font-semibold ${style}`}>{rate}% successful</span>
-    <span className="mt-1 block text-[11px] leading-4 text-slate-500">
-      {number(successes)} success · {number(expected)} expected block · {number(failures)} failed
+    <span className="mt-1 block text-[11px] leading-4 text-muted">
+      {number(successes)} success · {number(expected)} blocked as expected · {number(failures)} failed
     </span>
   </div>;
 }
 
 function AgentRow({ agent }: { agent: FounderAgent; key?: string }) {
-  return <tr className="border-t border-slate-100 align-top">
+  return <tr className="border-t border-stroke align-top">
     <th scope="row" className="py-4 pr-5 text-left font-normal">
-      <span className="block text-sm font-semibold text-slate-900">{agent.label}</span>
-      <span className="mt-1 block text-xs leading-5 text-slate-500">{agent.instrumented
+      <span className="block text-sm font-semibold text-ink">{agent.label}</span>
+      <span className="mt-1 block text-xs leading-5 text-muted">{agent.instrumented
         ? agentDescriptions[agent.key] ?? 'Measured product interactions'
         : agent.note ?? 'Deliberate use is not measured yet'}</span>
     </th>
-    <td className="py-4 pr-5 text-right text-sm font-semibold text-slate-900">{number(agent.identifiedAccounts.current)}</td>
-    <td className="py-4 pr-5 text-right text-sm font-semibold text-slate-900">{number(agent.successfulAccounts.current)}</td>
+    <td className="py-4 pr-5 text-right text-sm font-semibold text-ink">{number(agent.identifiedAccounts.current)}</td>
+    <td className="py-4 pr-5 text-right text-sm font-semibold text-ink">{number(agent.successfulAccounts.current)}</td>
     <td className="py-4 pr-5 text-right">
-      <span className="block text-sm font-semibold text-slate-900">{number(agent.interactions.current)}</span>
-      <span className="mt-1 block text-[11px] text-slate-500">iOS {number(agent.iosInteractions)} · Android {number(agent.androidInteractions ?? null)} · web {number(agent.webInteractions)}</span>
+      <span className="block text-sm font-semibold text-ink">{number(agent.interactions.current)}</span>
+      <span className="mt-1 block text-[11px] text-muted">iOS {number(agent.iosInteractions)} · Android {number(agent.androidInteractions ?? null)} · web {number(agent.webInteractions)}</span>
     </td>
     <td className="py-4 pr-5 text-right"><OutcomeHealth agent={agent} /></td>
     <td className="py-4 text-right">{agent.instrumented ? <ChangeBadge measure={agent.interactions} neutralWhenNew />
-      : <span className="text-xs font-medium text-amber-800">Not measured</span>}</td>
+      : <span className="text-xs font-medium text-warning">Not measured</span>}</td>
   </tr>;
 }
 
-type Selection = '7d' | '30d' | '90d' | 'month' | 'custom';
+type Selection = '7d' | '30d' | '90d' | 'month' | 'custom' | 'day';
 type ChartMode = 'accounts' | 'interactions';
 
 export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
@@ -159,101 +157,83 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
   const hasPreviousLine = chartData.some((point) => point.previous !== null);
 
   return <main className="space-y-5 pb-10">
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5" aria-label="Founder reporting period">
+    <section className="dashboard-card report-filter" aria-label="Founder reporting period">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="flex items-center gap-2 text-sm font-semibold text-slate-900"><CalendarDays className="h-4 w-4 text-sky-700" /> Reporting period</p>
-          <p className="mt-1 text-xs text-slate-500">Production data through {dayLabel(latestComplete)} · compared with the preceding equal-length period</p>
+          <p className="flex items-center gap-2 text-sm font-semibold text-ink"><CalendarDays className="h-4 w-4 text-brand-600" /> Reporting period</p>
+          <p className="mt-1 text-xs text-muted">Live product data through {dayLabel(latestComplete)} · compared with the preceding equal-length period</p>
         </div>
-        {loading && <span role="status" className="inline-flex items-center gap-2 text-xs text-sky-700"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Updating</span>}
+        {loading && <span role="status" className="inline-flex items-center gap-2 text-xs text-brand-600"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Updating</span>}
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="filter-presets">
         {([7, 30, 90] as const).map((days) => <button key={days} type="button"
           aria-pressed={selection === `${days}d`}
           onClick={() => applyRange(founderPresetRange(days), `${days}d`)}
-          className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${selection === `${days}d` ? 'bg-[#112034] text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>
+          className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${selection === `${days}d` ? 'bg-subtle text-ink' : 'bg-transparent text-muted'}`}>
           Last {days} days
         </button>)}
       </div>
-      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => applyRange(founderCustomRange(latestComplete, latestComplete), 'day')}
+          aria-pressed={selection === 'day' && period.endDate === latestComplete}
+          className="min-h-10 rounded-lg bg-brand-50 px-3 text-sm font-semibold text-brand-600">Latest complete day</button>
+        <SingleDayPicker label="Briefing specific day" value={period.days === 1 ? period.endDate : ''} min={FOUNDER_EARLIEST_DATE} max={latestComplete}
+          onChange={day => applyRange(founderCustomRange(day, day), 'day')} />
+      </div>
+      <details className="filter-custom"><summary>Custom dates or calendar month</summary>
+      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-40 flex-1 text-xs font-semibold text-slate-600">Choose a month
+          <label className="min-w-40 flex-1 text-xs font-semibold text-muted">Choose a month
             <input type="month" value={draftMonth} min="2026-05" max={latestComplete.slice(0, 7)} onChange={(event) => setDraftMonth(event.target.value)}
-              className="mt-1 block min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900" />
+              className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3 text-sm text-ink" />
           </label>
           <button type="button" onClick={() => applyRange(founderMonthRange(draftMonth), 'month')}
-            className={`min-h-10 rounded-lg px-3 text-sm font-semibold ${selection === 'month' ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-800'}`}>View month</button>
+            className={`min-h-10 rounded-lg px-3 text-sm font-semibold ${selection === 'month' ? 'bg-brand-500 text-white' : 'bg-brand-50 text-brand-600'}`}>View month</button>
         </div>
         <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-32 flex-1 text-xs font-semibold text-slate-600">From
+          <label className="min-w-32 flex-1 text-xs font-semibold text-muted">From
             <input type="date" value={draftStart} min={FOUNDER_EARLIEST_DATE} max={latestComplete} onChange={(event) => setDraftStart(event.target.value)}
-              className="mt-1 block min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900" />
+              className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3 text-sm text-ink" />
           </label>
-          <label className="min-w-32 flex-1 text-xs font-semibold text-slate-600">To
+          <label className="min-w-32 flex-1 text-xs font-semibold text-muted">To
             <input type="date" value={draftEnd} min={FOUNDER_EARLIEST_DATE} max={latestComplete} onChange={(event) => setDraftEnd(event.target.value)}
-              className="mt-1 block min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900" />
+              className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3 text-sm text-ink" />
           </label>
           <button type="button" onClick={() => applyRange(founderCustomRange(draftStart, draftEnd), 'custom')}
-            className={`min-h-10 rounded-lg px-3 text-sm font-semibold ${selection === 'custom' ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-800'}`}>Apply dates</button>
+            className={`min-h-10 rounded-lg px-3 text-sm font-semibold ${selection === 'custom' ? 'bg-brand-500 text-white' : 'bg-brand-50 text-brand-600'}`}>Apply dates</button>
         </div>
       </div>
-      {rangeError && <p role="alert" className="mt-3 text-xs font-medium text-rose-700">{rangeError}</p>}
-    </section>
-
-    <section className="relative overflow-hidden rounded-[28px] bg-[#112034] px-6 py-8 text-white shadow-[0_24px_70px_rgba(17,32,52,0.18)] sm:px-9 sm:py-9">
-      <div className="pointer-events-none absolute -right-10 -top-20 h-72 w-72 rounded-full bg-sky-400/15 blur-3xl" />
-      <div className="relative">
-        <p className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.17em] text-sky-100">
-          <Sparkles className="h-3.5 w-3.5" /> One app · founder briefing
-        </p>
-        <h1 className="mt-5 text-3xl font-semibold tracking-tight sm:text-5xl">Who is using One—and what do they do?</h1>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-200 sm:text-base">A clear production view of identifiable users on iOS, Android and web, the features they use, and how behaviour changes over time.</p>
-        {brief && <div className="mt-6 flex flex-wrap gap-2 text-xs font-medium text-slate-200">
-          <span className="rounded-full bg-white/10 px-3 py-1.5">{rangeLabel(brief.period)} · {brief.period.days} days</span>
-          <span className="rounded-full bg-white/10 px-3 py-1.5">vs {rangeLabel(brief.previousPeriod)}</span>
-          <span className="rounded-full bg-white/10 px-3 py-1.5">GA4 export · updated {new Date(brief.generatedAt).toLocaleString('en-US')}</span>
-        </div>}
-      </div>
+      </details>
+      {rangeError && <p role="alert" className="mt-3 text-xs font-medium text-danger">{rangeError}</p>}
     </section>
 
     <MetricsUpdateStatus period={rangeLabel(period)} updatedAt={brief ? resource.updatedAt : null} loading={resource.loading} refreshing={resource.refreshing} error={error} />
     {resource.loading && !brief ? <MetricsSkeleton label="Loading the selected briefing period" />
-      : error && !brief ? <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">The production briefing is temporarily unavailable. No estimate is shown.</div>
+      : error && !brief ? <div role="alert" className="rounded-2xl border border-amber-200 bg-warning-soft p-6 text-sm text-warning">The production briefing is temporarily unavailable. No estimate is shown.</div>
         : brief ? <>
-          {error && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Refresh failed; the previous period remains visible.</p>}
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <MetricCard eyebrow="One · all platforms" label="Identifiable active accounts" measure={brief.one.activeAccounts}
+          {error && <p role="status" className="rounded-xl bg-warning-soft p-3 text-sm text-warning">Refresh failed; the previous period remains visible.</p>}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard eyebrow="One · all platforms" label="Active signed-in accounts" measure={brief.one.activeAccounts}
               note="A signed-in account is counted once across iOS, Android and web when an account identifier is available." />
-            <MetricCard eyebrow="One · audience growth" label="Newly observed active accounts" measure={brief.one.firstObservedAccounts}
+            <MetricCard eyebrow="One · audience growth" label="Accounts first seen in this period" measure={brief.one.firstObservedAccounts}
               note="Signed-in accounts seen for the first time in available One analytics history. This is not a registration count." />
             <MetricCard eyebrow="One · audience loyalty" label="Returning active accounts" measure={returningAccounts}
               note="Active signed-in accounts first observed before this period. Repeat actions and extra devices do not add users." />
-            <MetricCard eyebrow="One · feature adoption" label="Accounts using a measured feature" measure={brief.one.agentEngagedAccounts}
+            <MetricCard eyebrow="One · feature adoption" label="Accounts using features" measure={brief.one.agentEngagedAccounts}
               note="Distinct signed-in accounts with at least one measured feature action—not a sum of agent rows." />
-            <MetricCard eyebrow="One · iOS" label="iOS app users we can identify" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
-              note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
-            <MetricCard eyebrow="One · Android" label="Android accounts using production"
-              measure={android?.identifiedAccounts ?? {current:null,previous:null}}
-              note={android?.captureState === 'observed' ? 'Distinct signed-in Android accounts with a production backend tag. Platform audiences overlap.' : 'Awaiting exported Android activity with a production backend tag. The current public build used UAT; missing history is not zero.'} />
-            <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Web users we can identify'}
-              measure={webMeasure}
-              note={webIdentityGap
-                ? `${number(web?.identifiedAccounts.current ?? null)} account IDs reached analytics, but only ${number(web?.signedInBoundIdentifiers ?? null)} of ${number(web?.signInIdentifiers ?? null)} sign-in browser identifiers later carried an account ID. This is not a reliable total of web users.`
-                : webPreviousIdentityGap
-                  ? 'Current identified accounts are shown, but growth is withheld: the earlier period did not reliably bind signed-in web activity to accounts.'
-                  : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
+
           </div>
 
           <section className="grid gap-4 lg:grid-cols-[1.45fr_1fr]">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+            <div className="dashboard-card p-5 sm:p-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Audience over time</p>
-                  <h2 className="mt-1 text-xl font-semibold text-slate-950">The trend, day by day</h2></div>
-                <div className="flex rounded-lg bg-slate-100 p-1" role="group" aria-label="Trend measure">
+                <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Audience over time</p>
+                  <h2 className="mt-1 text-xl font-semibold text-ink">The trend, day by day</h2></div>
+                <div className="flex rounded-lg bg-subtle p-1" role="group" aria-label="Trend measure">
                   <button type="button" aria-pressed={chartMode === 'accounts'} onClick={() => setChartMode('accounts')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'accounts' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>Accounts</button>
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'accounts' ? 'bg-surface text-ink shadow-sm' : 'text-muted'}`}>Accounts</button>
                   <button type="button" aria-pressed={chartMode === 'interactions'} onClick={() => setChartMode('interactions')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'interactions' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>Feature actions</button>
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'interactions' ? 'bg-surface text-ink shadow-sm' : 'text-muted'}`}>Feature actions</button>
                 </div>
               </div>
               {brief.one.available ? <>
@@ -265,69 +245,92 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                       <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#64748b', fontSize: 11 }} />
                       <Tooltip formatter={(value) => number(typeof value === 'number' ? value : null)} />
                       {hasPreviousLine && <Area type="monotone" dataKey="previous" name="Earlier period" fill="#cbd5e1" fillOpacity={0.12} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="5 4" />}
-                      <Area type="monotone" dataKey="current" name="Selected period" fill="#0ea5e9" fillOpacity={0.16} stroke="#0369a1" strokeWidth={2.5} />
+                      <Area type="monotone" dataKey="current" name="Selected period" fill="#465fff" fillOpacity={0.16} stroke="#3641f5" strokeWidth={2.5} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                  <span><i className="mr-1 inline-block h-2 w-4 rounded bg-sky-600" /> Selected period</span>
+                <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted">
+                  <span><i className="mr-1 inline-block h-2 w-4 rounded bg-brand-500" /> Selected period</span>
                   {hasPreviousLine && <span><i className="mr-1 inline-block h-2 w-4 rounded bg-slate-400" /> Earlier equal-length period</span>}
                 </div>
-              </> : <p className="mt-6 text-sm text-slate-600">One activity source is unavailable; a trend cannot be shown.</p>}
+                <details className="mt-4 border-t border-stroke pt-3"><summary className="cursor-pointer text-sm font-semibold text-brand-600">View daily numbers</summary>
+                  <div className="metrics-table-scroll mt-3" role="region" aria-label="Daily accounts and feature actions" tabIndex={0}>
+                    <table className="w-full text-left text-xs"><thead><tr className="text-muted"><th scope="col" className="py-3">Date</th><th scope="col" className="px-3 text-right">Active signed-in accounts</th><th scope="col" className="pl-3 text-right">Feature actions</th></tr></thead>
+                      <tbody>{brief.one.daily.map(point => <tr key={point.day} className="border-t border-stroke"><th scope="row" className="py-3 font-medium">{point.day}</th><td className="px-3 text-right">{number(point.activeAccounts)}</td><td className="pl-3 text-right">{number(point.agentInteractions)}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted">An account can appear on several days. Adding daily counts does not give the unique total for the period. Repeated feature actions count again.</p>
+                </details>
+              </> : <p className="mt-6 text-sm text-muted">One activity source is unavailable; a trend cannot be shown.</p>}
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Founder readout</p>
-              <h2 className="mt-1 text-xl font-semibold text-slate-950">What stands out</h2>
-              <ul className="mt-5 space-y-4 text-sm leading-6 text-slate-700">
-                <li><strong className="text-slate-900">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} identified accounts; <strong className="text-slate-900">web:</strong> {webIdentityGap ? 'user total unverified' : `${number(web?.identifiedAccounts.current ?? null)} identified accounts`}. <strong className="text-slate-900"> Android:</strong> {number(android?.identifiedAccounts.current ?? null)} identified accounts. These platform populations can overlap.</li>
-                <li>{mostAccounts ? <><strong className="text-slate-900">Most identified accounts used {mostAccounts.label}:</strong> {number(mostAccounts.identifiedAccounts.current)} in this period.</>
+            <div className="dashboard-card p-5 sm:p-6">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Founder readout</p>
+              <h2 className="mt-1 text-xl font-semibold text-ink">What stands out</h2>
+              <ul className="mt-5 space-y-4 text-sm leading-6 text-ink">
+                <li><strong className="text-ink">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} signed-in accounts; <strong className="text-ink">web:</strong> {webIdentityGap ? 'user total unverified' : `${number(web?.identifiedAccounts.current ?? null)} signed-in accounts`}. <strong className="text-ink"> Android:</strong> {number(android?.identifiedAccounts.current ?? null)} signed-in accounts. These platform populations can overlap.</li>
+                <li>{mostAccounts ? <><strong className="text-ink">Most signed-in accounts used {mostAccounts.label}:</strong> {number(mostAccounts.identifiedAccounts.current)} in this period.</>
                   : 'No agent has a verifiable signed-in audience in this range yet.'}</li>
-                <li>{mostInteractions ? <><strong className="text-slate-900">Most measured interactions:</strong> {mostInteractions.label} had {number(mostInteractions.interactions.current)}. Repeats count; this is not a user count.</>
+                <li>{mostInteractions ? <><strong className="text-ink">Most recorded actions:</strong> {mostInteractions.label} had {number(mostInteractions.interactions.current)}. Repeats count; this is not a user count.</>
                   : 'Agent interaction data is not available yet.'}</li>
-                <li><strong className="text-slate-900">First value:</strong> {number(brief.one.activatedAccounts.current)} identified accounts completed the measured Location activation action.</li>
+                <li><strong className="text-ink">First useful action:</strong> {number(brief.one.activatedAccounts.current)} signed-in accounts shared or received a location.</li>
               </ul>
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <MetricCard eyebrow="One · iOS" label="Active iOS accounts" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
+              note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
+            <MetricCard eyebrow="One · Android" label="Active Android accounts · live service"
+              measure={android?.identifiedAccounts ?? {current:null,previous:null}}
+              note={android?.captureState === 'observed' ? 'Distinct signed-in Android accounts with a production backend tag. Platform audiences overlap.' : 'Awaiting exported Android activity with a production backend tag. The current public build used UAT; missing history is not zero.'} />
+            <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Active web accounts'}
+              measure={webMeasure}
+              note={webIdentityGap
+                ? `${number(web?.identifiedAccounts.current ?? null)} account IDs reached analytics, but only ${number(web?.signedInBoundIdentifiers ?? null)} of ${number(web?.signInIdentifiers ?? null)} sign-in browser identifiers later carried an account ID. This is not a reliable total of web users.`
+                : webPreviousIdentityGap
+                  ? 'Current signed-in accounts are shown, but growth is withheld: the earlier period did not reliably bind signed-in web activity to accounts.'
+                  : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
+          </div>
+
+          <section className="dashboard-card p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Inside One</p>
-                <h2 className="mt-1 text-xl font-semibold text-slate-950">What do people use most?</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Known and successful accounts are deduplicated separately for each capability. Actions may repeat. Outcome health uses only events that explicitly report success, an expected product block, or a genuine failure; rows must not be added together.</p></div>
-              <button type="button" onClick={onExploreOne} className="inline-flex items-center gap-1 text-sm font-semibold text-sky-700 hover:text-sky-900">Explore full One analytics <ArrowRight className="h-4 w-4" /></button>
+              <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Inside One</p>
+                <h2 className="mt-1 text-xl font-semibold text-ink">What do people use most?</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">See which agents people use and whether recorded steps succeed. Accounts are counted once within each row; actions can repeat. The same account can appear in several rows.</p></div>
+              <button type="button" onClick={onExploreOne} className="inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:text-sky-900">Explore full One analytics <ArrowRight className="h-4 w-4" /></button>
             </div>
             <div className="mt-5 overflow-x-auto">
-              <table className="min-w-[760px] w-full text-left">
-                <thead><tr className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500">
+              <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="min-w-[760px] w-full text-left">
+                <thead><tr className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted">
                   <th scope="col" className="pb-3 pr-5">Feature / behaviour</th>
-                  <th scope="col" className="pb-3 pr-5 text-right">Known accounts</th>
+                  <th scope="col" className="pb-3 pr-5 text-right">Signed-in accounts</th>
                   <th scope="col" className="pb-3 pr-5 text-right">Successful accounts</th>
                   <th scope="col" className="pb-3 pr-5 text-right">Actions by platform</th>
-                  <th scope="col" className="pb-3 pr-5 text-right">Outcome health</th>
+                  <th scope="col" className="pb-3 pr-5 text-right">Recorded results</th>
                   <th scope="col" className="pb-3 text-right">Change in actions</th>
                 </tr></thead>
                 <tbody>{displayedAgents.map((agent) => <AgentRow key={agent.key} agent={agent} />)}</tbody>
-              </table>
+              </table></div>
             </div>
-            <p className="mt-4 text-xs leading-5 text-slate-500">Awaiting a result event means usage is measured but no governed outcome has reached the completed GA4 export yet—it is not shown as a failure. The Marketplace event is a profile view, not a completed transaction.</p>
+            <p className="mt-4 text-xs leading-5 text-muted">Waiting for result data means activity was recorded, but its result has not arrived yet. Marketplace counts profile views; it does not count completed purchases.</p>
           </section>
 
           <section className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-700">Acquisition · One web</p>
-              <h2 className="mt-1 text-xl font-semibold text-slate-950">Discovery from Google Search</h2>
+            <div className="dashboard-card p-5 sm:p-6">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Acquisition · One web</p>
+              <h2 className="mt-1 text-xl font-semibold text-ink">Discovery from Google Search</h2>
               <div className="mt-4 flex flex-wrap items-end gap-7">
-                <div><p className="text-xs text-slate-500">Clicks</p><p className="text-3xl font-semibold text-slate-950">{number(brief.search.clicks.current)}</p></div>
-                <div><p className="text-xs text-slate-500">Impressions</p><p className="text-3xl font-semibold text-slate-950">{number(brief.search.impressions.current)}</p></div>
+                <div><p className="text-xs text-muted">Clicks</p><p className="text-3xl font-semibold text-ink">{number(brief.search.clicks.current)}</p></div>
+                <div><p className="text-xs text-muted">Impressions</p><p className="text-3xl font-semibold text-ink">{number(brief.search.impressions.current)}</p></div>
                 <ChangeBadge measure={brief.search.clicks} />
               </div>
-              <p className="mt-4 text-sm leading-6 text-slate-600">Google Search Console counts search-result clicks and appearances for One’s production website. Clicks are neither unique visitors nor app users.</p>
-              {!brief.search.available && <p className="mt-2 text-xs font-medium text-amber-800">The selected Search Console export is incomplete; no value is guessed.</p>}
+              <p className="mt-4 text-sm leading-6 text-muted">Google Search Console counts search-result clicks and appearances for One’s production website. Clicks are neither unique visitors nor app users.</p>
+              {!brief.search.available && <p className="mt-2 text-xs font-medium text-warning">The selected Search Console export is incomplete; no value is guessed.</p>}
             </div>
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 sm:p-6">
-              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-amber-800"><ShieldAlert className="h-4 w-4" /> Measurement confidence</p>
-              <h2 className="mt-1 text-xl font-semibold text-slate-950">What we can—and cannot—claim</h2>
-              <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-700">
+            <div className="rounded-2xl border border-amber-200 bg-warning-soft p-5 sm:p-6">
+              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-warning"><ShieldAlert className="h-4 w-4" /> Data quality</p>
+              <h2 className="mt-1 text-xl font-semibold text-ink">What to keep in mind</h2>
+              <ul className="mt-4 space-y-2 text-sm leading-6 text-ink">
                 {webIdentityGap && <li>Web identity tracking needs repair: {number(web?.signInIdentifiers ?? null)} browser identifiers recorded a successful sign-in, but only {number(web?.signedInBoundIdentifiers ?? null)} of those later carried an account ID in this period. Sign-ins and browsers are <strong>not</strong> unique people. The web user total and its growth percentage are withheld.</li>}
                 {!webIdentityGap && webPreviousIdentityGap && <li>The earlier web period had {number(web?.previousSignedInBoundIdentifiers ?? null)} account-bound identifiers after {number(web?.previousSignInIdentifiers ?? null)} signed-in identifiers. Its identified-account count is not a reliable baseline, so web growth is withheld.</li>}
                 {lowCoverage && <li>Only {Math.round((brief.one.accountCoverage ?? 0) * 100)}% of tracked app/browser identifiers are linked to an account. Unlinked people cannot be uniquely counted.</li>}
@@ -337,7 +340,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                 {!brief.one.available && <li>The One GA4 source could not be verified for this selection.</li>}
                 {!lowCoverage && brief.one.comparisonReady && !brief.one.hasNativeEnvironmentConflict && brief.one.available && <li>Account-linked coverage and comparison history meet this briefing’s checks. Anonymous activity remains outside person counts.</li>}
               </ul>
-              <p className="mt-3 flex items-start gap-1.5 text-xs leading-5 text-amber-900"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Android requires a production backend tag. UAT and debug Android traffic is excluded from the founder audience.</p>
+              <p className="mt-3 flex items-start gap-1.5 text-xs leading-5 text-warning"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> This briefing includes Android activity only when it is marked as using the live service. Test and debug Android activity is excluded.</p>
             </div>
           </section>
         </> : null}

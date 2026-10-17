@@ -3718,6 +3718,7 @@ ${capabilitySql.isDeliberate}
       // so a capability that emits nothing appears with a reason instead of
       // vanishing from the list.
       capabilitiesAvailable: !agents.error,
+      capabilityDailyAvailable: !agentDaily.error,
       capabilities: ONE_CAPABILITIES.map((spec) => {
         const row = capabilityRows.get(spec.key);
         const observed = toNumber(row?.deliberateEvents) > 0;

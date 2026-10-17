@@ -1,0 +1,49 @@
+name: Responsive dashboard UI
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'server.ts'
+      - 'package*.json'
+      - 'playwright.config.ts'
+      - 'vite.config.ts'
+      - 'index.html'
+      - '.github/workflows/responsive-ui.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dashboard-ui-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:ui:one-platforms
+      - run: npm run test:ui:agent-feature-render
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+      - name: Save UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-ui-${{ github.event.pull_request.number }}
+          path: |
+            .codex/artifacts/ui/
+            test-results/
+          include-hidden-files: true
+          retention-days: 7

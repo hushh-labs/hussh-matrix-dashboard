@@ -42,7 +42,8 @@
     "test:chat:agent": "node scripts/check-insights-agent-local.mjs",
     "test:prod:agent": "node scripts/check-insights-agent-production.mjs",
     "test:api:app-store-connect": "node scripts/check-app-store-connect.mjs",
-    "test:api:public-contract": "node scripts/check-public-analytics-contract.mjs"
+    "test:api:public-contract": "node scripts/check-public-analytics-contract.mjs",
+    "test:ui": "playwright test"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.1",
@@ -63,6 +64,7 @@
     "vite": "^6.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/compression": "^1.8.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",

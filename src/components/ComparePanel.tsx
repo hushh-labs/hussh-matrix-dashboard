@@ -3,7 +3,7 @@ import { Fragment } from 'react';
 import type { ReactNode } from 'react';
 import type { GrowthCompare, GrowthCompareWindow, GrowthSummary } from '../lib/types';
 import { cn } from '../lib/utils';
-import { appleCard, applePanel, appleLabel, dashboardBand } from '../lib/theme';
+import { dashboardCard, dashboardPanel, dashboardLabel, dashboardBand } from '../lib/theme';
 
 /**
  * Over time.
@@ -11,7 +11,7 @@ import { appleCard, applePanel, appleLabel, dashboardBand } from '../lib/theme';
  * The growth tab answers "how are we doing in the window I picked". This tab
  * answers the question that comes straight after: "and is that better or
  * worse than usual?" -- the same organisation-level figures over the last 30
- * days, the last 90, and everything since the feeds began, in one table so
+ * days, the last 90, and everything since reporting began, in one table so
  * the eye can run across a row.
  *
  * Nothing here is derived from the growth tab's range. The three windows are
@@ -64,7 +64,7 @@ const SECTIONS: CompareSection[] = [
     title: 'Audience',
     rows: [
       {
-        label: 'New devices picked up',
+        label: 'New devices first seen',
         hint: 'Distinct devices first seen on the One app in the window',
         value: (g) => exact(g.users.window?.newUsers),
       },
@@ -76,7 +76,7 @@ const SECTIONS: CompareSection[] = [
     ],
   },
   {
-    title: 'Cross-product',
+    title: 'Website to app',
     rows: [
       { label: 'Website visitors', hint: 'hushh.ai, same analytics property', value: (g) => exact(g.crossProduct.siteVisitors) },
       { label: 'App web visitors', value: (g) => exact(g.crossProduct.appWebVisitors) },
@@ -85,7 +85,7 @@ const SECTIONS: CompareSection[] = [
     ],
   },
   {
-    title: 'Organic search',
+    title: 'Google Search',
     rows: [
       { label: 'Clicks', value: (g) => (g.organicSearch.available ? exact(g.organicSearch.clicks) : '—') },
       { label: 'Impressions', value: (g) => (g.organicSearch.available ? exact(g.organicSearch.impressions) : '—') },
@@ -103,28 +103,28 @@ const SECTIONS: CompareSection[] = [
     ],
   },
   {
-    title: 'Instrumentation',
+    title: 'Tracking quality',
     rows: [
-      { label: 'Governed events', hint: 'Carry the shared event_category param', value: (g) => exact(g.instrumentation.governedEvents) },
-      { label: 'Ungoverned events', value: (g) => exact(g.instrumentation.ungovernedEvents) },
-      { label: 'Distinct event names', value: (g) => exact(g.instrumentation.distinctEvents), muted: true },
+      { label: 'Activity with standard tracking labels', hint: 'Activity records with the required category label', value: (g) => exact(g.instrumentation.governedEvents) },
+      { label: 'Activity missing standard labels', value: (g) => exact(g.instrumentation.ungovernedEvents) },
+      { label: 'Different types of activity', value: (g) => exact(g.instrumentation.distinctEvents), muted: true },
     ],
   },
 ];
 
 function WindowHeader({ window }: { window: GrowthCompareWindow }) {
   return (
-    <div className={cn(appleCard, 'p-4')}>
-      <p className={appleLabel}>{window.label}</p>
-      <p className="mt-1 text-sm font-bold text-[#1d1d1f]">
+    <div className={cn(dashboardCard, 'p-4')}>
+      <p className={dashboardLabel}>{window.label}</p>
+      <p className="mt-1 text-sm font-bold text-ink">
         {window.range.startDate} to {window.range.endDate}
       </p>
-      <p className="mt-0.5 text-xs font-semibold text-[#86868b]">
+      <p className="mt-0.5 text-xs font-semibold text-muted">
         {window.range.days} days
-        {window.key === 'all' ? ' · since the feeds began' : ''}
+        {window.key === 'all' ? ' · since reporting began' : ''}
       </p>
       {window.error && (
-        <p className="mt-2 text-xs font-semibold leading-5 text-[#8a5a04]">{window.error}</p>
+        <p className="mt-2 text-xs font-semibold leading-5 text-warning">{window.error}</p>
       )}
     </div>
   );
@@ -132,8 +132,8 @@ function WindowHeader({ window }: { window: GrowthCompareWindow }) {
 
 function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className={cn(applePanel, 'p-8 text-center')}>
-      <div className="mx-auto max-w-xl text-sm font-medium leading-6 text-[#6e6e73]">{children}</div>
+    <div className={cn(dashboardPanel, 'p-8 text-center')}>
+      <div className="mx-auto max-w-xl text-sm font-medium leading-6 text-muted">{children}</div>
     </div>
   );
 }
@@ -156,18 +156,18 @@ export function ComparePanel({
       <section>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className={appleLabel}>Hussh · all products · three fixed windows</p>
-            <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
+            <p className={dashboardLabel}>Hussh · all products · three fixed windows</p>
+            <h2 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">
               Is this better or worse than usual?
             </h2>
-            <p className="mt-1.5 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
+            <p className="mt-1.5 max-w-2xl text-sm font-medium leading-6 text-muted">
               The same figures over the last 30 days, the last 90, and everything since the feeds
               began. Read across a row; the windows never move.
             </p>
           </div>
           {loading && compare && (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#6e6e73]" role="status">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#007aff]" />
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-muted" role="status">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-600" />
               Updating
             </span>
           )}
@@ -175,20 +175,20 @@ export function ComparePanel({
 
         {!compare && loading ? (
           <Empty>
-            <span className="inline-flex items-center gap-2 font-semibold text-[#1d1d1f]">
-              <Loader2 className="h-4 w-4 animate-spin text-[#007aff]" />
+            <span className="inline-flex items-center gap-2 font-semibold text-ink">
+              <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
               Reading three windows from BigQuery
             </span>
             <p className="mt-2">Usually under ten seconds.</p>
           </Empty>
         ) : !compare ? (
           <Empty>
-            <p className="font-semibold text-[#1d1d1f]">The comparison could not be loaded.</p>
+            <p className="font-semibold text-ink">The comparison could not be loaded.</p>
             <p className="mt-2">{error ?? 'The server did not return a comparison.'}</p>
             <button
               type="button"
               onClick={onRetry}
-              className="mt-4 inline-flex min-h-9 items-center rounded-lg bg-[#1d1d1f] px-4 text-sm font-bold text-white transition hover:bg-[#323236]"
+              className="mt-4 inline-flex min-h-9 items-center rounded-lg bg-brand-500 px-4 text-sm font-bold text-white transition hover:bg-brand-600"
             >
               Try again
             </button>
@@ -203,13 +203,13 @@ export function ComparePanel({
               ))}
             </div>
 
-            <div className={cn(appleCard, 'mt-4 overflow-x-auto')}>
-              <table className="w-full min-w-[560px] text-sm">
+            <div className={cn(dashboardCard, 'mt-4 overflow-x-auto')}>
+              <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="w-full min-w-[560px] text-sm">
                 <thead>
-                  <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
-                    <th className="border-b border-black/5 px-5 py-3">Metric</th>
+                  <tr className="text-left text-xs font-bold uppercase text-muted">
+                    <th className="border-b border-stroke px-5 py-3">Metric</th>
                     {windows.map((window) => (
-                      <th key={window.key} className="border-b border-black/5 px-5 py-3 text-right">
+                      <th key={window.key} className="border-b border-stroke px-5 py-3 text-right">
                         {window.label}
                       </th>
                     ))}
@@ -222,7 +222,7 @@ export function ComparePanel({
                     </Fragment>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </>
         )}
@@ -230,7 +230,7 @@ export function ComparePanel({
 
       {compare && (
         <section className={dashboardBand}>
-          <p className="max-w-3xl text-xs font-semibold leading-5 text-[#86868b]">
+          <p className="max-w-3xl text-xs font-semibold leading-5 text-muted">
             People are counted as devices, not individuals. &ldquo;All time&rdquo; starts where the
             One app GA4 export does; billing begins a month later, so the all-time spend column
             covers slightly less than the audience columns.
@@ -248,18 +248,18 @@ function SectionRows({ section, windows }: { section: CompareSection; windows: G
   return (
     <>
       <tr>
-        <td colSpan={windows.length + 1} className="border-b border-black/5 bg-[#f5f5f7]/70 px-5 py-2">
-          <span className={appleLabel}>{section.title}</span>
+        <td colSpan={windows.length + 1} className="border-b border-stroke bg-canvas/70 px-5 py-2">
+          <span className={dashboardLabel}>{section.title}</span>
         </td>
       </tr>
       {section.rows.map((row) => (
-        <tr key={row.label} className={cn('font-semibold', row.muted ? 'text-[#6e6e73]' : 'text-[#1d1d1f]')}>
-          <td className="border-b border-black/5 px-5 py-3">
+        <tr key={row.label} className={cn('font-semibold', row.muted ? 'text-muted' : 'text-ink')}>
+          <td className="border-b border-stroke px-5 py-3">
             <span>{row.label}</span>
-            {row.hint && <span className="mt-0.5 block text-xs font-semibold text-[#86868b]">{row.hint}</span>}
+            {row.hint && <span className="mt-0.5 block text-xs font-semibold text-muted">{row.hint}</span>}
           </td>
           {windows.map((window) => (
-            <td key={window.key} className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+            <td key={window.key} className="border-b border-stroke px-5 py-3 text-right tabular-nums">
               {window.data ? row.value(window.data, window) : '—'}
             </td>
           ))}

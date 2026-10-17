@@ -2,7 +2,7 @@ import { useMetricsResource } from '../lib/use-metrics-resource';
 import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
 import { useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { appleCard, applePanel } from '../lib/theme';
+import { dashboardCard, dashboardPanel } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { buildInstagramCampaignLink, INSTAGRAM_DESTINATIONS } from '../lib/instagram-campaign';
 import { contentLabel, contentTotals, filterContent, type InstagramProductType } from '../lib/instagram-content';
@@ -96,55 +96,55 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   return <section className="space-y-5" aria-labelledby="instagram-title">
     <MetricsUpdateStatus updatedAt={resource.updatedAt} loading={loading} refreshing={resource.refreshing} error={resource.error} />
     {loading && <MetricsSkeleton label="Loading Instagram reporting" />}
-    <div className={cn(appleCard, 'p-5 sm:p-8')}>
+    <div className={cn(dashboardCard, 'p-5 sm:p-8')}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-widest text-[#86868b]">Social performance</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-muted">Social performance</p>
           <h2 id="instagram-title" className="mt-2 text-3xl font-semibold">Instagram</h2>
-          <p className="mt-2 text-sm text-[#6e6e73]">{report?.username ? `@${report.username}` : 'Company account'}</p>
-          {report?.media?.length ? <a href="#instagram-content" className="mt-2 inline-block text-sm font-semibold text-[#005eb8] underline">
+          <p className="mt-2 text-sm text-muted">{report?.username ? `@${report.username}` : 'Company account'}</p>
+          {report?.media?.length ? <a href="#instagram-content" className="mt-2 inline-block text-sm font-semibold text-brand-600 underline">
             View posts and Reels
           </a> : null}
         </div>
         {report?.canSync && <button type="button" onClick={() => void sync()} disabled={syncing}
-          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#1d1d1f] px-4 text-sm font-bold text-white disabled:opacity-50">
+          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white disabled:opacity-50">
           <RefreshCw className={cn('h-4 w-4', syncing && 'animate-spin')} />Sync now
         </button>}
       </div>
-      <p role="status" className="mt-5 text-sm text-[#6e6e73]">
+      <p role="status" className="mt-5 text-sm text-muted">
         {loading ? 'Loading Instagram report…' : message || (report ? stateCopy[report.state] : 'Instagram reporting is unavailable.')}
       </p>
     </div>
-    <div className={cn(appleCard, 'p-5 sm:p-8')}>
+    <div className={cn(dashboardCard, 'p-5 sm:p-8')}>
       <h3 className="text-xl font-semibold">Content inventory</h3>
-      <p className="mt-2 text-sm text-[#6e6e73]">Posts and Reels returned for the past 365 days. Counts describe collected content, not Instagram reach or unique viewers.</p>
+      <p className="mt-2 text-sm text-muted">Posts and Reels returned for the past 365 days. Counts describe collected content, not Instagram reach or unique viewers.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {([
           ['Collected media', inventoryTotals.count], ['Reels', inventoryTotals.reels],
           ['Feed posts', inventoryTotals.feed], ['Stories', inventoryTotals.stories],
-        ] as const).map(([label, value]) => <div key={label} className="rounded-xl border border-black/10 p-4">
-          <p className="text-sm text-[#6e6e73]">{label}</p>
+        ] as const).map(([label, value]) => <div key={label} className="rounded-xl border border-stroke p-4">
+          <p className="text-sm text-muted">{label}</p>
           <p className="mt-2 text-2xl font-semibold tabular-nums">{report?.inventory ? value.toLocaleString() : '—'}</p>
         </div>)}
       </div>
-      {report?.inventory ? <p className="mt-4 text-sm leading-6 text-[#6e6e73]">
+      {report?.inventory ? <p className="mt-4 text-sm leading-6 text-muted">
         Scan window starts {report.inventory.windowSince} (UTC); last scanned {report.inventory.scannedAt} (UTC).
         {' '}{report.inventory.complete ? 'Pagination reached the end of the account media list.' : 'Scan is partial at the 75-item limit; format counts are lower bounds.'}
         {report.inventory.complete && report.mediaCount === report.inventory.count ? ' The scan count matches the current account media count.' : ''}
-      </p> : <p className="mt-4 text-sm text-[#6e6e73]">Detailed content inventory has not been collected yet.</p>}
-      {inventoryTotals.unknown > 0 && <p className="mt-2 text-sm text-[#946200]">{inventoryTotals.unknown} items have an unknown Instagram product type and are excluded from the Reel and Feed counts.</p>}
-      <p className="mt-3 text-sm text-[#6e6e73]">
+      </p> : <p className="mt-4 text-sm text-muted">Detailed content inventory has not been collected yet.</p>}
+      {inventoryTotals.unknown > 0 && <p className="mt-2 text-sm text-warning">{inventoryTotals.unknown} items have an unknown Instagram product type and are excluded from the Reel and Feed counts.</p>}
+      <p className="mt-3 text-sm text-muted">
         Current likes across collected items: {inventoryTotals.likes.observed ? inventoryTotals.likes.value.toLocaleString() : '—'} ({inventoryTotals.likes.observed}/{inventoryTotals.count} items with a count).
         {' '}Content views: {inventoryTotals.views.observed ? inventoryTotals.views.value.toLocaleString() : '—'} ({inventoryTotals.views.observed}/{inventoryTotals.count} items with available insight).
       </p>
-      <p className="mt-1 text-xs text-[#86868b]">Likes and views above add the latest per-item lifetime snapshots. Content views are not deduplicated account reach or seven-day account views.</p>
+      <p className="mt-1 text-xs text-muted">Likes and views above add the latest per-item lifetime snapshots. Content views are not deduplicated account reach or seven-day account views.</p>
     </div>
-    <div className={cn(applePanel, 'p-5 sm:p-8')}>
+    <div className={cn(dashboardPanel, 'p-5 sm:p-8')}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs font-bold uppercase tracking-widest text-[#86868b]">Reach · requested {accountRange}-day total</p>
-        <label className="text-sm text-[#6e6e73]">Account reporting window
+        <p className="text-xs font-bold uppercase tracking-widest text-muted">Reach · requested {accountRange}-day total</p>
+        <label className="text-sm text-muted">Account reporting window
           <select aria-label="Account reporting window" value={accountRange} onChange={(event) => setAccountRange(Number(event.target.value) as typeof accountRange)}
-            className="ml-2 min-h-10 rounded-lg border border-black/10 bg-white px-2">
+            className="ml-2 min-h-10 rounded-lg border border-stroke bg-surface px-2">
             <option value={7}>Past 7 days</option><option value={30}>Past 30 days</option><option value={90}>Past 90 days</option>
           </select>
         </label>
@@ -152,63 +152,63 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       <p className="mt-2 text-4xl font-semibold tabular-nums">
         {metricValue(selectedReach?.value, selectedReach?.status)}
       </p>
-      {selectedReach ? <p className="mt-3 text-sm leading-6 text-[#6e6e73]">
+      {selectedReach ? <p className="mt-3 text-sm leading-6 text-muted">
         Requested since: {selectedReach.requestedSince}; until: {selectedReach.requestedUntil} (UTC).
         Meta returned one total for this window; provider reporting boundaries and daily values were not returned.
         {selectedReach.fetchedAt ? ` Fetched: ${selectedReach.fetchedAt} (UTC).` : ''}
-      </p> : <p role="status" className="mt-3 text-sm text-[#946200]">
+      </p> : <p role="status" className="mt-3 text-sm text-warning">
         No stored {accountRange}-day reach total yet. The next sync will request this exact window.
         {report?.metricResults?.[`account.${accountRange}.reach`] ? ` Last attempt: ${report.metricResults[`account.${accountRange}.reach`]}.` : ''}
       </p>}
       {selectedReach && accountRange !== 7 && report?.metricResults?.[`account.${accountRange}.reach`] &&
         report.metricResults[`account.${accountRange}.reach`] !== 'available' &&
-        <p className="mt-2 text-sm text-[#946200]">Latest {accountRange}-day refresh: {report.metricResults[`account.${accountRange}.reach`]}. The prior stored total remains visible.</p>}
-      <p className="mt-3 text-sm text-[#6e6e73]">Last successful sync: {report?.lastSuccessfulSync || 'Never'}.</p>
-      <p className="mt-1 text-sm text-[#6e6e73]">Last attempt: {report?.lastAttempt || 'Never'}.</p>
-      <p className="mt-1 text-xs text-[#86868b]">Instagram reach is separate from website visitors, signups, and app installs.</p>
+        <p className="mt-2 text-sm text-warning">Latest {accountRange}-day refresh: {report.metricResults[`account.${accountRange}.reach`]}. The prior stored total remains visible.</p>}
+      <p className="mt-3 text-sm text-muted">Last successful sync: {report?.lastSuccessfulSync || 'Never'}.</p>
+      <p className="mt-1 text-sm text-muted">Last attempt: {report?.lastAttempt || 'Never'}.</p>
+      <p className="mt-1 text-xs text-muted">Instagram reach is separate from website visitors, signups, and app installs.</p>
     </div>
-    <div className={cn(appleCard, 'p-5 sm:p-8')}>
+    <div className={cn(dashboardCard, 'p-5 sm:p-8')}>
       <h3 className="text-xl font-semibold">Account activity</h3>
-      <p className="mt-2 text-sm text-[#6e6e73]">Requested {accountRange}-day totals for the same UTC window as reach. These are native Instagram metrics and may include paid activity.</p>
+      <p className="mt-2 text-sm text-muted">Requested {accountRange}-day totals for the same UTC window as reach. These are native Instagram metrics and may include paid activity.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         {([['views', 'Views'], ['total_interactions', 'Total interactions'], ['accounts_engaged', 'Accounts engaged']] as const).map(([name, label]) => {
           const metric = selectedAccountMetrics?.[name];
           const latestStatus = report?.metricResults?.[accountRange === 7 ? `account.${name}` : `account.${accountRange}.${name}`];
-          return <div key={name} className="rounded-xl border border-black/10 p-4">
-            <p className="text-sm text-[#6e6e73]">{label}</p>
+          return <div key={name} className="rounded-xl border border-stroke p-4">
+            <p className="text-sm text-muted">{label}</p>
             <p className="mt-2 text-2xl font-semibold tabular-nums">{metricValue(metric?.value, metric?.status)}</p>
-            <p className="mt-1 text-xs text-[#86868b]">{metric?.status || latestStatus || 'Not yet collected'}
+            <p className="mt-1 text-xs text-muted">{metric?.status || latestStatus || 'Not yet collected'}
               {metric && latestStatus && latestStatus !== 'available' ? ` · latest refresh: ${latestStatus}` : ''}</p>
           </div>;
         })}
       </div>
-      <p className="mt-4 text-sm text-[#6e6e73]">Current followers: {metricValue(report?.followersCount, report?.followersCount === null || report?.followersCount === undefined ? undefined : 'available')} · Current media count: {metricValue(report?.mediaCount, report?.mediaCount === null || report?.mediaCount === undefined ? undefined : 'available')}.</p>
-      <p className="mt-1 text-xs text-[#86868b]">Counts observed: {report?.countsObservedAt || 'Not yet available'} (UTC). These are current totals, not follower growth or daily additions.</p>
+      <p className="mt-4 text-sm text-muted">Current followers: {metricValue(report?.followersCount, report?.followersCount === null || report?.followersCount === undefined ? undefined : 'available')} · Current media count: {metricValue(report?.mediaCount, report?.mediaCount === null || report?.mediaCount === undefined ? undefined : 'available')}.</p>
+      <p className="mt-1 text-xs text-muted">Counts observed: {report?.countsObservedAt || 'Not yet available'} (UTC). These are current totals, not follower growth or daily additions.</p>
       {report?.metricResults && Object.values(report.metricResults).some((status) => status !== 'available') &&
-        <p className="mt-3 text-sm text-[#946200]">Some optional metrics are unavailable or failed on the last sync. Available values remain stored.</p>}
+        <p className="mt-3 text-sm text-warning">Some optional metrics are unavailable or failed on the last sync. Available values remain stored.</p>}
     </div>
-    <div id="instagram-content" className={cn(applePanel, 'p-5 sm:p-8')}>
+    <div id="instagram-content" className={cn(dashboardPanel, 'p-5 sm:p-8')}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h3 className="text-xl font-semibold">Posts and Reels</h3>
-          <p className="mt-1 text-sm text-[#6e6e73]">Per-item lifetime insights and current likes/comments. A Reel is identified by Instagram's media product type.</p></div>
+          <p className="mt-1 text-sm text-muted">Results collected for each post or Reel over its lifetime, plus current likes and comments.</p></div>
         <div className="flex flex-wrap gap-3">
-          <label className="text-sm text-[#6e6e73]">Type
-            <select value={mediaFilter} onChange={(event) => { setMediaFilter(event.target.value as typeof mediaFilter); setMediaPage(0); }}
-              className="ml-2 min-h-10 rounded-lg border border-black/10 bg-white px-2">
+          <label className="text-sm text-muted">Type
+            <select aria-label="Type" value={mediaFilter} onChange={(event) => { setMediaFilter(event.target.value as typeof mediaFilter); setMediaPage(0); }}
+              className="ml-2 min-h-10 rounded-lg border border-stroke bg-surface px-2">
               <option value="all">All</option><option value="REELS">Reels</option><option value="FEED">Feed</option>
               <option value="STORY">Stories</option><option value="UNKNOWN">Unknown</option>
             </select>
           </label>
-          <label className="text-sm text-[#6e6e73]">Published
-            <select value={mediaRange} onChange={(event) => { setMediaRange(Number(event.target.value) as typeof mediaRange); setMediaPage(0); }}
-              className="ml-2 min-h-10 rounded-lg border border-black/10 bg-white px-2">
+          <label className="text-sm text-muted">Published
+            <select aria-label="Published" value={mediaRange} onChange={(event) => { setMediaRange(Number(event.target.value) as typeof mediaRange); setMediaPage(0); }}
+              className="ml-2 min-h-10 rounded-lg border border-stroke bg-surface px-2">
               <option value={7}>Past 7 days</option><option value={30}>Past 30 days</option>
               <option value={90}>Past 90 days</option><option value={365}>Past 365 days</option>
             </select>
           </label>
-          <label className="text-sm text-[#6e6e73]">Sort by
-            <select value={mediaSort} onChange={(event) => { setMediaSort(event.target.value as typeof mediaSort); setMediaPage(0); }}
-              className="ml-2 min-h-10 rounded-lg border border-black/10 bg-white px-2">
+          <label className="text-sm text-muted">Sort by
+            <select aria-label="Sort by" value={mediaSort} onChange={(event) => { setMediaSort(event.target.value as typeof mediaSort); setMediaPage(0); }}
+              className="ml-2 min-h-10 rounded-lg border border-stroke bg-surface px-2">
               <option value="publishedAt">Published</option><option value="reach">Reach</option><option value="views">Views</option>
               <option value="likes">Likes</option><option value="comments">Comments</option>
               <option value="saves">Saves</option><option value="shares">Shares</option>
@@ -216,55 +216,55 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
           </label>
         </div>
       </div>
-      <p role="status" className="mt-4 text-sm text-[#6e6e73]">
+      <p role="status" className="mt-4 text-sm text-muted">
         Showing {mediaTotals.count} collected items: {mediaTotals.reels} Reels, {mediaTotals.feed} Feed posts, {mediaTotals.stories} Stories.
-        {' '}Views across {mediaTotals.views.observed}/{mediaTotals.count} items: {mediaTotals.views.observed ? mediaTotals.views.value.toLocaleString() : '—'} (sum of latest lifetime snapshots; not unique viewers).
+        {' '}Views across {mediaTotals.views.observed}/{mediaTotals.count} items: {mediaTotals.views.observed ? mediaTotals.views.value.toLocaleString() : '—'} (latest collected lifetime totals; repeat views included).
       </p>
-      {mediaRows.length === 0 ? <p className="mt-5 text-sm text-[#6e6e73]">No collected media matches these filters.</p> :
-        <div className="mt-5 overflow-x-auto"><table className="min-w-[860px] w-full text-left text-sm">
-          <thead><tr className="border-b border-black/10 text-[#6e6e73]"><th className="py-3 pr-3">Published (UTC)</th><th className="py-3 pr-3">Type</th>
+      {mediaRows.length === 0 ? <p className="mt-5 text-sm text-muted">No collected media matches these filters.</p> :
+        <div className="mt-5 overflow-x-auto"><div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="min-w-[860px] w-full text-left text-sm">
+          <thead><tr className="border-b border-stroke text-muted"><th className="py-3 pr-3">Published (UTC)</th><th className="py-3 pr-3">Type</th>
             <th className="py-3 pr-3">Reach</th><th className="py-3 pr-3">Views</th><th className="py-3 pr-3">Saves</th><th className="py-3 pr-3">Shares</th>
             <th className="py-3 pr-3">Likes</th><th className="py-3 pr-3">Comments</th><th className="py-3">Post</th></tr></thead>
-          <tbody>{visibleMedia.map((item) => <tr key={item.id} className="border-b border-black/[0.06]">
+          <tbody>{visibleMedia.map((item) => <tr key={item.id} className="border-b border-stroke">
             <td className="py-3 pr-3 whitespace-nowrap">{item.publishedAt.slice(0, 10)}</td><td className="py-3 pr-3">{contentLabel(item)}</td>
             {(['reach','views','saved','shares'] as const).map((name) => <td key={name} className="py-3 pr-3 tabular-nums" title={`${item.insights[name]?.status || report?.metricResults?.[`media.${item.id}.${name}`] || 'Not collected'}${item.insights[name]?.fetchedAt ? ` · observed ${item.insights[name].fetchedAt} UTC` : ''}`}>
               {metricValue(item.insights[name]?.value, item.insights[name]?.status)}</td>)}
             <td className="py-3 pr-3 tabular-nums" title={`Metadata checked ${item.fetchedAt} UTC`}>{item.likeCount === null ? '—' : item.likeCount.toLocaleString()}</td>
             <td className="py-3 pr-3 tabular-nums" title={`Metadata checked ${item.fetchedAt} UTC`}>{item.commentsCount === null ? '—' : item.commentsCount.toLocaleString()}</td>
-            <td className="py-3">{safePermalink(item.permalink) ? <a href={safePermalink(item.permalink)!} target="_blank" rel="noopener noreferrer" className="text-[#005eb8] underline">Open</a> : '—'}</td>
+            <td className="py-3">{safePermalink(item.permalink) ? <a href={safePermalink(item.permalink)!} target="_blank" rel="noopener noreferrer" className="text-brand-600 underline">Open</a> : '—'}</td>
           </tr>)}</tbody>
-        </table></div>}
+        </table></div></div>}
       {mediaRows.length > 10 && <div className="mt-4 flex items-center justify-end gap-3 text-sm">
-        <button type="button" disabled={mediaPage === 0} onClick={() => setMediaPage((page) => Math.max(0, page - 1))} className="min-h-10 rounded-lg border border-black/10 px-3 disabled:opacity-40">Previous</button>
+        <button type="button" disabled={mediaPage === 0} onClick={() => setMediaPage((page) => Math.max(0, page - 1))} className="min-h-10 rounded-lg border border-stroke px-3 disabled:opacity-40">Previous</button>
         <span>Page {Math.min(mediaPage, mediaPages - 1) + 1} of {mediaPages}</span>
-        <button type="button" disabled={mediaPage >= mediaPages - 1} onClick={() => setMediaPage((page) => Math.min(mediaPages - 1, page + 1))} className="min-h-10 rounded-lg border border-black/10 px-3 disabled:opacity-40">Next</button>
+        <button type="button" disabled={mediaPage >= mediaPages - 1} onClick={() => setMediaPage((page) => Math.min(mediaPages - 1, page + 1))} className="min-h-10 rounded-lg border border-stroke px-3 disabled:opacity-40">Next</button>
       </div>}
     </div>
-    <div className={cn(appleCard, 'p-5 sm:p-8')}>
+    <div className={cn(dashboardCard, 'p-5 sm:p-8')}>
       <h3 className="text-xl font-semibold">Instagram campaign link</h3>
-      <p className="mt-2 text-sm text-[#6e6e73]">Create a tagged link to an owned landing page. This records the link placement, not the identity of an Instagram viewer or a particular Reel.</p>
+      <p className="mt-2 text-sm text-muted">Create a tagged link to an owned landing page. This records the link placement, not the identity of an Instagram viewer or a particular Reel.</p>
       <div className="mt-5 grid gap-4 sm:grid-cols-3">
         <label className="text-sm font-semibold">Destination
-          <select value={destination} onChange={(event) => { setDestination(event.target.value); setCopied(false); }} className="mt-1 block min-h-10 w-full rounded-lg border border-black/10 bg-white px-3">
+          <select value={destination} onChange={(event) => { setDestination(event.target.value); setCopied(false); }} className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3">
             {INSTAGRAM_DESTINATIONS.map((item) => <option key={item.url} value={item.url}>{item.label}</option>)}
           </select>
         </label>
-        <label className="text-sm font-semibold">Campaign slug
+        <label className="text-sm font-semibold">Campaign name
           <input value={campaign} onChange={(event) => { setCampaign(event.target.value.trim().toLowerCase()); setCopied(false); }} placeholder="launch-sept" maxLength={64}
-            className="mt-1 block min-h-10 w-full rounded-lg border border-black/10 bg-white px-3" />
+            className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3" />
         </label>
         <label className="text-sm font-semibold">Placement or variant
           <input value={content} onChange={(event) => { setContent(event.target.value.trim().toLowerCase()); setCopied(false); }} placeholder="bio-link" maxLength={64}
-            className="mt-1 block min-h-10 w-full rounded-lg border border-black/10 bg-white px-3" />
+            className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3" />
         </label>
       </div>
-      <p className="mt-3 text-xs text-[#86868b]">Use lowercase letters, digits, hyphens, or underscores. Add no names, emails, or personal information.</p>
+      <p className="mt-3 text-xs text-muted">Use lowercase letters, digits, hyphens, or underscores. Add no names, emails, or personal information.</p>
       {campaignLink && <div className="mt-4 flex flex-wrap items-center gap-3">
-        <a href={campaignLink} target="_blank" rel="noopener noreferrer" className="max-w-full break-all text-sm font-semibold text-[#005eb8] underline">{campaignLink}</a>
+        <a href={campaignLink} target="_blank" rel="noopener noreferrer" className="max-w-full break-all text-sm font-semibold text-brand-600 underline">{campaignLink}</a>
         <button type="button" onClick={() => { void navigator.clipboard.writeText(campaignLink).then(() => setCopied(true)).catch(() => setMessage('Could not copy the link. Select and copy it instead.')); }}
-          className="min-h-10 rounded-lg bg-[#1d1d1f] px-4 text-sm font-bold text-white">{copied ? 'Copied' : 'Copy link'}</button>
+          className="min-h-10 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white">{copied ? 'Copied' : 'Copy link'}</button>
       </div>}
-      <p className="mt-4 text-xs text-[#86868b]">Website visits and signups are not joined to Instagram yet. Existing consent and event capture remain unchanged.</p>
+      <p className="mt-4 text-xs text-muted">Website visits and signups are not joined to Instagram yet. Existing consent and event capture remain unchanged.</p>
     </div>
   </section>;
 }

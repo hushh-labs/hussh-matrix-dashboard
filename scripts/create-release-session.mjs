@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
-const secret = process.env.SESSION_SECRET || '';
+// Match getAppConfig(): Secret Manager values can carry a trailing newline.
+const secret = (process.env.SESSION_SECRET || '').trim();
 assert(secret.length >= 32, 'SESSION_SECRET must be provided securely to the release job');
 const session = JSON.stringify({
   email: 'metrics-release-probe@hushh.ai',

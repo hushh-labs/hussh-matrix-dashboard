@@ -2,23 +2,23 @@ import type { OneAppSummary } from '../lib/types';
 
 export function MetricCalculationGuide({ summary }: { summary: OneAppSummary | null }) {
   return (
-    <section aria-label="KPI guide" className="rounded-2xl border border-black/5 bg-[#fbfbfd] p-4 text-xs text-[#6e6e73]">
-      <h3 className="text-sm font-bold text-[#1d1d1f]">How to read these KPIs</h3>
+    <section aria-label="KPI guide" className="rounded-2xl border border-stroke bg-canvas p-4 text-xs text-muted">
+      <h3 className="text-sm font-bold text-ink">How to read these KPIs</h3>
       <dl className="mt-3 grid gap-3 sm:grid-cols-2">
         {[
           ['Devices / browsers', 'How many different app or browser IDs recorded this activity. One person can use several IDs.'],
           ['Times recorded', 'How often the activity was logged during the selected period. Repeated activity counts again.'],
         ].map(([label, definition]) => (
           <div key={label}>
-            <dt className="font-semibold text-[#1d1d1f]">{label}</dt>
+            <dt className="font-semibold text-ink">{label}</dt>
             <dd className="mt-1 leading-5">{definition}</dd>
           </div>
         ))}
       </dl>
-      <p className="mt-3 rounded-xl bg-white p-3 leading-5 text-[#1d1d1f]"><strong>Example:</strong> One device opening a shared location five times = <strong>1 device, 5 views.</strong></p>
+      <p className="mt-3 rounded-xl bg-surface p-3 leading-5 text-ink"><strong>Example:</strong> One device opening a shared location five times = <strong>1 device, 5 views.</strong></p>
       <p className="mt-3 leading-5">One task can appear in several rows. Each row names the step being counted. Open <strong>View details</strong> for its results and calculation.</p>
-      <details className="mt-3 border-t border-black/5 pt-3">
-        <summary className="cursor-pointer font-semibold text-[#1d1d1f]">More about the counts</summary>
+      <details className="mt-3 border-t border-stroke pt-3">
+        <summary className="cursor-pointer font-semibold text-ink">More about the counts</summary>
         <ul className="mt-3 list-disc space-y-2 pl-4 leading-5">
           <li>Signed-in accounts count different account IDs. Activity without a signed-in account is excluded from that count.</li>
           <li>Average per device = times recorded ÷ device/browser IDs, for the whole period.</li>
