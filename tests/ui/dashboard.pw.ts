@@ -132,8 +132,13 @@ test('sidebar collapse, persistent theme, charts and date filtering work', async
   await expect(page.locator('.founder-kpi').first()).toBeVisible();
   await page.screenshot({ path: '.codex/artifacts/ui/founder-dark.png' });
   await page.getByRole('button', { name: 'Switch to light theme' }).click();
-  const request = page.waitForRequest(request => request.url().includes('/api/analytics/founder?') && request.url().includes('start_date='));
+  const request = page.waitForRequest(request => {
+    const url = new URL(request.url());
+    return url.pathname === '/api/analytics/founder'
+      && (Date.parse(url.searchParams.get('end_date') ?? '') - Date.parse(url.searchParams.get('start_date') ?? '')) / 86_400_000 + 1 === 7;
+  });
   await page.getByRole('button', { name: 'Last 7 days', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Last 7 days', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const requested = new URL((await request).url());
   const days = (Date.parse(requested.searchParams.get('end_date')!) - Date.parse(requested.searchParams.get('start_date')!)) / 86_400_000 + 1;
   expect(days).toBe(7);
