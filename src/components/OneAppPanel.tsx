@@ -362,7 +362,12 @@ const SCREEN_LABELS: Record<string, string> = {
   one_setup: 'Setup', feed: 'Feed', login: 'Sign in', kai_home: 'Legacy home',
 };
 
-export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; environment: 'production' | 'uat' }) {
+export function PlatformsAtAGlance({ one, environment, mainAnalytics, onViewMainAnalytics }: {
+  one: OneAppSummary;
+  environment: 'production' | 'uat';
+  mainAnalytics?: OneAppSummary | null;
+  onViewMainAnalytics?: () => void;
+}) {
   // A browser can briefly pair the new UI bundle with the previous API
   // revision during a rolling deploy or rollback. Missing fields mean
   // unavailable, not an empty or zero-valued platform.
@@ -372,10 +377,19 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
     </p>;
   }
 
+  const sourceName = environment === 'uat' ? 'Test analytics' : 'Main analytics';
+  const sameDates = Boolean(one.range?.startDate && one.range?.endDate
+    && one.range.startDate === mainAnalytics?.range?.startDate && one.range.endDate === mainAnalytics?.range?.endDate);
+  const mobileInMain = environment === 'uat' && sameDates && mainAnalytics?.available
+    && mainAnalytics.platformsAvailable === true && Array.isArray(mainAnalytics.platforms)
+    ? mainAnalytics.platforms.filter(row => ['IOS', 'ANDROID'].includes(row.platform.toUpperCase())
+      && row.events > 0 && !one.platforms.some(current => current.platform.toUpperCase() === row.platform.toUpperCase()))
+    : [];
+  const mobileNames = mobileInMain.map(row => platformLabel(row.platform)).join(' and ');
   const platformCards = [
     { key: 'WEB', title: 'One web', scope: `${one.sourceWebHost ?? (environment === 'uat' ? 'uat.one.hushh.ai' : 'one.hushh.ai')} browsers only` },
-    { key: 'IOS', title: 'One iOS', scope: 'com.hushh.app iOS app instances' },
-    { key: 'ANDROID', title: 'One Android', scope: 'com.hussh.app Android app instances · verified Firebase stream' },
+    { key: 'IOS', title: 'One iOS', scope: 'iOS app activity' },
+    { key: 'ANDROID', title: 'One Android', scope: 'Android app activity' },
   ];
 
   return (
@@ -386,6 +400,13 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
           Same selected dates for each surface. Signed-in accounts are users we can identify; browser/app IDs are not unique people.
         </p>
       </div>
+      {mobileInMain.length > 0 && (
+        <div className="rounded-xl border border-brand-600/20 bg-brand-50 p-4 text-sm leading-6 text-ink" role="status">
+          <p className="font-semibold">{mobileNames} activity is available in Main analytics for these same dates.</p>
+          <p className="mt-1 text-muted">Mobile apps can use the test backend while sending activity to Main analytics. The analytics source and the app backend are separate settings.</p>
+          {onViewMainAnalytics && <button type="button" onClick={onViewMainAnalytics} className="mt-3 rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">View captured mobile metrics</button>}
+        </div>
+      )}
       <div className="grid gap-4 lg:grid-cols-3">
         {platformCards.map(({ key, title, scope }) => {
           const row = one.platforms.find((item) => item.platform.toUpperCase() === key);
@@ -396,7 +417,10 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
               <p className="text-base font-semibold text-ink">{title}</p>
               <p className="mt-1 text-xs leading-5 text-muted">{scope}</p>
               {!row ? (
-                <p className="mt-5 text-sm font-semibold text-warning">No activity was recorded in this reporting source during these dates.</p>
+                <div className="mt-5 text-sm leading-6">
+                  <p className="font-semibold text-muted">No {key === 'WEB' ? 'web' : key === 'IOS' ? 'iOS' : 'Android'} activity in {sourceName} for these dates.</p>
+                  {mobileInMain.some(item => item.platform.toUpperCase() === key) && <p className="mt-2 text-brand-600">Captured app activity is in Main analytics. Use “View captured mobile metrics” above.</p>}
+                </div>
               ) : (
                 <>
                   <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4">
@@ -415,14 +439,14 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
                   {!accountsMeasured && <p className="mt-2 text-xs font-semibold text-warning">No stable account ID was observed here; the app/browser IDs cannot be converted into a user count.</p>}
                 </>
               )}
-              {key === 'ANDROID' && <p className="mt-4 rounded-xl bg-warning-soft p-3 text-xs font-semibold leading-5 text-warning">Android app activity is separate from store downloads. Check the native version, installer and backend environment below; test-labelled activity is not production-backend customer evidence.</p>}
+              {key === 'ANDROID' && <p className="mt-4 text-xs leading-5 text-muted">App usage and Play Store downloads are different measurements. Builds using the test backend are labeled separately below.</p>}
             </div>
           );
         })}
       </div>
-      {environment === 'uat' && !one.platforms.some((row) => row.platform === 'IOS' || row.platform === 'ANDROID') && (
+      {environment === 'uat' && mobileInMain.length === 0 && !one.platforms.some((row) => row.platform.toUpperCase() === 'IOS' || row.platform.toUpperCase() === 'ANDROID') && (
         <p className="rounded-xl border border-stroke bg-brand-50 p-3 text-xs font-semibold leading-5 text-brand-600">
-          No mobile activity reached the test analytics source during these dates. A public mobile build using the test service can still report to live-product analytics; that activity is labeled separately there.
+          This source has no mobile activity for these dates. Mobile apps can report to Main analytics even when they use the test backend. Check Main analytics or choose another date range.
         </p>
       )}
       <p className="text-xs leading-5 text-muted">These platform account rows can overlap and must not be added. The global active-account card deduplicates account IDs across surfaces. Store downloads, crashes and physical devices need separate sources and are not measured by these cards.</p>
@@ -1263,7 +1287,7 @@ export function OneAppPanel({
           <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-muted">
             Try refreshing or choose another period. Missing data is not shown as zero.
           </p>
-          {environment === 'uat' && <button type="button" onClick={() => setEnvironment('production')} className="mt-4 rounded-lg bg-brand-50 px-4 py-2 text-brand-600">Back to Production</button>}
+          {environment === 'uat' && <button type="button" onClick={() => setEnvironment('production')} className="mt-4 rounded-lg bg-brand-50 px-4 py-2 text-brand-600">Back to Main analytics</button>}
         </div>}
       </main>
     );
@@ -1315,7 +1339,7 @@ export function OneAppPanel({
             <div
               className="grid w-full grid-cols-2 gap-1 rounded-xl bg-subtle p-1 sm:flex sm:w-fit"
               role="tablist"
-              aria-label="One App environment"
+              aria-label="One app analytics source"
             >
               <button
                 type="button"
@@ -1329,7 +1353,7 @@ export function OneAppPanel({
                     : 'text-muted hover:text-ink',
                 )}
               >
-                Production
+                Main analytics
               </button>
               <button
                 type="button"
@@ -1343,13 +1367,13 @@ export function OneAppPanel({
                     : 'text-muted hover:text-ink',
                 )}
               >
-                UAT / Test builds
+                Test analytics
               </button>
             </div>
             <p className="text-xs font-semibold leading-5 text-muted">
               {environment === 'production'
-                ? 'Live website and mobile app activity. Other websites are excluded. Mobile test-service activity is labeled separately.'
-                : 'Activity from the test website and mobile apps reporting to the test analytics source.'}
+                ? 'Live website and mobile app activity, including mobile builds using the test backend. Backend labels appear separately.'
+                : 'Activity sent to the test analytics source. Test-backend mobile builds may send their activity to Main analytics instead.'}
             </p>
           </div>
           <div className="shrink-0">{dateControl}</div>
@@ -1359,7 +1383,7 @@ export function OneAppPanel({
           <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#465fff]/20 bg-[#465fff]/[0.06] px-4 py-3 text-sm font-semibold leading-5 text-brand-600">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
-              Some public mobile builds still use the test service: {nativeUatTagged.map((row) => `${row.platform} ${formatNumber(row.events)} recorded actions`).join(', ')}. This activity remains visible here and is labeled separately from activity using the live service.
+              Some mobile activity here uses the test backend: {nativeUatTagged.map((row) => `${platformLabel(row.platform)} ${formatNumber(row.events)} recorded actions`).join(', ')}. These actions are included in Main analytics and are separate from live-backend customer activity.
             </p>
           </div>
         )}
@@ -1367,7 +1391,7 @@ export function OneAppPanel({
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className={dashboardLabel}>
-              {environment === 'production' ? 'one.hushh.ai · production' : 'uat.one.hushh.ai · uat / test builds'} · {rangeLabel}
+              {environment === 'production' ? 'one.hushh.ai + mobile apps · Main analytics' : 'uat.one.hushh.ai · Test analytics'} · {rangeLabel}
             </p>
             <h2 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">
               How many registered and active users does One have?
@@ -1375,7 +1399,7 @@ export function OneAppPanel({
           </div>
         </div>
         <OneAtAGlance one={activeData} />
-        <PlatformsAtAGlance one={activeData} environment={environment} />
+        <PlatformsAtAGlance one={activeData} environment={environment} mainAnalytics={one} onViewMainAnalytics={() => setEnvironment('production')} />
         <AndroidAnalyticsPanel one={activeData} environment={environment} />
         <details className={cn(dashboardCard, 'mb-4 p-4 text-sm leading-6 text-ink')}>
           <summary className="cursor-pointer font-semibold text-ink">Plain-English guide to the numbers on this page</summary>
