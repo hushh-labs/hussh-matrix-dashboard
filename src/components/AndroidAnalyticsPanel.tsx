@@ -32,7 +32,7 @@ export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one
     </>}
     <p className="mt-3 text-xs leading-5 text-muted">Screen activity, activation, retention and feature use are in the One sections below. Firebase first_open counts a first launch after installation or reinstallation, not a Play Store download. Export data starts when the stream is included; missing historical raw events are not reconstructed.</p>
     <MetricsUpdateStatus period={startDate && endDate ? `${startDate} to ${endDate}` : undefined} updatedAt={resource.updatedAt} loading={loading} refreshing={resource.refreshing} error={error} />
-    {environment==='production' ? <AndroidProviderReport report={report} loading={loading} error={error} /> : <p className="mt-4 text-xs text-muted">Play Store and historical production-property reports are available in the production reporting view.</p>}
+    {environment==='production' ? <AndroidProviderReport report={report} loading={loading} error={error} /> : <p className="mt-4 text-xs text-muted">Play Store and Android history reports are available in Main analytics.</p>}
   </section>;
 }
 

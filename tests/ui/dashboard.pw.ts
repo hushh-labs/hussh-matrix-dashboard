@@ -217,11 +217,38 @@ test('daily agent traffic shows real drops, withholds missing data and preserves
   await section.getByRole('button', { name: 'Inspect agent activity on: previous day' }).click();
   await expect(row).toContainText('Unavailable');
   await assertFits(page);
-  await page.getByRole('tab', { name: 'UAT / Test builds', exact: true }).click();
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
   await expect(page.getByText('One app data is unavailable for this selection.', { exact: true })).toBeVisible();
   await expect(section).toHaveCount(0);
-  await page.getByRole('button', { name: 'Back to Production' }).click();
+  await page.getByRole('button', { name: 'Back to Main analytics' }).click();
   await expect(section).toBeVisible();
+});
+
+test('test-source empty cards lead to captured mobile metrics without mixing source counts or dates', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await mockDashboard(page);
+  const uat = { ...one, sourceWebHost: 'uat.one.hushh.ai', platforms: one.platforms.filter(row => row.platform === 'WEB') };
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: { production: one, uat } } } }));
+  await page.goto('/'); await navigate(page, 'One app');
+  const dates = await page.getByLabel('One app specific day', { exact: true }).inputValue();
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
+  const platforms = page.getByRole('region', { name: 'One activity by platform', exact: true });
+  await expect(platforms).toContainText('iOS app and Android app activity is available in Main analytics for these same dates.');
+  await expect(platforms).toContainText('No iOS activity in Test analytics for these dates.');
+  await expect(platforms).toContainText('No Android activity in Test analytics for these dates.');
+  await expect(platforms.getByText('Active app-instance IDs', { exact: true })).toHaveCount(0);
+  await assertFits(page);
+  await platforms.getByRole('button', { name: 'View captured mobile metrics', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Main analytics', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(platforms.getByText('Active app-instance IDs', { exact: true })).toHaveCount(2);
+  await expect(page.getByLabel('One app specific day', { exact: true })).toHaveValue(dates);
+  await assertFits(page);
+  const differentRange = { ...one.range, startDate: '2026-01-01', endDate: '2026-01-01' };
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: { production: { ...one, range: differentRange }, uat } } } }));
+  await page.reload(); await navigate(page, 'One app');
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
+  await expect(platforms.getByRole('button', { name: 'View captured mobile metrics', exact: true })).toHaveCount(0);
+  await expect(platforms).not.toContainText('activity is available in Main analytics');
 });
 
 test('failed daily query cannot appear as zero activity or a confirmed traffic drop', async ({ page }) => {

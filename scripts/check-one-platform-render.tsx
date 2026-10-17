@@ -6,10 +6,12 @@ import { AndroidProviderReport, AndroidAnalyticsPanel } from '../src/components/
 import { PlatformsAtAGlance, InstallFunnel } from '../src/components/OneAppPanel';
 import type { OneAppSummary } from '../src/lib/types';
 
-const render = (one: Partial<OneAppSummary>, environment: 'production' | 'uat') =>
+const render = (one: Partial<OneAppSummary>, environment: 'production' | 'uat', mainAnalytics?: Partial<OneAppSummary>) =>
   renderToStaticMarkup(createElement(PlatformsAtAGlance, {
     one: one as OneAppSummary,
     environment,
+    mainAnalytics: mainAnalytics as OneAppSummary | undefined,
+    onViewMainAnalytics: () => {},
   }));
 
 const previousSchema = render({}, 'production');
@@ -41,6 +43,20 @@ assert.match(withScreens, /<details/);
 assert.match(withScreens, /Screen activity details/);
 assert.match(withScreens, /Visits can repeat and are not user counts/);
 
+// Real mobile events can be in the main property even when the app uses a test backend.
+// An alternate-source hint requires healthy aggregates for exactly the same dates.
+const range = { startDate: '2026-09-01', endDate: '2026-09-30' } as OneAppSummary['range'];
+const testWeb = { available: true, platformsAvailable: true, platforms: [], range };
+const mainMobile = { available: true, platformsAvailable: true, range, platforms: [{ platform: 'IOS', events: 10, activeAccounts: 3, activeDeviceIds: 4 } as OneAppSummary['platforms'][number]] };
+const capturedElsewhere = render(testWeb, 'uat', mainMobile);
+assert.match(capturedElsewhere, /iOS app activity is available in Main analytics for these same dates/);
+assert.match(capturedElsewhere, /View captured mobile metrics/);
+assert.doesNotMatch(capturedElsewhere, /Active app-instance|>3<|>4</);
+for (const alternate of [undefined, { ...mainMobile, available: false }, { ...mainMobile, platformsAvailable: false }, { ...mainMobile, range: { ...range, endDate: '2026-09-29' } }]) {
+  assert.doesNotMatch(render(testWeb, 'uat', alternate), /activity is available in Main analytics|View captured mobile metrics/);
+}
+assert.doesNotMatch(render({ ...testWeb, platformsAvailable: false }, 'uat', mainMobile), /No iOS activity|View captured mobile metrics/);
+
 
 
 const waitingAndroid = renderToStaticMarkup(createElement(AndroidAnalyticsPanel, {one:{androidCapture:{state:'waiting',note:'No new Android app events were exported'}} as OneAppSummary}));
@@ -66,4 +82,4 @@ assert.doesNotMatch(pending,/0\.0%|Biggest drop:|100% drop/);
 const complete = renderToStaticMarkup(createElement(InstallFunnel,{funnels:[{...cohort,retentionWindowComplete:true,stages:cohort.stages.map(stage=>({...stage,shareOfInstalls:stage.users/5}))}]}));
 assert.match(complete,/returned in week 1 of 5 first-open app IDs/);
 assert.match(complete,/0\.0%/);
-console.log(JSON.stringify({ok:true,checks:['previous-schema','missing-screen-ranking','uat-source-host','anonymous-account-state','screen-diagnostics-deemphasized','android-waiting','provider-unavailable','missing-first-open','immature-native-cohort','completed-native-cohort-zero']}));
+console.log(JSON.stringify({ok:true,checks:['previous-schema','missing-screen-ranking','uat-source-host','anonymous-account-state','screen-diagnostics-deemphasized','mobile-source-switch','no-cross-source-count-substitution','alternate-source-health-and-date-guards','android-waiting','provider-unavailable','missing-first-open','immature-native-cohort','completed-native-cohort-zero']}));
