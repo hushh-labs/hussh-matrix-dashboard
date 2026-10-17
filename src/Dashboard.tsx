@@ -350,8 +350,8 @@ function sourceCardDetail(payload: SourceMetricClickPayload): MetricDetailState 
     : productKey === 'kai_uat'
       ? 'One UAT'
       : productKey === 'hushhtech'
-        ? 'HushhTech'
-        : 'Hushh AI';
+        ? 'HusshTech'
+        : 'Hussh AI';
   const metricStatus = section?.status ?? card.status;
   return {
     title: `${productLabel} · ${section?.label ?? card.label} · ${metric.label}`,
@@ -999,7 +999,7 @@ function DailyStatusTable({ rows }: { rows: HushhAiDailyStatusPoint[] }) {
         <p className="mt-1 text-sm font-medium text-muted">Supabase users, sessions, and exits by date</p>
       </div>
       {rows.length === 0 ? (
-        <EmptyState>No Hushh AI daily rows available yet.</EmptyState>
+        <EmptyState>No Hussh AI daily rows available yet.</EmptyState>
       ) : (
         <div className="overflow-x-auto">
           <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="min-w-[920px] w-full border-separate border-spacing-0 text-left text-sm">
@@ -1269,13 +1269,13 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!locationRoute) {
-      document.title = `${dashboardTabLabels[activeTab]} | Hushh Matrix`;
+      document.title = `${dashboardTabLabels[activeTab]} | hussh Matrix`;
       return;
     }
     const section = locationRoute.tab === 'overview'
       ? ''
       : ` · ${locationRoute.tab[0].toUpperCase()}${locationRoute.tab.slice(1)}`;
-    document.title = `One Location ${locationRoute.environment === 'uat' ? 'UAT' : 'Production'}${section} | Hussh Matrix`;
+    document.title = `One Location ${locationRoute.environment === 'uat' ? 'UAT' : 'Production'}${section} | hussh Matrix`;
   }, [activeTab, locationRoute]);
 
   const platforms = data?.platforms ?? [];
@@ -1477,7 +1477,7 @@ export default function Dashboard() {
     const ga4 = data?.hushhAi?.ga4;
     if (!ga4) {
       setMetricDetail({
-        title: label ?? 'Hushh AI GA4',
+        title: label ?? 'Hussh AI GA4',
         subtitle: 'GA4 aggregate data is not available for hushh.ai yet.',
         badge: 'Waiting',
         sections: [],
@@ -1486,17 +1486,17 @@ export default function Dashboard() {
       return;
     }
     const focusTitle: Record<typeof focus, string> = {
-      users: 'Hushh AI Users',
-      sessions: 'Hushh AI Sessions',
-      events: 'Hushh AI GA4 Events',
-      engagement: 'Hushh AI Engagement',
-      pages: 'Hushh AI Pages / Screens',
-      acquisition: 'Hushh AI Acquisition',
-      source: 'Hushh AI Source / Medium',
-      landing: 'Hushh AI Landing Pages',
-      geo: 'Hushh AI Countries and devices',
-      timing: 'Hushh AI Session Timing',
-      all: 'Hushh AI GA4 Details',
+      users: 'Hussh AI Users',
+      sessions: 'Hussh AI Sessions',
+      events: 'Hussh AI GA4 Events',
+      engagement: 'Hussh AI Engagement',
+      pages: 'Hussh AI Pages / Screens',
+      acquisition: 'Hussh AI Acquisition',
+      source: 'Hussh AI Source / Medium',
+      landing: 'Hussh AI Landing Pages',
+      geo: 'Hussh AI Countries and devices',
+      timing: 'Hussh AI Session Timing',
+      all: 'Hussh AI GA4 Details',
     };
     const selectedRange = ga4.range
       ? `${ga4.range.startDate} to ${ga4.range.endDate}`
@@ -1519,7 +1519,7 @@ export default function Dashboard() {
       status?: string;
     } | null | undefined;
     setMetricDetail({
-      title: label ?? 'Hushh AI Product Events',
+      title: label ?? 'Hussh AI Product Events',
       subtitle: 'These are the product/custom events we expect to track once a real hushh.ai aggregate source exists.',
       badge: productEvents?.status === 'not_configured' ? 'Not configured' : 'Waiting',
       summary: [
@@ -1539,7 +1539,7 @@ export default function Dashboard() {
         },
       ],
       caveats: [
-        productEvents?.note ?? 'Hushh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
+        productEvents?.note ?? 'Hussh AI DB aggregate source is not configured in metrics.hushh.ai yet.',
         'Until this source exists, GA4 can show traffic/events but cannot verify signup, login, CTA, demo, or contact funnel truth.',
       ],
     });
@@ -1548,7 +1548,7 @@ export default function Dashboard() {
   const openHushhAiSearchDetail = (label?: string) => {
     const search = data?.hushhAi?.searchConsole;
     setMetricDetail({
-      title: label ?? 'Hushh AI Search Console',
+      title: label ?? 'Hussh AI Search Console',
       subtitle: `Search Console aggregate details for ${search?.range?.startDate ?? hushhAiRange.startDate} to ${search?.range?.endDate ?? hushhAiRange.endDate}.`,
       badge: search?.available ? 'Search aggregate' : 'Waiting',
       summary: [
@@ -1622,7 +1622,7 @@ export default function Dashboard() {
   };
 
 
-  const openHushhTechDetail = (label = 'HushhTech Details', focus?: BreakdownMetric) => {
+  const openHushhTechDetail = (label = 'HusshTech Details', focus?: BreakdownMetric) => {
     const qualityWarnings = data?.hushhTech?.dataQualityWarnings ?? [];
     setMetricDetail({
       title: label,
@@ -1685,11 +1685,11 @@ export default function Dashboard() {
           subtitle: 'Which data connections are available and public-safe collection status.',
           rows: metricRows(hushhTechCoverageMetrics),
         },
-        ...sourceCardSections(data?.hushhTech?.sourceCards, 'HushhTech Source'),
+        ...sourceCardSections(data?.hushhTech?.sourceCards, 'HusshTech Source'),
       ],
       caveats: [
-        'HushhTech Supabase/database values are aggregate counts only; raw auth users, emails, and session rows are not exposed.',
-        'HushhTech processed GA4 traffic can be suspicious or zero; the dashboard preserves source caveats instead of treating those zeros as product truth.',
+        'HusshTech Supabase/database values are aggregate counts only; raw auth users, emails, and session rows are not exposed.',
+        'HusshTech processed GA4 traffic can be suspicious or zero; the dashboard preserves source caveats instead of treating those zeros as product truth.',
         'Cloud Run totals are aggregate infra totals, not daily database rows.',
         ...qualityWarnings,
       ],
@@ -1790,7 +1790,7 @@ export default function Dashboard() {
                 refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(rangeForPreset(days))}
                 onCustomRange={setOneRange}
-                ariaLabelPrefix="Hushh Connect"
+                ariaLabelPrefix="Hussh Connect"
               />
             )}
           />
@@ -1798,7 +1798,7 @@ export default function Dashboard() {
           loading ? <main className="space-y-6">
             <div className="grid gap-3 lg:grid-cols-2">
               <DateRangeControl range={kaiRange} onPreset={days => setKaiRange(rangeForPreset(days))} onCustomRange={setKaiRange} ariaLabelPrefix="One web" />
-              <DateRangeControl range={hushhAiRange} onPreset={days => setHushhAiRange(rangeForPreset(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hushh AI" />
+              <DateRangeControl range={hushhAiRange} onPreset={days => setHushhAiRange(rangeForPreset(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hussh AI" />
             </div>
             <MetricsSkeleton />
           </main> : <main className="space-y-10">
@@ -1929,15 +1929,15 @@ export default function Dashboard() {
                     refreshing={isRefreshing}
                     onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
                     onCustomRange={setHushhAiRange}
-                    ariaLabelPrefix="Hushh AI"
+                    ariaLabelPrefix="Hussh AI"
                   />
                 )}
               />
               <div className="mb-4">
                 <ProductLivePanel
-                  kicker="Hushh AI live mode"
+                  kicker="Hussh AI live mode"
                   title="Fresh on refresh"
-                  refreshingLabel="Refreshing Hushh AI sources"
+                  refreshingLabel="Refreshing Hussh AI sources"
                   freshness={hushhAiFreshness}
                   lastUpdated={data?.lastUpdated}
                   autoRefresh={autoRefresh}
@@ -1953,7 +1953,7 @@ export default function Dashboard() {
                 />
                 <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, 5xx responses, and latency context">
                   {hushhAiDailyStatus.length === 0 ? (
-                    <EmptyState>No Hushh AI traffic rows available yet.</EmptyState>
+                    <EmptyState>No Hussh AI traffic rows available yet.</EmptyState>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={hushhAiDailyStatus} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
@@ -2094,13 +2094,13 @@ export default function Dashboard() {
                   title="Total Report"
                   subtitle="Audience, sign-up progress, search and website performance"
                   items={hushhTechReportTotals}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)}
+                  onItemClick={(item) => openHushhTechDetail(`HusshTech · ${item.label}`, item)}
                 />
                 <MetricListCard
                   title="Selected reporting range"
                   subtitle="Active audience over 1, 7 and 30 days, visits and recorded actions"
                   items={hushhTechSevenDayMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)}
+                  onItemClick={(item) => openHushhTechDetail(`HusshTech · ${item.label}`, item)}
                 />
               </div>
             </section>
@@ -2112,13 +2112,13 @@ export default function Dashboard() {
                   title="Key account and product totals"
                   subtitle="Sign-ins, profiles, agents, setup, agreements and connected accounts"
                   items={hushhTechDatabaseMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)}
+                  onItemClick={(item) => openHushhTechDetail(`HusshTech Database · ${item.label}`, item)}
                 />
                 <MetricListCard
                   title="Records during the selected dates"
                   subtitle={hushhTechRangeLabel}
                   items={hushhTechDailySummaryMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Database Range · ${item.label}`, item)}
+                  onItemClick={(item) => openHushhTechDetail(`HusshTech Database Range · ${item.label}`, item)}
                 />
               </div>
               <div className="mt-4">
@@ -2181,13 +2181,13 @@ export default function Dashboard() {
                   title="hushhtech.com Audience"
                   subtitle="Public endpoint audience and traffic"
                   items={hushhTechAudienceMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Audience · ${item.label}`, item)}
+                  onItemClick={(item) => openHushhTechDetail(`HusshTech Audience · ${item.label}`, item)}
                 />
                 <MetricListCard
                   title="Search and website performance"
                   subtitle="Search Console, GA4, and Cloud Run"
                   items={hushhTechOpsMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Search and website performance · ${item.label}`, item)}
+                  onItemClick={(item) => openHushhTechDetail(`HusshTech Search and website performance · ${item.label}`, item)}
                 />
               </div>
             </section>
@@ -2286,13 +2286,13 @@ export default function Dashboard() {
                 title="hushhtech.com Funnel"
                 subtitle="Progress through sign-up and product setup"
                 items={hushhTechBusinessMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel · ${item.label}`, item)}
+                onItemClick={(item) => openHushhTechDetail(`HusshTech Funnel · ${item.label}`, item)}
               />
               <MetricListCard
                 title="hushhtech.com Activity"
                 subtitle="Pages, routes, and event aggregates"
                 items={hushhTechActivityMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Activity · ${item.label}`, item)}
+                onItemClick={(item) => openHushhTechDetail(`HusshTech Activity · ${item.label}`, item)}
               />
             </section>
 
@@ -2301,13 +2301,13 @@ export default function Dashboard() {
                 title="hushhtech.com Funnel Detail"
                 subtitle="Signup, onboarding, KYC, profile, and chat steps"
                 items={hushhTechFunnelMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel Detail · ${item.label}`, item)}
+                onItemClick={(item) => openHushhTechDetail(`HusshTech Funnel Detail · ${item.label}`, item)}
               />
               <MetricListCard
                 title="Data Coverage"
                 subtitle="Which data connections are available"
                 items={hushhTechCoverageMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)}
+                onItemClick={(item) => openHushhTechDetail(`HusshTech Coverage · ${item.label}`, item)}
               />
             </section>
           </main>
@@ -2362,13 +2362,13 @@ export default function Dashboard() {
                 title="hushhtech.com Database"
                 subtitle="Key totals from account and product records"
                 items={hushhTechDatabaseMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)}
+                onItemClick={(item) => openHushhTechDetail(`HusshTech Database · ${item.label}`, item)}
               />
               <MetricListCard
                 title="hushhtech.com Coverage"
                 subtitle="Which data connections are available"
                 items={hushhTechCoverageMetrics}
-                onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)}
+                onItemClick={(item) => openHushhTechDetail(`HusshTech Coverage · ${item.label}`, item)}
               />
             </section>
           </main>

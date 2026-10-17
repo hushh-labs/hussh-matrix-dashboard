@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * TypeScript types for the Hussh Matrix Dashboard.
+ * TypeScript types for the hussh Matrix Dashboard.
  * Maps to the BigQuery `kai_public_dashboard_feed` schema and
  * the hushhtech.com analytics endpoint contract.
  */
@@ -1233,7 +1233,7 @@ export interface GrowthCompare {
 }
 
 // ---------------------------------------------------------------------------
-// App Store Connect — Hushh 1 iOS (official Analytics Reports API)
+// App Store Connect — Hussh 1 iOS (official Analytics Reports API)
 // ---------------------------------------------------------------------------
 
 export interface AppStoreConnectMetrics {

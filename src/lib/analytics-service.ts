@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Client-side analytics service for the Hussh Matrix Dashboard.
+ * Client-side analytics service for the hussh Matrix Dashboard.
  * Fetches modeled aggregate analytics from the Express proxy and normalizes
  * One BigQuery rows plus hushhtech.com public metrics into one UI model.
  */
@@ -1046,7 +1046,7 @@ function buildSourceGroups(
   return [
     {
       productKey: 'hushh_ai',
-      productName: 'Hushh AI',
+      productName: 'Hussh AI',
       domain: 'hushh.ai',
       primaryEnvironment: 'production',
       sourceCards: hushhAi?.sourceCards ?? [],
@@ -1067,7 +1067,7 @@ function buildSourceGroups(
     },
     {
       productKey: 'hushhtech',
-      productName: 'HushhTech',
+      productName: 'HusshTech',
       domain: 'hushhtech.com',
       primaryEnvironment: 'production',
       sourceCards: hushhTech?.sourceCards ?? [],

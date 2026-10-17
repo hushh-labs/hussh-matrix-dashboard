@@ -1,14 +1,14 @@
 import type { ReactNode } from 'react';
-import { MatrixBrand } from './DashboardShell';
+import { MatrixBrand } from './MatrixBrand';
 
 export function AuthPageLayout({ children }: { children: ReactNode }) {
   return <div className="auth-layout">
     <section className="auth-form-side">
       <MatrixBrand />
       <div className="auth-form-card">{children}</div>
-      <p className="auth-footer">Hushh Matrix · Company analytics</p>
+      <p className="auth-footer">hussh Matrix · Company analytics</p>
     </section>
-    <aside className="auth-art-side" aria-label="About Hushh Matrix">
+    <aside className="auth-art-side" aria-label="About hussh Matrix">
       <div className="auth-art-content">
         <MatrixBrand />
         <h2>A clearer view of your business.</h2>

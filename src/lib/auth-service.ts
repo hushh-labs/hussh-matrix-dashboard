@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Client-side authentication models and session helpers for Hussh Matrix Dashboard.
+ * Client-side authentication models and session helpers for hussh Matrix Dashboard.
  */
 
 export interface AuthUser {

@@ -3,13 +3,7 @@ import { ArrowRight, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Log
 import type { AuthUser } from '../lib/auth-service';
 import { dashboardNavigation, dashboardTabLabels, locationNavigation, type DashboardTab } from '../lib/dashboard-navigation';
 import { cn } from '../lib/utils';
-
-export function MatrixBrand({ compact = false }: { compact?: boolean }) {
-  return <span className="matrix-brand">
-    <span className="matrix-brand-mark" aria-hidden="true"><span /><span /><span /></span>
-    {!compact && <span>Hushh<span className="font-normal text-muted"> Matrix</span></span>}
-  </span>;
-}
+import { MatrixBrand } from './MatrixBrand';
 
 /** The same focus/scroll contract for the mobile navigation and page search. */
 function useModalFocus(open: boolean, root: { current: HTMLElement | null }, onClose: () => void) {
@@ -102,7 +96,7 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
       inert={!desktop && !mobileOpen ? true : undefined} aria-hidden={!desktop && !mobileOpen ? true : undefined}
       role={mobileOpen ? 'dialog' : undefined} aria-modal={mobileOpen || undefined} aria-label="Dashboard navigation">
       <div className="sidebar-brand-row">
-        <button className="brand-home" aria-label="Hushh Matrix home" onClick={() => navigate('briefing')}><MatrixBrand compact={collapsed && !mobileOpen} /></button>
+        <button className="brand-home" aria-label="hussh Matrix home" onClick={() => navigate('briefing')}><MatrixBrand compact={collapsed && !mobileOpen} /></button>
         <button className="icon-button sidebar-mobile-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={20} /></button>
       </div>
       <nav className="sidebar-scroll" aria-label="Dashboard sections">
@@ -168,7 +162,7 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
           </dl>
         </details>
         {children}
-        <footer className="dashboard-footer"><span>Hushh Matrix</span><span>Aggregate metrics · source timestamps shown on each report</span></footer>
+        <footer className="dashboard-footer"><span>hussh Matrix</span><span>Aggregate metrics · source timestamps shown on each report</span></footer>
       </div>
     </div>
 

@@ -22,7 +22,7 @@ import type {
 } from '../lib/types';
 
 /**
- * Hushh Connect → Apps: Hushh 1 on iOS, Android and Web.
+ * Hussh Connect → Apps: Hussh 1 on iOS, Android and Web.
  *
  * Production and UAT are two columns, never merged into one number -- for iOS,
  * Production is the App Store and UAT is TestFlight. Every metric here is
@@ -45,9 +45,9 @@ export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateContro
     <main className="space-y-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className={dashboardLabel}>Hushh Connect · Apps</p>
+          <p className={dashboardLabel}>Hussh Connect · Apps</p>
           <h2 className="mt-2 text-3xl font-semibold text-ink sm:text-4xl">
-            Hushh 1 &mdash; iOS, Android, Web
+            Hussh 1 &mdash; iOS, Android, Web
           </h2>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-muted">
             Production and UAT are reported side by side and never added together.
@@ -66,7 +66,7 @@ export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateContro
           sublabel="iOS: App Store · Android & Web: production"
           one={one}
           appStoreConnectCard={appStoreConnect?.production && (
-            <AppStoreConnectCard title="Hushh 1 iOS — App Store" summary={appStoreConnect.production} />
+            <AppStoreConnectCard title="Hussh 1 iOS — App Store" summary={appStoreConnect.production} />
           )}
         />
         <EnvironmentColumn
@@ -74,7 +74,7 @@ export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateContro
           sublabel="iOS: TestFlight · Android & Web: UAT"
           one={oneUat}
           appStoreConnectCard={appStoreConnect?.testflight && (
-            <AppStoreConnectTestFlightCard title="Hushh 1 iOS — TestFlight" summary={appStoreConnect.testflight} />
+            <AppStoreConnectTestFlightCard title="Hussh 1 iOS — TestFlight" summary={appStoreConnect.testflight} />
           )}
         />
       </div>
@@ -120,7 +120,7 @@ function EnvironmentColumn({
 }
 
 /**
- * App Store Connect — Hushh 1 iOS Production, from the Analytics Reports API.
+ * App Store Connect — Hussh 1 iOS Production, from the Analytics Reports API.
  *
  * `summary.available === false` covers two distinct cases, distinguished only
  * by `note`: keys are missing (`App Store Connect analytics not
@@ -187,7 +187,7 @@ function AppStoreConnectMetricsGrid({ metrics }: { metrics: AppStoreConnectMetri
 }
 
 /**
- * App Store Connect — Hushh 1 iOS TestFlight, from the beta tester roster and
+ * App Store Connect — Hussh 1 iOS TestFlight, from the beta tester roster and
  * beta build/tester usage metrics and beta tester roster (not the Analytics
  * Reports API -- TestFlight has no bulk report equivalent since a pre-release
  * build has no product page). `note` is shown even when `available` is true:

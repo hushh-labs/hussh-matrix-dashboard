@@ -93,7 +93,7 @@ const capabilityMetadata: Record<
   },
   gmail: {
     title: 'Gmail Agent',
-    description: 'Gmail account connection, email receipt syncing, and Hushh Mail integration.',
+    description: 'Gmail account connection, email receipt syncing, and Hussh Mail integration.',
     icon: Mail,
     auditExplanation: 'Tracks Gmail connection and sync stages separately. Mail screen visits and receipt categorization need separate tracking; syncing does not fill those rows.',
   },
@@ -358,7 +358,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'inbox_viewed',
-      label: 'Hushh Mail Inbox View',
+      label: 'Hussh Mail Inbox View',
       icon: Mail,
       status: 'active',
       badgeLabel: 'Verified Active',
