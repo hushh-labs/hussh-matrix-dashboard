@@ -43,21 +43,21 @@ export class ErrorBoundary extends Component<
     if (!error) return this.props.children;
 
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f5f5f7] p-6 text-[#1d1d1f]">
-        <div className="max-w-xl rounded-lg border border-black/[0.06] bg-white/88 p-8 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_18px_40px_rgba(0,0,0,0.045)]">
-          <p className="text-xs font-bold uppercase text-[#86868b]">Dashboard error</p>
+      <div className="flex min-h-screen items-center justify-center bg-canvas p-6 text-ink">
+        <div className="max-w-xl rounded-lg border border-stroke bg-surface/88 p-8 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_18px_40px_rgba(0,0,0,0.045)]">
+          <p className="text-xs font-bold uppercase text-muted">Dashboard error</p>
           <h1 className="mt-2 text-2xl font-semibold">This page failed to render.</h1>
-          <p className="mt-3 text-sm font-medium leading-6 text-[#6e6e73]">
+          <p className="mt-3 text-sm font-medium leading-6 text-muted">
             The metrics service itself may be fine — this is a fault in the page, not
             necessarily in the data behind it. Reloading sometimes clears it.
           </p>
-          <pre className="mt-4 overflow-x-auto rounded-lg bg-[#f6f6f8] p-3 text-xs leading-5 text-[#1d1d1f]">
+          <pre className="mt-4 overflow-x-auto rounded-lg bg-canvas p-3 text-xs leading-5 text-ink">
             {error.message}
           </pre>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="mt-5 rounded-lg bg-[#007aff] px-4 py-2 text-sm font-semibold text-white"
+            className="mt-5 rounded-lg bg-[#465fff] px-4 py-2 text-sm font-semibold text-white"
           >
             Reload
           </button>

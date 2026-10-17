@@ -45,7 +45,7 @@ import {
 } from 'recharts';
 
 import { formatNumber } from '../lib/analytics-service';
-import { appleCard, appleLabel } from '../lib/theme';
+import { dashboardCard, dashboardLabel } from '../lib/theme';
 import { cn } from '../lib/utils';
 import type { OneAppSummary } from '../lib/types';
 import { FeatureActivityTable } from './FeatureActivityTable';
@@ -159,7 +159,7 @@ interface FeatureAuditSpec {
 function actionSpec(key: string, label: string, icon: typeof Activity): FeatureAuditSpec {
   return {
     key, label, icon, status: 'active', badgeLabel: 'Awaiting live signal',
-    badgeClass: 'bg-amber-50 text-amber-800',
+    badgeClass: 'bg-warning-soft text-warning',
     explanation: 'A privacy-safe action event is defined; this count appears only after it is verified in the selected GA4 export.',
   };
 }
@@ -172,7 +172,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: UserCheck,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_started"). Tracks entry point & provider choice.',
     },
     {
@@ -181,7 +181,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Key,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_phone_verified"). Verifies SMS OTP handoffs.',
     },
     {
@@ -190,7 +190,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: User,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_google_signed_in"). OAuth 2.0 token exchange.',
     },
     {
@@ -199,7 +199,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: FileText,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_profile_created"). Firebase catalog binding.',
     },
     {
@@ -208,7 +208,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: CheckCircle2,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_auth_onboarding_completed"). Full setup confirmation.',
     },
   ],
@@ -219,7 +219,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: BarChart3,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'A portfolio_viewed event records a deliberate portfolio screen view, not a financial outcome.',
     },
     {
@@ -228,7 +228,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Zap,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'A recommendation_viewed event records an opened recommendation, not advice accepted or acted upon.',
     },
     {
@@ -237,7 +237,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: TrendingUp,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'An analysis_stream_started event means the service accepted a stream request; it does not prove a completed analysis.',
     },
     {
@@ -255,7 +255,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Download,
       status: 'active',
       badgeLabel: 'Awaiting live signal',
-      badgeClass: 'bg-amber-50 text-amber-800',
+      badgeClass: 'bg-warning-soft text-warning',
       explanation: 'Counts save outcomes separately from parse outcomes, so one import is not inflated by adding its stages.',
     },
   ],
@@ -269,7 +269,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: ShieldCheck,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_consent_preferences_updated"). Privacy toggle updates.',
     },
     {
@@ -278,7 +278,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Lock,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_consent_data_unlock_requested"). Vault key unlock trigger.',
     },
     {
@@ -287,7 +287,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: CheckCircle2,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_consent_permission_granted"). Per-agent scope approval.',
     },
     {
@@ -307,7 +307,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Mail,
       status: 'active',
       badgeLabel: 'Awaiting live signal',
-      badgeClass: 'bg-amber-50 text-amber-800',
+      badgeClass: 'bg-warning-soft text-warning',
       explanation: 'A gmail_connect_started event records an OAuth attempt, not a connected account.',
     },
     {
@@ -316,7 +316,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Mail,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Counts terminal OAuth completion outcomes. The OAuth start step is excluded, and success/failure remain separate.',
     },
     {
@@ -325,7 +325,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: RefreshCw,
       status: 'active',
       badgeLabel: 'Awaiting live signal',
-      badgeClass: 'bg-amber-50 text-amber-800',
+      badgeClass: 'bg-warning-soft text-warning',
       explanation: 'A gmail_sync_requested event means the user requested a sync; it does not prove the server accepted or finished it.',
     },
     {
@@ -334,7 +334,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: RefreshCw,
       status: 'active',
       badgeLabel: 'Awaiting live signal',
-      badgeClass: 'bg-amber-50 text-amber-800',
+      badgeClass: 'bg-warning-soft text-warning',
       explanation: 'Counts queue outcomes separately. A success here means the job was accepted, not that receipt processing finished.',
     },
     {
@@ -343,7 +343,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: CheckCircle2,
       status: 'active',
       badgeLabel: 'Awaiting live signal',
-      badgeClass: 'bg-amber-50 text-amber-800',
+      badgeClass: 'bg-warning-soft text-warning',
       explanation: 'Counts terminal Gmail receipt-sync outcomes emitted only after processing finishes.',
     },
     {
@@ -352,7 +352,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Mail,
       status: 'active',
       badgeLabel: 'Awaiting live signal',
-      badgeClass: 'bg-amber-50 text-amber-800',
+      badgeClass: 'bg-warning-soft text-warning',
       explanation: 'A sign-in screen view is separate from an authenticated inbox view.',
     },
     {
@@ -361,7 +361,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Mail,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Only an actual one_gmail_inbox_viewed event can fill this row. Sign-in screen views are excluded.',
     },
     {
@@ -381,7 +381,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Briefcase,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_ria_verification_checked"). CRD number lookup.',
     },
     {
@@ -390,7 +390,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Users,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_ria_workspace_visited"). Financial advisor dashboard visit.',
     },
     {
@@ -399,7 +399,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Zap,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_ria_strategy_requested"). Portfolio strategy generation.',
     },
     {
@@ -419,7 +419,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Layers,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_marketplace_browsed"). Catalog search & filtering.',
     },
     {
@@ -428,7 +428,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: User,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_marketplace_profile_viewed"). Data deal details view.',
     },
     {
@@ -478,7 +478,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: Radio,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Confirmation records; shared-location views are reported separately.',
     },
     actionSpec('location_viewed', 'Shared location views', MapPin),
@@ -488,7 +488,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: CheckCircle2,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_in_completed").',
     },
     {
@@ -497,7 +497,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: CheckCircle2,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_out_completed"). Verified active in UAT & Production.',
     },
     {
@@ -506,7 +506,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: MessageCircleMore,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Save My Soul emergency trigger events recorded.',
     },
     {
@@ -515,7 +515,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: MapPin,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Location request events recorded across active devices.',
     },
     {
@@ -524,7 +524,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: ShieldCheck,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Public location link creation events recorded.',
     },
     {
@@ -533,7 +533,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: ContactRound,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Background contact signal sync events recorded.',
     },
     {
@@ -542,7 +542,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: CircleDot,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Circle creation and engagement records.',
     },
     {
@@ -551,7 +551,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       icon: UsersRound,
       status: 'active',
       badgeLabel: 'Verified Active',
-      badgeClass: 'bg-[#34c759]/10 text-[#1f7a36]',
+      badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Invitation creation and handoff records.',
     },
   ],
@@ -559,7 +559,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
 
 function MetricValue({ value, waiting = false }: { value: number | null; waiting?: boolean }) {
   if (waiting || value === null) {
-    return <span className="text-xs font-semibold text-[#86868b]">—</span>;
+    return <span className="text-xs font-semibold text-muted">—</span>;
   }
   return <>{exactCount(value)}</>;
 }
@@ -606,7 +606,7 @@ export function AgentCapabilityAnalyticsPanel({
       icon: meta.icon,
       status: instrumented ? 'active' : 'gap',
       badgeLabel: instrumented ? 'Verified Active' : 'Instrumentation Gap',
-      badgeClass: instrumented ? 'bg-[#34c759]/10 text-[#1f7a36]' : 'bg-[#ff9500]/10 text-[#b36b00]',
+      badgeClass: instrumented ? 'bg-[#12b76a]/10 text-success' : 'bg-[#ff9500]/10 text-[#b36b00]',
       explanation: meta.auditExplanation,
     },
   ];
@@ -655,7 +655,7 @@ export function AgentCapabilityAnalyticsPanel({
       ...spec,
       label: featureActivityLabel(spec.key, spec.label),
       badgeLabel: isGap ? 'Not tracked yet' : !sourceAvailable ? 'Data unavailable' : wasObserved ? 'Data available' : 'No activity recorded',
-      badgeClass: isGap || !sourceAvailable ? 'bg-amber-50 text-amber-800' : wasObserved ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-100 text-slate-600',
+      badgeClass: isGap || !sourceAvailable ? 'bg-warning-soft text-warning' : wasObserved ? 'bg-success-soft text-success' : 'bg-subtle text-muted',
       accounts,
       devices,
       signals,
@@ -669,28 +669,28 @@ export function AgentCapabilityAnalyticsPanel({
   return (
     <div className="space-y-8">
       {/* Top Header */}
-      <div className="flex flex-col gap-4 border-b border-black/5 pb-6">
+      <div className="flex flex-col gap-4 border-b border-stroke pb-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={onBack}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-black/5 text-[#1d1d1f] hover:bg-black/10 transition-colors"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-subtle text-ink hover:bg-subtle transition-colors"
               aria-label="Back to One App"
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
             <div>
               <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#007aff]/10 text-[#007aff]">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#465fff]/10 text-brand-600">
                   <Icon className="h-4 w-4" />
                 </span>
-                <p className={appleLabel}>{meta.title} &middot; Activity &middot; {rangeLabel}</p>
+                <p className={dashboardLabel}>{meta.title} &middot; Activity &middot; {rangeLabel}</p>
               </div>
-              <h1 className="mt-1 text-2xl font-bold text-[#1d1d1f] sm:text-3xl">
+              <h1 className="mt-1 text-2xl font-bold text-ink sm:text-3xl">
                 {meta.title} activity
               </h1>
-              <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
+              <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-muted">
                 {meta.description}
               </p>
             </div>
@@ -701,7 +701,7 @@ export function AgentCapabilityAnalyticsPanel({
         {/* Unified Environment Switcher matching Image 3 */}
         <div className="mt-2 grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
           <div
-            className="grid w-full grid-cols-2 gap-1 rounded-xl bg-black/[0.045] p-1 sm:flex sm:w-fit"
+            className="grid w-full grid-cols-2 gap-1 rounded-xl bg-subtle p-1 sm:flex sm:w-fit"
             role="tablist"
             aria-label="Agent capability environment"
           >
@@ -711,10 +711,10 @@ export function AgentCapabilityAnalyticsPanel({
               aria-selected={environment === 'production'}
               onClick={() => setEnvironment('production')}
               className={cn(
-                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
+                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] sm:shrink-0 sm:px-4',
                 environment === 'production'
-                  ? 'bg-white text-[#1d1d1f] shadow-sm'
-                  : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+                  ? 'bg-surface text-ink shadow-sm'
+                  : 'text-muted hover:text-ink',
               )}
             >
               Production
@@ -725,16 +725,16 @@ export function AgentCapabilityAnalyticsPanel({
               aria-selected={environment === 'uat'}
               onClick={() => setEnvironment('uat')}
               className={cn(
-                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
+                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] sm:shrink-0 sm:px-4',
                 environment === 'uat'
-                  ? 'bg-white text-[#1d1d1f] shadow-sm'
-                  : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+                  ? 'bg-surface text-ink shadow-sm'
+                  : 'text-muted hover:text-ink',
               )}
             >
               UAT / Test builds
             </button>
           </div>
-          <p className="text-xs font-semibold leading-5 text-[#6e6e73]">
+          <p className="text-xs font-semibold leading-5 text-muted">
             {environment === 'production'
               ? 'Production analytics source: One production web and native app activity. Native build and backend environment are not verified by this selection.'
               : 'UAT analytics source: test activity recorded in the UAT property. Production and UAT counts are kept separate.'}
@@ -745,52 +745,52 @@ export function AgentCapabilityAnalyticsPanel({
       {loading ? <MetricsSkeleton /> : <>
       {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className={cn(appleCard, 'p-5')}>
+        <div className={cn(dashboardCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Signed-in accounts</p>
-            <UserCheck className="h-4 w-4 text-[#007aff]" />
+            <p className="text-sm font-semibold text-muted">Signed-in accounts</p>
+            <UserCheck className="h-4 w-4 text-brand-600" />
           </div>
-          <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
+          <p className="mt-3 text-4xl font-bold text-ink">
             <MetricValue value={instrumented && capabilitySourceAvailable ? identifiedAccounts : null} />
           </p>
-          <p className="mt-1 text-xs font-semibold text-[#86868b]">
+          <p className="mt-1 text-xs font-semibold text-muted">
             Different signed-in account IDs using this feature
           </p>
         </div>
 
-        <div className={cn(appleCard, 'p-5')}>
+        <div className={cn(dashboardCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Active devices</p>
-            <Users className="h-4 w-4 text-[#007aff]" />
+            <p className="text-sm font-semibold text-muted">Active devices</p>
+            <Users className="h-4 w-4 text-brand-600" />
           </div>
-          <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
+          <p className="mt-3 text-4xl font-bold text-ink">
             <MetricValue value={instrumented && capabilitySourceAvailable ? deviceUsers : null} />
           </p>
-          <p className="mt-1 text-xs font-semibold text-[#86868b]">
+          <p className="mt-1 text-xs font-semibold text-muted">
             Different app or browser IDs using this feature
           </p>
         </div>
 
-        <div className={cn(appleCard, 'p-5')}>
+        <div className={cn(dashboardCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Recorded actions</p>
-            <Zap className="h-4 w-4 text-[#1f7a36]" />
+            <p className="text-sm font-semibold text-muted">Recorded actions</p>
+            <Zap className="h-4 w-4 text-success" />
           </div>
-          <p className="mt-3 text-4xl font-bold text-[#1d1d1f]">
+          <p className="mt-3 text-4xl font-bold text-ink">
             <MetricValue value={instrumented && capabilitySourceAvailable ? deliberateEvents : null} />
           </p>
-          <p className="mt-1 text-xs font-semibold text-[#86868b]">
+          <p className="mt-1 text-xs font-semibold text-muted">
             Recorded feature-use steps; repeated actions count again
           </p>
         </div>
 
-        <div className={cn(appleCard, 'p-5')}>
+        <div className={cn(dashboardCard, 'p-5')}>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#6e6e73]">Data status</p>
+            <p className="text-sm font-semibold text-muted">Data status</p>
             {observed ? (
-              <CheckCircle2 className="h-4 w-4 text-[#1f7a36]" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
             ) : (
-              <AlertTriangle className="h-4 w-4 text-[#8a5a04]" />
+              <AlertTriangle className="h-4 w-4 text-warning" />
             )}
           </div>
           <div className="mt-3">
@@ -798,14 +798,14 @@ export function AgentCapabilityAnalyticsPanel({
               className={cn(
                 'inline-block rounded-full px-2.5 py-1 text-xs font-bold',
                 observed
-                  ? 'bg-[#34c759]/10 text-[#1f7a36]'
+                  ? 'bg-[#12b76a]/10 text-success'
                   : 'bg-[#ff9500]/10 text-[#b36b00]'
               )}
             >
               {!instrumented ? 'Not tracked yet' : !capabilitySourceAvailable ? 'Data unavailable' : observed ? 'Data available' : 'No activity recorded'}
             </span>
           </div>
-          <p className="mt-2 text-xs font-semibold text-[#86868b]">
+          <p className="mt-2 text-xs font-semibold text-muted">
             {!instrumented
               ? 'Activity tracking is not available yet'
               : !capabilitySourceAvailable
@@ -821,10 +821,10 @@ export function AgentCapabilityAnalyticsPanel({
 
       {/* Daily Active Trend Chart */}
       {instrumented && observed && daily.length > 0 && (
-        <div className={cn(appleCard, 'p-6')}>
+        <div className={cn(dashboardCard, 'p-6')}>
           <div className="mb-4">
-            <h3 className="text-lg font-bold text-[#1d1d1f]">Devices active each day</h3>
-            <p className="mt-0.5 text-xs font-semibold text-[#6e6e73]">
+            <h3 className="text-lg font-bold text-ink">Devices active each day</h3>
+            <p className="mt-0.5 text-xs font-semibold text-muted">
               Different device/browser IDs using {meta.title} ({rangeLabel})
             </p>
           </div>
@@ -833,13 +833,13 @@ export function AgentCapabilityAnalyticsPanel({
               <AreaChart data={daily} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="agentCapGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#007aff" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#007aff" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#465fff" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#465fff" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8e8ed" vertical={false} />
-                <XAxis dataKey="eventDate" stroke="#86868b" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="#86868b" fontSize={11} tickLine={false} axisLine={false} />
+                <XAxis dataKey="eventDate" stroke="#667085" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="#667085" fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{
                     borderRadius: 10,
@@ -852,7 +852,7 @@ export function AgentCapabilityAnalyticsPanel({
                 <Area
                   type="monotone"
                   dataKey="users"
-                  stroke="#007aff"
+                  stroke="#465fff"
                   strokeWidth={2.5}
                   fill="url(#agentCapGradient)"
                 />
@@ -865,8 +865,8 @@ export function AgentCapabilityAnalyticsPanel({
       {/* Feature Adoption & Telemetry Audit Table */}
       <div className="space-y-4">
         <div>
-          <p className={appleLabel}>Feature adoption</p>
-          <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">Recorded activity by feature in {meta.title}</h3>
+          <p className={dashboardLabel}>Feature adoption</p>
+          <h3 className="mt-1 text-2xl font-semibold text-ink">Recorded activity by feature in {meta.title}</h3>
         </div>
 
         <FeatureActivityTable rows={computedFeatures.map(feature => ({
@@ -879,22 +879,22 @@ export function AgentCapabilityAnalyticsPanel({
       </div>
 
       {/* Telemetry Audit & Explanation */}
-      <details className={cn(appleCard, 'p-6')}>
-        <summary className="cursor-pointer text-sm font-semibold text-[#1d1d1f]">Tracking details</summary>
+      <details className={cn(dashboardCard, 'p-6')}>
+        <summary className="cursor-pointer text-sm font-semibold text-ink">Tracking details</summary>
         <div className="mt-3 flex items-start gap-3">
-          <Info className="h-5 w-5 text-[#007aff] shrink-0 mt-0.5" />
+          <Info className="h-5 w-5 text-brand-600 shrink-0 mt-0.5" />
           <div>
-            <h3 className="text-base font-bold text-[#1d1d1f]">About activity tracking</h3>
-            <p className="mt-1 text-xs font-semibold leading-5 text-[#6e6e73]">
+            <h3 className="text-base font-bold text-ink">About activity tracking</h3>
+            <p className="mt-1 text-xs font-semibold leading-5 text-muted">
               {meta.auditExplanation}
             </p>
             {capability?.note && (
-              <p className="mt-2 rounded-lg bg-[#fff7e6] p-3 text-xs font-semibold text-[#8a5a04] border border-[#ff9500]/20">
+              <p className="mt-2 rounded-lg bg-warning-soft p-3 text-xs font-semibold text-warning border border-[#ff9500]/20">
                 <strong>Notice:</strong> {capability.note}
               </p>
             )}
             {backgroundRatio && parseFloat(backgroundRatio) > 1.5 && (
-              <p className="mt-2 text-xs font-medium text-[#6e6e73]">
+              <p className="mt-2 text-xs font-medium text-muted">
                 💡 <strong>Background Ratio:</strong> {backgroundRatio}× total events relative to deliberate actions. Background pings (retries, pre-fetches, diagnostics) are filtered out from device activity metrics.
               </p>
             )}

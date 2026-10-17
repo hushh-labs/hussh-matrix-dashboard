@@ -26,7 +26,7 @@ import {
 } from 'recharts';
 
 import { formatNumber } from '../lib/analytics-service';
-import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
+import { dashboardCard, dashboardLabel, dashboardPanel, dashboardBand } from '../lib/theme';
 import { cn } from '../lib/utils';
 import type {
   LocationAnalyticsEnvironment,
@@ -86,7 +86,7 @@ const featureIcon: Record<string, typeof MapPin> = {
 
 function MetricValue({ value, waiting = false }: { value: number | null; waiting?: boolean }) {
   if (waiting || value === null) {
-    return <span className="text-xs font-semibold text-[#86868b]">—</span>;
+    return <span className="text-xs font-semibold text-muted">—</span>;
   }
   return <>{exactCount(value)}</>;
 }
@@ -105,43 +105,43 @@ function StatCard({
   waiting?: boolean;
 }) {
   return (
-    <div className={cn(appleCard, 'p-5')}>
+    <div className={cn(dashboardCard, 'p-5')}>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold text-[#6e6e73]">{label}</p>
-        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#e8f2ff] text-[#007aff]">
+        <p className="text-sm font-semibold text-muted">{label}</p>
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
           <Icon className="h-4 w-4" />
         </span>
       </div>
-      <p className={cn('mt-4 font-semibold leading-none text-[#1d1d1f]', waiting ? 'text-base' : 'text-3xl')}>
+      <p className={cn('mt-4 font-semibold leading-none text-ink', waiting ? 'text-base' : 'text-3xl')}>
         <MetricValue value={value} waiting={waiting} />
       </p>
-      <p className="mt-2 text-xs font-medium leading-5 text-[#86868b]">{detail}</p>
+      <p className="mt-2 text-xs font-medium leading-5 text-muted">{detail}</p>
     </div>
   );
 }
 
 function featureAudit(feature: OneLocationBehaviorMetric, environment: LocationAnalyticsEnvironment, sourceAvailable: boolean) {
   if (!sourceAvailable) return {
-    badgeLabel: 'Data unavailable', badgeClass: 'bg-amber-50 text-amber-800',
+    badgeLabel: 'Data unavailable', badgeClass: 'bg-warning-soft text-warning',
     explanation: 'We could not read this count. A dash does not mean zero activity.',
   };
   if (!feature.instrumented) {
     return {
       badgeLabel: 'Not tracked yet',
-      badgeClass: 'bg-amber-50 text-amber-800',
+      badgeClass: 'bg-warning-soft text-warning',
       explanation: `No matching ${environment === 'production' ? 'production' : 'UAT/test'} event has been observed. This is not proof of zero use.`,
     };
   }
   if (!feature.events) {
     return {
       badgeLabel: 'No activity recorded',
-      badgeClass: 'bg-slate-100 text-slate-600',
+      badgeClass: 'bg-subtle text-muted',
       explanation: 'No matching activity was recorded in this period.',
     };
   }
   return {
     badgeLabel: 'Data available',
-    badgeClass: 'bg-emerald-50 text-emerald-800',
+    badgeClass: 'bg-success-soft text-success',
     explanation: eventVolumeExplanation(feature.events, feature.users),
   };
 }
@@ -185,10 +185,10 @@ function FeatureTable({
 function JourneyReach({ rows }: { rows: OneLocationJourneyMetric[] }) {
   const max = Math.max(1, ...rows.map((row) => row.users ?? 0));
   return (
-    <div className={cn(applePanel, 'p-5 sm:p-6')}>
+    <div className={cn(dashboardPanel, 'p-5 sm:p-6')}>
       <div className="mb-5">
-        <p className="text-base font-bold text-[#1d1d1f]">Journey reach</p>
-        <p className="mt-1 text-xs font-medium leading-5 text-[#86868b]">
+        <p className="text-base font-bold text-ink">Journey reach</p>
+        <p className="mt-1 text-xs font-medium leading-5 text-muted">
           Optional branches are independent. This is reach, not a forced sequential funnel.
         </p>
       </div>
@@ -198,21 +198,21 @@ function JourneyReach({ rows }: { rows: OneLocationJourneyMetric[] }) {
           const width = waiting ? 0 : Math.max(2, ((row.users ?? 0) / max) * 100);
           return (
             <li key={row.key} className="grid grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-3">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#f2f2f7] text-[11px] font-bold text-[#6e6e73]">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-subtle text-[11px] font-bold text-muted">
                 {index + 1}
               </span>
               <div className="min-w-0">
                 <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <p className="truncate text-sm font-semibold text-[#1d1d1f]">{row.label}</p>
+                  <p className="truncate text-sm font-semibold text-ink">{row.label}</p>
                   {waiting && (
-                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-[#8a5a04]">Rolling out</span>
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-warning">Rolling out</span>
                   )}
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-[#ececf0]">
-                  <div className="h-full rounded-full bg-[#007aff]" style={{ width: `${width}%` }} />
+                <div className="h-2 overflow-hidden rounded-full bg-[#eaecf0]">
+                  <div className="h-full rounded-full bg-[#465fff]" style={{ width: `${width}%` }} />
                 </div>
               </div>
-              <p className="min-w-12 text-right text-sm font-bold text-[#1d1d1f]">
+              <p className="min-w-12 text-right text-sm font-bold text-ink">
                 <MetricValue value={row.users} waiting={waiting} />
               </p>
             </li>
@@ -228,35 +228,35 @@ function CircleBreakdown({ one }: { one: OneAppSummary }) {
   const engaged = one.locationAnalytics.journey.find((row) => row.key === 'circle_engaged');
   return (
     <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
-      <div className={cn(applePanel, 'p-6')}>
-        <p className={appleLabel}>Created in range</p>
-        <p className="mt-3 text-5xl font-semibold tracking-tight text-[#1d1d1f]">{formatNumber(total)}</p>
-        <p className="mt-2 text-sm font-medium leading-6 text-[#6e6e73]">
+      <div className={cn(dashboardPanel, 'p-6')}>
+        <p className={dashboardLabel}>Created in range</p>
+        <p className="mt-3 text-5xl font-semibold tracking-tight text-ink">{formatNumber(total)}</p>
+        <p className="mt-2 text-sm font-medium leading-6 text-muted">
           Based on emitted creation events—not a claim about current active inventory.
         </p>
         <div className="mt-6 grid grid-cols-3 gap-2">
           {one.locationAnalytics.circleKinds.map((row) => (
-            <div key={row.kind} className="rounded-2xl bg-white/70 p-3">
-              <p className="text-xl font-bold text-[#1d1d1f]">{formatNumber(row.circlesCreated)}</p>
-              <p className="mt-1 text-[11px] font-semibold text-[#86868b]">{row.label}</p>
+            <div key={row.kind} className="rounded-2xl bg-surface/70 p-3">
+              <p className="text-xl font-bold text-ink">{formatNumber(row.circlesCreated)}</p>
+              <p className="mt-1 text-[11px] font-semibold text-muted">{row.label}</p>
             </div>
           ))}
         </div>
       </div>
-      <div className={cn(applePanel, 'p-6')}>
+      <div className={cn(dashboardPanel, 'p-6')}>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className={appleLabel}>Engagement</p>
-            <p className="mt-2 text-3xl font-semibold text-[#1d1d1f]">
+            <p className={dashboardLabel}>Engagement</p>
+            <p className="mt-2 text-3xl font-semibold text-ink">
               <MetricValue value={engaged?.users ?? null} waiting={!engaged?.instrumented} />
             </p>
-            <p className="mt-1 text-sm font-medium text-[#6e6e73]">devices reaching a Circle action</p>
+            <p className="mt-1 text-sm font-medium text-muted">devices reaching a Circle action</p>
           </div>
-          <UsersRound className="h-6 w-6 text-[#007aff]" />
+          <UsersRound className="h-6 w-6 text-brand-600" />
         </div>
-        <div className="mt-6 rounded-2xl border border-black/[0.06] bg-white/60 p-4">
-          <p className="text-sm font-bold text-[#1d1d1f]">Measured without personal data</p>
-          <p className="mt-1 text-xs font-medium leading-5 text-[#6e6e73]">
+        <div className="mt-6 rounded-2xl border border-stroke bg-surface/60 p-4">
+          <p className="text-sm font-bold text-ink">Measured without personal data</p>
+          <p className="mt-1 text-xs font-medium leading-5 text-muted">
             Tab and detail opens, joins, member invitations, removals, leaves, deletions and invite-code handoffs—never Circle names, member identities or codes.
           </p>
         </div>
@@ -290,13 +290,13 @@ function SourceCompleteness({
       ];
   const sourcesWithActivity = sources.filter((source) => seen.has(source.platform)).length;
   return (
-    <div className={cn(applePanel, 'flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between')}>
+    <div className={cn(dashboardPanel, 'flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between')}>
       <div>
-        <p className="text-sm font-bold text-[#1d1d1f]">Combined platform total</p>
-        <p className="mt-1 text-xs font-medium leading-5 text-[#6e6e73]">
+        <p className="text-sm font-bold text-ink">Combined platform total</p>
+        <p className="mt-1 text-xs font-medium leading-5 text-muted">
           Every headline and feature row combines the three platforms inside this environment only.
         </p>
-        <p className="mt-1 text-xs font-semibold leading-5 text-[#86868b]">
+        <p className="mt-1 text-xs font-semibold leading-5 text-muted">
           Qualifying Location activity observed on {sourcesWithActivity} of {sources.length} included platform streams.
           Zero-event streams remain included in the total.
         </p>
@@ -363,16 +363,16 @@ export function OneLocationAnalyticsPanel({
         <button
           type="button"
           onClick={onBack}
-          className="mb-4 inline-flex min-h-10 items-center gap-2 rounded-full px-3 text-sm font-semibold text-[#007aff] transition hover:bg-white/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff]"
+          className="mb-4 inline-flex min-h-10 items-center gap-2 rounded-full px-3 text-sm font-semibold text-brand-600 transition hover:bg-surface/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff]"
         >
           <ArrowLeft className="h-4 w-4" />
           All One agents
         </button>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className={appleLabel}>{environmentConfig.sourceLabel} · One Location · {rangeLabel}</p>
-            <h2 className="mt-1 text-3xl font-semibold tracking-tight text-[#1d1d1f] sm:text-4xl">One Location analytics</h2>
-            <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
+            <p className={dashboardLabel}>{environmentConfig.sourceLabel} · One Location · {rangeLabel}</p>
+            <h2 className="mt-1 text-3xl font-semibold tracking-tight text-ink sm:text-4xl">One Location analytics</h2>
+            <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-muted">
               Behaviour across web, iPhone and Android—from Connect and Circles through requests, sharing and Check-In.
             </p>
           </div>
@@ -380,7 +380,7 @@ export function OneLocationAnalyticsPanel({
         </div>
         <div className="mt-5 grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
           <div
-            className="grid w-full grid-cols-2 gap-1 rounded-xl bg-black/[0.045] p-1 sm:flex sm:w-fit"
+            className="grid w-full grid-cols-2 gap-1 rounded-xl bg-subtle p-1 sm:flex sm:w-fit"
             role="tablist"
             aria-label="One Location analytics environment"
           >
@@ -392,21 +392,21 @@ export function OneLocationAnalyticsPanel({
                 aria-selected={environment === item.key}
                 onClick={() => onEnvironmentChange(item.key)}
                 className={cn(
-                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
+                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] sm:shrink-0 sm:px-4',
                   environment === item.key
-                    ? 'bg-white text-[#1d1d1f] shadow-sm'
-                    : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+                    ? 'bg-surface text-ink shadow-sm'
+                    : 'text-muted hover:text-ink',
                 )}
               >
                 {item.label}
               </button>
             ))}
           </div>
-          <p className="text-xs font-semibold leading-5 text-[#6e6e73]">
+          <p className="text-xs font-semibold leading-5 text-muted">
             {environmentConfig.description} Counts never mix across environments.
           </p>
         </div>
-        <div className="mt-5 grid grid-cols-2 gap-1 rounded-xl bg-black/[0.035] p-1 sm:flex" role="tablist" aria-label="One Location analytics sections">
+        <div className="mt-5 grid grid-cols-2 gap-1 rounded-xl bg-subtle p-1 sm:flex" role="tablist" aria-label="One Location analytics sections">
           {tabs.map((item) => (
             <button
               key={item.key}
@@ -415,8 +415,8 @@ export function OneLocationAnalyticsPanel({
               aria-selected={tab === item.key}
               onClick={() => onTabChange(item.key)}
               className={cn(
-                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007aff] sm:shrink-0 sm:px-4',
-                tab === item.key ? 'bg-white text-[#1d1d1f] shadow-sm' : 'text-[#6e6e73] hover:text-[#1d1d1f]',
+                'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] sm:shrink-0 sm:px-4',
+                tab === item.key ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink',
               )}
             >
               {item.label}
@@ -426,11 +426,11 @@ export function OneLocationAnalyticsPanel({
       </section>
 
       {loading ? <MetricsSkeleton /> : (!selectedOne || !selectedOne.available || !locationAnalytics) ? (
-        <section className={cn(applePanel, 'p-8 text-center')}>
-          <p className="text-base font-bold text-[#1d1d1f]">
+        <section className={cn(dashboardPanel, 'p-8 text-center')}>
+          <p className="text-base font-bold text-ink">
             {environment === 'production' ? 'Production' : 'UAT/test'} analytics are unavailable.
           </p>
-          <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-[#6e6e73]">
+          <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-muted">
             This lane stays separate and will never fall back to the other environment. Check the matching GA4 export and dashboard access.
           </p>
         </section>
@@ -464,8 +464,8 @@ export function OneLocationAnalyticsPanel({
       {(tab === 'overview' || tab === 'features') && (
         <section className="space-y-4">
           <div>
-            <p className={appleLabel}>Feature adoption</p>
-            <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">What devices actually use</h3>
+            <p className={dashboardLabel}>Feature adoption</p>
+            <h3 className="mt-1 text-2xl font-semibold text-ink">What devices actually use</h3>
           </div>
           <FeatureTable features={locationAnalytics.features} environment={environment} summary={selectedOne} />
         </section>
@@ -473,24 +473,24 @@ export function OneLocationAnalyticsPanel({
 
       {tab === 'overview' && (
         <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-          <div className={cn(applePanel, 'p-5 sm:p-6')}>
-            <p className="text-base font-bold text-[#1d1d1f]">Daily Location activity</p>
-            <p className="mt-1 text-xs font-medium text-[#86868b]">Unique devices using Location versus live sharing</p>
+          <div className={cn(dashboardPanel, 'p-5 sm:p-6')}>
+            <p className="text-base font-bold text-ink">Daily Location activity</p>
+            <p className="mt-1 text-xs font-medium text-muted">Unique devices using Location versus live sharing</p>
             <div className="mt-5 h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                   <defs>
                     <linearGradient id="location-active" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#007aff" stopOpacity={0.24} />
-                      <stop offset="100%" stopColor="#007aff" stopOpacity={0} />
+                      <stop offset="0%" stopColor="#465fff" stopOpacity={0.24} />
+                      <stop offset="100%" stopColor="#465fff" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid vertical={false} stroke="rgba(0,0,0,0.06)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#86868b' }} axisLine={false} tickLine={false} minTickGap={24} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#86868b' }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#667085' }} axisLine={false} tickLine={false} minTickGap={24} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#667085' }} axisLine={false} tickLine={false} />
                   <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid rgba(0,0,0,0.08)', fontSize: 12 }} />
-                  <Area type="monotone" dataKey="active" name="Devices using Location" stroke="#007aff" strokeWidth={2.4} fill="url(#location-active)" isAnimationActive={false} />
-                  <Area type="monotone" dataKey="sharing" name="Live sharing devices" stroke="#34c759" strokeWidth={2} fill="transparent" isAnimationActive={false} />
+                  <Area type="monotone" dataKey="active" name="Devices using Location" stroke="#465fff" strokeWidth={2.4} fill="url(#location-active)" isAnimationActive={false} />
+                  <Area type="monotone" dataKey="sharing" name="Live sharing devices" stroke="#12b76a" strokeWidth={2} fill="transparent" isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -502,8 +502,8 @@ export function OneLocationAnalyticsPanel({
       {(tab === 'overview' || tab === 'circles') && (
         <section className="space-y-4">
           <div>
-            <p className={appleLabel}>Circles</p>
-            <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">Creation mix and engagement</h3>
+            <p className={dashboardLabel}>Circles</p>
+            <h3 className="mt-1 text-2xl font-semibold text-ink">Creation mix and engagement</h3>
           </div>
           <CircleBreakdown one={selectedOne} />
         </section>
@@ -512,8 +512,8 @@ export function OneLocationAnalyticsPanel({
       {(tab === 'overview' || tab === 'journey') && (
         <section className="space-y-4">
           <div>
-            <p className={appleLabel}>Cross-surface journey</p>
-            <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">Connect to Circle to location value</h3>
+            <p className={dashboardLabel}>Cross-surface journey</p>
+            <h3 className="mt-1 text-2xl font-semibold text-ink">Connect to Circle to location value</h3>
           </div>
           <JourneyReach rows={locationAnalytics.journey} />
         </section>
@@ -522,20 +522,20 @@ export function OneLocationAnalyticsPanel({
       {(tab === 'overview' || tab === 'features') && (
         <section className="space-y-4">
           <div>
-            <p className={appleLabel}>Coverage</p>
-            <h3 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">All platforms, one total</h3>
+            <p className={dashboardLabel}>Coverage</p>
+            <h3 className="mt-1 text-2xl font-semibold text-ink">All platforms, one total</h3>
           </div>
           <SourceCompleteness one={selectedOne} environment={environment} />
         </section>
       )}
 
       <section className={dashboardBand}>
-        <div className={cn(applePanel, 'flex flex-col gap-2 p-5')}>
+        <div className={cn(dashboardPanel, 'flex flex-col gap-2 p-5')}>
           <div className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-[#34c759]" />
-            <p className="text-sm font-bold text-[#1d1d1f]">Privacy-safe aggregate analytics</p>
+            <ShieldCheck className="h-4 w-4 text-[#12b76a]" />
+            <p className="text-sm font-bold text-ink">Privacy-safe aggregate analytics</p>
           </div>
-          <p className="text-sm font-medium leading-6 text-[#6e6e73]">
+          <p className="text-sm font-medium leading-6 text-muted">
             Aggregate GA4 export rows only. Coordinates, Circle names, contact details, member identities, invitation codes, public-link tokens and message content never reach this dashboard. Devices and browsers are not deduplicated into people.
           </p>
         </div>

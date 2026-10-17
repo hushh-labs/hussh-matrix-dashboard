@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 *.p8
+.codex/artifacts/
+test-results/
+playwright-report/

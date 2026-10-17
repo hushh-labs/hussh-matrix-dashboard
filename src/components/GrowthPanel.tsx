@@ -17,7 +17,7 @@ import {
 } from 'recharts';
 
 import { cn } from '../lib/utils';
-import { appleCard, appleLabel, applePanel, dashboardBand } from '../lib/theme';
+import { dashboardCard, dashboardLabel, dashboardPanel, dashboardBand } from '../lib/theme';
 import { formatNumber } from '../lib/analytics-service';
 import type { GrowthSummary, OrgIdentityPlatform } from '../lib/types';
 
@@ -80,10 +80,10 @@ function Block({
   return (
     <section className={dashboardBand}>
       <div className="mb-4">
-        <p className={appleLabel}>{kicker}</p>
-        <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f]">{title}</h2>
+        <p className={dashboardLabel}>{kicker}</p>
+        <h2 className="mt-1 text-2xl font-semibold text-ink">{title}</h2>
         {hint && (
-          <p className="mt-1.5 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">{hint}</p>
+          <p className="mt-1.5 max-w-2xl text-sm font-medium leading-6 text-muted">{hint}</p>
         )}
       </div>
       {children}
@@ -104,17 +104,17 @@ function Figure({
   tone?: 'plain' | 'warn';
 }): ReactElement {
   return (
-    <div className={cn(appleCard, 'p-5')}>
-      <p className="text-sm font-semibold text-[#6e6e73]">{label}</p>
+    <div className={cn(dashboardCard, 'p-5')}>
+      <p className="text-sm font-semibold text-muted">{label}</p>
       <p
         className={cn(
           'mt-2 text-4xl font-semibold leading-none',
-          tone === 'warn' ? 'text-[#8a5a04]' : 'text-[#1d1d1f]',
+          tone === 'warn' ? 'text-warning' : 'text-ink',
         )}
       >
         {value}
       </p>
-      {detail && <p className="mt-2 text-xs font-semibold leading-5 text-[#86868b]">{detail}</p>}
+      {detail && <p className="mt-2 text-xs font-semibold leading-5 text-muted">{detail}</p>}
     </div>
   );
 }
@@ -197,18 +197,18 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
         />
       </div>
 
-      <div className={cn(appleCard, 'p-6')}>
+      <div className={cn(dashboardCard, 'p-6')}>
         <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold text-[#86868b]">
-            Time aggregation: <span className="capitalize font-bold text-[#1d1d1f]">{granularity}</span>
+          <p className="text-xs font-semibold text-muted">
+            Time aggregation: <span className="capitalize font-bold text-ink">{granularity}</span>
           </p>
-          <div className="flex items-center gap-1 rounded-lg bg-[#f0f0f2] p-1 text-xs font-semibold text-[#6e6e73]">
+          <div className="flex items-center gap-1 rounded-lg bg-subtle p-1 text-xs font-semibold text-muted">
             <button
               type="button"
               onClick={() => setGranularity('weekly')}
               className={cn(
                 'rounded-md px-2.5 py-1 transition-all',
-                granularity === 'weekly' ? 'bg-white text-[#1d1d1f] shadow-sm' : 'hover:text-[#1d1d1f]'
+                granularity === 'weekly' ? 'bg-surface text-ink shadow-sm' : 'hover:text-ink'
               )}
             >
               Weekly
@@ -218,7 +218,7 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
               onClick={() => setGranularity('monthly')}
               className={cn(
                 'rounded-md px-2.5 py-1 transition-all',
-                granularity === 'monthly' ? 'bg-white text-[#1d1d1f] shadow-sm' : 'hover:text-[#1d1d1f]'
+                granularity === 'monthly' ? 'bg-surface text-ink shadow-sm' : 'hover:text-ink'
               )}
             >
               Monthly
@@ -232,16 +232,16 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#e8e8ed" vertical={false} />
               <XAxis
                 dataKey="label"
-                stroke="#86868b"
+                stroke="#667085"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
               />
-              <YAxis yAxisId="left" stroke="#86868b" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis yAxisId="left" stroke="#667085" fontSize={11} tickLine={false} axisLine={false} />
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                stroke="#86868b"
+                stroke="#667085"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
@@ -257,7 +257,7 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
               <Bar
                 yAxisId="left"
                 dataKey="newUsers"
-                fill="#007aff"
+                fill="#465fff"
                 radius={[6, 6, 0, 0]}
                 isAnimationActive={false}
               />
@@ -273,9 +273,9 @@ function UsersOverTime({ growth }: { growth: GrowthSummary }) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold text-[#86868b]">
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold text-muted">
           <span>
-            <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#007aff]" />
+            <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#465fff]" />
             New ({granularity})
           </span>
           <span>
@@ -340,46 +340,46 @@ function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] })
         />
       </div>
 
-      <div className={cn(appleCard, 'overflow-x-auto')}>
-        <table className="w-full text-sm">
+      <div className={cn(dashboardCard, 'overflow-x-auto')}>
+        <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
-              <th className="border-b border-black/5 px-5 py-3">Platform</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Devices</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Accounts</th>
-              <th className="border-b border-black/5 px-5 py-3">Identity</th>
+            <tr className="text-left text-xs font-bold uppercase text-muted">
+              <th className="border-b border-stroke px-5 py-3">Platform</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Devices</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Accounts</th>
+              <th className="border-b border-stroke px-5 py-3">Identity</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => {
               const share = row.devices > 0 ? row.identifiedDevices / row.devices : null;
               return (
-                <tr key={row.platform} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 px-5 py-3">
+                <tr key={row.platform} className="font-semibold text-ink">
+                  <td className="border-b border-stroke px-5 py-3">
                     {IDENTITY_PLATFORM_LABELS[row.platform.toUpperCase()] ?? row.platform}
                   </td>
-                  <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                  <td className="border-b border-stroke px-5 py-3 text-right tabular-nums">
                     {exact(row.devices)}
                   </td>
-                  <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                  <td className="border-b border-stroke px-5 py-3 text-right tabular-nums">
                     {row.accounts > 0 ? exact(row.accounts) : <span className="text-[#c7c7cc]">&mdash;</span>}
                   </td>
-                  <td className="border-b border-black/5 px-5 py-3 text-xs font-semibold">
+                  <td className="border-b border-stroke px-5 py-3 text-xs font-semibold">
                     {row.accounts > 0 ? (
-                      <span className="text-[#6e6e73]">{percentText(share, 0)} of devices</span>
+                      <span className="text-muted">{percentText(share, 0)} of devices</span>
                     ) : (
-                      <span className="text-[#8a5a04]">Binds nothing</span>
+                      <span className="text-warning">Binds nothing</span>
                     )}
                   </td>
                 </tr>
               );
             })}
           </tbody>
-        </table>
-        <p className="border-t border-black/5 px-5 py-3 text-xs font-semibold leading-5 text-[#86868b]">
+        </table></div>
+        <p className="border-t border-stroke px-5 py-3 text-xs font-semibold leading-5 text-muted">
           A device becomes identifiable only once someone signs in, so this ceiling is partly the
           sign-in rate and partly instrumentation. A platform marked{' '}
-          <strong className="font-bold text-[#1d1d1f]">Binds nothing</strong> sends no account
+          <strong className="font-bold text-ink">Binds nothing</strong> sends no account
           identity at all, which is a bug rather than behaviour. The headline account count is
           globally distinct; platform account rows are diagnostic and must not be added together.
         </p>
@@ -408,8 +408,8 @@ function CostPerActive({
   const { cost } = growth;
   if (!cost.available) {
     return (
-      <div className={cn(applePanel, 'p-6 text-center')}>
-        <p className="text-sm font-semibold text-[#6e6e73]">
+      <div className={cn(dashboardPanel, 'p-6 text-center')}>
+        <p className="text-sm font-semibold text-muted">
           No billing export data for this window.
         </p>
       </div>
@@ -447,32 +447,32 @@ function CostPerActive({
         />
       </div>
 
-      <div className={cn(appleCard, 'overflow-x-auto')}>
-        <table className="w-full text-sm">
+      <div className={cn(dashboardCard, 'overflow-x-auto')}>
+        <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
-              <th className="border-b border-black/5 px-5 py-3">Product</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Production</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">UAT / dev / idle</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Ratio</th>
+            <tr className="text-left text-xs font-bold uppercase text-muted">
+              <th className="border-b border-stroke px-5 py-3">Product</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Production</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">UAT / dev / idle</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Ratio</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => {
               const ratio = row.production > 0 ? row.nonProduction / row.production : null;
               return (
-                <tr key={row.product} className="font-semibold text-[#1d1d1f]">
-                  <td className="border-b border-black/5 px-5 py-3">{row.product}</td>
-                  <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                <tr key={row.product} className="font-semibold text-ink">
+                  <td className="border-b border-stroke px-5 py-3">{row.product}</td>
+                  <td className="border-b border-stroke px-5 py-3 text-right tabular-nums">
                     {money(row.production)}
                   </td>
-                  <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                  <td className="border-b border-stroke px-5 py-3 text-right tabular-nums">
                     {money(row.nonProduction)}
                   </td>
                   <td
                     className={cn(
-                      'border-b border-black/5 px-5 py-3 text-right tabular-nums',
-                      ratio !== null && ratio > 2 ? 'text-[#8a5a04]' : 'text-[#6e6e73]',
+                      'border-b border-stroke px-5 py-3 text-right tabular-nums',
+                      ratio !== null && ratio > 2 ? 'text-warning' : 'text-muted',
                     )}
                   >
                     {ratio === null ? '—' : `${ratio.toFixed(1)}× more`}
@@ -481,7 +481,7 @@ function CostPerActive({
               );
             })}
             {cost.unattributed > 0 && (
-              <tr className="font-semibold text-[#6e6e73]">
+              <tr className="font-semibold text-muted">
                 <td className="px-5 py-3">Other projects</td>
                 <td className="px-5 py-3 text-right tabular-nums">—</td>
                 <td className="px-5 py-3 text-right tabular-nums">{money(cost.unattributed)}</td>
@@ -489,7 +489,7 @@ function CostPerActive({
               </tr>
             )}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );
@@ -519,29 +519,29 @@ function CrossProduct({ growth }: { growth: GrowthSummary }) {
         />
       </div>
 
-      <div className={cn(appleCard, 'p-6')}>
+      <div className={cn(dashboardCard, 'p-6')}>
         <ol className="flex flex-col gap-2.5">
           {stages.map((stage, index) => {
             const width = siteVisitors > 0 ? Math.max((stage.users / siteVisitors) * 100, stage.users > 0 ? 2 : 0) : 0;
             return (
               <li key={stage.label} className="flex flex-col gap-1.5">
                 <div className="flex items-baseline justify-between gap-4">
-                  <span className="text-sm font-semibold text-[#1d1d1f]">{stage.label}</span>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums text-[#6e6e73]">
+                  <span className="text-sm font-semibold text-ink">{stage.label}</span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-muted">
                     {formatNumber(stage.users)}
                     {index === 1 && (
-                      <span className="ml-2 text-[#86868b]">{percentText(conversionRate, 1)}</span>
+                      <span className="ml-2 text-muted">{percentText(conversionRate, 1)}</span>
                     )}
                   </span>
                 </div>
-                <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#f0f0f2]">
-                  <div className="h-full rounded-full bg-[#007aff]" style={{ width: `${width}%` }} />
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-subtle">
+                  <div className="h-full rounded-full bg-[#465fff]" style={{ width: `${width}%` }} />
                 </div>
               </li>
             );
           })}
         </ol>
-        <p className="mt-4 text-xs font-semibold leading-5 text-[#86868b]">{note}</p>
+        <p className="mt-4 text-xs font-semibold leading-5 text-muted">{note}</p>
       </div>
     </div>
   );
@@ -554,8 +554,8 @@ function TimeToFirstValue({ growth }: { growth: GrowthSummary }) {
 
   if (activatedUsers === 0) {
     return (
-      <div className={cn(applePanel, 'p-6 text-center')}>
-        <p className="text-sm font-semibold text-[#6e6e73]">
+      <div className={cn(dashboardPanel, 'p-6 text-center')}>
+        <p className="text-sm font-semibold text-muted">
           Nobody has reached first value yet, so there is no time to measure.
         </p>
       </div>
@@ -576,26 +576,26 @@ function TimeToFirstValue({ growth }: { growth: GrowthSummary }) {
         <Figure label="Slowest" value={duration(slowestMinutes)} detail="They came back and finished" />
       </div>
 
-      <div className={cn(appleCard, 'p-6')}>
+      <div className={cn(dashboardCard, 'p-6')}>
         <ol className="flex flex-col gap-2.5">
           {distribution.map((bucket) => {
             const width = total > 0 ? Math.max((bucket.users / total) * 100, bucket.users > 0 ? 2 : 0) : 0;
             return (
               <li key={bucket.bucket} className="flex flex-col gap-1.5">
                 <div className="flex items-baseline justify-between gap-4">
-                  <span className="text-sm font-semibold text-[#1d1d1f]">{bucket.bucket}</span>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums text-[#6e6e73]">
+                  <span className="text-sm font-semibold text-ink">{bucket.bucket}</span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-muted">
                     {formatNumber(bucket.users)}
                   </span>
                 </div>
-                <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#f0f0f2]">
-                  <div className="h-full rounded-full bg-[#007aff]" style={{ width: `${width}%` }} />
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-subtle">
+                  <div className="h-full rounded-full bg-[#465fff]" style={{ width: `${width}%` }} />
                 </div>
               </li>
             );
           })}
         </ol>
-        <p className="mt-4 text-xs font-semibold leading-5 text-[#86868b]">
+        <p className="mt-4 text-xs font-semibold leading-5 text-muted">
           Measured from the device&rsquo;s very first visit, not from the start of the selected
           window — so it is the whole journey they experienced.
         </p>
@@ -611,8 +611,8 @@ function OrganicSearch({ growth }: { growth: GrowthSummary }) {
 
   if (!available) {
     return (
-      <div className={cn(applePanel, 'p-6 text-center')}>
-        <p className="text-sm font-semibold text-[#6e6e73]">
+      <div className={cn(dashboardPanel, 'p-6 text-center')}>
+        <p className="text-sm font-semibold text-muted">
           No Search Console data for this window.
         </p>
       </div>
@@ -636,7 +636,7 @@ function OrganicSearch({ growth }: { growth: GrowthSummary }) {
         />
       </div>
 
-      <div className={cn(appleCard, 'p-6')}>
+      <div className={cn(dashboardCard, 'p-6')}>
         <div className="h-52 w-full">
           <ResponsiveContainer width="100%" height="100%">
             {/*
@@ -647,24 +647,24 @@ function OrganicSearch({ growth }: { growth: GrowthSummary }) {
             <ComposedChart data={series} margin={{ top: 4, right: 8, left: -14, bottom: 0 }}>
               <defs>
                 <linearGradient id="search-impr" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#007aff" stopOpacity={0.28} />
-                  <stop offset="100%" stopColor="#007aff" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#465fff" stopOpacity={0.28} />
+                  <stop offset="100%" stopColor="#465fff" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#e8e8ed" vertical={false} />
               <XAxis
                 dataKey="week"
-                stroke="#86868b"
+                stroke="#667085"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(v: string) => v.slice(5)}
               />
-              <YAxis yAxisId="impr" stroke="#86868b" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis yAxisId="impr" stroke="#667085" fontSize={11} tickLine={false} axisLine={false} />
               <YAxis
                 yAxisId="clicks"
                 orientation="right"
-                stroke="#86868b"
+                stroke="#667085"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
@@ -680,7 +680,7 @@ function OrganicSearch({ growth }: { growth: GrowthSummary }) {
                 yAxisId="impr"
                 type="monotone"
                 dataKey="impressions"
-                stroke="#007aff"
+                stroke="#465fff"
                 strokeWidth={2}
                 fill="url(#search-impr)"
                 isAnimationActive={false}
@@ -697,9 +697,9 @@ function OrganicSearch({ growth }: { growth: GrowthSummary }) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold text-[#86868b]">
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold text-muted">
           <span>
-            <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#007aff]" />
+            <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#465fff]" />
             Impressions (left)
           </span>
           <span>
@@ -749,14 +749,14 @@ function InstrumentationHealth({ growth }: { growth: GrowthSummary }) {
       </div>
 
       {declaredNotEmitted.length > 0 && (
-        <div className={cn(applePanel, 'flex flex-col gap-2 p-5')}>
+        <div className={cn(dashboardPanel, 'flex flex-col gap-2 p-5')}>
           <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-[#8a5a04]" />
-            <p className="text-sm font-bold text-[#1d1d1f]">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+            <p className="text-sm font-bold text-ink">
               Events the contract promises but nothing sends
             </p>
           </div>
-          <p className="text-sm font-medium leading-6 text-[#6e6e73]">
+          <p className="text-sm font-medium leading-6 text-muted">
             Nothing should be built on these until they have an emitter or are removed from the
             contract: {declaredNotEmitted.join(', ')}.
           </p>
@@ -785,9 +785,9 @@ export function GrowthPanel({
     return (
       <main className="space-y-10">
         <div className="flex justify-end">{dateControl}</div>
-        {loading ? <MetricsSkeleton /> : <div className={cn(applePanel, 'p-8 text-center')}>
-          <p className="text-base font-semibold text-[#1d1d1f]">Growth data is temporarily unavailable.</p>
-          <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-[#6e6e73]">
+        {loading ? <MetricsSkeleton /> : <div className={cn(dashboardPanel, 'p-8 text-center')}>
+          <p className="text-base font-semibold text-ink">Growth data is temporarily unavailable.</p>
+          <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-muted">
             This view reads the GA4 export, the billing export and Search Console. If it stays
             empty, check that the dashboard&rsquo;s service account can read all three.
           </p>
@@ -850,12 +850,12 @@ export function GrowthPanel({
       <section>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className={appleLabel}>Hussh · all products · {rangeLabel}</p>
-            <h2 className="mt-1 text-2xl font-semibold text-[#1d1d1f] sm:text-3xl">
+            <p className={dashboardLabel}>Hussh · all products · {rangeLabel}</p>
+            <h2 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">
               {sections[0].title}
             </h2>
             {sections[0].hint && (
-              <p className="mt-1.5 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
+              <p className="mt-1.5 max-w-2xl text-sm font-medium leading-6 text-muted">
                 {sections[0].hint}
               </p>
             )}
@@ -874,14 +874,14 @@ export function GrowthPanel({
       ))}
 
       <section className={dashboardBand}>
-        <div className={cn(applePanel, 'flex flex-col gap-2 p-5')}>
+        <div className={cn(dashboardPanel, 'flex flex-col gap-2 p-5')}>
           <div className="flex items-center gap-2">
-            <Info className="h-4 w-4 shrink-0 text-[#6e6e73]" />
-            <p className="text-sm font-bold text-[#1d1d1f]">How to read this page</p>
+            <Info className="h-4 w-4 shrink-0 text-muted" />
+            <p className="text-sm font-bold text-ink">How to read this page</p>
           </div>
-          <p className="max-w-4xl text-sm font-medium leading-6 text-[#6e6e73]">
+          <p className="max-w-4xl text-sm font-medium leading-6 text-muted">
             Activity is counted as{' '}
-            <strong className="font-bold text-[#1d1d1f]">devices and browsers</strong>, not
+            <strong className="font-bold text-ink">devices and browsers</strong>, not
             individuals — the analytics identity binds on iOS but not on web, so one person on a
             phone and a laptop counts twice and app and web figures cannot be added together.
             Costs come from the GCP billing export and cover every project, including ones no

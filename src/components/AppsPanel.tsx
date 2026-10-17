@@ -2,7 +2,7 @@ import { MetricsSkeleton } from './MetricsLoading';
 import type { ReactNode } from 'react';
 
 import { cn } from '../lib/utils';
-import { appleCard, appleLabel, applePanel } from '../lib/theme';
+import { dashboardCard, dashboardLabel, dashboardPanel } from '../lib/theme';
 import { formatNumber } from '../lib/analytics-service';
 import {
   ActivesByPlatform,
@@ -45,17 +45,17 @@ export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateContro
     <main className="space-y-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className={appleLabel}>Hushh Connect · Apps</p>
-          <h2 className="mt-2 text-3xl font-semibold text-[#1d1d1f] sm:text-4xl">
+          <p className={dashboardLabel}>Hushh Connect · Apps</p>
+          <h2 className="mt-2 text-3xl font-semibold text-ink sm:text-4xl">
             Hushh 1 &mdash; iOS, Android, Web
           </h2>
-          <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-[#6e6e73]">
+          <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-muted">
             Production and UAT are reported side by side and never added together.
             For iOS, Production is the App Store and UAT is TestFlight.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
-          <p className="text-xs font-semibold text-[#86868b]">{rangeLabel}</p>
+        <div className="flex min-w-0 w-full flex-col items-start gap-2 sm:w-auto sm:shrink-0 sm:items-end">
+          <p className="text-xs font-semibold text-muted">{rangeLabel}</p>
           {dateControl}
         </div>
       </header>
@@ -95,9 +95,9 @@ function EnvironmentColumn({
 }) {
   return (
     <section className="space-y-6">
-      <div className={cn(applePanel, 'p-4')}>
-        <p className="text-lg font-semibold text-[#1d1d1f]">{label}</p>
-        <p className="text-xs font-semibold text-[#86868b]">{sublabel}</p>
+      <div className={cn(dashboardPanel, 'p-4')}>
+        <p className="text-lg font-semibold text-ink">{label}</p>
+        <p className="text-xs font-semibold text-muted">{sublabel}</p>
       </div>
 
       {appStoreConnectCard}
@@ -111,8 +111,8 @@ function EnvironmentColumn({
           <LocationAgentByPlatform rows={one.locationAnalytics.platforms} />
         </>
       ) : (
-        <div className={cn(applePanel, 'p-6 text-center')}>
-          <p className="text-sm font-semibold text-[#6e6e73]">No data for this environment yet.</p>
+        <div className={cn(dashboardPanel, 'p-6 text-center')}>
+          <p className="text-sm font-semibold text-muted">No data for this environment yet.</p>
         </div>
       )}
     </section>
@@ -128,11 +128,11 @@ function EnvironmentColumn({
  */
 function AppStoreConnectCard({ title, summary }: { title: string; summary: AppStoreConnectSummary }) {
   return (
-    <div className={cn(appleCard, 'p-6')}>
+    <div className={cn(dashboardCard, 'p-6')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="text-sm font-semibold text-[#6e6e73]">{title}</p>
+        <p className="text-sm font-semibold text-muted">{title}</p>
         {summary.range && (
-          <p className="text-xs font-semibold text-[#86868b]">
+          <p className="text-xs font-semibold text-muted">
             {summary.range.startDate} to {summary.range.endDate}
           </p>
         )}
@@ -143,7 +143,7 @@ function AppStoreConnectCard({ title, summary }: { title: string; summary: AppSt
           <AppStoreConnectMetricsGrid metrics={summary.metrics} />
         </div>
       ) : (
-        <p className="mt-4 text-sm font-semibold leading-5 text-[#8a5a04]">
+        <p className="mt-4 text-sm font-semibold leading-5 text-warning">
           {summary.note ?? 'App Store Connect analytics not connected'}
         </p>
       )}
@@ -169,9 +169,9 @@ function AppStoreConnectMetricsGrid({ metrics }: { metrics: AppStoreConnectMetri
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
       {tiles.map((tile) => (
-        <div key={tile.label} className={cn(applePanel, 'p-3')}>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-[#86868b]">{tile.label}</p>
-          <p className="mt-1 text-xl font-semibold text-[#1d1d1f]">
+        <div key={tile.label} className={cn(dashboardPanel, 'p-3')}>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-muted">{tile.label}</p>
+          <p className="mt-1 text-xl font-semibold text-ink">
             {tile.value === null ? (
               <span className="text-[#c7c7cc]">&mdash;</span>
             ) : tile.percent ? (
@@ -202,11 +202,11 @@ function AppStoreConnectTestFlightCard({
   summary: AppStoreConnectTestFlightSummary;
 }) {
   return (
-    <div className={cn(appleCard, 'p-6')}>
+    <div className={cn(dashboardCard, 'p-6')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="text-sm font-semibold text-[#6e6e73]">{title}</p>
+        <p className="text-sm font-semibold text-muted">{title}</p>
         {summary.range && (
-          <p className="text-xs font-semibold text-[#86868b]">
+          <p className="text-xs font-semibold text-muted">
             {summary.range.startDate} to {summary.range.endDate}
           </p>
         )}
@@ -225,7 +225,7 @@ function AppStoreConnectTestFlightCard({
         <p
           className={cn(
             'text-sm font-semibold leading-5',
-            summary.available ? 'mt-3 text-[#86868b]' : 'mt-4 text-[#8a5a04]',
+            summary.available ? 'mt-3 text-muted' : 'mt-4 text-warning',
           )}
         >
           {summary.note}
@@ -248,9 +248,9 @@ function AppStoreConnectTestFlightMetricsGrid({ metrics }: { metrics: AppStoreCo
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
       {tiles.map((tile) => (
-        <div key={tile.label} className={cn(applePanel, 'p-3')}>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-[#86868b]">{tile.label}</p>
-          <p className="mt-1 text-xl font-semibold text-[#1d1d1f]">
+        <div key={tile.label} className={cn(dashboardPanel, 'p-3')}>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-muted">{tile.label}</p>
+          <p className="mt-1 text-xl font-semibold text-ink">
             {tile.value === null ? <span className="text-[#c7c7cc]">&mdash;</span> : formatNumber(tile.value)}
           </p>
         </div>
@@ -276,7 +276,7 @@ function AppStoreConnectTesterStateBreakdown({
       {rows.map((row) => (
         <span
           key={row.label}
-          className="rounded-md bg-[#f5f5f7] px-2 py-1 text-xs font-semibold text-[#6e6e73]"
+          className="rounded-md bg-canvas px-2 py-1 text-xs font-semibold text-muted"
         >
           {row.label}: {formatNumber(row.value)}
         </span>
@@ -293,8 +293,8 @@ function AppStoreConnectTesterStateBreakdown({
 function LocationAgentByPlatform({ rows }: { rows: OneLocationPlatformBehaviorMetric[] }) {
   if (rows.length === 0) {
     return (
-      <div className={cn(applePanel, 'p-6 text-center')}>
-        <p className="text-sm font-semibold text-[#6e6e73]">
+      <div className={cn(dashboardPanel, 'p-6 text-center')}>
+        <p className="text-sm font-semibold text-muted">
           No Location Agent activity recorded in this window.
         </p>
       </div>
@@ -302,35 +302,35 @@ function LocationAgentByPlatform({ rows }: { rows: OneLocationPlatformBehaviorMe
   }
 
   return (
-    <div className={cn(appleCard, 'overflow-hidden')}>
-      <p className="border-b border-black/5 px-5 py-3 text-sm font-semibold text-[#1d1d1f]">
+    <div className={cn(dashboardCard, 'overflow-hidden')}>
+      <p className="border-b border-stroke px-5 py-3 text-sm font-semibold text-ink">
         Location Agent, by platform
       </p>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs font-bold uppercase text-[#86868b]">
-              <th className="border-b border-black/5 px-5 py-3">Platform</th>
-              <th className="border-b border-black/5 px-5 py-3">Feature</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Devices</th>
-              <th className="border-b border-black/5 px-5 py-3 text-right">Events</th>
+            <tr className="text-left text-xs font-bold uppercase text-muted">
+              <th className="border-b border-stroke px-5 py-3">Platform</th>
+              <th className="border-b border-stroke px-5 py-3">Feature</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Devices</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Events</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row, index) => (
-              <tr key={`${row.platform}-${row.feature}-${index}`} className="font-semibold text-[#1d1d1f]">
-                <td className="border-b border-black/5 px-5 py-3">{platformLabel(row.platform)}</td>
-                <td className="border-b border-black/5 px-5 py-3 text-[#6e6e73]">{row.feature}</td>
-                <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+              <tr key={`${row.platform}-${row.feature}-${index}`} className="font-semibold text-ink">
+                <td className="border-b border-stroke px-5 py-3">{platformLabel(row.platform)}</td>
+                <td className="border-b border-stroke px-5 py-3 text-muted">{row.feature}</td>
+                <td className="border-b border-stroke px-5 py-3 text-right tabular-nums">
                   {formatNumber(row.users)}
                 </td>
-                <td className="border-b border-black/5 px-5 py-3 text-right tabular-nums">
+                <td className="border-b border-stroke px-5 py-3 text-right tabular-nums">
                   {formatNumber(row.events)}
                 </td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );

@@ -4,10 +4,11 @@
  */
 
 import { lazy, Suspense } from 'react';
+import { MotionConfig } from 'motion/react';
 import { MetricsSkeleton } from './components/MetricsLoading';
 const dashboardModule = import('./Dashboard');
 const Dashboard = lazy(() => dashboardModule);
-function DashboardShell() { return <div className="mx-auto min-h-screen max-w-[1320px] bg-[#f5f5f7] p-5 sm:p-8"><p className="mb-6 text-lg font-semibold">Hussh Matrix</p><MetricsSkeleton label="Opening your metrics dashboard" /></div>; }
+function DashboardShell() { return <div className="mx-auto min-h-screen max-w-[1320px] bg-canvas p-5 sm:p-8"><p className="mb-6 text-lg font-semibold">Hussh Matrix</p><MetricsSkeleton label="Opening your metrics dashboard" /></div>; }
 import { AuthProvider, useAuth } from './components/AuthProvider';
 import { LoginPage } from './components/LoginPage';
 import { AccessDeniedPage } from './components/AccessDeniedPage';
@@ -53,8 +54,8 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
+    <MotionConfig reducedMotion="user"><AuthProvider>
       <AppContent />
-    </AuthProvider>
+    </AuthProvider></MotionConfig>
   );
 }

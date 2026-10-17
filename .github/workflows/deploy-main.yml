@@ -57,6 +57,23 @@ jobs:
       - name: Verify One Location routes
         run: npm run test:routes:one-location
 
+      - name: Install browser for responsive UI checks
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify dashboard pages and responsive interactions
+        run: npm run test:ui
+
+      - name: Save responsive UI screenshots and failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-ui-verification
+          path: |
+            .codex/artifacts/ui/
+            test-results/
+          retention-days: 7
+          include-hidden-files: true
+
       - name: Verify One platform cards across API schema versions
         run: npm run test:ui:one-platforms
 
