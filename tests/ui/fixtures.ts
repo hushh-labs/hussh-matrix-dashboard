@@ -95,7 +95,7 @@ export const growth: GrowthSummary = {
   timeToFirstValue: { activatedUsers: 852, medianMinutes: 8, fastestMinutes: 1, slowestMinutes: 180,
     distribution: [{ bucket: '< 5 min', users: 380 }, { bucket: '5–30 min', users: 290 }, { bucket: '30+ min', users: 182 }] },
   cost: { total: 842, production: 620, nonProduction: 180, unattributed: 42, available: true,
-    byProduct: [{ key: 'one', product: 'One app', production: 320, nonProduction: 100 }, { key: 'hushh_ai', product: 'Hushh AI', production: 300, nonProduction: 80 }] },
+    byProduct: [{ key: 'one', product: 'One app', production: 320, nonProduction: 100 }, { key: 'hushh_ai', product: 'Hussh AI', production: 300, nonProduction: 80 }] },
   organicSearch: { available: true, clicks: 2860, impressions: 38640, ctr: .074, avgPosition: 12.4, latestDay: day(0), series: Array.from({ length: 12 }, (_, index) => ({ week: day(77 - index * 7), clicks: 140 + index * 25, impressions: 2000 + index * 300 })) },
   instrumentation: { governedEvents: 38400, ungovernedEvents: 120, distinctEvents: 42, ungovernedEventNames: 2, declaredNotEmitted: [] },
 };

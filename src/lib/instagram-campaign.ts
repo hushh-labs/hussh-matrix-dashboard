@@ -1,6 +1,6 @@
 /** Owned landing pages only. No redirect endpoint or inferred attribution. */
 export const INSTAGRAM_DESTINATIONS = [
-  { label: 'Hushh home', url: 'https://hushh.ai/' },
+  { label: 'Hussh home', url: 'https://hushh.ai/' },
   { label: 'One home', url: 'https://one.hushh.ai/' },
 ] as const;
 

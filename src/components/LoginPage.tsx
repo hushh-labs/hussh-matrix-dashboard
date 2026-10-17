@@ -37,7 +37,7 @@ export function LoginPage({ error, loading = false }: LoginPageProps) {
               </svg>}
       <span>{loading ? 'Redirecting to Google…' : 'Continue with Google'}</span>
     </button>
-    <div className="auth-note"><ShieldCheck size={18} /><span>Use your Hushh work account or an approved Google account to access this dashboard.</span></div>
+    <div className="auth-note"><ShieldCheck size={18} /><span>Use your Hussh work account or an approved Google account to access this dashboard.</span></div>
     <p className="auth-terms">Read our <a href="https://www.hushh.ai/terms">Terms</a> and <a href="https://www.hushh.ai/privacy">Privacy Policy</a>.</p>
   </AuthPageLayout>;
 }

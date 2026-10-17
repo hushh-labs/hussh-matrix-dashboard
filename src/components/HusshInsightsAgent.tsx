@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Matrix Agent One — floating metrics analyst for the Hussh Matrix Dashboard.
+ * Matrix Agent One — floating metrics analyst for the hussh Matrix Dashboard.
  * Shared dashboard styling with responsive chat controls.
  */
 
@@ -62,7 +62,7 @@ interface PromptOption {
 }
 
 const AGENT_NAME = 'Matrix Agent One';
-const AGENT_SUBTITLE = 'Hushh metrics copilot';
+const AGENT_SUBTITLE = 'Hussh metrics copilot';
 
 const STARTER_PROMPTS: PromptOption[] = [
   {
@@ -72,7 +72,7 @@ const STARTER_PROMPTS: PromptOption[] = [
   },
   {
     label: 'All-product users',
-    prompt: 'How many users does Hushh have across all products? Explain what is counted and what is not counted.',
+    prompt: 'How many users does Hussh have across all products? Explain what is counted and what is not counted.',
   },
   {
     label: 'Top 3 issues',
@@ -98,7 +98,7 @@ const DEEP_DIVE_PROMPTS: PromptOption[] = [
   {
     label: 'What changed today?',
     description: 'Last-day reliability, traffic, users, and freshness',
-    prompt: 'What happened in the last day across Hushh products? Separate reliability, traffic, users, funnels, source caveats, and data freshness.',
+    prompt: 'What happened in the last day across Hussh products? Separate reliability, traffic, users, funnels, source caveats, and data freshness.',
     tone: 'priority',
   },
   {
@@ -434,7 +434,7 @@ export default function HusshInsightsAgent() {
                   </div>
                   <p className="hidden text-[22px] font-semibold text-ink sm:block">{AGENT_NAME}</p>
                   <p className="mb-3 text-center text-[13px] font-medium leading-relaxed text-muted sm:mb-6 sm:mt-1 sm:text-[14px]">
-                    Analyst prompts for the Hushh Matrix
+                    Analyst prompts for the hussh Matrix
                   </p>
                   <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-2.5">
                     {DEEP_DIVE_PROMPTS.map((option) => (
