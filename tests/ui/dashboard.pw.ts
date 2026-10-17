@@ -12,7 +12,8 @@ async function navigate(page: Page, label: string) {
 
 async function assertFits(page: Page) {
   const dimensions = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
-  expect(dimensions.scroll, 'The page must not overflow the viewport').toBeLessThanOrEqual(dimensions.width + 1);
+  const heading = await page.locator('.dashboard-page-heading h1').textContent().catch(() => 'Sign-in');
+  expect(dimensions.scroll, `${heading} must not overflow the ${dimensions.width}px viewport`).toBeLessThanOrEqual(dimensions.width + 1);
   for (const table of await page.locator('table:visible').all()) {
     expect(await table.evaluate(element => Boolean(element.closest('.metrics-table-scroll'))), 'Wide tables need an internal scroll region').toBe(true);
   }
@@ -188,6 +189,12 @@ test('exact-day reporting and adjacent-day controls use existing API date parame
   await oneRequest;
   await page.getByRole('button', { name: 'One app specific day: previous day', exact: true }).click();
   await expect(page.getByLabel('One app specific day', { exact: true })).toHaveValue('2026-09-29');
+  await page.getByText('Custom date range', { exact: true }).click();
+  await page.getByLabel('One app start date', { exact: true }).fill('2026-09-25');
+  await page.getByLabel('One app end date', { exact: true }).fill('2026-09-30');
+  const customRequest = page.waitForRequest(request => request.url().includes('one_start_date=2026-09-25') && request.url().includes('one_end_date=2026-09-30'));
+  await page.getByRole('button', { name: 'Apply dates', exact: true }).click();
+  await customRequest;
 });
 
 test('daily agent traffic shows real drops, withholds missing data and preserves test-source separation', async ({ page }) => {

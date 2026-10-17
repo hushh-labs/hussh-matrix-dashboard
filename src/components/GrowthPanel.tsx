@@ -847,7 +847,7 @@ export function GrowthPanel({
   return (
     <main className="space-y-10">
       <section>
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className={dashboardLabel}>Hussh · all products · {rangeLabel}</p>
             <h2 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">

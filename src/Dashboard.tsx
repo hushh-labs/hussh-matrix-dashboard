@@ -727,11 +727,11 @@ function DateRangeControl({
 
   return (
     <div
-      className="flex w-full flex-col gap-2 rounded-lg border border-stroke bg-surface/88 p-2 shadow-sm backdrop-blur-xl md:w-auto"
+      className="flex w-full min-w-0 max-w-full flex-col gap-2 rounded-lg border border-stroke bg-surface/88 p-2 shadow-sm backdrop-blur-xl md:w-[360px] md:shrink-0"
       aria-busy={refreshing}
     >
       <div className="flex items-center gap-2">
-        <div className="inline-flex flex-1 rounded-lg bg-canvas p-1 md:flex-none">
+        <div className="grid min-w-0 flex-1 grid-cols-4 rounded-lg bg-canvas p-1">
           {presets.map((days) => (
             <button
               key={days}
@@ -739,7 +739,7 @@ function DateRangeControl({
               onClick={() => onPreset(days)}
               aria-pressed={range.preset === days}
               className={cn(
-                'min-h-9 flex-1 rounded-full px-3 text-xs font-bold transition md:flex-none',
+                'min-h-9 min-w-0 rounded-full px-2 text-xs font-bold transition',
                 range.preset === days ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink',
               )}
             >
@@ -759,7 +759,10 @@ function DateRangeControl({
           {refreshing ? 'Updating' : ''}
         </span>
       </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <SingleDayPicker label={`${ariaLabelPrefix} specific day`} value={range.startDate === range.endDate ? range.endDate : ''} max={today}
+        onChange={day => onCustomRange({ preset: 'custom', startDate: day, endDate: day })} />
+      <details className="rounded-lg bg-canvas px-2 py-1 text-xs text-muted"><summary className="min-h-8 cursor-pointer py-2 font-semibold">Custom date range</summary>
+      <div className="mt-2 grid grid-cols-1 gap-2">
         <label className="flex min-h-10 items-center gap-2 rounded-lg bg-canvas px-2 text-xs font-bold text-muted">
           <CalendarDays className="h-3.5 w-3.5 shrink-0" />
           <span>From</span>
@@ -784,10 +787,9 @@ function DateRangeControl({
           />
         </label>
       </div>
-      <SingleDayPicker label={`${ariaLabelPrefix} specific day`} value={range.startDate === range.endDate ? range.endDate : ''} max={today}
-        onChange={day => onCustomRange({ preset: 'custom', startDate: day, endDate: day })} />
-      <p className="px-1 text-[11px] leading-4 text-muted">Choose a date above for one day, or use From / To for a range. Recent data may still arrive.</p>
       {pending && <button type="button" onClick={() => { const next = normalizeCustomRange(draft); setDraft(next); onCustomRange(next); }} disabled={!draft.startDate || !draft.endDate} className="min-h-9 rounded-lg bg-[#465fff] px-3 text-xs font-bold text-white disabled:opacity-50">Apply dates</button>}
+      </details>
+      <p className="px-1 text-[11px] leading-4 text-muted">Recent data may still arrive.</p>
     </div>
   );
 }
