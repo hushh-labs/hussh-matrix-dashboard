@@ -190,7 +190,7 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     <div id="instagram-content" className={cn(dashboardPanel, 'p-5 sm:p-8')}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h3 className="text-xl font-semibold">Posts and Reels</h3>
-          <p className="mt-1 text-sm text-muted">Per-item lifetime insights and current likes/comments. A Reel is identified by Instagram's media product type.</p></div>
+          <p className="mt-1 text-sm text-muted">Results collected for each post or Reel over its lifetime, plus current likes and comments.</p></div>
         <div className="flex flex-wrap gap-3">
           <label className="text-sm text-muted">Type
             <select aria-label="Type" value={mediaFilter} onChange={(event) => { setMediaFilter(event.target.value as typeof mediaFilter); setMediaPage(0); }}
@@ -218,7 +218,7 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       </div>
       <p role="status" className="mt-4 text-sm text-muted">
         Showing {mediaTotals.count} collected items: {mediaTotals.reels} Reels, {mediaTotals.feed} Feed posts, {mediaTotals.stories} Stories.
-        {' '}Views across {mediaTotals.views.observed}/{mediaTotals.count} items: {mediaTotals.views.observed ? mediaTotals.views.value.toLocaleString() : '—'} (sum of latest lifetime snapshots; not unique viewers).
+        {' '}Views across {mediaTotals.views.observed}/{mediaTotals.count} items: {mediaTotals.views.observed ? mediaTotals.views.value.toLocaleString() : '—'} (latest collected lifetime totals; repeat views included).
       </p>
       {mediaRows.length === 0 ? <p className="mt-5 text-sm text-muted">No collected media matches these filters.</p> :
         <div className="mt-5 overflow-x-auto"><div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="min-w-[860px] w-full text-left text-sm">
@@ -249,7 +249,7 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
             {INSTAGRAM_DESTINATIONS.map((item) => <option key={item.url} value={item.url}>{item.label}</option>)}
           </select>
         </label>
-        <label className="text-sm font-semibold">Campaign slug
+        <label className="text-sm font-semibold">Campaign name
           <input value={campaign} onChange={(event) => { setCampaign(event.target.value.trim().toLowerCase()); setCopied(false); }} placeholder="launch-sept" maxLength={64}
             className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3" />
         </label>

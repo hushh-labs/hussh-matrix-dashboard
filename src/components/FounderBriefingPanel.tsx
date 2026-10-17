@@ -272,7 +272,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                   : 'No agent has a verifiable signed-in audience in this range yet.'}</li>
                 <li>{mostInteractions ? <><strong className="text-ink">Most recorded actions:</strong> {mostInteractions.label} had {number(mostInteractions.interactions.current)}. Repeats count; this is not a user count.</>
                   : 'Agent interaction data is not available yet.'}</li>
-                <li><strong className="text-ink">First useful action:</strong> {number(brief.one.activatedAccounts.current)} signed-in accounts completed the measured Location activation action.</li>
+                <li><strong className="text-ink">First useful action:</strong> {number(brief.one.activatedAccounts.current)} signed-in accounts shared or received a location.</li>
               </ul>
             </div>
           </section>

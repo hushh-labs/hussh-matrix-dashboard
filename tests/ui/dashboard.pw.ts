@@ -251,7 +251,7 @@ test('Instagram filters, pagination, campaign links and metrics chat retain thei
   await expect(page.getByRole('button', { name: 'Next', exact: true })).toHaveCount(0);
   await page.getByLabel('Published', { exact: true }).selectOption('7');
   await page.getByLabel('Sort by', { exact: true }).selectOption('views');
-  await page.getByLabel('Campaign slug', { exact: true }).fill('release-check');
+  await page.getByLabel('Campaign name', { exact: true }).fill('release-check');
   await page.getByLabel('Placement or variant', { exact: true }).fill('bio');
   const campaign = page.getByRole('link', { name: /utm_campaign=release-check/ });
   await expect(campaign).toHaveAttribute('href', /utm_source=instagram/);

@@ -368,7 +368,7 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
   // unavailable, not an empty or zero-valued platform.
   if (one.platformsAvailable === false || !Array.isArray(one.platforms)) {
     return <p className={cn(dashboardCard, 'mb-5 p-5 text-sm font-semibold text-warning')} role="status">
-      Platform behaviour is temporarily unavailable from the GA4 export. No platform counts are shown as zero.
+      Platform activity is temporarily unavailable. Missing counts are not shown as zero.
     </p>;
   }
 
@@ -396,7 +396,7 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
               <p className="text-base font-semibold text-ink">{title}</p>
               <p className="mt-1 text-xs leading-5 text-muted">{scope}</p>
               {!row ? (
-                <p className="mt-5 text-sm font-semibold text-warning">No telemetry observed in this reporting property and date range.</p>
+                <p className="mt-5 text-sm font-semibold text-warning">No activity was recorded in this reporting source during these dates.</p>
               ) : (
                 <>
                   <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4">
@@ -422,7 +422,7 @@ export function PlatformsAtAGlance({ one, environment }: { one: OneAppSummary; e
       </div>
       {environment === 'uat' && !one.platforms.some((row) => row.platform === 'IOS' || row.platform === 'ANDROID') && (
         <p className="rounded-xl border border-stroke bg-brand-50 p-3 text-xs font-semibold leading-5 text-brand-600">
-          No native rows reached the UAT GA4 property in this range. That does not tell us which backend the app used: mobile events tagged <code>env=uat</code> can appear in the production GA4 property and are shown there separately.
+          No mobile activity reached the test analytics source during these dates. A public mobile build using the test service can still report to live-product analytics; that activity is labeled separately there.
         </p>
       )}
       <p className="text-xs leading-5 text-muted">These platform account rows can overlap and must not be added. The global active-account card deduplicates account IDs across surfaces. Store downloads, crashes and physical devices need separate sources and are not measured by these cards.</p>
@@ -459,13 +459,13 @@ export function ActivesByPlatform({ rows, available = true }: { rows: OnePlatfor
       <div className={cn(dashboardCard, 'p-5')} role="status">
         <p className="text-sm font-semibold text-warning">Platform activity is temporarily unavailable</p>
         <p className="mt-1 text-xs leading-5 text-muted">
-          The GA4 platform query did not complete. iOS device and signed-in account counts are not shown as zero; retry after the export recovers.
+          Platform data could not be loaded. Try refreshing later; missing iOS device and account counts are not shown as zero.
         </p>
       </div>
     );
   }
   if (rows.length === 0) {
-    return <p className={cn(dashboardCard, 'p-5 text-sm text-muted')}>No platform activity was recorded in this GA4 property for the selected range.</p>;
+    return <p className={cn(dashboardCard, 'p-5 text-sm text-muted')}>No platform activity was recorded by this analytics source during the selected dates.</p>;
   }
   const anyBound = rows.some((row) => row.identityBound);
 
@@ -830,7 +830,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
 
             <div className="mt-5 border-t border-stroke pt-3">
               <p className="text-xs font-semibold leading-5 text-muted">
-                💡 Drop-off reasons require additional instrumentation (agent turn telemetry, auth failure reason emitters, and uninstrumented capability events) &mdash; not yet available in current data.
+                💡 These counts show where activity stops. The app does not yet record enough detail to explain why someone stopped.
               </p>
             </div>
           </div>
@@ -900,7 +900,7 @@ function FunnelDropoffAgentDiagnostic({
         <div>
           <h3 className="text-base font-bold text-ink">Where people stop and which agents they try</h3>
           <p className="mt-0.5 text-xs font-semibold text-muted">
-            Stage-by-stage loss analysis and capability telemetry status
+            See where activity drops and which agents have usable data.
           </p>
         </div>
         <span className="rounded-md bg-[#fff4e5] px-2.5 py-1 text-xs font-bold text-warning">
@@ -969,7 +969,7 @@ function FunnelDropoffAgentDiagnostic({
       </div>
 
       <div className="mt-4 rounded-lg bg-canvas p-3 text-xs font-semibold leading-5 text-muted">
-        <span className="font-bold text-ink">Why do they drop off?</span> Pinpointing agent-level failure causes (e.g. auth cancellation vs agent execution timeout) requires dedicated event emitters (<code>agent_turn_completed</code>, <code>auth_failure_code</code>) in the main app codebase.
+        <span className="font-bold text-ink">Why do they drop off?</span> The current data does not explain whether someone canceled sign-in, an agent took too long, or another issue occurred. More detailed app tracking is needed before we can identify the cause.
       </div>
     </div>
   );
@@ -1357,7 +1357,7 @@ export function OneAppPanel({
           <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#465fff]/20 bg-[#465fff]/[0.06] px-4 py-3 text-sm font-semibold leading-5 text-brand-600">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
-              Mobile backend routing: {nativeUatTagged.map((row) => `${row.platform} ${formatNumber(row.events)} events`).join(', ')} are tagged <code>env=uat</code>. This is expected while those public mobile builds use the UAT backend. They stay included in app analytics and are classified separately from production-backend activity.
+              Some public mobile builds still use the test service: {nativeUatTagged.map((row) => `${row.platform} ${formatNumber(row.events)} recorded actions`).join(', ')}. This activity remains visible here and is labeled separately from activity using the live service.
             </p>
           </div>
         )}
