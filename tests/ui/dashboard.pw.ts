@@ -69,6 +69,7 @@ test('agent detail pages, feature disclosures and the chat panel fit small scree
     await navigate(page, 'One app');
     await page.getByRole('button', { name: `Open detailed ${label} analytics`, exact: true }).click();
     await expect(page.getByRole('button', { name: /back/i }).first()).toBeVisible();
+    if (label === 'Finance') await expect(page.getByRole('img', { name: 'Daily agent device trend', exact: true })).toBeVisible();
     await expect(page.getByText('This page failed to render.')).toHaveCount(0);
     await assertFits(page);
     const detail = page.getByRole('button', { name: /^View details for / }).first();
@@ -230,6 +231,11 @@ test('failed daily query cannot appear as zero activity or a confirmed traffic d
   const section = page.getByRole('region', { name: 'Daily agent traffic', exact: true });
   await expect(section).toContainText('Daily agent data is unavailable');
   await expect(section.getByRole('table')).toHaveCount(0);
+  const finance = page.getByRole('button', { name: 'Open detailed Finance analytics', exact: true });
+  await expect(finance).toContainText('Daily trend unavailable');
+  await expect(finance.locator('.recharts-surface')).toHaveCount(0);
+  await finance.click();
+  await expect(page.getByRole('img', { name: 'Daily agent device trend', exact: true })).toHaveCount(0);
 });
 
 

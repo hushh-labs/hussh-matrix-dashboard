@@ -822,7 +822,7 @@ export function AgentCapabilityAnalyticsPanel({
       <DailyAgentActivity one={activeSummary} capabilityKey={capabilityKey} />
 
       {/* Daily Active Trend Chart */}
-      {instrumented && observed && daily.length > 0 && (
+      {capabilitySourceAvailable && activeSummary?.capabilityDailyAvailable === true && instrumented && observed && daily.length > 0 && (
         <div className={cn(dashboardCard, 'p-6')}>
           <div className="mb-4">
             <h3 className="text-lg font-bold text-ink">Devices active each day</h3>
@@ -830,7 +830,7 @@ export function AgentCapabilityAnalyticsPanel({
               Different device/browser IDs using {meta.title} ({rangeLabel})
             </p>
           </div>
-          <div className="h-64 w-full">
+          <div className="h-64 w-full" role="img" aria-label="Daily agent device trend">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={daily} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>

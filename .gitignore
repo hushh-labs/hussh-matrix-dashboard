@@ -10,3 +10,4 @@ coverage/
 .codex/artifacts/
 test-results/
 playwright-report/
+gha-creds-*.json
