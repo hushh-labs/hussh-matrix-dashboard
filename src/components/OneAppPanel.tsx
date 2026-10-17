@@ -1048,10 +1048,12 @@ function CapabilityCard({
   capability,
   index,
   sourceAvailable,
+  dailyAvailable,
 }: {
   capability: OneCapabilityUsage;
   index: number;
   sourceAvailable: boolean;
+  dailyAvailable: boolean;
 }): ReactElement {
   const {
     label, instrumented, devices, deliberateEvents, accounts, daily,
@@ -1085,7 +1087,7 @@ function CapabilityCard({
             {exactCount(accounts)} signed-in accounts · {exactCount(deliberateEvents)} recorded actions
           </p>
 
-          <div className="mt-4 h-14 w-full">
+          {dailyAvailable ? <div className="mt-4 h-14 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={daily} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
                 <defs>
@@ -1114,7 +1116,7 @@ function CapabilityCard({
                 />
               </AreaChart>
             </ResponsiveContainer>
-          </div>
+          </div> : <p className="mt-4 text-xs leading-5 text-muted">Daily trend unavailable. The period totals above are still available.</p>}
           <p className="mt-3 text-xs font-bold text-brand-600 group-hover:underline">View detailed analytics →</p>
         </>
       ) : (
@@ -1464,7 +1466,7 @@ export function OneAppPanel({
                   }}
                   className="h-full rounded-2xl text-left transition-all duration-200 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] focus-visible:ring-offset-2"
                 >
-                  <CapabilityCard capability={capability} index={index} sourceAvailable={activeData.capabilitiesAvailable} />
+                  <CapabilityCard capability={capability} index={index} sourceAvailable={activeData.capabilitiesAvailable} dailyAvailable={activeData.capabilityDailyAvailable === true} />
                 </button>
               </Fragment>
             ))}
