@@ -12,7 +12,7 @@ async function navigate(page: Page, label: string) {
 
 async function assertFits(page: Page) {
   const dimensions = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
-  const heading = await page.locator('.dashboard-page-heading h1').textContent().catch(() => 'Sign-in');
+  const heading = (await page.locator('.dashboard-page-heading h1').allTextContents())[0] ?? 'Sign-in';
   expect(dimensions.scroll, `${heading} must not overflow the ${dimensions.width}px viewport`).toBeLessThanOrEqual(dimensions.width + 1);
   for (const table of await page.locator('table:visible').all()) {
     expect(await table.evaluate(element => Boolean(element.closest('.metrics-table-scroll'))), 'Wide tables need an internal scroll region').toBe(true);
