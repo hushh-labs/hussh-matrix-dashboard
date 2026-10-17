@@ -23,6 +23,7 @@ import { exactCount } from '../lib/feature-measurement';
 import type { LocationAnalyticsRoute } from '../lib/location-analytics-route';
 import { OneLocationAnalyticsPanel } from './OneLocationAnalyticsPanel';
 import { AgentCapabilityAnalyticsPanel } from './AgentCapabilityAnalyticsPanel';
+import { DailyAgentActivity } from './DailyAgentActivity';
 import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
 import type {
   BreakdownMetric,
@@ -123,7 +124,7 @@ function ActiveDevices({ one }: { one: OneAppSummary }) {
           transition={{ delay: 0.12 }}
           className={cn(dashboardCard, 'p-5')}
         >
-          <p className="text-sm font-semibold text-muted">Device stickiness</p>
+          <p className="text-sm font-semibold text-muted">Daily use as a share of monthly use</p>
           <p className="mt-2 text-5xl font-semibold leading-none text-ink">{percentText(stickiness, 1)}</p>
           <p className="mt-2 text-xs font-semibold text-muted">Daily active devices divided by monthly active devices</p>
         </motion.div>
@@ -131,7 +132,7 @@ function ActiveDevices({ one }: { one: OneAppSummary }) {
       <div className="flex items-start gap-3 rounded-2xl border border-stroke bg-brand-50 p-4 text-brand-600">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <p className="text-sm font-semibold leading-5">
-          Counting unit: unique GA4 device/browser identifiers. {identityScope} A signed-in person using multiple devices can appear more than once; the dashboard does not claim these are unique humans. Person-level rows are not exposed.
+          Each app or browser ID counts once. One signed-in person can use several devices, so devices are different from accounts.
         </p>
       </div>
     </div>
@@ -144,15 +145,15 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
 
   const range = users.selectedRange;
   const primaryTiles = [
-    { label: 'Identified active users', value: range.totalUsers, detail: 'Distinct signed-in accounts active in selected range' },
-    { label: 'Newly observed active users', value: range.newUsers, detail: 'First-ever observed account activity in selected range' },
-    { label: 'Returning active users', value: range.returningUsers, detail: 'First observed before selected range' },
+    { label: 'Active signed-in accounts', value: range.totalUsers, detail: 'Distinct signed-in accounts active in selected range' },
+    { label: 'Accounts first seen in this period', value: range.newUsers, detail: 'First-ever observed account activity in selected range' },
+    { label: 'Returning active accounts', value: range.returningUsers, detail: 'First observed before selected range' },
   ];
   const activityTiles = [
-    { label: 'Daily identified accounts', value: users.dau, detail: users.asOf },
-    { label: 'Weekly identified accounts', value: users.wau, detail: `7 days to ${users.asOf}` },
-    { label: 'Monthly identified accounts', value: users.mau, detail: `30 days to ${users.asOf}` },
-    { label: 'Monthly identity coverage', value: percentText(users.deviceCoverage.mau, 1), detail: `${formatNumber(users.identifiedDevices.mau)} active devices carried an account ID` },
+    { label: 'Accounts active in 1 day', value: users.dau, detail: users.asOf },
+    { label: 'Accounts active in 7 days', value: users.wau, detail: `7 days to ${users.asOf}` },
+    { label: 'Accounts active in 30 days', value: users.mau, detail: `30 days to ${users.asOf}` },
+    { label: 'Devices linked to an account', value: percentText(users.deviceCoverage.mau, 1), detail: `${formatNumber(users.identifiedDevices.mau)} active devices carried an account ID` },
   ];
 
   return (
@@ -475,12 +476,12 @@ export function ActivesByPlatform({ rows, available = true }: { rows: OnePlatfor
           <thead>
             <tr className="text-left text-xs font-bold uppercase text-muted">
               <th className="border-b border-stroke px-5 py-3">Platform</th>
-              <th className="border-b border-stroke px-5 py-3 text-right">Device DAU</th>
-              <th className="border-b border-stroke px-5 py-3 text-right">Device WAU</th>
-              <th className="border-b border-stroke px-5 py-3 text-right">Device MAU</th>
-              <th className="border-b border-stroke px-5 py-3 text-right">Account DAU</th>
-              <th className="border-b border-stroke px-5 py-3 text-right">Account WAU</th>
-              <th className="border-b border-stroke px-5 py-3 text-right">Account MAU</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Devices · 1 day</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Devices · 7 days</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Devices · 30 days</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Accounts · 1 day</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Accounts · 7 days</th>
+              <th className="border-b border-stroke px-5 py-3 text-right">Accounts · 30 days</th>
               <th className="border-b border-stroke px-5 py-3">Identity</th>
             </tr>
           </thead>
@@ -629,7 +630,7 @@ export function Retention({ one }: { one: OneAppSummary }) {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm font-semibold text-muted">
-            Week-1 return rate
+            Returned in week 1 rate
           </p>
           <p className="mt-1 text-5xl font-semibold leading-none text-ink">
             {percentText(averageRate, 0)}
@@ -693,7 +694,7 @@ export function Retention({ one }: { one: OneAppSummary }) {
       <div className="mt-4 overflow-x-auto">
         <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="w-full text-left text-xs">
           <caption className="sr-only">Observed weekly acquisition cohorts and reporting availability</caption>
-          <thead><tr className="text-muted"><th scope="col" className="py-2">Week of</th><th scope="col">First-arrival IDs</th><th scope="col">Week-1 return</th></tr></thead>
+          <thead><tr className="text-muted"><th scope="col" className="py-2">Week of</th><th scope="col">First-time device IDs</th><th scope="col">Returned in week 1</th></tr></thead>
           <tbody>{one.retention.map(cohort => <tr key={cohort.cohortWeek} className="border-t border-stroke">
             <th scope="row" className="py-2 font-medium">{cohort.cohortWeek}</th>
             <td>{cohort.cohortSize == null ? 'Unavailable' : formatNumber(cohort.cohortSize)}</td>
@@ -897,7 +898,7 @@ function FunnelDropoffAgentDiagnostic({
     <div className={cn(dashboardCard, 'mt-4 p-6')}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h3 className="text-base font-bold text-ink">Drop-off & Agent Diagnostics</h3>
+          <h3 className="text-base font-bold text-ink">Where people stop and which agents they try</h3>
           <p className="mt-0.5 text-xs font-semibold text-muted">
             Stage-by-stage loss analysis and capability telemetry status
           </p>
@@ -1149,7 +1150,7 @@ function AgentsClaimed() {
   );
 }
 
-/** 6. Operational health. Deliberately last, and deliberately labelled. */
+/** 6. App performance. Deliberately last, and deliberately labelled. */
 function Health({ metrics }: { metrics: BreakdownMetric[] }) {
   if (metrics.length === 0) {
     return (
@@ -1244,23 +1245,23 @@ export function OneAppPanel({
   const [selectedAgentCapability, setSelectedAgentCapability] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
 
-  const activeData = (environment === 'production' ? one : (oneUat || one)) as OneAppSummary;
+  const activeData = (environment === 'production' ? one : oneUat) as OneAppSummary;
   const nativeUatTagged = (activeData?.nativeEnvironments ?? []).filter(
     (row) => row.environment === 'uat' && row.events > 0,
   );
 
-  if ((loading || !one || !one.available) && !locationRoute && !selectedAgentCapability) {
+  if ((loading || !activeData || !activeData.available) && !locationRoute && !selectedAgentCapability) {
     return (
       <main className="space-y-10">
         <div className="flex justify-end">{dateControl}</div>
         {loading ? <MetricsSkeleton /> : <div className={cn(dashboardPanel, 'p-8 text-center')}>
           <p className="text-base font-semibold text-ink">
-            No One app data for this window yet.
+            One app data is unavailable for this selection.
           </p>
           <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-muted">
-            This view reads the production GA4 export. If it stays empty, check that the
-            dashboard&rsquo;s service account can read the analytics dataset.
+            Try refreshing or choose another period. Missing data is not shown as zero.
           </p>
+          {environment === 'uat' && <button type="button" onClick={() => setEnvironment('production')} className="mt-4 rounded-lg bg-brand-50 px-4 py-2 text-brand-600">Back to Production</button>}
         </div>}
       </main>
     );
@@ -1345,8 +1346,8 @@ export function OneAppPanel({
             </div>
             <p className="text-xs font-semibold leading-5 text-muted">
               {environment === 'production'
-                ? 'Production GA4 property: one.hushh.ai plus its native app streams. Other web hosts are excluded.'
-                : 'UAT GA4 property: uat.one.hushh.ai plus any native rows exported to that property. Other web hosts are excluded.'}
+                ? 'Live website and mobile app activity. Other websites are excluded. Mobile test-service activity is labeled separately.'
+                : 'Activity from the test website and mobile apps reporting to the test analytics source.'}
             </p>
           </div>
           <div className="shrink-0">{dateControl}</div>
@@ -1378,7 +1379,7 @@ export function OneAppPanel({
           <summary className="cursor-pointer font-semibold text-ink">Plain-English guide to the numbers on this page</summary>
           <div className="mt-3 grid gap-x-6 gap-y-2 md:grid-cols-2">
             <p><strong>Registered users:</strong> distinct One account records in Firebase. “New” means the account was created during the selected dates. This does not prove one account per human.</p>
-            <p><strong>Identified active users:</strong> distinct account IDs attached to meaningful GA4 activity. One account counts once even after repeat visits or use on multiple devices. Activity without an account ID is excluded.</p>
+            <p><strong>Active signed-in accounts:</strong> distinct account IDs attached to meaningful GA4 activity. One account counts once even after repeat visits or use on multiple devices. Activity without an account ID is excluded.</p>
             <p><strong>First observed / returning:</strong> the account’s first tagged activity in the available export is inside / before the selected dates. First observed is not the same as a new registration.</p>
             <p><strong>Active devices:</strong> distinct app-install or browser identifiers with meaningful activity. One person can have several; anonymous visits are included. These are not unique people.</p>
             <p><strong>Daily / weekly / monthly:</strong> activity over 1 / 7 / 30 days, ending on the date printed on the tile. GA4’s finalized daily export may lag behind today or the selected end date.</p>
@@ -1402,10 +1403,16 @@ export function OneAppPanel({
         </details>
       </section>
 
+      <DailyAgentActivity one={activeData} onOpenAgent={key => {
+        if (key === 'location') onOpenLocation();
+        else setSelectedAgentCapability(key);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }} />
+
       <Block
-        kicker="Device growth diagnostic"
+        kicker="New and returning devices"
         title="Are devices coming back?"
-        hint="This secondary diagnostic uses device identifiers. The exact account-based New and Total user KPIs stay at the top of the page."
+        hint="See whether app and browser IDs are new or returning. Account totals appear at the top of this page."
       >
         <GrowthQuality one={activeData} />
       </Block>
@@ -1420,7 +1427,7 @@ export function OneAppPanel({
       <Block
         kicker="App first opens"
         title="What happens after the first app launch?"
-        hint="Every stage follows app-instance identifiers first opened in this window after installation or reinstallation. This is not a Play Store download count. Web is excluded from this native cohort."
+        hint="Follow app installs that first opened during these dates, including reinstalls. These are app IDs, not store downloads. Web visits are excluded."
       >
         <InstallFunnel funnels={activeData.installFunnel} />
         <FunnelDropoffAgentDiagnostic one={activeData} />
@@ -1437,7 +1444,7 @@ export function OneAppPanel({
       <Block
         kicker="Agents"
         title="Which agents do devices use?"
-        hint="Ranked by deliberate use. Retries, prefetches, health pings and diagnostics are counted separately, not as usage."
+        hint="Ranked by recorded feature use. Automatic background activity is kept separate."
       >
         <div className="flex flex-col gap-4">
           <AgentsClaimed />
@@ -1466,9 +1473,9 @@ export function OneAppPanel({
       </Block>
 
       <Block
-        kicker="Operational health"
+        kicker="App performance"
         title="Is the app up?"
-        hint="Served by the same Cloud Run service as the rest of the web app."
+        hint="Availability and response times for the live web service."
       >
         <Health metrics={healthMetrics} />
       </Block>

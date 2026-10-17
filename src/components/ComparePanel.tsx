@@ -11,7 +11,7 @@ import { dashboardCard, dashboardPanel, dashboardLabel, dashboardBand } from '..
  * The growth tab answers "how are we doing in the window I picked". This tab
  * answers the question that comes straight after: "and is that better or
  * worse than usual?" -- the same organisation-level figures over the last 30
- * days, the last 90, and everything since the feeds began, in one table so
+ * days, the last 90, and everything since reporting began, in one table so
  * the eye can run across a row.
  *
  * Nothing here is derived from the growth tab's range. The three windows are
@@ -64,7 +64,7 @@ const SECTIONS: CompareSection[] = [
     title: 'Audience',
     rows: [
       {
-        label: 'New devices picked up',
+        label: 'New devices first seen',
         hint: 'Distinct devices first seen on the One app in the window',
         value: (g) => exact(g.users.window?.newUsers),
       },
@@ -76,7 +76,7 @@ const SECTIONS: CompareSection[] = [
     ],
   },
   {
-    title: 'Cross-product',
+    title: 'Website to app',
     rows: [
       { label: 'Website visitors', hint: 'hushh.ai, same analytics property', value: (g) => exact(g.crossProduct.siteVisitors) },
       { label: 'App web visitors', value: (g) => exact(g.crossProduct.appWebVisitors) },
@@ -85,7 +85,7 @@ const SECTIONS: CompareSection[] = [
     ],
   },
   {
-    title: 'Organic search',
+    title: 'Google Search',
     rows: [
       { label: 'Clicks', value: (g) => (g.organicSearch.available ? exact(g.organicSearch.clicks) : '—') },
       { label: 'Impressions', value: (g) => (g.organicSearch.available ? exact(g.organicSearch.impressions) : '—') },
@@ -103,11 +103,11 @@ const SECTIONS: CompareSection[] = [
     ],
   },
   {
-    title: 'Instrumentation',
+    title: 'Tracking quality',
     rows: [
-      { label: 'Governed events', hint: 'Carry the shared event_category param', value: (g) => exact(g.instrumentation.governedEvents) },
-      { label: 'Ungoverned events', value: (g) => exact(g.instrumentation.ungovernedEvents) },
-      { label: 'Distinct event names', value: (g) => exact(g.instrumentation.distinctEvents), muted: true },
+      { label: 'Activity with standard tracking labels', hint: 'Activity records with the required category label', value: (g) => exact(g.instrumentation.governedEvents) },
+      { label: 'Activity missing standard labels', value: (g) => exact(g.instrumentation.ungovernedEvents) },
+      { label: 'Different types of activity', value: (g) => exact(g.instrumentation.distinctEvents), muted: true },
     ],
   },
 ];
@@ -121,7 +121,7 @@ function WindowHeader({ window }: { window: GrowthCompareWindow }) {
       </p>
       <p className="mt-0.5 text-xs font-semibold text-muted">
         {window.range.days} days
-        {window.key === 'all' ? ' · since the feeds began' : ''}
+        {window.key === 'all' ? ' · since reporting began' : ''}
       </p>
       {window.error && (
         <p className="mt-2 text-xs font-semibold leading-5 text-warning">{window.error}</p>

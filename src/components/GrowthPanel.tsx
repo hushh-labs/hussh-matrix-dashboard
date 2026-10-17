@@ -329,7 +329,7 @@ function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] })
           detail="Carry an account identity"
         />
         <Figure
-          label="Identity coverage"
+          label="Accounts and devices coverage"
           value={percentText(coverage, 1)}
           tone={lowCoverage ? 'warn' : 'plain'}
           detail={
@@ -347,7 +347,7 @@ function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] })
               <th className="border-b border-stroke px-5 py-3">Platform</th>
               <th className="border-b border-stroke px-5 py-3 text-right">Devices</th>
               <th className="border-b border-stroke px-5 py-3 text-right">Accounts</th>
-              <th className="border-b border-stroke px-5 py-3">Identity</th>
+              <th className="border-b border-stroke px-5 py-3">Accounts and devices</th>
             </tr>
           </thead>
           <tbody>
@@ -730,21 +730,21 @@ function InstrumentationHealth({ growth }: { growth: GrowthSummary }) {
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Figure
-          label="Events carrying required tags"
+          label="Activity with required tracking labels"
           value={percentText(governedShare, 1)}
           tone={governedShare !== null && governedShare < 0.9 ? 'warn' : 'plain'}
-          detail={`${exact(ungovernedEvents)} of ${exact(totalEvents)} arrived untagged`}
+          detail={`${exact(ungovernedEvents)} of ${exact(totalEvents)} are missing required labels`}
         />
         <Figure
-          label="Event types seen"
+          label="Types of activity recorded"
           value={formatNumber(distinctEvents)}
-          detail={`${formatNumber(ungovernedEventNames)} of them emit outside the governed taxonomy`}
+          detail={`${formatNumber(ungovernedEventNames)} are missing the standard tracking labels`}
         />
         <Figure
-          label="Declared but never sent"
+          label="Planned activity not yet recorded"
           value={formatNumber(declaredNotEmitted.length)}
           tone={declaredNotEmitted.length > 0 ? 'warn' : 'plain'}
-          detail="In the contract with no live emitter"
+          detail="Defined in tracking plans, but not yet sent by the app"
         />
       </div>
 
@@ -788,8 +788,7 @@ export function GrowthPanel({
         {loading ? <MetricsSkeleton /> : <div className={cn(dashboardPanel, 'p-8 text-center')}>
           <p className="text-base font-semibold text-ink">Growth data is temporarily unavailable.</p>
           <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-muted">
-            This view reads the GA4 export, the billing export and Search Console. If it stays
-            empty, check that the dashboard&rsquo;s service account can read all three.
+            Try refreshing or choose another period. Activity, costs and search data may become available at different times.
           </p>
         </div>}
       </main>
@@ -799,18 +798,18 @@ export function GrowthPanel({
   const sections: Array<{ kicker: string; title: string; hint?: string; body: ReactElement }> = [
     {
       kicker: 'Audience',
-      title: 'How many devices have we picked up in the trailing year?',
-      hint: 'Distinct One app devices first seen in the trailing 365 days, and the rate we are adding them.',
+      title: 'How many new devices reached One?',
+      hint: 'Different app and browser IDs first seen in the last 365 days, plus growth during your selected dates.',
       body: <UsersOverTime growth={growth} />,
     },
     {
-      kicker: 'Identity',
+      kicker: 'Accounts and devices',
       title: 'How many devices are tied to accounts?',
-      hint: 'Every audience number in this One growth view counts devices. This is why, and by how much.',
+      hint: 'This growth report counts app and browser IDs. See how many can also be linked to a signed-in account.',
       body: <IdentityCoverage identity={growth.identity} />,
     },
     {
-      kicker: 'Unit economics',
+      kicker: 'Cost of serving users',
       title: 'What does an active device cost us?',
       hint: 'Cloud spend divided by active devices, with the spend that serves no measured device shown separately.',
       body: (
@@ -822,9 +821,9 @@ export function GrowthPanel({
       ),
     },
     {
-      kicker: 'Cross-product',
+      kicker: 'Website to app',
       title: 'Does the website feed the app?',
-      hint: 'The only journey that connects two products, measured same-device without merging anyone.',
+      hint: 'Visits from hushh.ai to One on the same device. Visits on separate devices cannot be linked here.',
       body: <CrossProduct growth={growth} />,
     },
     {
@@ -840,7 +839,7 @@ export function GrowthPanel({
     {
       kicker: 'Data quality',
       title: 'Can we trust these numbers?',
-      hint: 'Two collection paths have broken silently before. This section is how the third one gets caught.',
+      hint: 'Check whether activity records have the tags needed for reliable reporting.',
       body: <InstrumentationHealth growth={growth} />,
     },
   ];

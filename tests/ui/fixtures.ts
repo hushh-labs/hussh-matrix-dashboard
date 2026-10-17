@@ -61,6 +61,7 @@ export const one: OneAppSummary = {
   retention: Array.from({ length: 6 }, (_, index) => ({ cohortWeek: day(49 - index * 7), cohortSize: 100 + index * 10, returnedW1: 40 + index * 4, rateW1: .4, windowComplete: true, state: 'available' })),
   retentionAvailable: true, activationStages: [{ key: 'started', label: 'Started', users: 1460 }, { key: 'activated', label: 'Activated', users: 852 }],
   capabilitiesAvailable: true,
+  capabilityDailyAvailable: true,
   capabilities: capabilityKeys.map((key, index) => ({ key, label: capabilityLabels[index], instrumented: true, observed: true, note: null,
     accounts: 320 - index * 21, devices: 380 - index * 25, deliberateEvents: 2100 - index * 160, totalUsers: 400 - index * 26, totalEvents: 2400 - index * 170,
     daily: daily.map(item => ({ eventDate: item.eventDate, users: Math.max(1, item.users - index * 2) })) })),

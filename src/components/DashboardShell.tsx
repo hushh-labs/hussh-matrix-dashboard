@@ -156,6 +156,17 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
           <div className="dashboard-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('briefing')}>Home</button><ChevronRight size={16} /><span>{pageTitle}</span></div>
         </div>
         <div className="dashboard-status" role="status"><span className={cn('status-dot', refreshing && 'is-updating')} /><span>{status}</span></div>
+        <details className="mb-5 rounded-lg border border-stroke bg-surface px-4 py-3 text-xs leading-5 text-muted">
+          <summary className="cursor-pointer font-semibold text-ink">Quick guide to the numbers</summary>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div><dt className="font-semibold text-ink">Accounts</dt><dd>Different signed-in accounts. One account may use several devices; an account is not a verified unique person.</dd></div>
+            <div><dt className="font-semibold text-ink">Devices and browsers</dt><dd>Different app or browser IDs. One person may have more than one.</dd></div>
+            <div><dt className="font-semibold text-ink">Visits, actions and requests</dt><dd>Recorded activity. Repeats count again; website requests may include automatic traffic.</dd></div>
+            <div><dt className="font-semibold text-ink">Live and test data</dt><dd>Production is the live product reporting source. UAT is the test source. Mobile builds can use a different service, as labeled in each report.</dd></div>
+            <div><dt className="font-semibold text-ink">Missing or recent data</dt><dd>0 means no matching activity was recorded. — means unavailable or untracked. Recent data can arrive late.</dd></div>
+            <div><dt className="font-semibold text-ink">Daily, weekly and monthly</dt><dd>1, 7 and 30 days ending on the date shown. Counts across days or agents can overlap.</dd></div>
+          </dl>
+        </details>
         {children}
         <footer className="dashboard-footer"><span>Hushh Matrix</span><span>Aggregate metrics · source timestamps shown on each report</span></footer>
       </div>

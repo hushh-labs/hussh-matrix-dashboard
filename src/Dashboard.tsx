@@ -1,4 +1,5 @@
 import { DashboardShell } from './components/DashboardShell';
+import { SingleDayPicker } from './components/SingleDayPicker';
 import { dashboardTabs, dashboardTabLabels, type DashboardTab } from './lib/dashboard-navigation';
 import { useMetricsResource } from './lib/use-metrics-resource';
 import { MetricsSkeleton, MetricsUpdateStatus } from './components/MetricsLoading';
@@ -676,7 +677,7 @@ function SourceMatrix({
   const orderedKeys = ['search_console', 'ga4', 'product_events'];
   return (
     <section className={dashboardBand}>
-      <SectionHeader kicker="Connected sources" title="Three-source metrics matrix" />
+      <SectionHeader kicker="Connected sources" title="Where each product’s data comes from" />
       <div className="space-y-7">
         {groups.map((group) => {
           const cards = orderedKeys
@@ -742,7 +743,7 @@ function DateRangeControl({
                 range.preset === days ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink',
               )}
             >
-              {days}D
+              {days} days
             </button>
           ))}
         </div>
@@ -758,9 +759,10 @@ function DateRangeControl({
           {refreshing ? 'Updating' : ''}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <label className="flex min-h-10 items-center gap-2 rounded-lg bg-canvas px-2 text-xs font-bold text-muted">
           <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+          <span>From</span>
           <input
             type="date"
             value={draft.startDate}
@@ -771,6 +773,7 @@ function DateRangeControl({
           />
         </label>
         <label className="flex min-h-10 items-center rounded-lg bg-canvas px-2 text-xs font-bold text-muted">
+          <span className="mr-2">To</span>
           <input
             type="date"
             value={draft.endDate}
@@ -781,6 +784,9 @@ function DateRangeControl({
           />
         </label>
       </div>
+      <SingleDayPicker label={`${ariaLabelPrefix} specific day`} value={range.startDate === range.endDate ? range.endDate : ''} max={today}
+        onChange={day => onCustomRange({ preset: 'custom', startDate: day, endDate: day })} />
+      <p className="px-1 text-[11px] leading-4 text-muted">Choose a date above for one day, or use From / To for a range. Recent data may still arrive.</p>
       {pending && <button type="button" onClick={() => { const next = normalizeCustomRange(draft); setDraft(next); onCustomRange(next); }} disabled={!draft.startDate || !draft.endDate} className="min-h-9 rounded-lg bg-[#465fff] px-3 text-xs font-bold text-white disabled:opacity-50">Apply dates</button>}
     </div>
   );
@@ -1357,7 +1363,7 @@ export default function Dashboard() {
 
     if (focus === 'events' || focus === 'all') {
       add({
-        title: 'Top GA4 Events',
+        title: 'Most recorded website actions',
         subtitle: 'Event names and counts returned by GA4 Data API. Web-vitals rows are performance telemetry, not conversion events.',
         rows: (ga4?.topEvents ?? []).map((event) => detailRow(
           readableMetricLabel(event.eventName),
@@ -1405,7 +1411,7 @@ export default function Dashboard() {
 
     add({
       title: 'Landing Pages',
-      subtitle: 'First page in each GA4 session, grouped with channel context.',
+      subtitle: 'The first page opened in each visit, grouped with channel context.',
       rows: (acquisition?.landingPages ?? []).map((page) => detailRow(
         page.landingPage ?? '(not set)',
         `${formatOptionalNumber(page.sessions)} sessions`,
@@ -1415,7 +1421,7 @@ export default function Dashboard() {
     });
 
     add({
-      title: 'Geo + Device',
+      title: 'Countries and devices',
       subtitle: 'Aggregate country/device mix from GA4.',
       rows: (acquisition?.geoDevice ?? []).map((geo) => detailRow(
         `${geo.country ?? '(not set)'} · ${geo.deviceCategory ?? '(not set)'}`,
@@ -1438,7 +1444,7 @@ export default function Dashboard() {
 
     if (focus !== 'events') {
       add({
-        title: 'Top GA4 Events',
+        title: 'Most recorded website actions',
         subtitle: 'Event context for the same selected range.',
         rows: (ga4?.topEvents ?? []).slice(0, 8).map((event) => detailRow(
           readableMetricLabel(event.eventName),
@@ -1486,7 +1492,7 @@ export default function Dashboard() {
       acquisition: 'Hushh AI Acquisition',
       source: 'Hushh AI Source / Medium',
       landing: 'Hushh AI Landing Pages',
-      geo: 'Hushh AI Geo + Device',
+      geo: 'Hushh AI Countries and devices',
       timing: 'Hushh AI Session Timing',
       all: 'Hushh AI GA4 Details',
     };
@@ -1638,7 +1644,7 @@ export default function Dashboard() {
           rows: metricRows(hushhTechDatabaseMetrics),
         },
         {
-          title: 'Database Range Summary',
+          title: 'Records during the selected dates',
           subtitle: hushhTechRangeLabel,
           rows: metricRows(hushhTechDailySummaryMetrics),
         },
@@ -1649,7 +1655,7 @@ export default function Dashboard() {
         },
         {
           title: 'Funnel',
-          subtitle: 'Supabase business funnel aggregates.',
+          subtitle: 'Progress through sign-up and product setup.',
           rows: metricRows(hushhTechBusinessMetrics),
         },
         {
@@ -1668,13 +1674,13 @@ export default function Dashboard() {
           rows: metricRows(hushhTechAudienceMetrics),
         },
         {
-          title: 'Search + Ops',
+          title: 'Search and website performance',
           subtitle: 'Search Console and Cloud Run aggregate operations metrics.',
           rows: metricRows(hushhTechOpsMetrics),
         },
         {
           title: 'Data Coverage',
-          subtitle: 'Connected provider coverage and public-safe collection status.',
+          subtitle: 'Which data connections are available and public-safe collection status.',
           rows: metricRows(hushhTechCoverageMetrics),
         },
         ...sourceCardSections(data?.hushhTech?.sourceCards, 'HushhTech Source'),
@@ -1817,7 +1823,7 @@ export default function Dashboard() {
             <section className={dashboardBand}>
               <SectionHeader
                 kicker="one.hushh.ai · production"
-                title="Production traffic + readiness"
+                title="One website traffic and data status"
                 action={(
                   <DateRangeControl
                     range={kaiRange}
@@ -1849,7 +1855,7 @@ export default function Dashboard() {
                 />
                 <ChartShell
                   title="Users, Sessions, Events"
-                  subtitle="Production GA4 daily export; provider data may arrive with normal processing delay"
+                  subtitle="Daily website activity. Recent data may take time to arrive."
                   action={<DetailActionButton onClick={() => openKaiProductionDetail('One Production GA4 Details')} />}
                 >
                   {!kaiProductionGa4Available ? (
@@ -1972,7 +1978,7 @@ export default function Dashboard() {
               </div>
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <MetricListCard
-                  title="GA4 Engagement"
+                  title="Website visits and engagement"
                   subtitle="Users, sessions, events, and engaged-session quality"
                   items={hushhAiEngagementMetrics}
                   onItemClick={(item) => {
@@ -1992,31 +1998,31 @@ export default function Dashboard() {
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 <MetricListCard
                   title="Where Sessions Came From"
-                  subtitle="GA4 session channel groups"
+                  subtitle="How visitors found the website"
                   items={hushhAiAcquisitionMetrics}
                   onItemClick={handleHushhAiMetricListClick('acquisition')}
                 />
                 <MetricListCard
                   title="Source / Medium"
-                  subtitle="GA4 session source attribution"
+                  subtitle="Websites and campaigns bringing visits"
                   items={hushhAiSourceMediumMetrics}
                   onItemClick={handleHushhAiMetricListClick('source')}
                 />
                 <MetricListCard
                   title="Landing Pages"
-                  subtitle="First page in each GA4 session"
+                  subtitle="The first page opened in each visit"
                   items={hushhAiLandingPageMetrics}
                   onItemClick={handleHushhAiMetricListClick('landing')}
                 />
                 <MetricListCard
-                  title="Geo + Device"
+                  title="Countries and devices"
                   subtitle="Aggregate country and device mix"
                   items={hushhAiGeoDeviceMetrics}
                   onItemClick={handleHushhAiMetricListClick('geo')}
                 />
                 <MetricListCard
                   title="Session Timing"
-                  subtitle="Top session hours in GA4 property timezone"
+                  subtitle="Busiest hours, using the analytics reporting timezone"
                   items={hushhAiSessionTimingMetrics}
                   onItemClick={handleHushhAiMetricListClick('timing')}
                 />
@@ -2024,7 +2030,7 @@ export default function Dashboard() {
               <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
                 <ChartShell
                   title="Top Pages / Screens"
-                  subtitle="GA4 aggregate page views for hushh.ai"
+                  subtitle="Pages viewed on hushh.ai; repeat views count again"
                   action={(
                     <button
                       type="button"
@@ -2050,7 +2056,7 @@ export default function Dashboard() {
                   )}
                 </ChartShell>
                 <ChartShell
-                  title="Top GA4 Events"
+                  title="Most recorded website actions"
                   subtitle="Aggregate events that show what visitors are doing"
                   action={(
                     <button
@@ -2084,13 +2090,13 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <MetricListCard
                   title="Total Report"
-                  subtitle="Users, funnel, search, infra, and stored aggregates"
+                  subtitle="Audience, sign-up progress, search and website performance"
                   items={hushhTechReportTotals}
                   onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)}
                 />
                 <MetricListCard
                   title="Selected reporting range"
-                  subtitle="DAU, WAU, MAU, sessions, views, events, and engagement"
+                  subtitle="Active audience over 1, 7 and 30 days, visits and recorded actions"
                   items={hushhTechSevenDayMetrics}
                   onItemClick={(item) => openHushhTechDetail(`HushhTech · ${item.label}`, item)}
                 />
@@ -2098,16 +2104,16 @@ export default function Dashboard() {
             </section>
 
             <section className={dashboardBand}>
-              <SectionHeader kicker="hushhtech.com Supabase" title="Database truth metrics" />
+              <SectionHeader kicker="hushhtech.com Supabase" title="Account and product records" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <MetricListCard
-                  title="Top 10 Database Metrics"
-                  subtitle="Auth, profile, agent, onboarding, NDA, and Plaid aggregate counts"
+                  title="Key account and product totals"
+                  subtitle="Sign-ins, profiles, agents, setup, agreements and connected accounts"
                   items={hushhTechDatabaseMetrics}
                   onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)}
                 />
                 <MetricListCard
-                  title="Database Range Summary"
+                  title="Records during the selected dates"
                   subtitle={hushhTechRangeLabel}
                   items={hushhTechDailySummaryMetrics}
                   onItemClick={(item) => openHushhTechDetail(`HushhTech Database Range · ${item.label}`, item)}
@@ -2167,8 +2173,8 @@ export default function Dashboard() {
               </div>
 
               <div className="grid grid-cols-1 gap-4">
-                <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
-                <MetricListCard title="hushh.ai Search" subtitle="Search Console export metrics" items={hushhAiSearchMetrics} />
+                <MetricListCard title="hushh.ai GCP" subtitle="Website requests, errors and response times" items={hushhAiOpsMetrics} />
+                <MetricListCard title="hushh.ai Search" subtitle="Google Search clicks and appearances" items={hushhAiSearchMetrics} />
                 <MetricListCard
                   title="hushhtech.com Audience"
                   subtitle="Public endpoint audience and traffic"
@@ -2176,10 +2182,10 @@ export default function Dashboard() {
                   onItemClick={(item) => openHushhTechDetail(`HushhTech Audience · ${item.label}`, item)}
                 />
                 <MetricListCard
-                  title="Search + Ops"
+                  title="Search and website performance"
                   subtitle="Search Console, GA4, and Cloud Run"
                   items={hushhTechOpsMetrics}
-                  onItemClick={(item) => openHushhTechDetail(`HushhTech Search + Ops · ${item.label}`, item)}
+                  onItemClick={(item) => openHushhTechDetail(`HushhTech Search and website performance · ${item.label}`, item)}
                 />
               </div>
             </section>
@@ -2267,7 +2273,7 @@ export default function Dashboard() {
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
               <MetricListCard
                 title="Usage Snapshot"
-                subtitle="Latest production feed usage rows"
+                subtitle="Latest recorded activity from the live product"
                 items={kaiUsageMetrics}
                 onItemClick={(item) => openKaiProductionDetail(`Production Usage · ${item.label}`, item)}
               />
@@ -2276,7 +2282,7 @@ export default function Dashboard() {
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-2')}>
               <MetricListCard
                 title="hushhtech.com Funnel"
-                subtitle="Supabase business funnel aggregates"
+                subtitle="Progress through sign-up and product setup"
                 items={hushhTechBusinessMetrics}
                 onItemClick={(item) => openHushhTechDetail(`HushhTech Funnel · ${item.label}`, item)}
               />
@@ -2297,7 +2303,7 @@ export default function Dashboard() {
               />
               <MetricListCard
                 title="Data Coverage"
-                subtitle="Connected provider coverage"
+                subtitle="Which data connections are available"
                 items={hushhTechCoverageMetrics}
                 onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)}
               />
@@ -2336,7 +2342,7 @@ export default function Dashboard() {
               />
               <MetricListCard
                 title="Feature Engagement"
-                subtitle="Governed feature events"
+                subtitle="Feature activity with standard tracking labels"
                 items={featureEngagement}
                 onItemClick={(item) => openKaiProductionDetail(`Production Feature Engagement · ${item.label}`, item)}
               />
@@ -2344,21 +2350,21 @@ export default function Dashboard() {
 
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
               <MetricListCard
-                title="Instrumentation Health"
-                subtitle="Governed event schema coverage"
+                title="Tracking quality"
+                subtitle="Whether activity records contain the required tracking labels"
                 items={instrumentationHealth}
                 onItemClick={(item) => openKaiProductionDetail(`Production Instrumentation · ${item.label}`, item)}
               />
-              <MetricListCard title="hushh.ai GCP" subtitle="Cloud Run service metrics" items={hushhAiOpsMetrics} />
+              <MetricListCard title="hushh.ai GCP" subtitle="Website requests, errors and response times" items={hushhAiOpsMetrics} />
               <MetricListCard
                 title="hushhtech.com Database"
-                subtitle="Top Supabase aggregate counts"
+                subtitle="Key totals from account and product records"
                 items={hushhTechDatabaseMetrics}
                 onItemClick={(item) => openHushhTechDetail(`HushhTech Database · ${item.label}`, item)}
               />
               <MetricListCard
                 title="hushhtech.com Coverage"
-                subtitle="Connected provider coverage"
+                subtitle="Which data connections are available"
                 items={hushhTechCoverageMetrics}
                 onItemClick={(item) => openHushhTechDetail(`HushhTech Coverage · ${item.label}`, item)}
               />

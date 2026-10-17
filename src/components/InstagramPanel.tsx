@@ -193,21 +193,21 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
           <p className="mt-1 text-sm text-muted">Per-item lifetime insights and current likes/comments. A Reel is identified by Instagram's media product type.</p></div>
         <div className="flex flex-wrap gap-3">
           <label className="text-sm text-muted">Type
-            <select value={mediaFilter} onChange={(event) => { setMediaFilter(event.target.value as typeof mediaFilter); setMediaPage(0); }}
+            <select aria-label="Type" value={mediaFilter} onChange={(event) => { setMediaFilter(event.target.value as typeof mediaFilter); setMediaPage(0); }}
               className="ml-2 min-h-10 rounded-lg border border-stroke bg-surface px-2">
               <option value="all">All</option><option value="REELS">Reels</option><option value="FEED">Feed</option>
               <option value="STORY">Stories</option><option value="UNKNOWN">Unknown</option>
             </select>
           </label>
           <label className="text-sm text-muted">Published
-            <select value={mediaRange} onChange={(event) => { setMediaRange(Number(event.target.value) as typeof mediaRange); setMediaPage(0); }}
+            <select aria-label="Published" value={mediaRange} onChange={(event) => { setMediaRange(Number(event.target.value) as typeof mediaRange); setMediaPage(0); }}
               className="ml-2 min-h-10 rounded-lg border border-stroke bg-surface px-2">
               <option value={7}>Past 7 days</option><option value={30}>Past 30 days</option>
               <option value={90}>Past 90 days</option><option value={365}>Past 365 days</option>
             </select>
           </label>
           <label className="text-sm text-muted">Sort by
-            <select value={mediaSort} onChange={(event) => { setMediaSort(event.target.value as typeof mediaSort); setMediaPage(0); }}
+            <select aria-label="Sort by" value={mediaSort} onChange={(event) => { setMediaSort(event.target.value as typeof mediaSort); setMediaPage(0); }}
               className="ml-2 min-h-10 rounded-lg border border-stroke bg-surface px-2">
               <option value="publishedAt">Published</option><option value="reach">Reach</option><option value="views">Views</option>
               <option value="likes">Likes</option><option value="comments">Comments</option>

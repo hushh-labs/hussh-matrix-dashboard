@@ -50,6 +50,7 @@ import { cn } from '../lib/utils';
 import type { OneAppSummary } from '../lib/types';
 import { FeatureActivityTable } from './FeatureActivityTable';
 import { MetricCalculationGuide } from './MetricCalculationGuide';
+import { DailyAgentActivity } from './DailyAgentActivity';
 import { exactCount, eventVolumeExplanation, featureActivityLabel, featureMeasurementState } from '../lib/feature-measurement';
 import { featureTrackingGap } from '../lib/agent-measurement-contract.mjs';
 
@@ -168,7 +169,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
   onboarding: [
     {
       key: 'auth_started',
-      label: 'Auth start & Method Selection',
+      label: 'Started sign-in',
       icon: UserCheck,
       status: 'active',
       badgeLabel: 'Verified Active',
@@ -177,7 +178,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'phone_verified',
-      label: 'Phone Verification & OTP',
+      label: 'Phone verification',
       icon: Key,
       status: 'active',
       badgeLabel: 'Verified Active',
@@ -186,7 +187,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'google_signin',
-      label: 'Google Sign-In Handoff',
+      label: 'Google sign-in step',
       icon: User,
       status: 'active',
       badgeLabel: 'Verified Active',
@@ -195,7 +196,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'profile_created',
-      label: 'Profile Setup & Catalog Bind',
+      label: 'Profile setup',
       icon: FileText,
       status: 'active',
       badgeLabel: 'Verified Active',
@@ -204,7 +205,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'onboarding_completed',
-      label: 'Onboarding Flow Completion',
+      label: 'Finished setup',
       icon: CheckCircle2,
       status: 'active',
       badgeLabel: 'Verified Active',
@@ -224,7 +225,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'ai_recommendation',
-      label: 'AI Recommendation Engine',
+      label: 'Opened a recommendation',
       icon: Zap,
       status: 'active',
       badgeLabel: 'Verified Active',
@@ -580,9 +581,9 @@ export function AgentCapabilityAnalyticsPanel({
 
   const meta = capabilityMetadata[capabilityKey] || {
     title: `${capabilityKey.toUpperCase()} Agent`,
-    description: `Detailed analytics and telemetry for ${capabilityKey}`,
+    description: `Recorded activity for ${capabilityKey}`,
     icon: Activity,
-    auditExplanation: `Telemetry and event tracking for ${capabilityKey}`,
+    auditExplanation: `Activity tracking for ${capabilityKey}`,
   };
 
   const Icon = meta.icon;
@@ -818,6 +819,7 @@ export function AgentCapabilityAnalyticsPanel({
       </div>
 
       <MetricCalculationGuide summary={activeSummary} />
+      <DailyAgentActivity one={activeSummary} capabilityKey={capabilityKey} />
 
       {/* Daily Active Trend Chart */}
       {instrumented && observed && daily.length > 0 && (
@@ -862,7 +864,7 @@ export function AgentCapabilityAnalyticsPanel({
         </div>
       )}
 
-      {/* Feature Adoption & Telemetry Audit Table */}
+      {/* Feature activity table */}
       <div className="space-y-4">
         <div>
           <p className={dashboardLabel}>Feature adoption</p>

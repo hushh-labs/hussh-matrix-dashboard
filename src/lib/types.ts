@@ -1057,6 +1057,8 @@ export interface OneAppSummary {
   retentionAvailable?: boolean;
   activationStages: OneActivationStage[];
   capabilitiesAvailable: boolean;
+  /** Health of the existing daily agent query; absent on older API revisions. */
+  capabilityDailyAvailable?: boolean;
   capabilities: OneCapabilityUsage[];
   surfaces: OneSurfaceRow[];
   androidCapture?: {

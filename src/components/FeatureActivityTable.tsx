@@ -62,7 +62,7 @@ export function FeatureActivityTable({ rows }: { rows: FeatureActivityRow[] }) {
           <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold', row.badgeClass)}>{row.badgeLabel}</span>
         </div>
         <p className="mt-1 text-xs leading-5 text-muted">{featureActivityDescription(row.key)}</p>
-        <p className="mt-0.5 text-xs leading-5 text-muted">{row.explanation}</p>
+        <details className="mt-1 text-xs leading-5 text-muted"><summary className="cursor-pointer font-medium">Tracking details</summary><p className="mt-1">{row.explanation}</p></details>
       </div>
     </div>;
   }

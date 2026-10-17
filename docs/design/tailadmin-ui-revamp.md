@@ -144,3 +144,14 @@ The `responsive-ui.yml` workflow runs type-check, build and browser checks on pu
 | [vector-maps.html](https://demo.tailadmin.com/vector-maps.html) | 0 | 0 |
 | [video-generator.html](https://demo.tailadmin.com/video-generator.html) | 0 | 0 |
 | [videos.html](https://demo.tailadmin.com/videos.html) | 0 | 0 |
+
+
+## Founder wording and daily reporting follow-up
+
+Visible headings and explanations use accounts, devices, visits, actions and results. Each page includes a short optional reading guide; feature tracking details remain available in disclosures. Production and test analytics stay separate, including the unavailable-test-data state.
+
+The briefing supports an exact completed day, previous/next day, the latest completed day, custom ranges and calendar months. Its daily table exposes the same account/action series as the existing chart. Other product date controls support exact-day requests through their existing query parameters.
+
+One and every agent detail show a daily device comparison using the existing capability daily series. Missing dates, untracked capabilities and failed daily reads are unavailable, never inferred as zero. Previous-day percentages require a nonzero baseline; recent days carry a provisional-data notice. These device comparisons do not claim unique daily people, diagnose causes, or change account KPIs. The only server change adds `capabilityDailyAvailable` from the existing query result; SQL, metric calculations, event classifications and authentication are unchanged.
+
+Release validation includes 155 unit tests, responsive page and nested-route checks, date request assertions, real-zero/missing-data comparisons, production/test separation, Instagram controls, campaign links and a mocked chat round trip. Production accuracy is checked separately by the deployment reconciliation probes.

@@ -1,4 +1,5 @@
 import { MetricsSkeleton } from './MetricsLoading';
+import { DailyAgentActivity } from './DailyAgentActivity';
 import { useState, useMemo } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import {
@@ -58,15 +59,15 @@ const environments: Array<{
   {
     key: 'production',
     label: 'Production',
-    sourceLabel: 'one.hushh.ai · One native streams',
-    description: 'Production GA4 property with the exact production web host and One native app streams. Native build channel and backend environment are not verified by property selection.',
+    sourceLabel: 'Live website and mobile apps',
+    description: 'Live website and mobile app analytics. Some public mobile builds may still use the test service.',
     waitingNote: 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.',
   },
   {
     key: 'uat',
     label: 'UAT / Test builds',
-    sourceLabel: 'uat.one.hushh.ai · One native streams',
-    description: 'UAT GA4 property with the exact UAT web host and native app streams when exported to this property. Build channel and backend environment are separate dimensions.',
+    sourceLabel: 'Test website and mobile apps',
+    description: 'Test website and mobile app analytics. The selected analytics source does not confirm which service a mobile build uses.',
     waitingNote: 'The detailed journey event has not reached the UAT export yet. TestFlight, Android internal and UAT web events will appear after the next GA4 export.',
   },
 ];
@@ -280,13 +281,13 @@ function SourceCompleteness({
   const sources = environment === 'production'
     ? [
         { platform: 'WEB', label: 'Production web' },
-        { platform: 'IOS', label: 'iOS app stream' },
-        { platform: 'ANDROID', label: 'Android app stream' },
+        { platform: 'IOS', label: 'iOS app' },
+        { platform: 'ANDROID', label: 'Android app' },
       ]
     : [
         { platform: 'WEB', label: 'UAT web' },
-        { platform: 'IOS', label: 'iOS app stream' },
-        { platform: 'ANDROID', label: 'Android app stream' },
+        { platform: 'IOS', label: 'iOS app' },
+        { platform: 'ANDROID', label: 'Android app' },
       ];
   const sourcesWithActivity = sources.filter((source) => seen.has(source.platform)).length;
   return (
@@ -453,6 +454,7 @@ export function OneLocationAnalyticsPanel({
       </div>
 
       <MetricCalculationGuide summary={selectedOne} />
+      <DailyAgentActivity one={selectedOne} capabilityKey="location" />
 
       {!locationAnalytics.journeyActionSeen && (
         <div className="flex items-start gap-3 rounded-2xl border border-[#f0d8a8] bg-[#fff8ea] p-4 text-[#6a4600]">
@@ -465,7 +467,7 @@ export function OneLocationAnalyticsPanel({
         <section className="space-y-4">
           <div>
             <p className={dashboardLabel}>Feature adoption</p>
-            <h3 className="mt-1 text-2xl font-semibold text-ink">What devices actually use</h3>
+            <h3 className="mt-1 text-2xl font-semibold text-ink">Which Location features are used?</h3>
           </div>
           <FeatureTable features={locationAnalytics.features} environment={environment} summary={selectedOne} />
         </section>
@@ -503,7 +505,7 @@ export function OneLocationAnalyticsPanel({
         <section className="space-y-4">
           <div>
             <p className={dashboardLabel}>Circles</p>
-            <h3 className="mt-1 text-2xl font-semibold text-ink">Creation mix and engagement</h3>
+            <h3 className="mt-1 text-2xl font-semibold text-ink">Which circles are created and used?</h3>
           </div>
           <CircleBreakdown one={selectedOne} />
         </section>
@@ -513,7 +515,7 @@ export function OneLocationAnalyticsPanel({
         <section className="space-y-4">
           <div>
             <p className={dashboardLabel}>Cross-surface journey</p>
-            <h3 className="mt-1 text-2xl font-semibold text-ink">Connect to Circle to location value</h3>
+            <h3 className="mt-1 text-2xl font-semibold text-ink">From connecting to sharing a location</h3>
           </div>
           <JourneyReach rows={locationAnalytics.journey} />
         </section>
@@ -523,7 +525,7 @@ export function OneLocationAnalyticsPanel({
         <section className="space-y-4">
           <div>
             <p className={dashboardLabel}>Coverage</p>
-            <h3 className="mt-1 text-2xl font-semibold text-ink">All platforms, one total</h3>
+            <h3 className="mt-1 text-2xl font-semibold text-ink">Activity by platform</h3>
           </div>
           <SourceCompleteness one={selectedOne} environment={environment} />
         </section>

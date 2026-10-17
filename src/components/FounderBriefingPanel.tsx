@@ -1,5 +1,6 @@
 import { useMetricsResource } from '../lib/use-metrics-resource';
 import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
+import { SingleDayPicker } from './SingleDayPicker';
 import { ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Clock3, Info, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -64,13 +65,13 @@ function OutcomeHealth({ agent }: { agent: FounderAgent }) {
   const health = founderOutcomeHealth(agent);
   if (health.state === 'not_measured') return <span className="text-xs font-medium text-warning">Not measured</span>;
   if (health.state === 'unavailable') return <span className="text-xs font-medium text-muted">Source unavailable</span>;
-  if (health.state === 'waiting') return <span className="text-xs font-medium text-muted">Awaiting a result event</span>;
+  if (health.state === 'waiting') return <span className="text-xs font-medium text-muted">Waiting for result data</span>;
   const { successRate: rate, successes, expectedErrors: expected, failures } = health;
   const style = failures > 0 ? 'text-danger' : expected > 0 ? 'text-warning' : 'text-success';
   return <div className="min-w-40">
     <span className={`block text-sm font-semibold ${style}`}>{rate}% successful</span>
     <span className="mt-1 block text-[11px] leading-4 text-muted">
-      {number(successes)} success · {number(expected)} expected block · {number(failures)} failed
+      {number(successes)} success · {number(expected)} blocked as expected · {number(failures)} failed
     </span>
   </div>;
 }
@@ -95,7 +96,7 @@ function AgentRow({ agent }: { agent: FounderAgent; key?: string }) {
   </tr>;
 }
 
-type Selection = '7d' | '30d' | '90d' | 'month' | 'custom';
+type Selection = '7d' | '30d' | '90d' | 'month' | 'custom' | 'day';
 type ChartMode = 'accounts' | 'interactions';
 
 export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
@@ -160,7 +161,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="flex items-center gap-2 text-sm font-semibold text-ink"><CalendarDays className="h-4 w-4 text-brand-600" /> Reporting period</p>
-          <p className="mt-1 text-xs text-muted">Production data through {dayLabel(latestComplete)} · compared with the preceding equal-length period</p>
+          <p className="mt-1 text-xs text-muted">Live product data through {dayLabel(latestComplete)} · compared with the preceding equal-length period</p>
         </div>
         {loading && <span role="status" className="inline-flex items-center gap-2 text-xs text-brand-600"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Updating</span>}
       </div>
@@ -171,6 +172,13 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
           className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${selection === `${days}d` ? 'bg-subtle text-ink' : 'bg-transparent text-muted'}`}>
           Last {days} days
         </button>)}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => applyRange(founderCustomRange(latestComplete, latestComplete), 'day')}
+          aria-pressed={selection === 'day' && period.endDate === latestComplete}
+          className="min-h-10 rounded-lg bg-brand-50 px-3 text-sm font-semibold text-brand-600">Latest complete day</button>
+        <SingleDayPicker label="Briefing specific day" value={period.days === 1 ? period.endDate : ''} min={FOUNDER_EARLIEST_DATE} max={latestComplete}
+          onChange={day => applyRange(founderCustomRange(day, day), 'day')} />
       </div>
       <details className="filter-custom"><summary>Custom dates or calendar month</summary>
       <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -205,13 +213,13 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
         : brief ? <>
           {error && <p role="status" className="rounded-xl bg-warning-soft p-3 text-sm text-warning">Refresh failed; the previous period remains visible.</p>}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard eyebrow="One · all platforms" label="Identifiable active accounts" measure={brief.one.activeAccounts}
+            <MetricCard eyebrow="One · all platforms" label="Active signed-in accounts" measure={brief.one.activeAccounts}
               note="A signed-in account is counted once across iOS, Android and web when an account identifier is available." />
-            <MetricCard eyebrow="One · audience growth" label="Newly observed active accounts" measure={brief.one.firstObservedAccounts}
+            <MetricCard eyebrow="One · audience growth" label="Accounts first seen in this period" measure={brief.one.firstObservedAccounts}
               note="Signed-in accounts seen for the first time in available One analytics history. This is not a registration count." />
             <MetricCard eyebrow="One · audience loyalty" label="Returning active accounts" measure={returningAccounts}
               note="Active signed-in accounts first observed before this period. Repeat actions and extra devices do not add users." />
-            <MetricCard eyebrow="One · feature adoption" label="Accounts using a measured feature" measure={brief.one.agentEngagedAccounts}
+            <MetricCard eyebrow="One · feature adoption" label="Accounts using features" measure={brief.one.agentEngagedAccounts}
               note="Distinct signed-in accounts with at least one measured feature action—not a sum of agent rows." />
 
           </div>
@@ -245,34 +253,42 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                   <span><i className="mr-1 inline-block h-2 w-4 rounded bg-brand-500" /> Selected period</span>
                   {hasPreviousLine && <span><i className="mr-1 inline-block h-2 w-4 rounded bg-slate-400" /> Earlier equal-length period</span>}
                 </div>
+                <details className="mt-4 border-t border-stroke pt-3"><summary className="cursor-pointer text-sm font-semibold text-brand-600">View daily numbers</summary>
+                  <div className="metrics-table-scroll mt-3" role="region" aria-label="Daily accounts and feature actions" tabIndex={0}>
+                    <table className="w-full text-left text-xs"><thead><tr className="text-muted"><th scope="col" className="py-3">Date</th><th scope="col" className="px-3 text-right">Active signed-in accounts</th><th scope="col" className="pl-3 text-right">Feature actions</th></tr></thead>
+                      <tbody>{brief.one.daily.map(point => <tr key={point.day} className="border-t border-stroke"><th scope="row" className="py-3 font-medium">{point.day}</th><td className="px-3 text-right">{number(point.activeAccounts)}</td><td className="pl-3 text-right">{number(point.agentInteractions)}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted">An account can appear on several days. Adding daily counts does not give the unique total for the period. Repeated feature actions count again.</p>
+                </details>
               </> : <p className="mt-6 text-sm text-muted">One activity source is unavailable; a trend cannot be shown.</p>}
             </div>
             <div className="dashboard-card p-5 sm:p-6">
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Founder readout</p>
               <h2 className="mt-1 text-xl font-semibold text-ink">What stands out</h2>
               <ul className="mt-5 space-y-4 text-sm leading-6 text-ink">
-                <li><strong className="text-ink">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} identified accounts; <strong className="text-ink">web:</strong> {webIdentityGap ? 'user total unverified' : `${number(web?.identifiedAccounts.current ?? null)} identified accounts`}. <strong className="text-ink"> Android:</strong> {number(android?.identifiedAccounts.current ?? null)} identified accounts. These platform populations can overlap.</li>
-                <li>{mostAccounts ? <><strong className="text-ink">Most identified accounts used {mostAccounts.label}:</strong> {number(mostAccounts.identifiedAccounts.current)} in this period.</>
+                <li><strong className="text-ink">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} signed-in accounts; <strong className="text-ink">web:</strong> {webIdentityGap ? 'user total unverified' : `${number(web?.identifiedAccounts.current ?? null)} signed-in accounts`}. <strong className="text-ink"> Android:</strong> {number(android?.identifiedAccounts.current ?? null)} signed-in accounts. These platform populations can overlap.</li>
+                <li>{mostAccounts ? <><strong className="text-ink">Most signed-in accounts used {mostAccounts.label}:</strong> {number(mostAccounts.identifiedAccounts.current)} in this period.</>
                   : 'No agent has a verifiable signed-in audience in this range yet.'}</li>
-                <li>{mostInteractions ? <><strong className="text-ink">Most measured interactions:</strong> {mostInteractions.label} had {number(mostInteractions.interactions.current)}. Repeats count; this is not a user count.</>
+                <li>{mostInteractions ? <><strong className="text-ink">Most recorded actions:</strong> {mostInteractions.label} had {number(mostInteractions.interactions.current)}. Repeats count; this is not a user count.</>
                   : 'Agent interaction data is not available yet.'}</li>
-                <li><strong className="text-ink">First value:</strong> {number(brief.one.activatedAccounts.current)} identified accounts completed the measured Location activation action.</li>
+                <li><strong className="text-ink">First useful action:</strong> {number(brief.one.activatedAccounts.current)} signed-in accounts completed the measured Location activation action.</li>
               </ul>
             </div>
           </section>
 
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <MetricCard eyebrow="One · iOS" label="iOS app users we can identify" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
+            <MetricCard eyebrow="One · iOS" label="Active iOS accounts" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
               note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
-            <MetricCard eyebrow="One · Android" label="Android accounts using production"
+            <MetricCard eyebrow="One · Android" label="Active Android accounts · live service"
               measure={android?.identifiedAccounts ?? {current:null,previous:null}}
               note={android?.captureState === 'observed' ? 'Distinct signed-in Android accounts with a production backend tag. Platform audiences overlap.' : 'Awaiting exported Android activity with a production backend tag. The current public build used UAT; missing history is not zero.'} />
-            <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Web users we can identify'}
+            <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Active web accounts'}
               measure={webMeasure}
               note={webIdentityGap
                 ? `${number(web?.identifiedAccounts.current ?? null)} account IDs reached analytics, but only ${number(web?.signedInBoundIdentifiers ?? null)} of ${number(web?.signInIdentifiers ?? null)} sign-in browser identifiers later carried an account ID. This is not a reliable total of web users.`
                 : webPreviousIdentityGap
-                  ? 'Current identified accounts are shown, but growth is withheld: the earlier period did not reliably bind signed-in web activity to accounts.'
+                  ? 'Current signed-in accounts are shown, but growth is withheld: the earlier period did not reliably bind signed-in web activity to accounts.'
                   : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
           </div>
 
@@ -280,23 +296,23 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Inside One</p>
                 <h2 className="mt-1 text-xl font-semibold text-ink">What do people use most?</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Known and successful accounts are deduplicated separately for each capability. Actions may repeat. Outcome health uses only events that explicitly report success, an expected product block, or a genuine failure; rows must not be added together.</p></div>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">See which agents people use and whether recorded steps succeed. Accounts are counted once within each row; actions can repeat. The same account can appear in several rows.</p></div>
               <button type="button" onClick={onExploreOne} className="inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:text-sky-900">Explore full One analytics <ArrowRight className="h-4 w-4" /></button>
             </div>
             <div className="mt-5 overflow-x-auto">
               <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="min-w-[760px] w-full text-left">
                 <thead><tr className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted">
                   <th scope="col" className="pb-3 pr-5">Feature / behaviour</th>
-                  <th scope="col" className="pb-3 pr-5 text-right">Known accounts</th>
+                  <th scope="col" className="pb-3 pr-5 text-right">Signed-in accounts</th>
                   <th scope="col" className="pb-3 pr-5 text-right">Successful accounts</th>
                   <th scope="col" className="pb-3 pr-5 text-right">Actions by platform</th>
-                  <th scope="col" className="pb-3 pr-5 text-right">Outcome health</th>
+                  <th scope="col" className="pb-3 pr-5 text-right">Recorded results</th>
                   <th scope="col" className="pb-3 text-right">Change in actions</th>
                 </tr></thead>
                 <tbody>{displayedAgents.map((agent) => <AgentRow key={agent.key} agent={agent} />)}</tbody>
               </table></div>
             </div>
-            <p className="mt-4 text-xs leading-5 text-muted">Awaiting a result event means usage is measured but no governed outcome has reached the completed GA4 export yet—it is not shown as a failure. The Marketplace event is a profile view, not a completed transaction.</p>
+            <p className="mt-4 text-xs leading-5 text-muted">Waiting for result data means activity was recorded, but its result has not arrived yet. Marketplace counts profile views; it does not count completed purchases.</p>
           </section>
 
           <section className="grid gap-4 lg:grid-cols-2">
@@ -312,8 +328,8 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
               {!brief.search.available && <p className="mt-2 text-xs font-medium text-warning">The selected Search Console export is incomplete; no value is guessed.</p>}
             </div>
             <div className="rounded-2xl border border-amber-200 bg-warning-soft p-5 sm:p-6">
-              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-warning"><ShieldAlert className="h-4 w-4" /> Measurement confidence</p>
-              <h2 className="mt-1 text-xl font-semibold text-ink">What we can—and cannot—claim</h2>
+              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-warning"><ShieldAlert className="h-4 w-4" /> Data quality</p>
+              <h2 className="mt-1 text-xl font-semibold text-ink">What to keep in mind</h2>
               <ul className="mt-4 space-y-2 text-sm leading-6 text-ink">
                 {webIdentityGap && <li>Web identity tracking needs repair: {number(web?.signInIdentifiers ?? null)} browser identifiers recorded a successful sign-in, but only {number(web?.signedInBoundIdentifiers ?? null)} of those later carried an account ID in this period. Sign-ins and browsers are <strong>not</strong> unique people. The web user total and its growth percentage are withheld.</li>}
                 {!webIdentityGap && webPreviousIdentityGap && <li>The earlier web period had {number(web?.previousSignedInBoundIdentifiers ?? null)} account-bound identifiers after {number(web?.previousSignInIdentifiers ?? null)} signed-in identifiers. Its identified-account count is not a reliable baseline, so web growth is withheld.</li>}
@@ -324,7 +340,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                 {!brief.one.available && <li>The One GA4 source could not be verified for this selection.</li>}
                 {!lowCoverage && brief.one.comparisonReady && !brief.one.hasNativeEnvironmentConflict && brief.one.available && <li>Account-linked coverage and comparison history meet this briefing’s checks. Anonymous activity remains outside person counts.</li>}
               </ul>
-              <p className="mt-3 flex items-start gap-1.5 text-xs leading-5 text-warning"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Android requires a production backend tag. UAT and debug Android traffic is excluded from the founder audience.</p>
+              <p className="mt-3 flex items-start gap-1.5 text-xs leading-5 text-warning"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> This briefing includes Android activity only when it is marked as using the live service. Test and debug Android activity is excluded.</p>
             </div>
           </section>
         </> : null}
