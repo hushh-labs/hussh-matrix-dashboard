@@ -5904,6 +5904,18 @@ function registerAnalyticsRoutes(app: express.Express): void {
       });
     },
   };
+  api.get('/api/analytics/one/referrals', async (req, res) => {
+    const { parseReferralQuery } = await import('./src/lib/referrals');
+    let query: ReturnType<typeof parseReferralQuery>;
+    try { query = parseReferralQuery(req.query); }
+    catch { res.status(400).json({ error: 'Choose production or UAT and a valid date range of up to 366 days.' }); return; }
+    try {
+      const { readReferralMetrics } = await import('./src/server/referrals');
+      res.json(await readReferralMetrics(query));
+    } catch {
+      res.status(503).json({ state: 'unavailable', error: 'Referral metrics are temporarily unavailable.' });
+    }
+  });
   if (process.env.K_SERVICE && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
     const refreshTimer = setInterval(() => { void snapshots.refreshActive(); }, 30_000);
     refreshTimer.unref();

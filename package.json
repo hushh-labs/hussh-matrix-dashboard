@@ -47,6 +47,7 @@
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.1",
+    "@google-cloud/cloud-sql-connector": "^1.12.1",
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
@@ -57,6 +58,7 @@
     "google-auth-library": "^10.6.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "pg": "^8.23.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^3.8.1",
@@ -68,6 +70,7 @@
     "@types/compression": "^1.8.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
     "autoprefixer": "^10.4.21",
     "supertest": "^7.3.0",
