@@ -1,4 +1,5 @@
 import { DashboardShell } from './components/DashboardShell';
+import { isReferralsPath, referralsPath } from './lib/referrals';
 import { SingleDayPicker } from './components/SingleDayPicker';
 import { dashboardTabs, dashboardTabLabels, type DashboardTab } from './lib/dashboard-navigation';
 import { useMetricsResource } from './lib/use-metrics-resource';
@@ -93,6 +94,7 @@ const OneAppPanel = lazy(() => import('./components/OneAppPanel').then(module =>
 const AppsPanel = lazy(() => import('./components/AppsPanel').then(module => ({ default: module.AppsPanel })));
 import { FounderBriefingPanel } from './components/FounderBriefingPanel';
 const InstagramPanel = lazy(() => import('./components/InstagramPanel').then(module => ({ default: module.InstagramPanel })));
+const ReferralsPanel = lazy(() => import('./components/ReferralsPanel').then(module => ({ default: module.ReferralsPanel })));
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
@@ -1179,7 +1181,7 @@ export default function Dashboard() {
   const [locationRoute, setLocationRoute] = useState<LocationAnalyticsRoute | null>(() => (
     typeof window === 'undefined' ? null : parseLocationAnalyticsPath(window.location.pathname)
   ));
-  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : 'briefing'));
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : isReferralsPath(window.location.pathname) ? 'referrals' : 'briefing'));
   const [briefRefreshKey, setBriefRefreshKey] = useState(0);
   const [instagramRefreshKey, setInstagramRefreshKey] = useState(0);
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
@@ -1217,8 +1219,9 @@ export default function Dashboard() {
   const loadCompare = () => setCompareRefreshKey(key => key + 1);
 
   const changeDashboardTab = useCallback((tab: DashboardTab) => {
-    if (locationRoute) {
-      window.history.pushState({ dashboardTab: tab }, '', '/');
+    const path = tab === 'referrals' ? referralsPath : '/';
+    if (locationRoute || window.location.pathname !== path) {
+      window.history.pushState({ dashboardTab: tab }, '', path);
       setLocationRoute(null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
@@ -1260,7 +1263,7 @@ export default function Dashboard() {
     const handlePopState = (event: PopStateEvent) => {
       const route = parseLocationAnalyticsPath(window.location.pathname);
       setLocationRoute(route);
-      setActiveTab(route ? 'one' : (isDashboardTab(event.state?.dashboardTab) ? event.state.dashboardTab : 'briefing'));
+      setActiveTab(route ? 'one' : isReferralsPath(window.location.pathname) ? 'referrals' : (isDashboardTab(event.state?.dashboardTab) ? event.state.dashboardTab : 'briefing'));
       window.scrollTo({ top: 0 });
     };
     window.addEventListener('popstate', handlePopState);
@@ -1329,6 +1332,8 @@ export default function Dashboard() {
     : 'Selected range';
   const statusText = activeTab === 'instagram'
     ? 'Instagram reporting · stored observations'
+    : activeTab === 'referrals'
+    ? 'Referral reporting · source status below'
     : activeTab === 'briefing'
     ? 'One production briefing · choose dates below'
     : loading ? 'Loading the selected period' : usingMock ? 'Metrics temporarily unavailable · details below' : isRefreshing ? 'Updating metrics in the background' : 'Metrics ready · selected dates below';
@@ -1732,6 +1737,9 @@ export default function Dashboard() {
           <FounderBriefingPanel refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />
         ) : activeTab === 'instagram' ? (
           <InstagramPanel refreshKey={instagramRefreshKey} />
+        ) : activeTab === 'referrals' ? (
+          <ReferralsPanel startDate={oneRange.startDate} endDate={oneRange.endDate} refreshKey={refreshKey}
+            dateControl={<DateRangeControl range={oneRange} onPreset={days => setOneRange(rangeForPreset(days))} onCustomRange={setOneRange} ariaLabelPrefix="Referrals" />} />
         ) : activeTab === 'growth' ? (
           <GrowthPanel
             loading={loading}

@@ -112,6 +112,11 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
               title="One Location" onClick={openLocation} aria-current={locationActive ? 'page' : undefined}>
               <locationNavigation.icon size={18} aria-hidden="true" /><span className="sidebar-link-label">One Location</span>
             </button>}
+            {item.key === 'one' && dashboardNavigation.filter(child => child.group === 'One app').map(child => <button key={child.key} type="button"
+              className={cn('sidebar-link sidebar-sub-link', activeTab === child.key && 'is-active')}
+              title={child.label} onClick={() => navigate(child.key)} aria-current={activeTab === child.key ? 'page' : undefined}>
+              <child.icon size={18} aria-hidden="true" /><span className="sidebar-link-label">{child.label}</span>
+            </button>)}
           </div>)}
         </div>)}
       </nav>
