@@ -74,6 +74,11 @@ test('enrolls an account and operates the shared follow-up queue without sending
   expect(state.contacts[0].supportOpen).toBe(true);
   await page.getByRole('button', { name: 'Close account details' }).click();
   await mkdir('.codex/artifacts/plg', { recursive: true });
+  await page.evaluate(() => {
+    document.documentElement.style.scrollBehavior = 'auto';
+    (document.activeElement as HTMLElement)?.blur();
+    window.scrollTo(0, 0);
+  });
   await page.screenshot({ path: '.codex/artifacts/plg/queue-1440.png', fullPage: true });
   await page.getByRole('button', { name: 'Preview next messages' }).click();
   await expect(page.getByRole('region', { name: 'Campaign preview' })).toContainText('0 eligible messages');
@@ -126,6 +131,11 @@ for (const width of [320, 768, 1440])
       ).toBe(true);
     }
     await mkdir('.codex/artifacts/plg', { recursive: true });
+    await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = 'auto';
+      (document.activeElement as HTMLElement)?.blur();
+      window.scrollTo(0, 0);
+    });
     await page.screenshot({ path: `.codex/artifacts/plg/workspace-${width}.png`, fullPage: true });
     expect(errors).toEqual([]);
   });
