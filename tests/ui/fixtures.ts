@@ -135,15 +135,24 @@ export const allAnalytics = {
   } },
 } as unknown as AllAnalyticsResponse;
 
+// Synthetic public standings; never copy personal source records into UI fixtures.
+export const referralEntries = Array.from({length:43},(_,index)=>({rank:index+1,handle:`Member ${String(index+1).padStart(2,'0')}`,points:730-index*10}));
 export const referrals = {
-  environment: 'production', state: 'available', generatedAt: timestamp, latestRecordAt: timestamp, range: { ...range, timezone: 'UTC' },
-  totals: { referrers: 12, referredAccounts: 28, qualified: 8, pending: 18, linkOpens: 96,
-    netPoints: 1085, netCoins: 990, pointEarners: 14, milestonesEarned: 2, rewardRecipients: 2, weeklyAwards: 1 },
-  daily: daily.map((row,index) => ({ date:row.eventDate,referredAccounts:index % 3,netPoints:index * 10 })),
-  points: [{type:'base_qualification',points:1100,coins:1000,events:11},{type:'reversal',points:-15,coins:-10,events:1}],
-  rewards: [{reward:'Amazon voucher',threshold:10,earned:2,claimed:1},{reward:'Apple AirPods',threshold:500,earned:0,claimed:0}],
-  weeklyAwards: [{status:'pending_review',awards:1}],
+  environment:'production', environments:['production','uat'], board:'individual', state:'available',
+  sources:[{environment:'production',state:'available'},{environment:'uat',state:'available'}],
+  snapshotId:'c22bf6bb-c6d2-4d87-b2d6-31e17498a2e4', snapshotGeneratedAt:timestamp,
+  entryCount:43, entries:referralEntries.slice(0,20), nextAfterRank:20,
 };
+
+export function referralFixture(url: string) {
+  const query=new URL(url).searchParams;
+  const afterRank=Number(query.get('afterRank')??0);
+  const board=query.get('board')??'individual';
+  const entries=referralEntries.filter(row=>row.rank>afterRank).slice(0,20);
+  return {...referrals,environment:query.get('environment')??'production',board,
+    ...(board==='circles'?{state:'preview',entries:[],entryCount:null,snapshotId:null,snapshotGeneratedAt:null,nextAfterRank:null}
+      :{entries,nextAfterRank:afterRank+20<43?entries.at(-1)!.rank:null})};
+}
 
 export async function mockDashboard(page: Page) {
   await page.route('**/api/**', async route => {
@@ -151,7 +160,7 @@ export async function mockDashboard(page: Page) {
     let data: unknown;
     if (path === '/api/auth/me') data = { authenticated: true, user: { email: 'qa@example.invalid', name: 'QA reviewer', domainAuthorized: true } };
     else if (path === '/api/analytics/founder') data = founder;
-    else if (path === '/api/analytics/one/referrals') data = { ...referrals, environment: new URL(route.request().url()).searchParams.get('environment') };
+    else if (path === '/api/analytics/one/referrals') data = referralFixture(route.request().url());
     else if (path === '/api/analytics/all') data = allAnalytics;
     else if (path === '/api/analytics/growth/compare') data = { fetchedAt: timestamp, error: null, windows: ['30d', '90d', 'all'].map((key, index) => ({ key, label: ['Last 30 days', 'Last 90 days', 'All time'][index], range: { ...range, days: [30, 90, 180][index] }, data: growth, error: null })) };
     else if (path === '/api/analytics/one/android') data = { history: { state: 'permission_missing', daily: [] }, downloads: {}, vitals: { state: 'not_yet_available' } };
