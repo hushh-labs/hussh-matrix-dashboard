@@ -1333,7 +1333,7 @@ export default function Dashboard() {
   const statusText = activeTab === 'instagram'
     ? 'Instagram reporting · stored observations'
     : activeTab === 'referrals'
-    ? 'Referral reporting · source status below'
+    ? 'Referral rankings'
     : activeTab === 'briefing'
     ? 'One production briefing · choose dates below'
     : loading ? 'Loading the selected period' : usingMock ? 'Metrics temporarily unavailable · details below' : isRefreshing ? 'Updating metrics in the background' : 'Metrics ready · selected dates below';
@@ -1738,8 +1738,7 @@ export default function Dashboard() {
         ) : activeTab === 'instagram' ? (
           <InstagramPanel refreshKey={instagramRefreshKey} />
         ) : activeTab === 'referrals' ? (
-          <ReferralsPanel startDate={oneRange.startDate} endDate={oneRange.endDate} refreshKey={refreshKey}
-            dateControl={<DateRangeControl range={oneRange} onPreset={days => setOneRange(rangeForPreset(days))} onCustomRange={setOneRange} ariaLabelPrefix="Referrals" />} />
+          <ReferralsPanel refreshKey={refreshKey} />
         ) : activeTab === 'growth' ? (
           <GrowthPanel
             loading={loading}

@@ -5904,16 +5904,21 @@ function registerAnalyticsRoutes(app: express.Express): void {
       });
     },
   };
+  // Public leaderboard handles still require a dashboard session, even in public aggregate mode.
+  app.use('/api/analytics/one/referrals', (req, res, next) => {
+    if (!(req as any).sessionUser) { res.status(401).json({ error: 'Sign in to view referral rankings.' }); return; }
+    next();
+  });
   api.get('/api/analytics/one/referrals', async (req, res) => {
     const { parseReferralQuery } = await import('./src/lib/referrals');
     let query: ReturnType<typeof parseReferralQuery>;
     try { query = parseReferralQuery(req.query); }
-    catch { res.status(400).json({ error: 'Choose production or UAT and a valid date range of up to 366 days.' }); return; }
+    catch { res.status(400).json({ error: 'Choose a valid referral leaderboard and snapshot cursor.' }); return; }
     try {
-      const { readReferralMetrics } = await import('./src/server/referrals');
-      res.json(await readReferralMetrics(query));
+      const { readReferralRankings } = await import('./src/server/referrals');
+      res.json(await readReferralRankings(query));
     } catch {
-      res.status(503).json({ state: 'unavailable', error: 'Referral metrics are temporarily unavailable.' });
+      res.status(503).json({ state: 'unavailable', error: 'Referral rankings are temporarily unavailable.' });
     }
   });
   if (process.env.K_SERVICE && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
