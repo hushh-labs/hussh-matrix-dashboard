@@ -82,6 +82,14 @@ export function oneFounderSurfaceSql(webHost) {
 }
 
 /** Never serve an old property-wide feed under a new environment-scoped label. */
+export function oneFeedEnvironment(requested, sources) {
+  if (requested.length !== 3 || requested.some(value => typeof value !== 'string' || !value)) return null;
+  const matches = ['production', 'uat'].filter(environment =>
+    sources[environment]?.length === 3 && sources[environment].every((value, index) => value === requested[index]));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/** Each row must attest the same environment as the uniquely selected source. */
 export function validateOneFeedScope(rows, environment) {
   validateEnvironment(environment);
   const markers = rows.filter(row => row.metric_group === 'status' && row.metric_name === 'reporting_scope_version');

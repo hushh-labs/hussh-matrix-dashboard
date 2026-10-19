@@ -25,7 +25,7 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
-import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, oneNonDebugSql, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
+import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, oneNonDebugSql, oneFeedEnvironment, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
 import { oneAccountSource, oneIdentityAuthorityId, accountScopeNote, readOneAccountCounts } from './src/server/one-account-scope.mjs';
 import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushhtech-window.mjs';
 import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
@@ -544,9 +544,12 @@ async function queryBigQuery(
   view: string,
   range?: HushhAiDateRange,
 ): Promise<BigQueryFeedResult> {
-  const environment = projectId === BQ_PROD_PROJECT && dataset === BQ_PROD_DATASET && view === BQ_PROD_VIEW
-    ? 'production' : projectId === BQ_UAT_PROJECT && dataset === BQ_UAT_DATASET && view === BQ_UAT_VIEW ? 'uat' : null;
-  const scoped = (rows: Record<string, unknown>[]): BigQueryFeedResult => environment && validateOneFeedScope(rows, environment)
+  const environment = oneFeedEnvironment([projectId, dataset, view], {
+    production: [BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW],
+    uat: [BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW],
+  });
+  if (!environment) return { rows: [], error: 'One feed environment source is ambiguous or unconfigured.' };
+  const scoped = (rows: Record<string, unknown>[]): BigQueryFeedResult => validateOneFeedScope(rows, environment)
     ? { rows, error: null }
     : { rows: [], error: 'One feed environment scope has not been verified. Property-wide legacy totals are withheld.' };
   try {

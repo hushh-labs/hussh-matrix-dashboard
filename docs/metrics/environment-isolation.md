@@ -63,6 +63,8 @@ Every feed row must name the requested environment, with exactly one matching
 `source_environment` status marker and one `reporting_scope_version` marker.
 Unversioned, duplicate or contradictory feeds are withheld, including the CLI
 fallback path. An edited SQL file is not proof that a live view was changed.
+If PROD and UAT are configured to the same aggregate source, both are withheld;
+source inference must never relabel a production feed as UAT.
 
 Automatic SDK first opens historically lack backend provenance. Their absence
 after filtering cannot establish zero installs or retention. First opens and

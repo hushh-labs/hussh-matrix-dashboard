@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { oneSurfaceSql, oneFounderSurfaceSql, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION } from '../src/server/one-scope.mjs';
+import { oneSurfaceSql, oneFounderSurfaceSql, oneFeedEnvironment, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION } from '../src/server/one-scope.mjs';
 import { oneAccountSource, readOneAccountCounts, oneIdentityAuthorityId } from '../src/server/one-account-scope.mjs';
 import { sanitizePublicPayload } from '../server';
 import { renderOneFeedSql } from '../scripts/render-one-feed-scope.mjs';
 
 describe('One reporting environment boundary', () => {
+  it('refuses aliased PROD/UAT feed configurations instead of relabelling PROD as UAT', () => {
+    const production = ['prod-fixture', 'aggregate', 'feed'];
+    const uat = ['uat-fixture', 'aggregate', 'feed'];
+    expect(oneFeedEnvironment(production, { production, uat })).toBe('production');
+    expect(oneFeedEnvironment(uat, { production, uat })).toBe('uat');
+    expect(oneFeedEnvironment(uat, { production: uat, uat })).toBeNull();
+    expect(oneFeedEnvironment(['other', 'aggregate', 'feed'], { production, uat })).toBeNull();
+  });
   it('requires environment, exact streams and debug exclusion for every platform', () => {
     const prod = oneSurfaceSql('one.hushh.ai', 'production');
     const uat = oneSurfaceSql('uat.one.hushh.ai', 'uat');
