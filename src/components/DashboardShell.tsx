@@ -167,7 +167,7 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
           </dl>
         </details>
         {children}
-        <footer className="dashboard-footer"><span>hussh Matrix</span><span>Aggregate metrics · source timestamps shown on each report</span></footer>
+        <footer className="dashboard-footer"><span>hussh Matrix</span><span>{activeTab === 'plg' ? 'Private PLG operations · account access restricted' : 'Aggregate metrics · source timestamps shown on each report'}</span></footer>
       </div>
     </div>
 

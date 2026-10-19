@@ -1,6 +1,6 @@
-import { BarChart3, ChartNoAxesCombined, Clock3, Globe2, Instagram, LayoutGrid, MapPin, Smartphone, UsersRound, UserPlus } from 'lucide-react';
+import { BarChart3, ChartNoAxesCombined, Clock3, Globe2, Instagram, LayoutGrid, MapPin, Smartphone, UsersRound, UserPlus, Workflow } from 'lucide-react';
 
-export type DashboardTab = 'briefing' | 'growth' | 'compare' | 'one' | 'apps' | 'overview' | 'platforms' | 'instagram' | 'referrals';
+export type DashboardTab = 'briefing' | 'growth' | 'compare' | 'one' | 'apps' | 'overview' | 'platforms' | 'instagram' | 'referrals' | 'plg';
 
 export const dashboardNavigation = [
   { key: 'briefing', label: 'Founder briefing', group: 'Dashboard', icon: LayoutGrid, description: 'Active accounts, feature adoption and the daily trend.' },
@@ -12,6 +12,7 @@ export const dashboardNavigation = [
   { key: 'apps', label: 'Hussh Connect', group: 'Products', icon: UsersRound, description: 'iOS, Android and web across production and test builds.' },
   { key: 'instagram', label: 'Instagram', group: 'Products', icon: Instagram, description: 'Reach, content performance and campaign links.' },
   { key: 'platforms', label: 'Data sources', group: 'Workspace', icon: Globe2, description: 'Platform health, coverage and measurement readiness.' },
+  { key: 'plg', label: 'PLG workspace', group: 'Workspace', icon: Workflow, description: 'Private activation journeys, follow-ups and useful content.' },
 ] as const;
 
 export const dashboardTabs: DashboardTab[] = dashboardNavigation.map(item => item.key);
