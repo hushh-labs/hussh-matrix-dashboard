@@ -14,7 +14,10 @@ function validate(state: PlgState) {
   // This intentionally bounded pilot uses a single transactional document.
   // Refuse writes before Firestore's 1 MiB limit rather than silently trim history.
   if (Buffer.byteLength(JSON.stringify(state)) > 750_000)
-    throw new PlgError(409, 'Pilot storage capacity reached. Archive or migrate before continuing.');
+    throw new PlgError(
+      409,
+      'Pilot storage capacity reached. Archive or migrate before continuing.',
+    );
 }
 export class MemoryPlgStore implements PlgStore {
   private state = initialPlgState();
@@ -96,10 +99,13 @@ export class FilePlgStore implements PlgStore {
 }
 export class FirestorePlgStore implements PlgStore {
   private database: Promise<import('@google-cloud/firestore').Firestore> | null = null;
-  constructor(private projectId: string) {}
+  constructor(
+    private projectId: string,
+    private databaseId = '(default)',
+  ) {}
   private db() {
     return (this.database ??= import('@google-cloud/firestore').then(
-      ({ Firestore }) => new Firestore({ projectId: this.projectId }),
+      ({ Firestore }) => new Firestore({ projectId: this.projectId, databaseId: this.databaseId }),
     ));
   }
   async read() {

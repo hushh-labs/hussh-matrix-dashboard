@@ -28,6 +28,7 @@ env:
   INSTAGRAM_ACCOUNT_ID: '17841436775785807'
   INSTAGRAM_CREDENTIAL_RESOURCE: projects/hushh-ai-prod/secrets/metrics-instagram-credential
   INSTAGRAM_ADMIN_EMAIL: i-neelesh@hushh.ai
+  ONE_PLG_CONFIGURED: ${{ vars.ONE_PLG_CONFIGURED }}
 
 jobs:
   deploy:
@@ -152,13 +153,24 @@ jobs:
       - name: Deploy Cloud Run service
         id: deploy
         run: |
+          PLG_ENV_SUFFIX=""
+          PLG_SECRET_SUFFIX=""
+          if [[ "${ONE_PLG_CONFIGURED}" == "true" ]]; then
+            DATABASE_TYPE="$(gcloud firestore databases describe --database=one-plg-production --project="${PROJECT_ID}" --format='value(type)')"
+            if [[ "${DATABASE_TYPE}" != "FIRESTORE_NATIVE" ]]; then
+              echo "The named PLG database must be provisioned in Native mode."
+              exit 1
+            fi
+            PLG_ENV_SUFFIX="|PLG_ENABLED=true|PLG_STORAGE=firestore|PLG_FIRESTORE_PROJECT=${PROJECT_ID}|PLG_FIRESTORE_DATABASE=one-plg-production|PLG_PUBLIC_ORIGIN=${PRODUCTION_URL}|PLG_ONE_SOURCE_URL=https://api.hushh.ai/api/one/plg/snapshot|PLG_DELIVERY_ENABLED=false"
+            PLG_SECRET_SUFFIX=",PLG_SIGNING_SECRET=metrics-one-plg-signing-secret:latest,PLG_SYNC_SECRET=metrics-one-plg-sync-secret:latest,PLG_ONE_SOURCE_SECRET=metrics-one-plg-source-secret:latest,PLG_ADMIN_EMAILS=metrics-one-plg-admin-emails:latest,PLG_OPERATOR_EMAILS=metrics-one-plg-operator-emails:latest"
+          fi
           gcloud run deploy "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --image="${IMAGE}" \
             --service-account="${RUNTIME_SERVICE_ACCOUNT}" \
-            --update-env-vars="^|^GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}|GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}|ALLOWED_EMAIL_DOMAINS=hussh.ai,hushh.ai,hushhtech.com,hushh.labs,hush1one.com|REQUIRE_AUTH=true|INSTAGRAM_ANALYTICS_ENABLED=true|INSTAGRAM_USER_ID=${INSTAGRAM_ACCOUNT_ID}|INSTAGRAM_CREDENTIAL_SECRET=${INSTAGRAM_CREDENTIAL_RESOURCE}|INSTAGRAM_ANALYTICS_ADMIN_EMAILS=${INSTAGRAM_ADMIN_EMAIL}" \
-            --update-secrets="GOOGLE_CLIENT_SECRET=metrics-dashboard-google-client-secret:latest,SESSION_SECRET=metrics-dashboard-session-secret:latest,ALLOWED_EMAILS=metrics-dashboard-allowed-emails:latest" \
+            --update-env-vars="^|^GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}|GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}|ALLOWED_EMAIL_DOMAINS=hussh.ai,hushh.ai,hushhtech.com,hushh.labs,hush1one.com|REQUIRE_AUTH=true|INSTAGRAM_ANALYTICS_ENABLED=true|INSTAGRAM_USER_ID=${INSTAGRAM_ACCOUNT_ID}|INSTAGRAM_CREDENTIAL_SECRET=${INSTAGRAM_CREDENTIAL_RESOURCE}|INSTAGRAM_ANALYTICS_ADMIN_EMAILS=${INSTAGRAM_ADMIN_EMAIL}${PLG_ENV_SUFFIX}" \
+            --update-secrets="GOOGLE_CLIENT_SECRET=metrics-dashboard-google-client-secret:latest,SESSION_SECRET=metrics-dashboard-session-secret:latest,ALLOWED_EMAILS=metrics-dashboard-allowed-emails:latest${PLG_SECRET_SUFFIX}" \
             --allow-unauthenticated \
             --port=8080 \
             --memory=1Gi \
@@ -225,6 +237,8 @@ jobs:
             'INSTAGRAM_USER_ID',
             'INSTAGRAM_CREDENTIAL_SECRET',
             'INSTAGRAM_ANALYTICS_ADMIN_EMAILS',
+            'PLG_ENABLED', 'PLG_STORAGE', 'PLG_FIRESTORE_PROJECT', 'PLG_FIRESTORE_DATABASE',
+            'PLG_PUBLIC_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_DELIVERY_ENABLED',
           ]);
           const plain = env.filter((entry) => entry.value && !allowedPlain.has(entry.name)).map((entry) => entry.name);
           if (plain.length > 0) {
@@ -237,6 +251,23 @@ jobs:
             SESSION_SECRET: 'metrics-dashboard-session-secret',
             ALLOWED_EMAILS: 'metrics-dashboard-allowed-emails',
           };
+          if (process.env.ONE_PLG_CONFIGURED === 'true') {
+            Object.assign(requiredSecrets, {
+              PLG_SIGNING_SECRET: 'metrics-one-plg-signing-secret',
+              PLG_SYNC_SECRET: 'metrics-one-plg-sync-secret',
+              PLG_ONE_SOURCE_SECRET: 'metrics-one-plg-source-secret',
+              PLG_ADMIN_EMAILS: 'metrics-one-plg-admin-emails',
+              PLG_OPERATOR_EMAILS: 'metrics-one-plg-operator-emails',
+            });
+            const expected = {
+              PLG_ENABLED: 'true', PLG_STORAGE: 'firestore', PLG_FIRESTORE_PROJECT: process.env.PROJECT_ID,
+              PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_PUBLIC_ORIGIN: process.env.PRODUCTION_URL,
+              PLG_ONE_SOURCE_URL: 'https://api.hushh.ai/api/one/plg/snapshot', PLG_DELIVERY_ENABLED: 'false',
+            };
+            for (const [name, value] of Object.entries(expected)) {
+              if (byName.get(name)?.value !== value) throw new Error(`PLG release setting mismatch: ${name}`);
+            }
+          }
           for (const [name, secretName] of Object.entries(requiredSecrets)) {
             if (byName.get(name)?.valueFrom?.secretKeyRef?.name !== secretName) {
               console.error(`${name} is not bound to the expected Secret Manager secret.`);

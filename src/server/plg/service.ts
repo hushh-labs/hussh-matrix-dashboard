@@ -10,6 +10,7 @@ export interface PlgRuntime {
   admins: Set<string>;
   operators: Set<string>;
   signingSecret: string;
+  syncSecret?: string;
   webhookSecret: string;
   apiKey: string;
   from: string;
@@ -44,6 +45,7 @@ export function plgRuntime(): PlgRuntime {
     admins: emails(process.env.PLG_ADMIN_EMAILS),
     operators: emails(process.env.PLG_OPERATOR_EMAILS),
     signingSecret: process.env.PLG_SIGNING_SECRET || '',
+    syncSecret: process.env.PLG_SYNC_SECRET || '',
     webhookSecret: process.env.PLG_RESEND_WEBHOOK_SECRET || '',
     apiKey: process.env.PLG_RESEND_API_KEY || '',
     from: process.env.PLG_EMAIL_FROM || '',
@@ -181,7 +183,9 @@ export class PlgService {
     if (snapshot.paused) throw new PlgError(409, 'Campaigns are paused.');
     let sent = 0,
       uncertain = 0;
-    const due = snapshot.contacts.filter((c) => candidate(snapshot, c, this.now()).eligible).slice(0, 10);
+    const due = snapshot.contacts
+      .filter((c) => candidate(snapshot, c, this.now()).eligible)
+      .slice(0, 10);
     for (const item of due) {
       const now = this.now();
       const reserved = await this.store.transaction((state) => {
@@ -217,7 +221,10 @@ export class PlgService {
         const current = await this.store.read();
         const c = current.contacts.find((c) => c.id === item.id)!;
         const check = candidate(
-          { ...current, deliveries: current.deliveries.filter((d) => d.id !== reserved.delivery.id) },
+          {
+            ...current,
+            deliveries: current.deliveries.filter((d) => d.id !== reserved.delivery.id),
+          },
           c,
           this.now(),
         );
@@ -245,7 +252,12 @@ export class PlgService {
         await this.store.transaction((state) => {
           const d = state.deliveries.find((d) => d.id === reserved.delivery.id)!;
           d.status = 'uncertain';
-          audit(state, actor, 'A reserved email needs delivery review; automatic retry blocked.', this.now());
+          audit(
+            state,
+            actor,
+            'A reserved email needs delivery review; automatic retry blocked.',
+            this.now(),
+          );
         });
         uncertain++;
       }

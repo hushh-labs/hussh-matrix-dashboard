@@ -12,17 +12,36 @@ import {
   updateTemplate,
 } from './engine';
 import { FilePlgStore, FirestorePlgStore, type PlgStore } from './store';
-import { equalSignature, escapeHtml, plgRuntime, PlgService, signValue, tokenContact } from './service';
+import {
+  equalSignature,
+  escapeHtml,
+  plgRuntime,
+  PlgService,
+  signValue,
+  tokenContact,
+} from './service';
+import { syncOneEvidence } from './one-source';
 
-export function registerPlgRoutes(app: express.Express, production: boolean, injected?: PlgService) {
+export function registerPlgRoutes(
+  app: express.Express,
+  production: boolean,
+  injected?: PlgService,
+) {
   const config = injected?.runtime ?? plgRuntime();
   let service = injected;
   const getService = () => {
     if (!config.enabled) throw new PlgError(503, 'PLG is not configured.');
     if (!service) {
       let store: PlgStore;
-      if (process.env.PLG_STORAGE === 'firestore' && process.env.PLG_FIRESTORE_PROJECT)
-        store = new FirestorePlgStore(process.env.PLG_FIRESTORE_PROJECT);
+      if (
+        process.env.PLG_STORAGE === 'firestore' &&
+        process.env.PLG_FIRESTORE_PROJECT &&
+        (!production || process.env.PLG_FIRESTORE_DATABASE)
+      )
+        store = new FirestorePlgStore(
+          process.env.PLG_FIRESTORE_PROJECT,
+          process.env.PLG_FIRESTORE_DATABASE,
+        );
       else if (!production && process.env.PLG_STORAGE === 'local')
         store = new FilePlgStore(process.env.PLG_DATA_DIR || '.plg-data');
       else throw new PlgError(503, 'PLG storage is not configured.');
@@ -44,15 +63,19 @@ export function registerPlgRoutes(app: express.Express, production: boolean, inj
         .then(() => fn(req, res))
         .catch((error) => {
           if (!res.headersSent)
-            res
-              .status(error instanceof PlgError ? error.status : 503)
-              .json({ error: error instanceof PlgError ? error.message : 'PLG is temporarily unavailable.' });
+            res.status(error instanceof PlgError ? error.status : 503).json({
+              error: error instanceof PlgError ? error.message : 'PLG is temporarily unavailable.',
+            });
         });
     };
   const role = (req: express.Request, admin = false) => {
     const email = (req as any).sessionUser?.email?.toLowerCase() as string | undefined;
     if (!email) throw new PlgError(401, 'Authentication required');
-    const value = config.admins.has(email) ? 'admin' : config.operators.has(email) ? 'operator' : null;
+    const value = config.admins.has(email)
+      ? 'admin'
+      : config.operators.has(email)
+        ? 'operator'
+        : null;
     if (!value || (admin && value !== 'admin'))
       throw new PlgError(403, 'This action requires PLG workspace access.');
     if (req.method !== 'GET' && req.headers.origin !== config.origin)
@@ -60,16 +83,17 @@ export function registerPlgRoutes(app: express.Express, production: boolean, inj
     return { email, role: value as 'admin' | 'operator' };
   };
   const machine = (req: express.Request, purpose: string) => {
+    const secret = purpose === 'sync' ? (config.syncSecret ?? '') : config.signingSecret;
     const timestamp = req.get('X-PLG-Timestamp') || '';
     const signature = req.get('X-PLG-Signature') || '';
     const raw = (req as any).plgRawBody as string | undefined;
     if (
       !config.enabled ||
-      config.signingSecret.length < 32 ||
+      secret.length < 32 ||
       !/^\d{13}$/.test(timestamp) ||
       Math.abs(Date.now() - Number(timestamp)) > 300_000 ||
       raw === undefined ||
-      !equalSignature(signature, signValue(`${purpose}\n${timestamp}\n${raw}`, config.signingSecret))
+      !equalSignature(signature, signValue(`${purpose}\n${timestamp}\n${raw}`, secret))
     )
       throw new PlgError(401, 'Invalid integration signature.');
   };
@@ -145,6 +169,13 @@ export function registerPlgRoutes(app: express.Express, production: boolean, inj
   // Sending is only available through the signed scheduler endpoint. Browsing,
   // editing and previewing in this UI cannot send an email.
   app.post(
+    '/integrations/plg/sync',
+    handle(async (req, res) => {
+      machine(req, 'sync');
+      return res.json(await syncOneEvidence(getService().store));
+    }),
+  );
+  app.post(
     '/integrations/plg/events',
     handle(async (req, res) => {
       machine(req, 'events');
@@ -192,11 +223,18 @@ export function registerPlgRoutes(app: express.Express, production: boolean, inj
           for (const c of state.contacts)
             if (
               Array.isArray(event.data?.to) &&
-              event.data.to.some((e: unknown) => typeof e === 'string' && e.toLowerCase() === c.email)
+              event.data.to.some(
+                (e: unknown) => typeof e === 'string' && e.toLowerCase() === c.email,
+              )
             ) {
               if (c.suppressed !== reason) {
                 c.suppressed = reason;
-                timeline(c, 'Delivery provider', `Promotional email suppressed: ${reason}.`, Date.now());
+                timeline(
+                  c,
+                  'Delivery provider',
+                  `Promotional email suppressed: ${reason}.`,
+                  Date.now(),
+                );
               }
             }
         if (event.type === 'email.delivered') {
@@ -209,7 +247,8 @@ export function registerPlgRoutes(app: express.Express, production: boolean, inj
   );
   const preferences = (unsubscribe: boolean) =>
     handle(async (req, res) => {
-      if (config.signingSecret.length < 32) throw new PlgError(503, 'Preferences are not configured.');
+      if (config.signingSecret.length < 32)
+        throw new PlgError(503, 'Preferences are not configured.');
       const id = tokenContact(req.params.token as string, config.signingSecret);
       const store = getService().store;
       const contact = (await store.read()).contacts.find((c) => c.id === id);

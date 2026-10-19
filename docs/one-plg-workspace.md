@@ -6,6 +6,57 @@ readiness, campaign previews and measured first-value/returning-account counts.
 The module starts disabled. Campaigns start paused, journey readiness is false,
 and all message templates start as drafts. No contacts are preloaded.
 
+## Backend evidence and release status
+
+The companion One backend exposes server-only `POST /api/one/plg/snapshot`.
+The dashboard's signed `POST /integrations/plg/sync` polls that route for
+already-enrolled accounts in batches of 20. Configure `PLG_ONE_SOURCE_URL` and
+a dedicated `PLG_ONE_SOURCE_SECRET` matching backend `ONE_PLG_EXPORT_SECRET`.
+Requests authenticate `snapshot\n<TIMESTAMP_MS>\n<EXACT_RAW_JSON_BODY>` with
+HMAC-SHA256, a five-minute replay window and no redirects. No browser receives
+the credential or source response.
+
+The dashboard sync endpoint and worker use a separate `PLG_SYNC_SECRET`.
+That credential cannot authenticate enrollment events, delivery runs or
+preference links; the sync job never receives `PLG_SIGNING_SECRET`.
+
+The backend requires production runtime identity, an enabled flag and an
+independent private allowlist of at most 100 pilot UIDs. It queries existing
+confirmed Memory mutations and provider-confirmed Mail sends. The bridge imports
+opaque action IDs and timestamps, validates every batch before committing, and
+deduplicates repeated queries. No prompts, content, domains, recipients or email
+bodies are exported.
+
+Memory requires explicit owner confirmation and an exact plan/commit binding.
+Older writes without authorization-mode provenance remain unclassified.
+Automatic saves, upgrades, source refreshes and scheduled Mail sends cannot
+inflate returning-usage counts.
+
+Retained task rows prove positive outcomes only. Empty snapshots never emit
+`observation_completed`, infer inactivity or create a new-signup cohort.
+`observationAt` is independent of `telemetryAt`; records without an explicit
+complete observation remain unknown for behavioral reminders. Setup, failures,
+support and enrollment remain separate trusted producers. Enrollment and
+messaging permission still require the reviewed workspace or signed producer.
+
+An authoritative account-deletion tombstone removes the contact, its delivery
+records and UID-bearing action keys. A UID hash blocks delayed re-enrollment;
+opaque deduplication hashes remain. A sync failure commits no partial evidence
+and aborts a worker's `--sync-first --send` sequence. Sync itself sends no email.
+
+Production now requires `PLG_FIRESTORE_DATABASE=one-plg-production`, a named
+Native database: the project's existing default is Datastore mode. See
+[infrastructure and release procedure](../infra/one-plg/README.md). Its scheduler
+starts paused and uses `--sync-only`. No provisioning, deployment, merge or
+customer send has been performed for this change.
+
+The team must confirm its marketing provider/account, verified From, display
+name, Reply-To and signed bounce/complaint callback. GCP secret-name inventories
+were inspected; no marketing credential was identified. The OTP sender is not
+campaign authority. The Resend adapter is retained without a provider binding;
+another existing provider needs its matching adapter. Live sender verification
+and a controlled recipient test remain release prerequisites.
+
 ## Run locally
 
 Use the existing dashboard Google sign-in. Set the following local configuration

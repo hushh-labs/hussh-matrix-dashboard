@@ -15,6 +15,7 @@ const config: PlgRuntime = {
   admins: new Set(['admin@example.invalid']),
   operators: new Set(['operator@example.invalid']),
   signingSecret: secret,
+  syncSecret: 'test-only-dedicated-sync-secret-over-32-characters',
   webhookSecret: 'whsec_' + Buffer.from('test-webhook-signing-secret-value').toString('base64'),
   apiKey: '',
   from: '',
@@ -52,13 +53,44 @@ function app() {
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('does not let a sync credential authorize delivery or enrollment', async () => {
+    const timestamp = String(Date.now()),
+      body = '{}';
+    for (const purpose of ['events', 'run']) {
+      const denied = await request(app())
+        .post(`/integrations/plg/${purpose}`)
+        .set('Content-Type', 'application/json')
+        .set('X-PLG-Timestamp', timestamp)
+        .set('X-PLG-Signature', signValue(`${purpose}\n${timestamp}\n${body}`, config.syncSecret!))
+        .send(body);
+      expect(denied.status).toBe(401);
+    }
+    const denied = await request(app())
+      .post('/integrations/plg/sync')
+      .set('Content-Type', 'application/json')
+      .set('X-PLG-Timestamp', timestamp)
+      .set('X-PLG-Signature', signValue(`sync\n${timestamp}\n${body}`, secret))
+      .send(body);
+    expect(denied.status).toBe(401);
+    const accepted = await request(app())
+      .post('/integrations/plg/sync')
+      .set('Content-Type', 'application/json')
+      .set('X-PLG-Timestamp', timestamp)
+      .set('X-PLG-Signature', signValue(`sync\n${timestamp}\n${body}`, config.syncSecret!))
+      .send(body);
+    // Authorized, but source configuration is absent in this fixture.
+    expect(accepted.status).toBe(503);
+    expect(accepted.body.error).toContain('evidence');
+  });
   beforeEach(() => {
     store = new MemoryPlgStore();
   });
   afterEach(() => vi.restoreAllMocks());
   it('requires a real session and explicit role even when analytics is public', async () => {
     expect((await request(app()).get('/api/plg/workspace')).status).toBe(401);
-    const denied = await request(app()).get('/api/plg/workspace').set('Test-User', 'viewer@example.invalid');
+    const denied = await request(app())
+      .get('/api/plg/workspace')
+      .set('Test-User', 'viewer@example.invalid');
     expect(denied.status).toBe(403);
     expect(denied.text).not.toContain('customer@');
     const allowed = await request(app())
@@ -106,9 +138,9 @@ describe('Private PLG API boundaries', () => {
       occurredAt: new Date().toISOString(),
     });
     await store.transaction((s) => enroll(s, input, 'admin', Date.now() - 1000));
-    expect((await request(server).post('/integrations/plg/events').send(JSON.parse(payload))).status).toBe(
-      401,
-    );
+    expect(
+      (await request(server).post('/integrations/plg/events').send(JSON.parse(payload))).status,
+    ).toBe(401);
     const good = await request(server)
       .post('/integrations/plg/events')
       .set('Content-Type', 'application/json')
@@ -132,7 +164,8 @@ describe('Private PLG API boundaries', () => {
     expect((await request(server).get(url)).status).toBe(200);
     expect((await store.read()).contacts[0].suppressed).toBeNull();
     expect(
-      (await request(server).post(url).type('form').send({ 'List-Unsubscribe': 'One-Click' })).status,
+      (await request(server).post(url).type('form').send({ 'List-Unsubscribe': 'One-Click' }))
+        .status,
     ).toBe(200);
     expect((await store.read()).contacts[0].suppressed).toBe('unsubscribed');
     expect((await request(server).get(url + 'tampered')).status).toBe(400);
@@ -148,9 +181,9 @@ describe('Private PLG API boundaries', () => {
       }),
     );
     const payload = JSON.stringify({ type: 'email.complained', data: { to: [input.email] } });
-    expect((await request(app()).post('/integrations/plg/resend').send(JSON.parse(payload))).status).toBe(
-      401,
-    );
+    expect(
+      (await request(app()).post('/integrations/plg/resend').send(JSON.parse(payload))).status,
+    ).toBe(401);
     const id = 'msg_test_plg';
     const timestamp = new Date();
     const signature = new Webhook(config.webhookSecret).sign(id, timestamp, payload);

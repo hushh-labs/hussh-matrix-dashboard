@@ -1,9 +1,18 @@
 /** Private PLG contract. Never include these records in aggregate analytics. */
 export type PlgJourney = 'memory' | 'mail';
 export type PlgFrequency = 'daily' | 'weekly' | 'updates';
-export type PlgStage = 'unknown' | 'new' | 'setup' | 'blocked' | 'activated' | 'returning' | 'inactive';
+export type PlgStage =
+  'unknown' | 'new' | 'setup' | 'blocked' | 'activated' | 'returning' | 'inactive';
 export type PlgStep = 'welcome' | 'demo' | 'help' | 'repeat' | 'return' | 'feedback' | 'newsletter';
-export const plgSteps: PlgStep[] = ['welcome', 'demo', 'help', 'repeat', 'return', 'feedback', 'newsletter'];
+export const plgSteps: PlgStep[] = [
+  'welcome',
+  'demo',
+  'help',
+  'repeat',
+  'return',
+  'feedback',
+  'newsletter',
+];
 export const plgStageLabels: Record<PlgStage, string> = {
   unknown: 'Activity unknown',
   new: 'First task needed',
@@ -36,6 +45,8 @@ export interface PlgContact {
   supportOpen: boolean;
   notes: string;
   telemetryAt: string | null;
+  /** A complete observation is separate from a single successful task. */
+  observationAt?: string | null;
   setupAt: string | null;
   failedAt: string | null;
   firstValueAt: string | null;
@@ -79,6 +90,8 @@ export interface PlgState {
   templates: PlgTemplate[];
   deliveries: PlgDelivery[];
   eventIds: string[];
+  /** Erased accounts cannot be re-enrolled by a delayed integration event. */
+  erasedAccountHashes?: string[];
   audit: PlgTimeline[];
 }
 export interface PlgCandidate {

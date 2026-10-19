@@ -15,8 +15,15 @@ import {
   updateTemplate,
 } from '../src/server/plg/engine';
 import { FilePlgStore, MemoryPlgStore } from '../src/server/plg/store';
-import { PlgService, preferenceToken, tokenContact, type PlgRuntime } from '../src/server/plg/service';
+import {
+  PlgService,
+  preferenceToken,
+  tokenContact,
+  type PlgRuntime,
+} from '../src/server/plg/service';
 import type { PlgContact, PlgState } from '../src/lib/plg';
+import { syncOneEvidence } from '../src/server/plg/one-source';
+import { signValue } from '../src/server/plg/service';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
 const runtime: PlgRuntime = {
@@ -60,7 +67,13 @@ function ready(state: PlgState) {
     t.published = true;
   });
 }
-function observe(state: PlgState, c: PlgContact, at = NOW, kind = 'observation_completed', extra = {}) {
+function observe(
+  state: PlgState,
+  c: PlgContact,
+  at = NOW,
+  kind = 'observation_completed',
+  extra = {},
+) {
   return ingestEvent(
     state,
     {
@@ -79,6 +92,22 @@ function observe(state: PlgState, c: PlgContact, at = NOW, kind = 'observation_c
 }
 
 describe('PLG eligibility and measurement', () => {
+  it('does not mistake a successful task for a complete activity observation', () => {
+    const s = initialPlgState();
+    ready(s);
+    const c = contact(s, NOW - 3 * DAY);
+    observe(s, c, NOW - 2 * DAY, 'task_completed', {
+      result: 'success',
+      deliberate: true,
+      actionId: 'completed-task',
+    });
+    observe(s, c, NOW, 'activity_observed');
+    expect(c.telemetryAt).toBe(new Date(NOW).toISOString());
+    expect(c.observationAt).toBeUndefined();
+    expect(candidate(s, c, NOW).step).not.toBe('repeat');
+    observe(s, c, NOW);
+    expect(candidate(s, c, NOW).step).toBe('repeat');
+  });
   it('starts empty, paused and with unpublished, unverified journeys', () => {
     const s = initialPlgState();
     expect(s.contacts).toEqual([]);
@@ -113,7 +142,12 @@ describe('PLG eligibility and measurement', () => {
     const s = initialPlgState();
     const c = contact(s);
     expect(() =>
-      enroll(s, { ...c, accountId: 'other', environment: 'production', internal: false }, 'operator', NOW),
+      enroll(
+        s,
+        { ...c, accountId: 'other', environment: 'production', internal: false },
+        'operator',
+        NOW,
+      ),
     ).toThrow('already enrolled');
     expect(() =>
       enroll(
@@ -198,12 +232,23 @@ describe('PLG eligibility and measurement', () => {
     ready(s);
     const c = contact(s, NOW - 3 * DAY);
     expect(() =>
-      observe(s, c, NOW, 'task_completed', { result: 'success', deliberate: false, actionId: 'task-1' }),
+      observe(s, c, NOW, 'task_completed', {
+        result: 'success',
+        deliberate: false,
+        actionId: 'task-1',
+      }),
     ).toThrow('deliberate');
-    observe(s, c, NOW, 'task_completed', { result: 'success', deliberate: true, actionId: 'task-1' });
+    observe(s, c, NOW, 'task_completed', {
+      result: 'success',
+      deliberate: true,
+      actionId: 'task-1',
+    });
     expect(
-      observe(s, c, NOW, 'task_completed', { result: 'success', deliberate: true, actionId: 'task-1' })
-        .duplicate,
+      observe(s, c, NOW, 'task_completed', {
+        result: 'success',
+        deliberate: true,
+        actionId: 'task-1',
+      }).duplicate,
     ).toBe(true);
     expect(metrics(s, NOW).activated).toBe(1);
     expect(candidate(s, c, NOW).step).not.toBe('help');
@@ -213,13 +258,19 @@ describe('PLG eligibility and measurement', () => {
     const s = initialPlgState();
     const c = contact(s);
     expect(() => observe(s, c, NOW - DAY)).toThrow('timestamp');
-    expect(() => observe(s, c, NOW, 'task_completed', { environment: 'uat' })).toThrow('production');
+    expect(() => observe(s, c, NOW, 'task_completed', { environment: 'uat' })).toThrow(
+      'production',
+    );
     expect(() => observe(s, c, NOW, 'task_completed', { journey: 'mail' })).toThrow('journey');
   });
   it('deduplicates the same completed action under different event IDs', () => {
     const s = initialPlgState();
     const c = contact(s, NOW - DAY);
-    observe(s, c, NOW, 'task_completed', { result: 'success', deliberate: true, actionId: 'shared-task' });
+    observe(s, c, NOW, 'task_completed', {
+      result: 'success',
+      deliberate: true,
+      actionId: 'shared-task',
+    });
     expect(
       observe(s, c, NOW, 'task_completed', {
         eventId: 'another-device-event',
@@ -259,7 +310,9 @@ describe('PLG eligibility and measurement', () => {
       published: true,
       resourceUrl: 'https://youtu.be/approved-demo',
     };
-    expect(updateTemplate(s, 'memory-demo', template, 'admin', NOW).resourceUrl).toBe(template.resourceUrl);
+    expect(updateTemplate(s, 'memory-demo', template, 'admin', NOW).resourceUrl).toBe(
+      template.resourceUrl,
+    );
     expect(() =>
       updateTemplate(
         s,
@@ -295,11 +348,150 @@ describe('PLG eligibility and measurement', () => {
       updateTemplate(
         s,
         'memory-demo',
-        { subject: 'Demo', body: 'Task', ctaLabel: 'Open', ctaUrl: 'https://evil.invalid/', published: true },
+        {
+          subject: 'Demo',
+          body: 'Task',
+          ctaLabel: 'Open',
+          ctaUrl: 'https://evil.invalid/',
+          published: true,
+        },
         'admin',
         NOW,
       ),
     ).toThrow('one.hushh.ai');
+  });
+});
+
+describe('One retained task evidence bridge', () => {
+  it('refreshes the request window and clock for a slow multi-batch sync', async () => {
+    const store = new MemoryPlgStore();
+    await store.transaction((s) => {
+      for (let i = 0; i < 81; i++) contact(s, NOW - 10 * DAY, String(i));
+    });
+    let clock = NOW;
+    const source: typeof fetch = (async (_url, init) => {
+      const requested = JSON.parse(init!.body as string).accounts;
+      expect(requested[0].since).toBe(new Date(clock - 7 * DAY).toISOString());
+      const asOf = new Date(clock).toISOString();
+      clock += 20_000;
+      return new Response(
+        JSON.stringify({
+          version: 1,
+          environment: 'production',
+          retainedOnly: true,
+          asOf,
+          accounts: requested.map((c: object) => ({ ...c, deleted: false, tasks: [] })),
+        }),
+      );
+    }) as typeof fetch;
+    expect(
+      await syncOneEvidence(
+        store,
+        {
+          url: 'https://api.example.invalid/api/one/plg/snapshot',
+          secret: 'test-only-source-secret-over-32-characters',
+        },
+        source,
+        () => clock,
+      ),
+    ).toMatchObject({ accounts: 81 });
+    expect(clock - NOW).toBe(100_000);
+  });
+  const options = {
+    url: 'https://api.example.invalid/api/one/plg/snapshot',
+    secret: 'test-only-source-secret-over-32-characters',
+  };
+  async function fixture() {
+    const store = new MemoryPlgStore();
+    await store.transaction((s) => contact(s, NOW - DAY));
+    return store;
+  }
+  function fetcher(deleted = false, accountId = 'account-1', tasks = true): typeof fetch {
+    return (async (_url, init) => {
+      const headers = init!.headers as Record<string, string>;
+      expect(headers['X-PLG-Signature']).toBe(
+        signValue(`snapshot\n${NOW}\n${init!.body}`, options.secret),
+      );
+      expect(init!.redirect).toBe('error');
+      const requested = JSON.parse(init!.body as string).accounts[0];
+      return new Response(
+        JSON.stringify({
+          version: 1,
+          environment: 'production',
+          retainedOnly: true,
+          asOf: new Date(NOW).toISOString(),
+          accounts: [
+            {
+              ...requested,
+              accountId,
+              deleted,
+              tasks:
+                deleted || !tasks
+                  ? []
+                  : [
+                      {
+                        actionId: 'a'.repeat(64),
+                        occurredAt: new Date(NOW).toISOString(),
+                        privateContent: 'must never persist',
+                      },
+                    ],
+            },
+          ],
+        }),
+      );
+    }) as typeof fetch;
+  }
+  it('signs exact bodies, imports only metadata, and safely replays positive task outcomes', async () => {
+    const store = await fixture();
+    expect(await syncOneEvidence(store, options, fetcher(), NOW)).toMatchObject({ imported: 1 });
+    expect(await syncOneEvidence(store, options, fetcher(), NOW)).toMatchObject({ imported: 0 });
+    expect(
+      await syncOneEvidence(store, options, fetcher(false, 'account-1', false), NOW),
+    ).toMatchObject({ imported: 0 });
+    const state = await store.read();
+    expect(state.contacts[0].firstValueAt).toBe(new Date(NOW).toISOString());
+    expect(state.contacts[0].observationAt).toBeUndefined();
+    expect(JSON.stringify(state)).not.toContain('must never persist');
+  });
+  it('erases contact records and blocks delayed re-enrollment after authoritative deletion', async () => {
+    const store = await fixture();
+    await store.transaction((state) => {
+      state.eventIds.push('event:signup:account-1:person-1@example.invalid');
+    });
+    await syncOneEvidence(store, options, fetcher(), NOW);
+    expect(await syncOneEvidence(store, options, fetcher(true), NOW)).toMatchObject({ erased: 1 });
+    const state = await store.read();
+    expect(state.contacts).toEqual([]);
+    expect(state.deliveries).toEqual([]);
+    expect(JSON.stringify(state)).not.toContain('person-1@example.invalid');
+    expect(JSON.stringify(state)).not.toContain('account-1');
+    expect(
+      ingestEvent(state, { eventId: 'signup:account-1:person-1@example.invalid' }, NOW).duplicate,
+    ).toBe(true);
+    expect(() => contact(state, NOW)).toThrow('erased');
+  });
+  it('rejects an unexpected account or source failure without committing partial activity', async () => {
+    const store = await fixture();
+    await expect(
+      syncOneEvidence(store, options, fetcher(false, 'different-account'), NOW),
+    ).rejects.toThrow('unavailable');
+    await expect(
+      syncOneEvidence(
+        store,
+        options,
+        (async () => new Response('private diagnostics', { status: 503 })) as typeof fetch,
+        NOW,
+      ),
+    ).rejects.toThrow('unavailable');
+    expect((await store.read()).contacts[0].telemetryAt).toBeNull();
+    await expect(
+      syncOneEvidence(
+        store,
+        { ...options, url: options.url.replace('https:', 'http:') },
+        fetcher(),
+        NOW,
+      ),
+    ).rejects.toThrow('unavailable');
   });
 });
 
@@ -431,6 +623,8 @@ describe('PLG persistence and delivery safety', () => {
     const id = 'ecf9b4ac-3018-443c-907c-a13cf55c4882';
     const token = preferenceToken(id, runtime.signingSecret);
     expect(tokenContact(token, runtime.signingSecret)).toBe(id);
-    expect(() => tokenContact(token.replace('ecf9', 'abcd'), runtime.signingSecret)).toThrow('invalid');
+    expect(() => tokenContact(token.replace('ecf9', 'abcd'), runtime.signingSecret)).toThrow(
+      'invalid',
+    );
   });
 });

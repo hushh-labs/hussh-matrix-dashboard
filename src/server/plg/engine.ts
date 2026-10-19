@@ -20,7 +20,26 @@ export class PlgError extends Error {
   }
 }
 export const iso = (now: number) => new Date(now).toISOString();
-const age = (at: string | null, now: number) => (at ? now - Date.parse(at) : Infinity);
+const age = (at: string | null | undefined, now: number) => (at ? now - Date.parse(at) : Infinity);
+export const accountHash = (accountId: string) =>
+  createHash('sha256').update(accountId).digest('hex');
+const eventKey = (eventId: string) => `eventhash:${accountHash(eventId)}`;
+const seenEvent = (state: PlgState, eventId: string) =>
+  state.eventIds.includes(eventKey(eventId)) || state.eventIds.includes(`event:${eventId}`);
+export function eraseAccount(state: PlgState, accountId: string, now: number) {
+  const ids = new Set(state.contacts.filter((c) => c.accountId === accountId).map((c) => c.id));
+  state.contacts = state.contacts.filter((c) => !ids.has(c.id));
+  state.deliveries = state.deliveries.filter((d) => !ids.has(d.contactId));
+  state.eventIds = state.eventIds
+    .filter((id) => !id.startsWith(`action:${accountId}:`))
+    // Old producers could include personal identifiers in arbitrary event IDs.
+    // Hash legacy IDs while retaining deduplication for delayed replays.
+    .map((id) => (id.startsWith('event:') ? eventKey(id.slice(6)) : id));
+  state.erasedAccountHashes = [
+    ...new Set([...(state.erasedAccountHashes ?? []), accountHash(accountId)]),
+  ];
+  audit(state, 'One product', 'Erased a deleted account and blocked delayed re-enrollment.', now);
+}
 export function text(value: unknown, max: number, required = false): string {
   if (
     typeof value !== 'string' ||
@@ -152,8 +171,11 @@ export function enroll(
   actor: string,
   now: number,
 ): PlgContact {
-  if (state.contacts.length >= 100) throw new PlgError(409, 'This pilot supports 100 enrolled accounts.');
+  if (state.contacts.length >= 100)
+    throw new PlgError(409, 'This pilot supports 100 enrolled accounts.');
   const accountId = text(input.accountId, 128, true);
+  if (state.erasedAccountHashes?.includes(accountHash(accountId)))
+    throw new PlgError(409, 'This account has been erased from the pilot.');
   const email = text(input.email, 254, true).toLowerCase();
   if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email) || /[\r\n]/.test(email))
     throw new PlgError(400, 'Enter a valid email address.');
@@ -209,7 +231,8 @@ export function updateContact(
   if (!c) throw new PlgError(404, 'Account not found.');
   for (const key of ['owner', 'blocker', 'notes'] as const)
     if (input[key] !== undefined) c[key] = text(input[key], key === 'notes' ? 400 : 120);
-  if (input.frequency !== undefined) c.frequency = choose(input.frequency, ['daily', 'weekly', 'updates']);
+  if (input.frequency !== undefined)
+    c.frequency = choose(input.frequency, ['daily', 'weekly', 'updates']);
   if (input.supportOpen !== undefined) {
     if (typeof input.supportOpen !== 'boolean') throw new PlgError(400, 'Invalid support status.');
     c.supportOpen = input.supportOpen;
@@ -239,7 +262,12 @@ export function updateContact(
         ctaUrl: '',
         providerId: null,
       });
-      timeline(c, actor, `Recorded promotional ${channel} contact in the shared frequency limit.`, now);
+      timeline(
+        c,
+        actor,
+        `Recorded promotional ${channel} contact in the shared frequency limit.`,
+        now,
+      );
     }
   }
   timeline(c, actor, 'Updated follow-up details and preferences.', now);
@@ -247,7 +275,7 @@ export function updateContact(
 }
 export function ingestEvent(state: PlgState, input: Record<string, unknown>, now: number) {
   const eventId = text(input.eventId, 128, true);
-  if (state.eventIds.includes(`event:${eventId}`)) return { duplicate: true };
+  if (seenEvent(state, eventId)) return { duplicate: true };
   if (input.environment !== 'production' || input.internal !== false)
     throw new PlgError(400, 'Only production customer events are accepted.');
   const accountId = text(input.accountId, 128, true);
@@ -256,7 +284,12 @@ export function ingestEvent(state: PlgState, input: Record<string, unknown>, now
   if (choose(input.journey, ['memory', 'mail']) !== c.journey)
     throw new PlgError(400, 'Event does not match the enrolled journey.');
   const at = Date.parse(text(input.occurredAt, 40, true));
-  if (!Number.isFinite(at) || at > now + 60_000 || at < now - 7 * DAY || at < Date.parse(c.enrolledAt))
+  if (
+    !Number.isFinite(at) ||
+    at > now + 60_000 ||
+    at < now - 7 * DAY ||
+    at < Date.parse(c.enrolledAt)
+  )
     throw new PlgError(400, 'Event timestamp is outside the accepted window.');
   const kind = choose(input.kind, [
     'observation_completed',
@@ -269,6 +302,8 @@ export function ingestEvent(state: PlgState, input: Record<string, unknown>, now
   if (kind === 'observation_completed' && input.verified !== true)
     throw new PlgError(400, 'An observation requires a verified complete product check.');
   c.telemetryAt = iso(Math.max(at, Date.parse(c.telemetryAt ?? '1970-01-01')));
+  if (kind === 'observation_completed')
+    c.observationAt = iso(Math.max(at, Date.parse(c.observationAt ?? '1970-01-01')));
   if (kind === 'setup_started') c.setupAt = iso(at);
   if (kind === 'task_failed') c.failedAt = iso(at);
   if (kind === 'help_requested') c.supportOpen = true;
@@ -283,24 +318,27 @@ export function ingestEvent(state: PlgState, input: Record<string, unknown>, now
     if (!c.lastValueAt || at > Date.parse(c.lastValueAt)) c.lastValueAt = iso(at);
     c.valueDays = [...new Set([...c.valueDays, iso(at).slice(0, 10)])].sort();
   }
-  state.eventIds.push(`event:${eventId}`);
+  state.eventIds.push(eventKey(eventId));
   timeline(c, 'One product', kind.replaceAll('_', ' '), now);
   return { duplicate: false };
 }
 export function ingestEnrollment(state: PlgState, input: Record<string, unknown>, now: number) {
   const eventId = text(input.eventId, 128, true);
-  if (state.eventIds.includes(`event:${eventId}`)) return { duplicate: true };
+  if (seenEvent(state, eventId)) return { duplicate: true };
   const at = Date.parse(text(input.occurredAt, 40, true));
   if (!Number.isFinite(at) || at > now + 60_000 || at < now - 7 * DAY || input.cohort !== 'new')
     throw new PlgError(400, 'Invalid new-signup enrollment event.');
   const existing = state.contacts.find((c) => c.accountId === input.accountId);
   if (existing) return { duplicate: true };
   enroll(state, input, 'One product', at);
-  state.eventIds.push(`event:${eventId}`);
+  state.eventIds.push(eventKey(eventId));
   return { duplicate: false };
 }
 export function contactStage(c: PlgContact, now: number): PlgStage {
-  if (c.supportOpen || (c.failedAt && (!c.lastValueAt || Date.parse(c.failedAt) > Date.parse(c.lastValueAt))))
+  if (
+    c.supportOpen ||
+    (c.failedAt && (!c.lastValueAt || Date.parse(c.failedAt) > Date.parse(c.lastValueAt)))
+  )
     return 'blocked';
   if (c.firstValueAt)
     return age(c.lastValueAt, now) >= 7 * DAY
@@ -311,7 +349,12 @@ export function contactStage(c: PlgContact, now: number): PlgStage {
   if (!c.telemetryAt) return 'unknown';
   return c.setupAt ? 'setup' : 'new';
 }
-export function candidate(state: PlgState, c: PlgContact, now: number, ignorePause = false): PlgCandidate {
+export function candidate(
+  state: PlgState,
+  c: PlgContact,
+  now: number,
+  ignorePause = false,
+): PlgCandidate {
   const stage = contactStage(c, now);
   const out: PlgCandidate = {
     contactId: c.id,
@@ -333,10 +376,14 @@ export function candidate(state: PlgState, c: PlgContact, now: number, ignorePau
   if (c.frequency === 'updates') return stop('Product updates only; lifecycle messages disabled');
   // An observed activity is not an ongoing feed-health guarantee. Require a fresh
   // per-account observation before inferring the absence of a completed task.
-  const freshObservation = age(c.telemetryAt, now) <= DAY;
+  const freshObservation = age(c.observationAt, now) <= DAY;
   const history = state.deliveries.filter((d) => d.contactId === c.id);
-  if (history.some((d) => age(d.createdAt, now) < DAY)) return stop('One promotional message per 24 hours');
-  if (c.frequency === 'weekly' && history.filter((d) => age(d.createdAt, now) < 7 * DAY).length >= 3)
+  if (history.some((d) => age(d.createdAt, now) < DAY))
+    return stop('One promotional message per 24 hours');
+  if (
+    c.frequency === 'weekly' &&
+    history.filter((d) => age(d.createdAt, now) < 7 * DAY).length >= 3
+  )
     return stop('Three promotional messages per seven days');
   const has = (step: PlgStep) =>
     history.some(
@@ -391,13 +438,16 @@ export function candidate(state: PlgState, c: PlgContact, now: number, ignorePau
         ? 'No relevant message due'
         : 'Activity unknown or stale; review before behavioral follow-up',
     );
-  const template = state.templates.find((t) => t.journey === c.journey && t.step === step && t.published);
+  const template = state.templates.find(
+    (t) => t.journey === c.journey && t.step === step && t.published,
+  );
   if (!template) return stop(`Publish the ${step} message before sending`);
   const key =
     step === 'newsletter'
       ? `${c.id}:${template.id}:${template.version}`
       : `${c.id}:${step}:${['repeat', 'return', 'feedback'].includes(step) ? c.lastValueAt : 'activation'}`;
-  if (history.some((d) => d.key === key)) return stop('This journey step has already been reserved or sent');
+  if (history.some((d) => d.key === key))
+    return stop('This journey step has already been reserved or sent');
   return {
     ...out,
     eligible: true,
