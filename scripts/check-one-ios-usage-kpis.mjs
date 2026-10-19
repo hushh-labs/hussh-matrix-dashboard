@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Read-only, aggregate-only reconciliation of the iOS app-instance/screen KPIs. */
 import { BigQuery } from '@google-cloud/bigquery';
+import { oneSurfaceSql } from '../src/server/one-scope.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -42,6 +43,7 @@ const query = `
       AND (NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
         OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (SELECT suffix FROM finalized_dates))
       AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
+      AND ${oneSurfaceSql('one.hushh.ai', 'production')}
   )
   SELECT COUNT(*) AS scoped_events,
     COUNT(DISTINCT IF(event_name NOT IN (${ignored}), user_pseudo_id, NULL)) AS active_install_ids,

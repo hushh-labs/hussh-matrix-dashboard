@@ -63,10 +63,19 @@ scoped AS (
   FROM `hushh-pda.analytics_526603671.events_*` e, params p
   WHERE REGEXP_CONTAINS(e._TABLE_SUFFIX, r'^[0-9]{8}$')
     AND PARSE_DATE('%Y%m%d', e.event_date) BETWEEN DATE_SUB(p.latest_day, INTERVAL 89 DAY) AND p.latest_day
-    AND (
-      e.platform IN ('IOS', 'ANDROID')
-      OR NET.HOST((SELECT value.string_value FROM UNNEST(e.event_params) WHERE key = 'page_location')) = 'one.hushh.ai'
-    )
+    -- BEGIN GENERATED ONE ENVIRONMENT SCOPE
+    AND (((e.platform = 'IOS' AND e.app_info.id = 'com.hushh.app'
+      AND e.stream_id = '13695001361')
+    OR (e.platform = 'ANDROID' AND e.app_info.id = 'com.hussh.app'
+      AND e.stream_id = '15395548050')
+    OR (e.platform = 'WEB' AND e.stream_id = '13695004816'
+      AND NET.HOST((SELECT value.string_value FROM UNNEST(e.event_params)
+        WHERE key = 'page_location')) = 'one.hushh.ai'))
+    AND NOT EXISTS (SELECT 1 FROM UNNEST(e.event_params) debug_param
+    WHERE debug_param.key = 'debug_mode' AND (
+      COALESCE(debug_param.value.int_value, 0) = 1
+      OR LOWER(COALESCE(debug_param.value.string_value, '')) IN ('1', 'true')))  AND (SELECT value.string_value FROM UNNEST(e.event_params) WHERE key = 'env') = 'production')
+    -- END GENERATED ONE ENVIRONMENT SCOPE
 ),
 -- Machine-generated traffic. Kept out of "active user" and feature counts;
 -- an HTTP request is not a person and a cache warm is not a use.
@@ -116,6 +125,7 @@ status_rows AS (
          m.metric_value, m.metric_count, m.metric_string_value, m.metric_timestamp
   FROM source_state ss, UNNEST([
     STRUCT('source_environment' AS metric_name, CAST(NULL AS FLOAT64) AS metric_value, CAST(NULL AS INT64) AS metric_count, 'production' AS metric_string_value, CAST(NULL AS TIMESTAMP) AS metric_timestamp),
+    STRUCT('reporting_scope_version' AS metric_name, CAST(NULL AS FLOAT64) AS metric_value, CAST(NULL AS INT64) AS metric_count, 'one-environment-v1' AS metric_string_value, CAST(NULL AS TIMESTAMP) AS metric_timestamp),
     STRUCT('source_project_id', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), 'hushh-pda', CAST(NULL AS TIMESTAMP)),
     STRUCT('source_dataset', CAST(NULL AS FLOAT64), CAST(NULL AS INT64), 'analytics_526603671', CAST(NULL AS TIMESTAMP)),
     STRUCT('production_ready', 1.0, CAST(NULL AS INT64), 'true', CAST(NULL AS TIMESTAMP)),

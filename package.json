@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "start": "tsx server.ts",
     "test": "vitest run",
+    "test:metrics:environment-fixtures": "node scripts/check-one-environment-fixtures.mjs",
+    "test:metrics:feed-scope": "node scripts/render-one-feed-scope.mjs",
     "test:prod:auth": "node scripts/check-auth-production.mjs",
     "test:prod:performance": "node scripts/check-metrics-performance.mjs",
     "test:prod:founder": "node scripts/check-founder-briefing-contract.mjs",

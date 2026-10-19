@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { oneAccountSummaryIssues } from "../src/server/one-account-scope.mjs";
 
 const args = process.argv.slice(2);
 const valueAfter = (flag, fallback) => {
@@ -64,7 +65,7 @@ function inspect(value, path, findings) {
   }
 }
 
-function assertOneSummary(summary, label, expectedWebHost, findings) {
+function assertOneSummary(summary, label, expectedWebHost, findings, environment) {
   if (!summary || typeof summary !== 'object' || summary.available === false) return;
   if (summary.sourceWebHost !== expectedWebHost) findings.push(`${label}.sourceWebHost: expected ${expectedWebHost}`);
   if (summary.surfaceScope?.webHost !== expectedWebHost || summary.surfaceScope?.strictWebHost !== true) {
@@ -77,31 +78,7 @@ function assertOneSummary(summary, label, expectedWebHost, findings) {
   const wau = Number(active?.wau ?? 0);
   const mau = Number(active?.mau ?? 0);
   if (!(dau <= wau && wau <= mau)) findings.push(`${label}.activeUsers: expected DAU <= WAU <= MAU, got ${dau}/${wau}/${mau}`);
-  const registered = summary.registeredAccounts;
-  if (!registered || registered.countingUnit !== 'account') {
-    findings.push(`${label}.registeredAccounts.countingUnit: expected account`);
-  }
-  if (registered?.available !== true) {
-    findings.push(`${label}.registeredAccounts: authoritative Firebase aggregate unavailable`);
-  } else {
-    const totalAccounts = Number(registered.totalAccounts ?? -1);
-    const newAccounts = Number(registered.newAccounts ?? -1);
-    const throughEnd = Number(registered.accountsCreatedByRangeEnd ?? -1);
-    const disabledAccounts = Number(registered.disabledAccounts ?? -1);
-    const dailyNew = (registered.daily || []).reduce((total, row) => total + Number(row?.newAccounts ?? 0), 0);
-    if (totalAccounts < 0 || newAccounts < 0 || disabledAccounts < 0) {
-      findings.push(`${label}.registeredAccounts: counts must be non-negative`);
-    }
-    if (!(newAccounts <= throughEnd && throughEnd <= totalAccounts)) {
-      findings.push(`${label}.registeredAccounts: expected new <= created-through-end <= current total`);
-    }
-    if (dailyNew !== newAccounts) {
-      findings.push(`${label}.registeredAccounts.daily: ${dailyNew} does not equal newAccounts ${newAccounts}`);
-    }
-    if (registered.sharedAcrossEnvironments !== true || !/firebase authentication/i.test(registered.sourceLabel || '')) {
-      findings.push(`${label}.registeredAccounts: shared Firebase identity scope is not declared`);
-    }
-  }
+  findings.push(...oneAccountSummaryIssues(summary.registeredAccounts, environment).map(issue => `${label}.registeredAccounts: ${issue}`));
   const identified = summary.identifiedUsers;
   if (!identified || identified.countingUnit !== 'account') findings.push(`${label}.identifiedUsers.countingUnit: expected account`);
   if (!identified?.identityScope || !/distinct|account|user_id/i.test(identified.identityScope)) {
@@ -280,14 +257,8 @@ for (const spec of [
     const findings = [];
     inspect(result.data, '$', findings);
     const one = spec.path === '/api/analytics/all' ? result.data?.one?.data : result.data?.data;
-    assertOneSummary(one?.production, `${spec.path}.production`, 'one.hushh.ai', findings);
-    assertOneSummary(one?.uat, `${spec.path}.uat`, 'uat.one.hushh.ai', findings);
-    if (one?.production?.registeredAccounts?.available && one?.uat?.registeredAccounts?.available) {
-      if (one.production.registeredAccounts.totalAccounts !== one.uat.registeredAccounts.totalAccounts
-        || one.production.registeredAccounts.newAccounts !== one.uat.registeredAccounts.newAccounts) {
-        findings.push(`${spec.path}: production and UAT shared registered-account totals differ`);
-      }
-    }
+    assertOneSummary(one?.production, `${spec.path}.production`, 'one.hushh.ai', findings, 'production');
+    assertOneSummary(one?.uat, `${spec.path}.uat`, 'uat.one.hushh.ai', findings, 'uat');
     checks.push({
       endpoint: spec.path,
       bytes: result.bytes,

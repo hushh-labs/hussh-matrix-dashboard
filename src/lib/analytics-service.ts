@@ -740,7 +740,7 @@ function buildKaiProductionDailySummaryMetrics(kaiProduction: KaiProductionSumma
   const ga4Ready = Boolean(ga4?.available);
   const ga4Source = ga4?.sourceLabel ?? 'GA4 export';
   return [
-    metric('Production Users', asNumber(ga4?.rangeTotals?.users), ga4Source, ga4Ready ? undefined : 'Waiting'),
+    metric('PROD app/browser IDs', asNumber(ga4?.rangeTotals?.users), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('Production Sessions', asNumber(ga4?.rangeTotals?.sessions), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('Production Events', asNumber(ga4?.rangeTotals?.events), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('Cloud Run Requests', asNumber(gcp?.requestCount), gcp?.serviceName),
@@ -798,7 +798,7 @@ function buildKaiUatDailySummaryMetrics(kaiUsage: UsageSummary | null, kaiGa4: K
   const ga4Ready = Boolean(kaiGa4?.available);
   const ga4Source = kaiGa4?.sourceLabel ?? 'UAT GA4 export';
   return [
-    metric('UAT GA4 Users', asNumber(kaiGa4?.rangeTotals?.users), ga4Source, ga4Ready ? undefined : 'Waiting'),
+    metric('UAT app/browser IDs', asNumber(kaiGa4?.rangeTotals?.users), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('UAT GA4 Sessions', asNumber(kaiGa4?.rangeTotals?.sessions), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('UAT GA4 Events', asNumber(kaiGa4?.rangeTotals?.events), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('UAT DB DAU', asNumber(kaiUsage?.dau), 'UAT DB aggregate'),
@@ -977,7 +977,7 @@ function buildKpiStats(
       label: 'One Prod GA4 Events',
       value: kaiProdGa4?.available ? formatNumber(kaiProdGa4.rangeTotals?.events ?? 0) : '—',
       icon: 'Activity',
-      change: kaiProdGa4?.available ? `${formatNumber(kaiProdGa4.rangeTotals?.users ?? 0)} users` : 'GA4 waiting',
+      change: kaiProdGa4?.available ? `${formatNumber(kaiProdGa4.rangeTotals?.users ?? 0)} app/browser IDs` : 'GA4 waiting',
     },
     {
       label: 'One UAT Top Event',

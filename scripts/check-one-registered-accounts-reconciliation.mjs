@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
 import { GoogleAuth } from 'google-auth-library';
+import { oneAccountSummaryIssues } from '../src/server/one-account-scope.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -14,7 +16,10 @@ const dashboardUrl = option(
   '--dashboard-url',
   process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai',
 ).replace(/\/$/, '');
-const projectId = option('--firebase-project', process.env.ONE_FIREBASE_AUTH_PROJECT || 'hushh-pda');
+const projectIds = {
+  production: option('--production-firebase-project', option('--firebase-project', process.env.ONE_PROD_FIREBASE_AUTH_PROJECT || process.env.ONE_FIREBASE_AUTH_PROJECT || 'hushh-pda')),
+  uat: option('--uat-firebase-project', process.env.ONE_UAT_FIREBASE_AUTH_PROJECT || 'hushh-pda-uat'),
+};
 const days = Math.max(1, Math.min(Number(option('--days', '30')) || 30, 90));
 const timeoutMs = Number(option('--timeout-ms', '120000'));
 
@@ -25,7 +30,7 @@ start.setUTCDate(start.getUTCDate() - (days - 1));
 const startDate = start.toISOString().slice(0, 10);
 const endDate = end.toISOString().slice(0, 10);
 
-async function authoritativeCounts() {
+async function authoritativeCounts(projectId) {
   const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
   const client = await auth.getClient();
   const seen = new Set();
@@ -89,15 +94,23 @@ async function dashboardCounts() {
   };
 }
 
-const [source, dashboard] = await Promise.all([authoritativeCounts(), dashboardCounts()]);
+const dashboard = await dashboardCounts();
+const sources = {};
 const fields = ['totalAccounts', 'newAccounts', 'accountsCreatedByRangeEnd', 'disabledAccounts'];
 const failures = [];
 for (const environment of ['production', 'uat']) {
   const reported = dashboard[environment];
+  failures.push(...oneAccountSummaryIssues(reported, environment).map(issue => `${environment}: ${issue}`));
   if (reported?.available !== true) {
-    failures.push(`${environment}: authoritative registered-user aggregate unavailable`);
+    if (args.includes('--require-isolated')) failures.push(`${environment}: verified isolated registry is required for cutover`);
     continue;
   }
+  if (projectIds.production === projectIds.uat || reported.identityAuthorityId !== `sha256:${createHash('sha256').update(projectIds[environment]).digest('hex')}`) {
+    failures.push(`${environment}: registry authority does not match the independent source`);
+    continue;
+  }
+  const source = await authoritativeCounts(projectIds[environment]);
+  sources[environment] = source;
   for (const field of fields) {
     if (Number(reported[field]) !== Number(source[field])) {
       failures.push(`${environment}.${field}: dashboard=${reported[field]}, source=${source[field]}`);
@@ -110,7 +123,9 @@ const report = {
   checkedAt: new Date().toISOString(),
   dashboardUrl,
   range: { startDate, endDate, days },
-  authoritative: source,
+  authoritative: sources,
+  cutoverReady: Object.keys(sources).length === 2 && failures.length === 0,
+  note: 'Withheld legacy/unconfigured registries can satisfy containment; --require-isolated is mandatory before declaring the identity cutover complete.',
   dashboard: {
     production: Object.fromEntries(fields.map((field) => [field, dashboard.production?.[field] ?? null])),
     uat: Object.fromEntries(fields.map((field) => [field, dashboard.uat?.[field] ?? null])),

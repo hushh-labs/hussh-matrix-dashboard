@@ -25,8 +25,8 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
-import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, nativeRetentionWindowComplete, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
-import { oneRetentionSql, oneRetentionCohort } from './src/server/one-retention.mjs';
+import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, oneNonDebugSql, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
+import { oneAccountSource, oneIdentityAuthorityId, accountScopeNote, readOneAccountCounts } from './src/server/one-account-scope.mjs';
 import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushhtech-window.mjs';
 import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
@@ -104,10 +104,8 @@ const ONE_APP_GA4_DATASET = process.env.ONE_APP_GA4_DATASET || KAI_PROD_GA4_DATA
 const ONE_APP_GA4_WINDOW_DAYS = parseInt(process.env.ONE_APP_GA4_WINDOW_DAYS || '30', 10);
 const ONE_APP_UAT_GA4_PROJECT = process.env.ONE_APP_UAT_GA4_PROJECT || KAI_GA4_PROJECT;
 const ONE_APP_UAT_GA4_DATASET = process.env.ONE_APP_UAT_GA4_DATASET || KAI_GA4_DATASET;
-// Production and UAT One builds intentionally share the same Firebase
-// Authentication realm. Backend routing and GA4 properties remain separate;
-// this project is used only as the authoritative registered-account source.
-const ONE_FIREBASE_AUTH_PROJECT = process.env.ONE_FIREBASE_AUTH_PROJECT || KAI_PROD_GCP_PROJECT;
+// Account sources are resolved per environment. The legacy shared registry is
+// never certified as production acquisition merely because UAT moves elsewhere.
 const ONE_FIREBASE_AUTH_CACHE_TTL_MS = Math.max(
   60_000,
   Math.min(parseInt(process.env.ONE_FIREBASE_AUTH_CACHE_TTL_MS || '60000', 10) || 60_000, 3_600_000),
@@ -281,7 +279,7 @@ const PUBLIC_UNSAFE_VALUE_PATTERN = /analytics_\d+|searchconsole_|_search_consol
 const PUBLIC_EMAIL_VALUE_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
 const PUBLIC_PHONE_VALUE_PATTERN = /(?:^|\s)\+\d[\d\s().-]{8,}\d(?:$|\s)/;
 
-function sanitizePublicPayload(value: unknown): unknown {
+export function sanitizePublicPayload(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => sanitizePublicPayload(item));
   if (typeof value === 'string') {
     if (PUBLIC_EMAIL_VALUE_PATTERN.test(value) || PUBLIC_PHONE_VALUE_PATTERN.test(value)) return '[redacted]';
@@ -540,31 +538,17 @@ async function queryBigQuerySql(queryJobProject: string, query: string, bounded 
   }
 }
 
-// Retention uses one scan, a finite reporting cache and a cold-query budget.
-// The initial 100 MB candidate cap was below the measured existing export size.
-const retentionQueryCache = new AggregateCache<BigQueryFeedResult>({ freshMs: 300_000, maxAgeMs: 300_000, maxEntries: 32 });
-let retentionQueryBudget = { at: 0, attempts: 0 };
-async function queryOneRetention(project: string, query: string): Promise<BigQueryFeedResult> {
-  const key = `${project}:${crypto.createHash('sha256').update(query).digest('hex')}`;
-  try {
-    const result = await retentionQueryCache.read(key, async () => {
-      const now = Date.now();
-      if (now - retentionQueryBudget.at > 600_000) retentionQueryBudget = { at: now, attempts: 0 };
-      if (++retentionQueryBudget.attempts > 12) throw new Error('Retention query budget reached');
-      const value = await queryBigQuerySqlUncached(project, query, true);
-      if (value.error) throw new Error('Retention source unavailable');
-      return value;
-    }, analyticsQueryContext.getStore()?.refresh === true);
-    return result.value;
-  } catch { return { rows: [], error: 'Retention reporting unavailable' }; }
-}
-
 async function queryBigQuery(
   projectId: string,
   dataset: string,
   view: string,
   range?: HushhAiDateRange,
 ): Promise<BigQueryFeedResult> {
+  const environment = projectId === BQ_PROD_PROJECT && dataset === BQ_PROD_DATASET && view === BQ_PROD_VIEW
+    ? 'production' : projectId === BQ_UAT_PROJECT && dataset === BQ_UAT_DATASET && view === BQ_UAT_VIEW ? 'uat' : null;
+  const scoped = (rows: Record<string, unknown>[]): BigQueryFeedResult => environment && validateOneFeedScope(rows, environment)
+    ? { rows, error: null }
+    : { rows: [], error: 'One feed environment scope has not been verified. Property-wide legacy totals are withheld.' };
   try {
     const bq = await bigQueryClient(BQ_JOB_PROJECT || projectId);
     const dateFilter = range
@@ -577,14 +561,14 @@ async function queryBigQuery(
       ORDER BY metric_group, metric_name, metric_date
     `;
     const [rows] = await bq.query({ query, location: 'US' });
-    return { rows: rows as Record<string, unknown>[], error: null };
+    return scoped(rows as Record<string, unknown>[]);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`BigQuery query failed for ${projectId}.${dataset}.${view}:`, message);
     if (BQ_CLI_FALLBACK) {
       try {
         const rows = await queryBigQueryWithCli(projectId, dataset, view, range);
-        return { rows, error: null };
+        return scoped(rows);
       } catch (cliErr: unknown) {
         const cliMessage = cliErr instanceof Error ? cliErr.message : String(cliErr);
         console.error(`bq CLI fallback failed for ${projectId}.${dataset}.${view}:`, cliMessage);
@@ -1669,6 +1653,7 @@ async function fetchKaiGa4Summary(range?: HushhAiDateRange): Promise<DataResult<
     effectiveRange,
     false,
     ONE_UAT_GA4_PROPERTY_ID,
+    { environment: 'uat', webHost: ONE_APP_UAT_HOST },
   );
 }
 
@@ -1739,15 +1724,17 @@ async function fetchKaiGa4ExportSummary(
   range: HushhAiDateRange,
   tolerateMissingDataset: boolean,
   propertyId = '',
+  oneScope?: { environment: 'production' | 'uat'; webHost: string },
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
-  const dateFilter = ga4ExportSuffixFilter(range.startDate, range.endDate);
+  const scope = oneScope ? ` AND ${oneSurfaceSql(oneScope.webHost, oneScope.environment)}` : '';
+  const dateFilter = ga4ExportSuffixFilter(range.startDate, range.endDate) + scope;
   const last7Range = defaultUtcRange(7);
   const last24Range = defaultUtcRange(2);
-  const last7Filter = ga4ExportSuffixFilter(last7Range.startDate, last7Range.endDate);
+  const last7Filter = ga4ExportSuffixFilter(last7Range.startDate, last7Range.endDate) + scope;
   const last24Filter = `${ga4ExportSuffixFilter(last24Range.startDate, last24Range.endDate, true, projectId, dataset)}
-    AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`;
+    AND TIMESTAMP_MICROS(event_timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)${scope}`;
 
   const dailyQuery = `
     SELECT
@@ -1792,7 +1779,12 @@ async function fetchKaiGa4ExportSummary(
   `;
 
   const queryProject = BQ_JOB_PROJECT || projectId;
-  const realtimePromise: Promise<Ga4SectionTotals> = propertyId
+  // Realtime does not prove the backend environment of legacy native builds.
+  // Do not substitute a property-wide number for a scoped export KPI.
+  const realtimePromise: Promise<Ga4SectionTotals> = oneScope
+    ? Promise.resolve({ users: null, sessions: null, events: null, available: false,
+      note: 'Backend-scoped realtime is not verified; use the environment-scoped export.' })
+    : propertyId
     ? runGa4RealtimeReport(propertyId, {
       minuteRanges: [{ name: 'last_30_minutes', startMinutesAgo: 29, endMinutesAgo: 0 }],
       metrics: [{ name: 'activeUsers' }, { name: 'eventCount' }],
@@ -2313,7 +2305,10 @@ interface OneRegisteredAccountsSummary {
   available: boolean;
   sourceLabel: string;
   identityRealm: string;
+  identityAuthorityId: string;
   sharedAcrossEnvironments: boolean;
+  environment: 'production' | 'uat';
+  registryScope: string;
   countingUnit: 'account';
   deduplication: string;
   totalAccounts: number | null;
@@ -2323,7 +2318,7 @@ interface OneRegisteredAccountsSummary {
   startDate: string;
   endDate: string;
   generatedAt: string;
-  daily: Array<{ date: string; newAccounts: number }>;
+  daily: Array<{ date: string; newAccounts: number | null }>;
   note: string;
 }
 
@@ -2339,12 +2334,17 @@ const oneRegisteredAccountsInflight = new Map<
 function unavailableOneRegisteredAccounts(
   range: HushhAiDateRange,
   note: string,
+  environment: 'production' | 'uat',
 ): OneRegisteredAccountsSummary {
+  const source = oneAccountSource(environment);
   return {
     available: false,
     sourceLabel: 'Firebase Authentication',
-    identityRealm: 'Shared One production and UAT identity realm',
-    sharedAcrossEnvironments: true,
+    identityRealm: source.identityRealm,
+    identityAuthorityId: oneIdentityAuthorityId(source.project),
+    sharedAcrossEnvironments: source.sharedAcrossEnvironments,
+    environment,
+    registryScope: source.registryScope,
     countingUnit: 'account',
     deduplication: 'One immutable Firebase account ID counted once',
     totalAccounts: null,
@@ -2354,7 +2354,7 @@ function unavailableOneRegisteredAccounts(
     startDate: range.startDate,
     endDate: range.endDate,
     generatedAt: new Date().toISOString(),
-    daily: dateSpine(range).map((date) => ({ date, newAccounts: 0 })),
+    daily: dateSpine(range).map((date) => ({ date, newAccounts: null })),
     note,
   };
 }
@@ -2370,23 +2370,19 @@ function unavailableOneRegisteredAccounts(
  */
 async function fetchOneRegisteredAccountsUncached(
   range: HushhAiDateRange,
+  environment: 'production' | 'uat',
 ): Promise<DataResult<OneRegisteredAccountsSummary>> {
+  const source = oneAccountSource(environment);
+  if (source.registryScope !== 'isolated') {
+    return { data: unavailableOneRegisteredAccounts(range, accountScopeNote(source), environment), error: null };
+  }
   try {
     const { GoogleAuth } = await import('google-auth-library');
     const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
     const client = await auth.getClient();
-    const seenAccountIds = new Set<string>();
-    const newAccountsByDate = new Map<string, number>();
-    let nextPageToken = '';
-    let previousPageToken = '';
-    let disabledAccounts = 0;
-    let newAccounts = 0;
-    let accountsCreatedByRangeEnd = 0;
-    let pageCount = 0;
-
-    do {
+    const counts = await readOneAccountCounts(range, async (nextPageToken: string) => {
       const response = await (client as any).request({
-        url: `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(ONE_FIREBASE_AUTH_PROJECT)}/accounts:batchGet`,
+        url: `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(source.project)}/accounts:batchGet`,
         method: 'GET',
         params: {
           maxResults: 1000,
@@ -2394,55 +2390,33 @@ async function fetchOneRegisteredAccountsUncached(
         },
         timeout: 30_000,
       });
-      const body = (response.data ?? {}) as FirebaseAuthBatchResponse;
-      for (const account of body.users ?? []) {
-        const accountId = typeof account.localId === 'string' ? account.localId : '';
-        if (!accountId || seenAccountIds.has(accountId)) continue;
-        seenAccountIds.add(accountId);
-        if (account.disabled === true) disabledAccounts += 1;
-
-        const createdAtMs = Number(account.createdAt);
-        if (!Number.isFinite(createdAtMs) || createdAtMs < 0) continue;
-        const createdDate = new Date(createdAtMs).toISOString().slice(0, 10);
-        if (createdDate <= range.endDate) accountsCreatedByRangeEnd += 1;
-        if (createdDate >= range.startDate && createdDate <= range.endDate) {
-          newAccounts += 1;
-          newAccountsByDate.set(createdDate, (newAccountsByDate.get(createdDate) ?? 0) + 1);
-        }
-      }
-
-      previousPageToken = nextPageToken;
-      nextPageToken = typeof body.nextPageToken === 'string' ? body.nextPageToken : '';
-      pageCount += 1;
-      if (nextPageToken && nextPageToken === previousPageToken) {
-        throw new Error('Identity Toolkit returned a repeated pagination token');
-      }
-      if (pageCount > 10_000) {
-        throw new Error('Identity Toolkit pagination exceeded the safety limit');
-      }
-    } while (nextPageToken);
+      return (response.data ?? {}) as FirebaseAuthBatchResponse;
+    });
 
     const generatedAt = new Date().toISOString();
     return {
       data: {
         available: true,
         sourceLabel: 'Firebase Authentication',
-        identityRealm: 'Shared One production and UAT identity realm',
-        sharedAcrossEnvironments: true,
+        identityRealm: source.identityRealm,
+        identityAuthorityId: oneIdentityAuthorityId(source.project),
+        sharedAcrossEnvironments: source.sharedAcrossEnvironments,
+        environment,
+        registryScope: source.registryScope,
         countingUnit: 'account',
         deduplication: 'One immutable Firebase account ID counted once',
-        totalAccounts: seenAccountIds.size,
-        newAccounts,
-        accountsCreatedByRangeEnd,
-        disabledAccounts,
+        totalAccounts: counts.totalAccounts,
+        newAccounts: counts.newAccounts,
+        accountsCreatedByRangeEnd: counts.accountsCreatedByRangeEnd,
+        disabledAccounts: counts.disabledAccounts,
         startDate: range.startDate,
         endDate: range.endDate,
         generatedAt,
         daily: dateSpine(range).map((date) => ({
           date,
-          newAccounts: newAccountsByDate.get(date) ?? 0,
+          newAccounts: counts.daily.find((row: { date: string }) => row.date === date)?.newAccounts ?? 0,
         })),
-        note: 'Current Firebase Authentication account records; deleted accounts are not present. Disabled accounts are included and reported separately.',
+        note: accountScopeNote(source),
       },
       error: null,
     };
@@ -2453,7 +2427,7 @@ async function fetchOneRegisteredAccountsUncached(
       ? 'Registered-user aggregate is waiting for Firebase Authentication Viewer access for the metrics runtime identity.'
       : 'Registered-user aggregate is temporarily unavailable from Firebase Authentication.';
     return {
-      data: unavailableOneRegisteredAccounts(range, note),
+      data: unavailableOneRegisteredAccounts(range, note, environment),
       error: note,
     };
   }
@@ -2461,18 +2435,19 @@ async function fetchOneRegisteredAccountsUncached(
 
 function fetchOneRegisteredAccounts(
   range: HushhAiDateRange,
+  environment: 'production' | 'uat',
 ): Promise<DataResult<OneRegisteredAccountsSummary>> {
   const now = Date.now();
   for (const [cacheKey, entry] of oneRegisteredAccountsCache) {
     if (entry.expiresAt <= now) oneRegisteredAccountsCache.delete(cacheKey);
   }
-  const key = `${range.startDate}:${range.endDate}`;
+  const key = `${oneAccountSource(environment).cacheNamespace}:${range.startDate}:${range.endDate}`;
   const cached = oneRegisteredAccountsCache.get(key);
   if (cached) return Promise.resolve(cached.result);
   const inflight = oneRegisteredAccountsInflight.get(key);
   if (inflight) return inflight;
 
-  const request = fetchOneRegisteredAccountsUncached(range)
+  const request = fetchOneRegisteredAccountsUncached(range, environment)
     .then((result) => {
       if (!result.error) {
         while (oneRegisteredAccountsCache.size >= 64) {
@@ -2549,10 +2524,11 @@ async function fetchOneAppSummary(
   range: HushhAiDateRange,
   tolerateMissingDataset: boolean,
   webHost: string = ONE_APP_HOST,
+  environment: 'production' | 'uat' = 'production',
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
-  const surfaceFilter = oneAppSurfaceFilter(webHost);
+  const surfaceFilter = oneSurfaceSql(webHost, environment);
   const backgroundNames = sqlNameList(ONE_BACKGROUND_EVENTS);
   const meaningful = `event_name NOT IN (${backgroundNames})`;
   // GA4 app-instance ids are scoped to a stream/platform. Always carry that
@@ -2864,13 +2840,13 @@ ${capabilitySql.isDeliberate}
     FROM ${table}
     WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate, true, projectId, dataset)}
       AND platform IN ('IOS', 'ANDROID')
-      AND ${surfaceFilter}
+      AND ${oneSurfaceSql(webHost, environment, { collectionOnly: true })}
     GROUP BY platform, environment
     ORDER BY platform, events DESC
   `;
 
   // Bounded aggregate metadata only; do not scan unavailable production history.
-  const androidEnvironment = webHost === ONE_APP_UAT_HOST ? 'uat' : 'production';
+  const androidEnvironment = environment;
   const androidReadRange = androidCaptureQueryRange(range, androidEnvironment);
   const androidQuery = `
     WITH scoped AS (
@@ -3002,76 +2978,6 @@ ${capabilitySql.isDeliberate}
     FROM days
   `;
 
-  // What happens to a native install.
-  //
-  // The activation funnel elsewhere starts at "opened the app", which quietly
-  // omits the largest drop in the product: most people who install never sign
-  // in at all. This is a true cohort funnel -- every stage is measured against
-  // the same set of devices that installed inside the window, so the stages
-  // nest and the percentages mean something. Counting each stage independently
-  // would mix in people who installed months ago and make the rates nonsense.
-  // The 6-stage native install cohort funnel (iOS & Android native only).
-  // Stages nest because every one is measured against the same set of devices
-  // that installed inside the window. Web is excluded (no native install cohort).
-  const installFunnelQuery = `
-    WITH scoped AS (
-      SELECT
-        COALESCE(platform, 'UNKNOWN') AS platform,
-        user_pseudo_id,
-        event_name,
-        PARSE_DATE('%Y%m%d', event_date) AS day
-      FROM ${table}
-      WHERE ${dateFilter} AND ${surfaceFilter} AND platform IN ('IOS', 'ANDROID')
-    ),
-    installs AS (
-      -- Use the observed first_open reporting date, not a lifetime first-touch date.
-      SELECT platform, user_pseudo_id, MIN(day) AS firstDay
-      FROM scoped WHERE event_name = 'first_open' GROUP BY platform, user_pseudo_id
-    ),
-    finalized_days AS (
-      SELECT PARSE_DATE('%Y%m%d', SUBSTR(table_name, 8)) AS day
-      FROM \`${projectId}.${dataset}.INFORMATION_SCHEMA.TABLES\`
-      WHERE REGEXP_CONTAINS(table_name, r'^events_[0-9]{8}$')
-        AND table_name BETWEEN 'events_${range.startDate.replaceAll('-', '')}'
-                           AND 'events_${range.endDate.replaceAll('-', '')}'
-    ),
-    cohorts AS (
-      SELECT i.*, (SELECT COUNT(*) FROM finalized_days d
-        WHERE d.day BETWEEN DATE_ADD(i.firstDay, INTERVAL 1 DAY)
-                        AND DATE_ADD(i.firstDay, INTERVAL 7 DAY)) = 7 AS returnWindowComplete
-      FROM installs i
-    ),
-    progressed AS (
-      SELECT
-        i.platform,
-        i.user_pseudo_id,
-        i.firstDay,
-        i.returnWindowComplete,
-        MAX(IF(s.event_name IN ('auth_started', 'google_sign_in_started'), 1, 0)) AS triedSignIn,
-        MAX(IF(s.event_name IN ('auth_succeeded', 'google_sign_in_completed'), 1, 0)) AS signedIn,
-        MAX(IF(s.event_name = 'one_location_onboarding_completed', 1, 0)) AS onboarded,
-        MAX(IF(s.event_name = 'one_location_activation_completed', 1, 0)) AS activated,
-        MAX(IF(s.day BETWEEN DATE_ADD(i.firstDay, INTERVAL 1 DAY) AND DATE_ADD(i.firstDay, INTERVAL 7 DAY), 1, 0)) AS returnedW1
-      FROM cohorts i
-      JOIN scoped s USING (platform, user_pseudo_id)
-      GROUP BY i.platform, i.user_pseudo_id, i.firstDay, i.returnWindowComplete
-    )
-    SELECT
-      platform,
-      CAST(MAX(firstDay) AS STRING) AS latestFirstOpen,
-      CAST((SELECT MAX(day) FROM finalized_days) AS STRING) AS retentionDataThrough,
-      COUNTIF(NOT returnWindowComplete OR firstDay IS NULL) AS incompleteReturnWindows,
-      COUNT(*) AS installed,
-      SUM(triedSignIn) AS triedSignIn,
-      SUM(IF(triedSignIn = 1 AND signedIn = 1, 1, 0)) AS signedIn,
-      SUM(IF(triedSignIn = 1 AND signedIn = 1 AND onboarded = 1, 1, 0)) AS onboarded,
-      SUM(IF(triedSignIn = 1 AND signedIn = 1 AND onboarded = 1 AND activated = 1, 1, 0)) AS activated,
-      SUM(IF(triedSignIn = 1 AND signedIn = 1 AND onboarded = 1 AND activated = 1 AND returnedW1 = 1, 1, 0)) AS returnedW1
-    FROM progressed
-    GROUP BY platform
-    ORDER BY installed DESC
-  `;
-
   // Per-platform actives, reported separately because they cannot be summed.
   //
   // GA4 keeps web, iOS and Android on separate streams with separate device
@@ -3194,6 +3100,7 @@ ${capabilitySql.isDeliberate}
       WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^(intraday_)?[0-9]{8}$')
         AND REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') <= ${sqlStringLiteral(range.endDate.replaceAll('-', ''))}
         AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
+        AND ${surfaceFilter}
         AND ${meaningful} AND NULLIF(user_id, '') IS NOT NULL
       GROUP BY accountId
     ),
@@ -3243,16 +3150,8 @@ ${capabilitySql.isDeliberate}
     FROM ios_events
   `;
 
-  // Observe first_visit/first_open itself, including devices that never return.
-  // A lifetime first-touch on a later active device would bias the denominator.
-  // Require a complete acquisition week plus every seven-day return window.
+  // Acquisition provenance is not verified for legacy automatic SDK events.
   const retentionStart = formatUtcDate(addUtcDays(parseUtcDate(range.endDate) as Date, -83));
-  const retentionQuery = oneRetentionSql({
-    table, tables: `\`${projectId}.${dataset}.INFORMATION_SCHEMA.TABLES\``,
-    suffixFilter: ga4ExportSuffixFilter(retentionStart, range.endDate, true, projectId, dataset),
-    surfaceFilter, meaningful, deviceKeySql, startDate: retentionStart, endDate: range.endDate,
-    androidCompleteFrom: webHost === ONE_APP_HOST ? ONE_ANDROID_COMPLETE_FROM : null,
-  });
 
   // Onboarding to first value, as three counts rather than a ratio, so a stage
   // with no emitter cannot masquerade as a conversion collapse.
@@ -3394,12 +3293,10 @@ ${capabilitySql.isDeliberate}
     last24,
     active,
     activeByPlatform,
-    installFunnel,
     growth,
     identifiedGrowth,
     iosIdentifiedGrowth,
     iosUsage,
-    retention,
     activationStages,
     featureUsage,
     nativeEnvironments,
@@ -3420,17 +3317,15 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, last24Query),
     queryBigQuerySql(queryProject, activeQuery),
     queryBigQuerySql(queryProject, activeByPlatformQuery),
-    queryBigQuerySql(queryProject, installFunnelQuery),
     queryBigQuerySql(queryProject, growthQuery),
     queryBigQuerySql(queryProject, identifiedGrowthQuery),
     queryBigQuerySql(queryProject, iosIdentifiedGrowthQuery),
     queryBigQuerySql(queryProject, iosUsageQuery),
-    queryOneRetention(queryProject, retentionQuery),
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
     queryBigQuerySql(queryProject, nativeEnvironmentQuery),
     androidReadRange ? queryAndroidCapture(queryProject, androidQuery) : Promise.resolve({rows:[{events:0}],error:null}),
-    fetchOneRegisteredAccounts(range),
+    fetchOneRegisteredAccounts(range, environment),
   ]);
 
   const errors = [
@@ -3448,12 +3343,10 @@ ${capabilitySql.isDeliberate}
     last24.error,
     active.error,
     activeByPlatform.error,
-    installFunnel.error,
     growth.error,
     identifiedGrowth.error,
     iosIdentifiedGrowth.error,
     iosUsage.error,
-    retention.error,
     activationStages.error,
     featureUsage.error,
     nativeEnvironments.error,
@@ -3516,6 +3409,9 @@ ${capabilitySql.isDeliberate}
       sourceDataset: dataset,
       sourceLabel: 'GA4 export',
       sourceWebHost: webHost,
+      reportingEnvironment: environment,
+      reportingScopeVersion: ONE_REPORTING_SCOPE_VERSION,
+      acquisitionScopeNote: 'Only environment-tagged events qualify. Automatic first-open/first-visit events without backend provenance cannot establish environment-specific acquisition or retention.',
       surfaceScope: {
         webHost,
         strictWebHost: true,
@@ -3639,39 +3535,9 @@ ${capabilitySql.isDeliberate}
       },
       androidCapture: androidCaptureResult(androidCapture, range, androidEnvironment),
       registeredAccounts: registeredAccounts.data,
-      // The install cohort funnel, per native platform. Stages nest because
-      // every one is measured against the same devices that installed inside
-      // the window, so the ratios are real conversions rather than unrelated
-      // counts placed next to each other.
-      installFunnel: installFunnel.rows.map((row) => {
-        const installed = toNumber(row.installed);
-        const retentionWindowComplete = row.incompleteReturnWindows != null && row.incompleteReturnWindows !== ''
-          && nativeRetentionWindowComplete(row.latestFirstOpen, row.retentionDataThrough, Number(row.incompleteReturnWindows));
-        const stage = (key: string, label: string, users: number) => ({
-          key,
-          label,
-          users,
-          // Share of the install cohort, not of the previous stage: the
-          // question this answers is "of everyone who installed, how many got
-          // here", and step-to-step ratios hide how steep the first drop is.
-          shareOfInstalls: installed > 0 && (key !== 'returned_w1' || retentionWindowComplete)
-            ? users / installed : null,
-        });
-        return {
-          platform: String(row.platform ?? 'UNKNOWN'),
-          installed,
-          retentionWindowComplete,
-          retentionDataThrough: row.retentionDataThrough ?? null,
-          stages: [
-            stage('installed', 'First opened the app', installed),
-            stage('tried_sign_in', 'Tried to sign in', toNumber(row.triedSignIn)),
-            stage('signed_in', 'Signed in', toNumber(row.signedIn)),
-            stage('onboarded', 'Finished onboarding', toNumber(row.onboarded)),
-            stage('activated', 'Reached first value', toNumber(row.activated)),
-            stage('returned_w1', 'Returned in week 1', toNumber(row.returnedW1)),
-          ],
-        };
-      }),
+      // Missing environment provenance cannot establish a zero-install cohort.
+      installFunnelAvailable: false,
+      installFunnel: [],
       // One row per platform, never a total. The columns are separate
       // populations: the same person on an iPhone and a laptop is two rows and
       // nothing here can collapse them.
@@ -3703,12 +3569,10 @@ ${capabilitySql.isDeliberate}
         unknownUsers: toNumber(growthRow.unknownUsers),
       },
       retentionRange: { startDate: retentionStart, endDate: range.endDate, timezone: 'Etc/GMT+8' },
-      retentionAvailable: !retention.error,
-      retention: (retention.error ? [] : retention.rows)
-        .map(oneRetentionCohort)
-        // Oldest first, so the chart reads left to right like every other
-        // trend on the page.
-        .reverse(),
+      // SDK acquisition events lack backend provenance on legacy builds. Their
+      // absence after scoping is a coverage gap, not proof of zero retention.
+      retentionAvailable: false,
+      retention: [],
       activationStages: [
         { key: 'reached_app', label: 'Opened the app', users: toNumber(activationRow.reachedApp) },
         { key: 'onboarded', label: 'Finished onboarding', users: toNumber(activationRow.onboarded) },
@@ -6003,7 +5867,8 @@ api.get('/api/analytics/hushhtech', async (req, res) => {
 api.get(['/api/analytics/one/ga4', '/api/analytics/kai/ga4'], async (_req, res) => {
   const result = await fetchKaiGa4Summary();
   res.status(result.error && !result.data ? 502 : 200).json(sanitizePublicPayload({
-    platform: 'one.hushh.ai',
+    platform: 'uat.one.hushh.ai',
+    reportingEnvironment: 'uat',
     data: result.data,
     error: result.error,
     fetchedAt: new Date().toISOString(),
@@ -6016,7 +5881,7 @@ api.get(['/api/analytics/one', '/api/analytics/kai'], async (req, res) => {
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     fetchKaiGa4Summary(kaiRange),
-    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true, ONE_PROD_GA4_PROPERTY_ID),
+    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true, ONE_PROD_GA4_PROPERTY_ID, { environment: 'production', webHost: ONE_APP_HOST }),
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'One production'),
     fetchKaiProductionSearchConsole(kaiRange),
     fetchKaiUatSearchConsole(kaiRange),
@@ -6188,12 +6053,18 @@ async function fetchGrowthSummary(
       SELECT
         PARSE_DATE('%Y%m%d', event_date) AS d,
         user_pseudo_id,
-        NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) AS host
+        NET.HOST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location')) AS host,
+        (${surface}) AS eligibleOne,
+        (${oneNonDebugSql()}) AS nonDebug,
+        platform,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env') AS backendEnvironment
       FROM ${table}
       WHERE ${ga4ExportSuffixFilter(range.startDate, range.endDate)}
     ),
-    site AS (SELECT user_pseudo_id, MIN(d) AS firstSite FROM scoped WHERE host IN ('hushh.ai','www.hushh.ai') GROUP BY user_pseudo_id),
-    app AS (SELECT user_pseudo_id, MIN(d) AS firstApp FROM scoped WHERE host = ${sqlStringLiteral(ONE_APP_HOST)} GROUP BY user_pseudo_id)
+    site AS (SELECT user_pseudo_id, MIN(d) AS firstSite FROM scoped WHERE platform = 'WEB' AND nonDebug
+      AND (backendEnvironment IS NULL OR backendEnvironment = 'production')
+      AND host IN ('hushh.ai','www.hushh.ai') GROUP BY user_pseudo_id),
+    app AS (SELECT user_pseudo_id, MIN(d) AS firstApp FROM scoped WHERE platform = 'WEB' AND eligibleOne GROUP BY user_pseudo_id)
     SELECT
       (SELECT COUNT(*) FROM site) AS siteVisitors,
       (SELECT COUNT(*) FROM app) AS appWebVisitors,
@@ -7022,7 +6893,7 @@ api.get('/api/analytics/one/app', async (req, res) => {
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
   const [production, uat] = await Promise.all([
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
-    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST),
+    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST, 'uat'),
   ]);
   const error = [production.error, uat.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
@@ -7105,7 +6976,7 @@ api.get('/api/analytics/all', async (req, res) => {
     feed(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW, kaiRange),
     feed(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW, kaiRange),
     optional(full, () => fetchKaiGa4Summary(kaiRange)),
-    optional(relatedHealth, () => fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true, ONE_PROD_GA4_PROPERTY_ID)),
+    optional(relatedHealth, () => fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, kaiRange, true, ONE_PROD_GA4_PROPERTY_ID, { environment: 'production', webHost: ONE_APP_HOST })),
     optional(relatedHealth, () => fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, kaiRange, 'One production')),
     optional(full, () => fetchKaiProductionSearchConsole(kaiRange)),
     optional(full, () => fetchKaiUatSearchConsole(kaiRange)),
@@ -7114,7 +6985,7 @@ api.get('/api/analytics/all', async (req, res) => {
     optional(full, () => fetchHushhAiGa4Summary(hushhAiRange)),
     optional(full, () => fetchHushhTechAnalytics(hushhTechRange)),
     optional(appData, () => fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true)),
-    optional(appData, () => fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST)),
+    optional(appData, () => fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST, 'uat')),
     optional(complete || view === 'growth', () => fetchGrowthSummary(oneRange)),
     optional(complete || view === 'apps', () => fetchAppStoreConnectSummary(appStoreConnectRange)),
   ]);
@@ -7371,9 +7242,9 @@ const METRIC_FIELD_CATALOG: MetricFieldCatalogEntry[] = [
     id: 'ga4.users',
     product: 'one.hushh.ai',
     source: 'production_ga4',
-    label: 'Production GA4 users',
-    unit: 'users',
-    description: 'Production one.hushh.ai GA4 web-user aggregate when the production export is available.',
+    label: 'PROD app/browser IDs',
+    unit: 'app/browser IDs',
+    description: 'Environment-scoped production One GA4 app/browser identifiers, not signed-in accounts or unique humans.',
     synonyms: ['kai production users', 'prod ga4 users', 'production visitors'],
     caveat: 'If production GA4 is waiting, do not substitute UAT values.',
     exampleQuestions: ['How many users does One production have?', 'Is One production GA4 ready?'],
@@ -7382,9 +7253,9 @@ const METRIC_FIELD_CATALOG: MetricFieldCatalogEntry[] = [
     id: 'ga4.users',
     product: 'uat.one.hushh.ai',
     source: 'uat_ga4',
-    label: 'UAT GA4 users',
-    unit: 'users',
-    description: 'UAT one.hushh.ai GA4 web-user aggregate used for validation and UAT behavior analysis.',
+    label: 'UAT app/browser IDs',
+    unit: 'app/browser IDs',
+    description: 'Environment-scoped UAT One GA4 app/browser identifiers for testing diagnostics, not signed-in accounts or unique humans.',
     synonyms: ['kai uat users', 'uat visitors', 'testing users', 'uat ga4 users'],
     caveat: 'UAT values must remain separate from production One truth.',
     exampleQuestions: ['How many users are on One UAT?', 'Compare One production and UAT users.'],
@@ -7918,7 +7789,7 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
     queryBigQuery(BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW),
     queryBigQuery(BQ_PROD_PROJECT, BQ_PROD_DATASET, BQ_PROD_VIEW),
     fetchKaiGa4Summary(range),
-    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, range, true, ONE_PROD_GA4_PROPERTY_ID),
+    fetchKaiGa4ExportSummary(KAI_PROD_GA4_PROJECT, KAI_PROD_GA4_DATASET, range, true, ONE_PROD_GA4_PROPERTY_ID, { environment: 'production', webHost: ONE_APP_HOST }),
     fetchCloudRunSummary(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, range, 'One production'),
     fetchKaiProductionSearchConsole(range),
     fetchKaiUatSearchConsole(range),
@@ -8449,17 +8320,17 @@ function buildCrossProductUsersAnswer(snapshot: MetricsSnapshot): AgentAnswer {
     claims.push(deterministicClaim(snapshot, 'hushh.ai', 'ga4.users', 'GA4 web users', hushhAiUsers, 'users', 'GA4 Data API'));
   }
   if (kaiGa4Available && kaiUsers != null) {
-    claims.push(deterministicClaim(snapshot, 'one.hushh.ai', 'ga4.users', 'GA4 web users', kaiUsers, 'users', 'GA4 export'));
+    claims.push(deterministicClaim(snapshot, 'one.hushh.ai', 'ga4.users', 'PROD app/browser IDs', kaiUsers, 'app/browser IDs', 'GA4 export'));
   }
   if (kaiUatGa4Available && kaiUatUsers != null) {
-    claims.push(deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.users', 'UAT GA4 web users', kaiUatUsers, 'users', 'One UAT GA4 export'));
+    claims.push(deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.users', 'UAT app/browser IDs', kaiUatUsers, 'app/browser IDs', 'One UAT GA4 export'));
   }
 
   const kaiLine = kaiGa4Available && kaiUsers != null
-    ? `one.hushh.ai has ${formatInteger(kaiUsers)} GA4 web users.`
+    ? `one.hushh.ai has ${formatInteger(kaiUsers)} app/browser IDs.`
     : 'one.hushh.ai production user analytics is not currently available, so I am not counting it as zero users.';
   const kaiUatLine = kaiUatGa4Available && kaiUatUsers != null
-    ? `One UAT separately has ${formatInteger(kaiUatUsers)} GA4 web users for validation, but I am not mixing UAT into production totals.`
+    ? `One UAT separately has ${formatInteger(kaiUatUsers)} app/browser IDs for validation, but I am not mixing UAT into production totals.`
     : 'One UAT user analytics is not available in this range.';
 
   return {
@@ -8505,16 +8376,16 @@ function buildKaiEnvironmentSplitAnswer(snapshot: MetricsSnapshot): AgentAnswer 
   return {
     reply: [
       `One production and One UAT are now separate in the analyst model for ${snapshot.range.startDate} to ${snapshot.range.endDate}.`,
-      `Production one.hushh.ai: ${formatInteger(prodCloudRun?.requestCount)} Cloud Run requests, ${formatInteger(prodCloudRun?.errorCount)} 5xx responses, and ${formatPercent(prodCloudRun?.errorRate)} error rate. Production GA4 users are ${prodGa4Available ? formatInteger(prodGa4?.users) : 'waiting'}, and production DB/product events are ${prodEvents?.available ? 'available' : 'waiting'}.`,
-      `UAT uat.one.hushh.ai: GA4 users are ${uatGa4Available ? formatInteger(uatGa4?.users) : 'waiting'}, GA4 sessions are ${uatGa4Available ? formatInteger(uatGa4?.sessions) : 'waiting'}, and UAT DB events are ${formatOptionalInteger(uatEvents?.totalEvents)} with DAU ${formatOptionalInteger(uatEvents?.dau)}.`,
+      `Production one.hushh.ai: ${formatInteger(prodCloudRun?.requestCount)} Cloud Run requests, ${formatInteger(prodCloudRun?.errorCount)} 5xx responses, and ${formatPercent(prodCloudRun?.errorRate)} error rate. PROD app/browser IDs are ${prodGa4Available ? formatInteger(prodGa4?.users) : 'waiting'}, and production DB/product events are ${prodEvents?.available ? 'available' : 'waiting'}.`,
+      `UAT uat.one.hushh.ai: app/browser IDs are ${uatGa4Available ? formatInteger(uatGa4?.users) : 'waiting'}, GA4 sessions are ${uatGa4Available ? formatInteger(uatGa4?.sessions) : 'waiting'}, and UAT DB events are ${formatOptionalInteger(uatEvents?.totalEvents)} with DAU ${formatOptionalInteger(uatEvents?.dau)}.`,
       'Do not use UAT values as production truth; UAT is validation and test-environment behavior.',
     ].join('\n'),
     claims: [
       deterministicClaim(snapshot, 'one.hushh.ai', 'cloud_run.request_count', 'Production Cloud Run requests', toNumber(prodCloudRun?.requestCount), 'requests', 'Cloud Run Monitoring'),
       deterministicClaim(snapshot, 'one.hushh.ai', 'cloud_run.error_rate', 'Production Cloud Run error rate', Number((toNumber(prodCloudRun?.errorRate) * 100).toFixed(2)), '%', 'Cloud Run Monitoring'),
-      ...(prodGa4Available ? [deterministicClaim(snapshot, 'one.hushh.ai', 'ga4.users', 'Production GA4 users', toNumber(prodGa4?.users), 'users', 'One production GA4 export')] : []),
+      ...(prodGa4Available ? [deterministicClaim(snapshot, 'one.hushh.ai', 'ga4.users', 'PROD app/browser IDs', toNumber(prodGa4?.users), 'app/browser IDs', 'One production GA4 export')] : []),
       ...(uatGa4Available ? [
-        deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.users', 'UAT GA4 users', toNumber(uatGa4?.users), 'users', 'One UAT GA4 export'),
+        deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.users', 'UAT app/browser IDs', toNumber(uatGa4?.users), 'app/browser IDs', 'One UAT GA4 export'),
         deterministicClaim(snapshot, 'uat.one.hushh.ai', 'ga4.sessions', 'UAT GA4 sessions', toNumber(uatGa4?.sessions), 'sessions', 'One UAT GA4 export'),
       ] : []),
       deterministicClaim(snapshot, 'uat.one.hushh.ai', 'product_events.dau', 'UAT DB DAU', optionalNumber(uatEvents?.dau), 'users', 'One UAT DB aggregate feed'),

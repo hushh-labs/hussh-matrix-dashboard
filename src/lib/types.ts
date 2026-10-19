@@ -774,14 +774,16 @@ export interface OneIdentifiedUsers {
 
 /**
  * Authoritative registered-account counts from Firebase Authentication.
- * Production and UAT builds share this identity realm even though their
- * backend routing and GA4 properties remain separate.
+ * Counts are eligible only after the selected environment registry is verified.
  */
 export interface OneRegisteredAccounts {
   available: boolean;
   sourceLabel: string;
   identityRealm: string;
+  identityAuthorityId?: string;
   sharedAcrossEnvironments: boolean;
+  environment?: 'production' | 'uat';
+  registryScope?: 'isolated' | 'legacy_shared' | 'unverified' | 'unconfigured';
   countingUnit: 'account';
   deduplication: string;
   /** Current unique account records in Firebase Authentication. */
@@ -795,7 +797,7 @@ export interface OneRegisteredAccounts {
   startDate: string;
   endDate: string;
   generatedAt: string;
-  daily: Array<{ date: string; newAccounts: number }>;
+  daily: Array<{ date: string; newAccounts: number | null }>;
   note: string;
 }
 
@@ -1018,6 +1020,9 @@ export interface OneDailyPoint {
 }
 
 export interface OneAppSummary {
+  reportingEnvironment?: 'production' | 'uat';
+  reportingScopeVersion?: string;
+  acquisitionScopeNote?: string;
   sourceLabel?: string;
   sourceWebHost?: string;
   generatedAt?: string;
@@ -1050,6 +1055,7 @@ export interface OneAppSummary {
   registeredAccounts: OneRegisteredAccounts;
   activeByPlatformAvailable?: boolean;
   activeByPlatform: OnePlatformActives[];
+  installFunnelAvailable?: boolean;
   installFunnel: OneInstallFunnel[];
   growth: OneGrowthSplit;
   retention: OneRetentionCohort[];
