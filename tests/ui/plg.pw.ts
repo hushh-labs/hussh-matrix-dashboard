@@ -8,10 +8,14 @@ import {
   candidate,
   updateContact,
   updateTemplate,
+  registerPlgCatalog,
 } from '../../src/server/plg/engine';
 
-async function mockPlg(page: Page, denied = false) {
+async function mockPlg(page: Page, denied = false, withAgents = false) {
   const state = initialPlgState();
+  if (withAgents) registerPlgCatalog(state, { revision: 'a'.repeat(64),
+    agents: [{ id: 'agent_calendar', label: 'Calendar', public: true, available: true }],
+    actions: [{ id: 'calendar.event.create', label: 'Create event', agentId: 'agent_calendar', kind: 'action', proof: 'client_reported' }] });
   await mockDashboard(page);
   await page.route('**/api/plg/**', async (route) => {
     if (denied)
@@ -42,6 +46,8 @@ async function mockPlg(page: Page, denied = false) {
       result = updateTemplate(state, pathname.split('/').at(-1)!, input, 'test-admin', Date.now());
     else if (pathname.endsWith('/preview'))
       result = { messages: [], candidates: state.contacts.map((c) => candidate(state, c, Date.now(), true)) };
+    else if (pathname.endsWith('/activity')) result = { catalog: state.catalog, deleted: false,
+      activity: { enabled: true, epoch: 'b'.repeat(64), mode: 'best_effort', limited: true, startedAt: new Date().toISOString(), rollups: [] } };
     return route.fulfill({ json: result });
   });
   return state;
@@ -117,12 +123,12 @@ test('does not expose contacts to an unauthorized dashboard viewer', async ({ pa
 for (const width of [320, 768, 1440])
   test(`PLG views fit at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
-    await mockPlg(page);
+    await mockPlg(page, false, true);
     await page.goto('/plg');
     await expect(page.getByText('Your first cohort starts here')).toBeVisible();
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
-    for (const label of ['Follow-up queue', 'Journeys and content', 'Results and activity']) {
+    for (const label of ['Follow-up queue', 'Journeys and content', 'Results and activity', 'Agents and actions']) {
       await page.getByRole('tab', { name: label }).click();
       expect(
         await page.evaluate(
@@ -139,3 +145,18 @@ for (const width of [320, 768, 1440])
     await page.screenshot({ path: `.codex/artifacts/plg/workspace-${width}.png`, fullPage: true });
     expect(errors).toEqual([]);
   });
+
+test('filters registered actions and inspects limited activity without claiming activation', async ({ page }) => {
+  const state = await mockPlg(page, false, true);
+  enroll(state, { accountId: 'synthetic-ui-account', email: 'pilot@example.invalid', name: 'Pilot', journey: 'agent_calendar', cohort: 'existing', frequency: 'daily', consent: true, consentSource: 'Synthetic preference form', environment: 'production', internal: false }, 'test-operator', Date.now());
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Agents and actions' }).click();
+  await expect(page.getByText('Not collected', { exact: true })).toBeVisible();
+  await page.getByLabel('Agent filter').selectOption('agent_calendar');
+  await page.getByLabel('Search actions').fill('Create event');
+  await expect(page.getByText('calendar.event.create', { exact: true })).toBeVisible();
+  await page.getByLabel('Inspect account').selectOption(state.contacts[0].id);
+  await page.getByRole('button', { name: 'View action activity' }).click();
+  await expect(page.getByRole('region', { name: 'All agent activity' }).getByRole('status')).toContainText('collection limit');
+  expect(state.contacts[0].firstValueAt).toBeNull();
+});

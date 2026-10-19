@@ -216,6 +216,55 @@ an email already accepted by the provider cannot be recalled by a later event.
 
 ## Current release boundaries
 
+### All-agent observation pilot
+
+The **Agents and actions** tab discovers the authored product agents, generated
+capability actions, registered agent/tool calls and closed frontend feature
+events from One's signed version 2 source. Refresh works before enrollment to
+load the catalog. Public, available agents become selectable journeys; their
+new message templates stay drafts and readiness stays false until reviewed.
+Internal or unavailable agents remain visible for coverage without enabling them.
+
+For enrolled accounts, the workspace stores compact per-agent reports,
+execution returns, errors and observed UTC days. Selecting an account fetches
+action-level started/returned/failed/blocked counts on demand. Raw prompts,
+arguments, responses, locations, financial information and private MCP tool
+names never enter this pipeline. Only compact rollups persist in the existing
+bounded 750KB pilot document; detailed action rows do not grow that document.
+Refreshing or inspecting activity cannot enroll users or send email.
+
+App reports and SDK returns establish **observed activity**, not a verified
+business result. Such accounts display **Agent activity observed**. They never
+inflate first value, verified DAU or retention. The only verified-value adapters
+remain explicit Memory commits and manually sent Mail. One's general journey
+can count either of those verified effects; another agent journey requires its
+own domain-verification adapter before it can qualify as verified activation.
+This distinction is visible even when a browser reports success.
+
+The client requests version 2 in five-account batches, validates the full
+catalog, ownership, source, phase, window and aggregate limits, and commits only
+after every batch validates. Version 1 remains supported for Memory/Mail; a
+downgrade cannot activate a newly added agent. Repeated snapshots replace
+compact activity and merge verified UTC days without adding duplicate events.
+Inspection also honors authoritative account deletion and erases local records.
+Each fetch has a 30-second maximum within a shared 135-second sync budget,
+below the worker's 180-second HTTP timeout. Slow or over-budget snapshots
+abort before any pilot state is changed.
+
+Collection requires One migration365 and its independent off-by-default
+`ONE_PLG_ACTIVITY_ENABLED` flag, production identity and explicit pilot UID
+allowlist. It is prospective, best effort, limited to 500 observations per
+owner per UTC day, and retained for seven days. Unknown/not-started/disabled
+collection is shown as unavailable; missing rows never prove inactivity. A
+capacity or retired-contract warning means incomplete retained coverage.
+This view is not a complete app-wide DAU measure or historical backfill.
+Account switches and same-owner resets fence delayed callbacks before transport;
+reset/deletion also fence and erase the backend metadata.
+
+Provider identity, verified From/Reply-To and deployment provisioning are still
+required before a launch. The existing Resend adapter does not imply that the
+team's marketing provider has been chosen. These PRs do not enable live sends.
+
 The workspace sends email only. WhatsApp/SMS delivery, automatic Firebase
 audience import, monitored reply ingestion, individual product-update broadcasts,
 and content/video production remain separate integrations. The queue captures

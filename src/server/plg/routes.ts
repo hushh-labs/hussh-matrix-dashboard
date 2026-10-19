@@ -1,5 +1,6 @@
 import type express from 'express';
 import { Webhook } from 'svix';
+import { plgJourneyOptions } from '../../lib/plg';
 import {
   audit,
   choose,
@@ -143,11 +144,14 @@ export function registerPlgRoutes(
         if (
           typeof req.body.paused !== 'boolean' ||
           typeof req.body.ready?.memory !== 'boolean' ||
-          typeof req.body.ready?.mail !== 'boolean'
+          typeof req.body.ready?.mail !== 'boolean' ||
+          Object.entries(req.body.ready ?? {}).some(([id, value]) =>
+            !plgJourneyOptions(state).some((j) => j.id === id) || typeof value !== 'boolean')
         )
           throw new PlgError(400, 'Supply campaign status and verified journey readiness.');
         state.paused = req.body.paused;
-        state.ready = { memory: req.body.ready.memory, mail: req.body.ready.mail };
+        state.ready = Object.fromEntries(plgJourneyOptions(state).map((j) =>
+          [j.id, req.body.ready[j.id] ?? state.ready[j.id] ?? false])) as typeof state.ready;
         audit(
           state,
           user.email,
@@ -157,6 +161,22 @@ export function registerPlgRoutes(
         return { paused: state.paused, ready: state.ready };
       });
       return res.json(settings);
+    }),
+  );
+  app.post(
+    '/api/plg/sync',
+    handle(async (req, res) => {
+      role(req);
+      return res.json(await syncOneEvidence(getService().store));
+    }),
+  );
+  app.post(
+    '/api/plg/activity',
+    handle(async (req, res) => {
+      role(req);
+      if (typeof req.body.contactId !== 'string') throw new PlgError(400, 'Choose an enrolled account.');
+      const result = await syncOneEvidence(getService().store, undefined, fetch, Date.now, req.body.contactId);
+      return res.json(result.inspection);
     }),
   );
   app.post(

@@ -53,6 +53,17 @@ function app() {
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('protects all-agent sync and inspection with session, role and same-origin authority', async () => {
+    for (const route of ['/api/plg/sync', '/api/plg/activity']) {
+      expect((await request(app()).post(route).send({ contactId: 'anything' })).status).toBe(401);
+      expect((await request(app()).post(route).set('Test-User', 'viewer@example.invalid').set('Origin', config.origin).send({ contactId: 'anything' })).status).toBe(403);
+      expect((await request(app()).post(route).set('Test-User', 'operator@example.invalid').send({ contactId: 'anything' })).status).toBe(403);
+      const allowed = await request(app()).post(route).set('Test-User', 'operator@example.invalid').set('Origin', config.origin).send({ contactId: 'anything' });
+      // Source configuration is intentionally absent; authenticated authority
+      // reaches the integration, never a sender or enrollment bypass.
+      expect(allowed.status).toBe(503);
+    }
+  });
   it('does not let a sync credential authorize delivery or enrollment', async () => {
     const timestamp = String(Date.now()),
       body = '{}';

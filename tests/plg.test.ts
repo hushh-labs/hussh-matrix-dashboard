@@ -13,6 +13,7 @@ import {
   metrics,
   updateContact,
   updateTemplate,
+  registerPlgCatalog,
 } from '../src/server/plg/engine';
 import { FilePlgStore, MemoryPlgStore } from '../src/server/plg/store';
 import {
@@ -21,7 +22,7 @@ import {
   tokenContact,
   type PlgRuntime,
 } from '../src/server/plg/service';
-import type { PlgContact, PlgState } from '../src/lib/plg';
+import type { PlgContact, PlgState, PlgCatalog } from '../src/lib/plg';
 import { syncOneEvidence } from '../src/server/plg/one-source';
 import { signValue } from '../src/server/plg/service';
 
@@ -363,10 +364,89 @@ describe('PLG eligibility and measurement', () => {
 });
 
 describe('One retained task evidence bridge', () => {
+  const catalog: PlgCatalog = {
+    revision: 'a'.repeat(64),
+    agents: [
+      { id: 'agent_one', label: 'One', public: true, available: true },
+      { id: 'agent_calendar', label: 'Calendar', public: true, available: true },
+      { id: 'agent_email', label: 'Mail', public: true, available: true },
+    ],
+    actions: [{ id: 'calendar.event.create', agentId: 'agent_calendar', label: 'Create event', kind: 'action', proof: 'client_reported' }],
+  };
+  function v2Source(change: (body: any) => void = () => {}): typeof fetch {
+    return (async (_url, init) => {
+      const requested = JSON.parse(init!.body as string).accounts;
+      expect((init!.headers as Record<string, string>)['X-PLG-Version']).toBe('2');
+      const at = new Date(NOW).toISOString();
+      const result = { version: 2, environment: 'production', retainedOnly: true, asOf: at, catalog,
+        accounts: requested.map((c: any) => ({ ...c, deleted: false, tasks: [], verified: [],
+          privateContent: 'PRIVATE_ACCOUNT_CONTENT',
+          activity: { enabled: true, mode: 'best_effort', limited: false, startedAt: at, epoch: 'b'.repeat(64),
+            rollups: [{ actionId: 'calendar.event.create', agentId: 'agent_calendar', source: 'client_reported', phase: 'returned', count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)], privateContent: 'PRIVATE_ACTION_CONTENT' }] } })) };
+      change(result);
+      return new Response(JSON.stringify(result));
+    }) as typeof fetch;
+  }
+  it('discovers agent journeys without enrollment, publishing or enabling delivery', async () => {
+    const store = new MemoryPlgStore();
+    await syncOneEvidence(store, options, v2Source(), NOW);
+    const state = await store.read();
+    expect(state.catalog).toEqual(catalog);
+    expect(state.contacts).toEqual([]);
+    expect(state.ready.agent_calendar).toBe(false);
+    expect(state.templates.filter((t) => t.journey === 'agent_calendar').every((t) => !t.published)).toBe(true);
+    expect(state.paused).toBe(true);
+  });
+  it('tracks a new agent without promoting app reports to verified activation and replays compactly', async () => {
+    const store = await fixture();
+    await store.transaction((s) => { registerPlgCatalog(s, catalog); s.contacts[0].journey = 'agent_calendar'; });
+    await syncOneEvidence(store, options, v2Source(), NOW);
+    const once = await store.read();
+    const c = once.contacts[0];
+    expect(() => ingestEvent(once, { eventId: 'forged-calendar-value', accountId: c.accountId,
+      journey: c.journey, environment: 'production', internal: false, occurredAt: new Date(NOW).toISOString(),
+      kind: 'task_completed', result: 'success', deliberate: true, verified: true, actionId: 'calendar-event' }, NOW)).toThrow('outcome adapter');
+    expect(contactStage(c, NOW)).toBe('engaged');
+    expect(c.firstValueAt).toBeNull();
+    expect(c.observationAt).toBeUndefined();
+    expect(metrics(once, NOW)).toMatchObject({ observed: 1, activated: 0, repeat: 0 });
+    expect(c.activity?.agents).toMatchObject([{ agentId: 'agent_calendar', reported: 1, executed: 0 }]);
+    expect(JSON.stringify(once)).not.toContain('PRIVATE_');
+    await syncOneEvidence(store, options, v2Source(), NOW);
+    expect(await store.read()).toEqual(once);
+    const inspection = await syncOneEvidence(store, options, v2Source(), NOW, c.id);
+    expect(inspection.inspection?.activity?.rollups).toHaveLength(1);
+    expect(await store.read()).toEqual(once);
+    await expect(syncOneEvidence(store, options, fetcher(), NOW)).rejects.toThrow('unavailable');
+  });
+  it('rejects forged proof, cross-agent action ownership and duplicate groups atomically', async () => {
+    for (const corrupt of [
+      (r: any) => { r.accounts[0].activity.rollups[0].source = 'execution_observed'; },
+      (r: any) => { r.accounts[0].activity.rollups[0].agentId = 'agent_email'; },
+      (r: any) => { r.accounts[0].activity.rollups.push(r.accounts[0].activity.rollups[0]); },
+      (r: any) => { r.accounts[0].verified = [{ ...r.accounts[0].activity.rollups[0], agentId: 'agent_calendar' }]; },
+    ]) {
+      const store = await fixture();
+      const before = await store.read();
+      await expect(syncOneEvidence(store, options, v2Source(corrupt), NOW)).rejects.toThrow('unavailable');
+      expect(await store.read()).toEqual(before);
+    }
+  });
+  it('keeps unavailable collection unknown and erases authoritative deletions during inspection', async () => {
+    const store = await fixture();
+    await syncOneEvidence(store, options, v2Source((r) => { r.accounts[0].activity = { enabled: false, mode: 'best_effort', limited: false, startedAt: null, epoch: null, rollups: [] }; }), NOW);
+    let state = await store.read();
+    expect(state.contacts[0].firstValueAt).toBeNull();
+    const id = state.contacts[0].id;
+    const result = await syncOneEvidence(store, options, v2Source((r) => { r.accounts[0] = { ...r.accounts[0], deleted: true, activity: null, verified: [] }; }), NOW, id);
+    expect(result.inspection?.deleted).toBe(true);
+    state = await store.read();
+    expect(state.contacts).toEqual([]);
+  });
   it('refreshes the request window and clock for a slow multi-batch sync', async () => {
     const store = new MemoryPlgStore();
     await store.transaction((s) => {
-      for (let i = 0; i < 81; i++) contact(s, NOW - 10 * DAY, String(i));
+      for (let i = 0; i < 21; i++) contact(s, NOW - 10 * DAY, String(i));
     });
     let clock = NOW;
     const source: typeof fetch = (async (_url, init) => {
@@ -394,8 +474,18 @@ describe('One retained task evidence bridge', () => {
         source,
         () => clock,
       ),
-    ).toMatchObject({ accounts: 81 });
+    ).toMatchObject({ accounts: 21 });
     expect(clock - NOW).toBe(100_000);
+  });
+  it('abandons an over-budget sync before changing any account or catalog', async () => {
+    const store = new MemoryPlgStore();
+    await store.transaction((s) => { for (let i = 0; i < 40; i++) contact(s, NOW - DAY, String(i)); });
+    const before = await store.read();
+    let clock = NOW;
+    const slow = v2Source((r) => { r.asOf = new Date(clock).toISOString(); clock += 20_000; });
+    await expect(syncOneEvidence(store, options, slow, () => clock)).rejects.toThrow('unavailable');
+    expect(clock - NOW).toBe(140_000);
+    expect(await store.read()).toEqual(before);
   });
   const options = {
     url: 'https://api.example.invalid/api/one/plg/snapshot',

@@ -24,12 +24,15 @@ import {
 } from 'lucide-react';
 import {
   plgStageLabels,
+  plgJourneyOptions,
+  plgJourneyLabel,
   type PlgContact,
   type PlgTemplate,
   type PlgWorkspace as Workspace,
 } from '../lib/plg';
 import { cn } from '../lib/utils';
 import { dashboardCard } from '../lib/theme';
+import { PlgAgentActivityPanel, type PlgActivityInspection } from './PlgAgentActivityPanel';
 
 async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(`/api/plg/${path}`, {
@@ -69,7 +72,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'queue' | 'content' | 'results'>('queue');
+  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents'>('queue');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
@@ -247,6 +250,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             ['queue', 'Follow-up queue'],
             ['content', 'Journeys and content'],
             ['results', 'Results and activity'],
+            ['agents', 'Agents and actions'],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -260,6 +264,9 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           </button>
         ))}
       </div>
+      {tab === 'agents' && <PlgAgentActivityPanel state={state} busy={busy}
+        refresh={() => void mutate('sync', 'POST', {})}
+        inspect={(contactId) => api<PlgActivityInspection>('activity', 'POST', { contactId })} />}
       {tab === 'queue' && (
         <section className={cn(dashboardCard, 'p-5 sm:p-6')}>
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -317,8 +324,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               </Field>
               <Field label="Journey">
                 <select name="journey" className={inputStyle}>
-                  <option value="memory">Memory</option>
-                  <option value="mail">Mail</option>
+                  {plgJourneyOptions(state).map((j) => <option key={j.id} value={j.id}>{j.label}</option>)}
                 </select>
               </Field>
               <Field label="Audience">
@@ -422,7 +428,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
                           </p>
                         </td>
                         <td className="px-3 py-4 text-ink">
-                          <p className="capitalize">{c.journey}</p>
+                          <p>{plgJourneyLabel(state, c.journey)}</p>
                           <p className="mt-1 text-xs text-muted">{plgStageLabels[next.stage]}</p>
                         </td>
                         <td className="max-w-[260px] px-3 py-4 text-xs leading-5 text-muted">
@@ -466,17 +472,17 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               the demonstration, copy and destination.
             </p>
             <div className="mt-4 flex flex-wrap gap-5">
-              {(['memory', 'mail'] as const).map((j) => (
+              {plgJourneyOptions(state).map(({ id: j, label }) => (
                 <label key={j} className="flex items-center gap-2 text-sm capitalize text-ink">
                   <input
                     type="checkbox"
-                    checked={state.ready[j]}
+                    checked={state.ready[j] ?? false}
                     disabled={!admin || busy}
                     onChange={(e) =>
                       void updateSettings({ ready: { ...state.ready, [j]: e.target.checked } })
                     }
                   />
-                  {j} task verified
+                  {label} task verified
                 </label>
               ))}
             </div>

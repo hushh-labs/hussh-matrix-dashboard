@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   plgSteps,
+  plgJourneyOptions,
+  type PlgCatalog,
   type PlgCandidate,
   type PlgContact,
   type PlgJourney,
@@ -161,6 +163,15 @@ export function audit(state: PlgState, actor: string, action: string, now: numbe
   state.audit.unshift({ actor, action, at: iso(now) });
   state.audit = state.audit.slice(0, 100);
 }
+export function registerPlgCatalog(state: PlgState, catalog: PlgCatalog) {
+  state.catalog = catalog;
+  const defaults = initialPlgState().templates.filter((t) => t.journey === 'memory');
+  for (const journey of plgJourneyOptions(state)) {
+    state.ready[journey.id] ??= false;
+    if (state.templates.some((t) => t.journey === journey.id)) continue;
+    state.templates.push(...defaults.map((t) => ({ ...t, id: `${journey.id}-${t.step}`, journey: journey.id })));
+  }
+}
 export function timeline(contact: PlgContact, actor: string, action: string, now: number) {
   contact.timeline.unshift({ actor, action, at: iso(now) });
   contact.timeline = contact.timeline.slice(0, 30);
@@ -191,7 +202,7 @@ export function enroll(
     accountId,
     email,
     name: text(input.name ?? '', 100),
-    journey: choose(input.journey, ['memory', 'mail']),
+    journey: choose(input.journey, plgJourneyOptions(state).map((j) => j.id)),
     cohort: choose(input.cohort, ['new', 'existing']),
     group:
       createHash('sha256').update(`one-plg-v1:${accountId}`).digest().readUInt32BE(0) % 100 < 20
@@ -281,7 +292,7 @@ export function ingestEvent(state: PlgState, input: Record<string, unknown>, now
   const accountId = text(input.accountId, 128, true);
   const c = state.contacts.find((item) => item.accountId === accountId);
   if (!c) throw new PlgError(404, 'Account is not enrolled.');
-  if (choose(input.journey, ['memory', 'mail']) !== c.journey)
+  if (choose(input.journey, plgJourneyOptions(state).map((j) => j.id)) !== c.journey)
     throw new PlgError(400, 'Event does not match the enrolled journey.');
   const at = Date.parse(text(input.occurredAt, 40, true));
   if (
@@ -301,6 +312,8 @@ export function ingestEvent(state: PlgState, input: Record<string, unknown>, now
   ]);
   if (kind === 'observation_completed' && input.verified !== true)
     throw new PlgError(400, 'An observation requires a verified complete product check.');
+  if (kind === 'task_completed' && !['memory', 'mail'].includes(c.journey))
+    throw new PlgError(400, 'This agent has no verified outcome adapter.');
   c.telemetryAt = iso(Math.max(at, Date.parse(c.telemetryAt ?? '1970-01-01')));
   if (kind === 'observation_completed')
     c.observationAt = iso(Math.max(at, Date.parse(c.observationAt ?? '1970-01-01')));
@@ -346,6 +359,9 @@ export function contactStage(c: PlgContact, now: number): PlgStage {
       : c.valueDays.length > 1
         ? 'returning'
         : 'activated';
+  const focus = c.journey === 'memory' ? 'agent_personal_information' : c.journey === 'mail' ? 'agent_email' : c.journey;
+  if (c.activity?.agents.some((a) => (a.agentId === focus || focus === 'agent_one') && a.reported + a.executed > 0))
+    return 'engaged';
   if (!c.telemetryAt) return 'unknown';
   return c.setupAt ? 'setup' : 'new';
 }
@@ -370,6 +386,7 @@ export function candidate(
   if (!c.consentAt) return stop('Messaging permission not recorded');
   if (c.group === 'control') return stop('Comparison group; requested support remains available');
   if (state.paused && !ignorePause) return stop('Campaigns paused');
+  if (!plgJourneyOptions(state).some((j) => j.id === c.journey)) return stop('Agent journey is unavailable');
   if (!state.ready[c.journey]) return stop('Journey task has not been verified');
   if (c.supportOpen) return stop('Assistance open; respond through requested support');
   if (c.pauseUntil && Date.parse(c.pauseUntil) > now) return stop('Follow-up pause active');
@@ -399,7 +416,7 @@ export function candidate(
     // Neutral welcome and explicitly subscribed content do not assert inactivity.
     // Behavioral reminders still require complete, fresh product observations.
     if (
-      !c.firstValueAt &&
+      !c.firstValueAt && stage !== 'engaged' &&
       !has('welcome') &&
       state.templates.some((t) => t.journey === c.journey && t.step === 'welcome' && t.published)
     )
@@ -485,7 +502,7 @@ export function metrics(state: PlgState, now: number) {
   );
   return {
     enrolled: state.contacts.length,
-    observed: state.contacts.filter((c) => c.telemetryAt).length,
+    observed: state.contacts.filter((c) => c.telemetryAt || c.activity?.agents.length).length,
     activated: state.contacts.filter((c) => c.firstValueAt).length,
     repeat: state.contacts.filter((c) => c.valueDays.length > 1).length,
     activationEligible: eligible.length,
