@@ -37,7 +37,8 @@ export function outcomeSupported(catalog: PlgCatalog, agentId: string): boolean 
 export function outcomeProofMatches(catalog: PlgCatalog, agentId: string, proof: unknown): boolean {
   if (!outcomeSupported(catalog, agentId)) return proof == null;
   return proof === outcomeProofs[agentId] ||
-    (proof === undefined && ['agent_personal_information', 'agent_email'].includes(agentId));
+    (proof === undefined && !catalog.agents.find((a) => a.id === agentId)?.outcome &&
+      ['agent_personal_information', 'agent_email'].includes(agentId));
 }
 
 export function readCatalog(value: any): PlgCatalog {
