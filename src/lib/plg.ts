@@ -31,7 +31,7 @@ export interface PlgAudiencePerson {
     lastFailureAt: string | null;
     lastActionId: string | null;
   };
-  verified: { supported: boolean; count: number; lastAt: string | null; limited: boolean };
+  verified: { supported: boolean; proof?: string | null; count: number; lastAt: string | null; limited: boolean };
 }
 export interface PlgAudiencePage {
   version: 1;
@@ -49,9 +49,15 @@ export interface PlgAudiencePage {
   campaignEnrollmentChanged: false;
 }
 export type PlgJourney = 'memory' | 'mail' | PlgAgentId;
+export interface PlgOutcomeCoverage {
+  status: 'supported' | 'internal' | 'unmeasured';
+  proof: string | null;
+  label: string;
+  reason: string;
+}
 export interface PlgCatalog {
   revision: string;
-  agents: { id: PlgAgentId; label: string; public: boolean; available: boolean }[];
+  agents: { id: PlgAgentId; label: string; public: boolean; available: boolean; outcome?: PlgOutcomeCoverage }[];
   actions: { id: string; agentId: PlgAgentId; label: string; kind: 'action' | 'agent' | 'tool'; proof: 'client_reported' | 'execution_observed' }[];
 }
 export interface PlgActivityRollup {

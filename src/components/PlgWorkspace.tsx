@@ -619,8 +619,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
                   : 'Waiting for mature cohorts'}
               </p>
               <p className="mt-2 text-xs text-muted">
-                {metrics.activationConverted} of {metrics.activationEligible} accounts with seven full days
-                observed
+                {metrics.activationConverted} of {metrics.activationEligible} accounts enrolled at least seven days ago
               </p>
             </div>
             <div className="rounded-xl border border-stroke p-5">
@@ -631,14 +630,13 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
                   : 'Waiting for mature cohorts'}
               </p>
               <p className="mt-2 text-xs text-muted">
-                {metrics.retained} of {metrics.retentionEligible} activated accounts with a complete UTC day 8
-                to 14 window
+                {metrics.retained} of {metrics.retentionEligible} activated accounts whose UTC day 8 to 14 window has elapsed
               </p>
             </div>
           </div>
           <p className="text-sm leading-6 text-muted">
             Twenty percent of accounts are assigned to a stable comparison group. Early small-sample
-            differences are directional. Unknown tracking is separate from confirmed inactivity.
+            differences are directional. Rates reflect retained positive evidence; elapsed cohort windows do not prove complete observation. Unknown tracking is separate from confirmed inactivity.
           </p>
           <div className="metrics-table-scroll">
             <table className="w-full min-w-[540px] text-left text-sm">

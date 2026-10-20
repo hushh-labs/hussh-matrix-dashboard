@@ -14,7 +14,8 @@ import {
 async function mockPlg(page: Page, denied = false, withAgents = false) {
   const state = initialPlgState();
   if (withAgents) registerPlgCatalog(state, { revision: 'a'.repeat(64),
-    agents: [{ id: 'agent_calendar', label: 'Calendar', public: true, available: true }],
+    agents: [{ id: 'agent_calendar', label: 'Calendar', public: true, available: true,
+      outcome: { status: 'supported', proof: 'calendar.provider_effect.v1', label: 'Provider-confirmed Calendar change', reason: 'Retained positive evidence only.' } }],
     actions: [{ id: 'calendar.event.create', label: 'Create event', agentId: 'agent_calendar', kind: 'action', proof: 'client_reported' }] });
   await mockDashboard(page);
   await page.route('**/api/plg/**', async (route) => {
@@ -51,7 +52,8 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
     else if (pathname.endsWith('/audience')) result = {
       version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live',
       catalog: { revision: 'a'.repeat(64), agents: [
-        { id: 'agent_one', label: 'One', public: true, available: true },
+        { id: 'agent_one', label: 'One', public: true, available: true,
+          outcome: { status: 'supported', proof: 'one.distinct_domain_effects.v1', label: 'Distinct verified task outcomes', reason: 'Shared domain effects count once.' } },
         { id: 'agent_calendar', label: 'Calendar', public: true, available: true }],
         actions: [{ id: 'agent:agent_one', agentId: 'agent_one', label: 'One execution', kind: 'agent', proof: 'execution_observed' }] },
       asOf: new Date().toISOString(), windowStart: new Date(Date.now() - 7 * 86400000).toISOString(),
@@ -61,7 +63,7 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
         identity: { name: 'Registered person', email: null, emailVerified: false, phoneNumber: '+919876543210', phoneVerified: true, source: 'canonical', updatedAt: null },
         activity: { coverage: 'observed', mode: 'best_effort', counts: { started: 1, returned: 0, failed: 0, cancelled: 0, blocked: 0, possibleIncomplete: 1, inProgress: 0, uncorrelated: 0, otherObservations: 0 },
           collectionStartedAt: null, firstAttemptAt: new Date(Date.now() - 7200000).toISOString(), lastObservedAt: new Date(Date.now() - 7200000).toISOString(), lastReturnedAt: null, lastFailureAt: null, lastActionId: 'agent:agent_one' },
-        verified: { supported: false, count: 0, lastAt: null, limited: false } }],
+        verified: { supported: input.agentId === 'agent_one', ...(input.agentId === 'agent_one' ? { proof: 'one.distinct_domain_effects.v1' } : {}), count: 0, lastAt: null, limited: false } }],
     };
     return route.fulfill({ json: result });
   });
@@ -118,6 +120,8 @@ test('reads agent people with phone-only identity, filters and live pagination w
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   await expect(page.getByText('+919876543210', { exact: true })).toBeVisible();
   await expect(page.getByText('Not enrolled in campaigns', { exact: true })).toBeVisible();
+  await expect(page.getByText('Distinct verified task outcomes.', { exact: false })).toBeVisible();
+  await expect(page.getByText('No verified value observed', { exact: true })).toBeVisible();
   await page.getByLabel('People agent').selectOption('agent_calendar');
   await expect(page.getByLabel('People agent')).toHaveValue('agent_calendar');
   await page.getByLabel('Attempt evidence').selectOption('possible_incomplete');

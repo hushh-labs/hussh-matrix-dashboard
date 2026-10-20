@@ -1,7 +1,7 @@
 import type { PlgAudienceFilters, PlgAudiencePage, PlgAudiencePerson } from '../../lib/plg';
 import { DAY, PlgError } from './engine';
 import { signValue } from './service';
-import { readCatalog } from './one-source';
+import { outcomeProofMatches, outcomeSupported, readCatalog } from './one-source';
 
 const segments = ['all', 'possible_incomplete', 'failed', 'blocked', 'cancelled', 'returned', 'verified', 'unknown', 'in_progress'];
 const keys = ['started', 'returned', 'failed', 'cancelled', 'blocked', 'possibleIncomplete', 'inProgress', 'uncorrelated', 'otherObservations'] as const;
@@ -75,13 +75,14 @@ function page(value: unknown, filters: PlgAudienceFilters, now: number): PlgAudi
       ((lastReturnedAt || lastFailureAt) && (!lastObservedAt || (lastReturnedAt && lastReturnedAt > lastObservedAt) || (lastFailureAt && lastFailureAt > lastObservedAt)))) return unavailable();
     const supported = boolean(verified.supported), count = number(verified.count, 1000), limited = boolean(verified.limited);
     const lastAt = date(verified.lastAt, Date.parse(at), Date.parse(since));
-    if (supported !== ['agent_personal_information', 'agent_email'].includes(filters.agentId) || (!supported && (count || lastAt || limited)) || Boolean(count) !== Boolean(lastAt)) return unavailable();
+    if (supported !== outcomeSupported(catalog, filters.agentId) || !outcomeProofMatches(catalog, filters.agentId, verified.proof) ||
+      (!supported && (count || lastAt || limited)) || Boolean(count) !== Boolean(lastAt)) return unavailable();
     return {
       accountId, agentId: row.agentId,
       identity: { name, email, emailVerified, phoneNumber, phoneVerified, source: identity.source, updatedAt: date(identity.updatedAt, now + 10_000) },
       activity: { coverage: activity.coverage, mode: 'best_effort', counts, firstAttemptAt, lastObservedAt, lastReturnedAt, lastFailureAt, lastActionId,
         collectionStartedAt: date(activity.collectionStartedAt, now + 10_000) },
-      verified: { supported, count, lastAt, limited },
+      verified: { supported, ...(verified.proof !== undefined ? { proof: verified.proof } : {}), count, lastAt, limited },
     };
   });
   if (new Set(rows.map((r) => r.accountId)).size !== rows.length) return unavailable();

@@ -102,6 +102,8 @@ export function PlgAudiencePanel({ state, load, openContact }: {
               {counts.uncorrelated > 0 && <p className="mt-1 text-xs text-muted">{counts.uncorrelated} observations cannot be paired with an attempt.</p>}
               {counts.otherObservations > 0 && <p className="mt-1 text-xs text-muted">{counts.otherObservations} tool observations; these do not establish completed attempts.</p>}
               <p className="mt-2 text-xs text-muted">{person.verified.supported ? person.verified.count ? `${person.verified.count}${person.verified.limited ? '+' : ''} verified outcomes observed` : 'No verified value observed' : 'Business completion is not measured for this agent'}</p>
+              {person.verified.limited && <p className="mt-1 text-xs text-muted">Outcome evidence is partial; additional results may be outside retained bounds.</p>}
+              {agent?.outcome && <p className="mt-1 text-xs leading-5 text-muted">{agent.outcome.label}. {agent.outcome.reason}</p>}
             </td>
             <td className="max-w-[220px] p-3 text-xs"><p>{time(activity.lastObservedAt)}</p>{action && <p className="mt-1 text-muted">{action.label}</p>}<p className="mt-2 text-muted">First start: {time(activity.firstAttemptAt)}</p></td>
             <td className="p-3">{enrolled ? <button className={button} onClick={() => openContact(enrolled.id)}>Open follow-up</button> : <span className="text-xs text-muted">Not enrolled in campaigns</span>}</td>
