@@ -8,7 +8,7 @@ const button = 'rounded-xl border border-stroke bg-surface px-4 py-2.5 text-sm f
 const defaults: PlgAudienceFilters = { agentId: 'agent_one', segment: 'all', query: '', graceMinutes: 60 };
 const time = (value: string | null) => value ? new Date(value).toLocaleString() : 'Not observed';
 const coverage = {
-  observed: 'Observed activity', not_started: 'No collection baseline', unavailable: 'Activity collection off',
+  observed: 'Collection available', not_started: 'No collection baseline', unavailable: 'Activity collection off',
   limited: 'Collection limit reached', reset_during_traversal: 'Account reset during browsing',
 };
 
