@@ -4,55 +4,80 @@ import { createApp, signCookie } from '../server';
 import { isReferralsPath, parseReferralQuery } from '../src/lib/referrals';
 
 const read = vi.hoisted(() => vi.fn());
-vi.mock('../src/server/referrals', () => ({ readReferralMetrics: read }));
+vi.mock('../src/server/referrals', () => ({ readReferralRankings: read }));
 const secret = 'test-referral-session-secret-thirty-two-characters';
 const cookie = `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email: 'qa@hushh.ai', exp: Math.floor(Date.now()/1000)+3600 }),secret))}`;
-const app = () => createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-const path = '/api/analytics/one/referrals?environment=production&startDate=2026-10-12&endDate=2026-10-18';
-const aggregate = { state: 'available', environment: 'production', totals: { referrers: 2, referredAccounts: 3, netPoints: -5 }, daily: [], points: [], rewards: [], weeklyAwards: [] };
+const app = (isPublic = false) => createApp({ requireAuth: !isPublic, allowPublicDashboard: isPublic, isProduction: false, sessionSecret: secret });
+const path = '/api/analytics/one/referrals?board=individual&afterRank=0';
+const snapshotId = 'c22bf6bb-c6d2-4d87-b2d6-31e17498a2e4';
+const standings = { state: 'available', board: 'individual', environment: 'uat', environments: ['uat'],
+  sources: [{environment:'uat',state:'available'}], snapshotId, snapshotGeneratedAt:'2026-10-19T12:00:00Z',
+  entryCount:21, entries:[{rank:1,handle:'Public handle',points:730}], nextAfterRank:20 };
 
-describe('referral reporting scope', () => {
-  it('validates exact dates, environment and bounded windows', () => {
-    const now = new Date('2026-10-19T12:00:00Z');
-    expect(parseReferralQuery({},now)).toEqual({ environment:'production', startDate:'2026-09-20',endDate:'2026-10-19' });
+describe('referral ranking contract', () => {
+  it('accepts only a bounded cursor tied to a source snapshot', () => {
+    expect(parseReferralQuery({})).toEqual({board:'individual',afterRank:0});
+    expect(parseReferralQuery({environment:'uat',afterRank:'20',snapshotId}).afterRank).toBe(20);
     for (const query of [
-      { environment:'dev' }, { environment:['production','uat'] }, { startDate:'2026-02-30' },
-      { startDate:'2026-10-19',endDate:'2026-10-18' }, { endDate:'2099-01-01' },
-      { startDate:'2025-01-01',endDate:'2026-10-18' }, { startDate:'bad' }, { endDate:['2026-10-18'] },
-    ]) expect(() => parseReferralQuery(query,now)).toThrow();
-    expect(parseReferralQuery({ environment:'uat',startDate:'2026-10-18',endDate:'2026-10-18' },now).environment).toBe('uat');
+      {environment:'dev'}, {environment:['uat']}, {board:'rewards'}, {board:['individual']},
+      {afterRank:'-1'}, {afterRank:'1.5'}, {afterRank:'1000000000'}, {afterRank:['20']},
+      {afterRank:'20'}, {environment:'uat',afterRank:'20'}, {snapshotId},
+      {environment:'uat',snapshotId:'not-uuid'}, {board:'circles',environment:'uat',snapshotId},
+    ]) expect(() => parseReferralQuery(query)).toThrow();
     expect(isReferralsPath('/referral-analytics/')).toBe(true);
     expect(isReferralsPath('/referral-analytics/unknown')).toBe(false);
   });
-  it('requires sign-in even after an aggregate has been cached', async () => {
-    read.mockResolvedValue(aggregate);
+  it('requires sign-in and never puts viewer names in the shared aggregate cache', async () => {
+    read.mockClear();
+    read.mockResolvedValue(standings);
     const server = app();
     expect((await request(server).get(path)).status).toBe(401);
     const response = await request(server).get(path).set('Cookie',cookie);
-    expect(response.status).toBe(200); expect(response.body.totals.netPoints).toBe(-5);
+    expect(response.status).toBe(200); expect(response.body.entries[0].points).toBe(730);
     expect(response.headers['cache-control']).toContain('no-store');
     const hit = await request(server).get(path).set('Cookie',cookie);
-    expect(hit.headers['x-metrics-cache']).toBe('HIT');
+    expect(hit.headers['x-metrics-cache']).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(2);
     expect((await request(server).get(path)).status).toBe(401);
   });
-  it('isolates production, UAT and date ranges', async () => {
-    read.mockClear(); read.mockImplementation(async query => ({ ...aggregate,environment:query.environment,range:query }));
+  it('keeps public leaderboard handles private even in public aggregate mode', async () => {
+    read.mockClear(); read.mockResolvedValue(standings);
+    const server = app(true);
+    expect((await request(server).get(path)).status).toBe(401);
+    expect(read).not.toHaveBeenCalled();
+    expect((await request(server).get(path).set('Cookie',cookie)).status).toBe(200);
+    expect((await request(server).get(path)).status).toBe(401);
+  });
+  it('keeps environments, boards, snapshot versions and cursors isolated', async () => {
+    read.mockClear(); read.mockResolvedValue(standings);
     const server = app();
-    for (const url of [path,path.replace('production','uat'),path.replace('2026-10-12','2026-10-13')]) {
-      expect((await request(server).get(url).set('Cookie',cookie)).status).toBe(200);
-    }
-    expect(read).toHaveBeenCalledTimes(3);
+    const urls = [path, `${path}&environment=uat`, path.replace('individual','circles'),
+      `${path}&environment=production&snapshotId=${snapshotId}`,
+      `${path.replace('afterRank=0','afterRank=20')}&environment=production&snapshotId=${snapshotId}`,
+      `${path}&environment=production&snapshotId=36040968-628f-4093-8479-1c5b78fe2f0c`];
+    for (const url of urls) expect((await request(server).get(url).set('Cookie',cookie)).status).toBe(200);
+    expect(read).toHaveBeenCalledTimes(urls.length);
+  });
+  it('takes the viewer only from the signed session and separates two dashboard users', async () => {
+    read.mockClear(); read.mockResolvedValue(standings);
+    const otherCookie = `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({email:'second@hushh.ai',exp:Math.floor(Date.now()/1000)+3600}),secret))}`;
+    const server = app();
+    await request(server).get(`${path}&viewerUserId=someone-else&viewerEmail=someone-else@hushh.ai`).set('Cookie',cookie);
+    await request(server).get(path).set('Cookie',otherCookie);
+    expect(read.mock.calls[0][1]).toBe('qa@hushh.ai');
+    expect(read.mock.calls[1][1]).toBe('second@hushh.ai');
+    expect(read.mock.calls[0][0].viewerUserId).toBeUndefined();
   });
   it('rejects invalid input before contacting the source', async () => {
     read.mockClear();
-    expect((await request(app()).get(path.replace('production','other')).set('Cookie',cookie)).status).toBe(400);
+    expect((await request(app()).get(`${path}&environment=other`).set('Cookie',cookie)).status).toBe(400);
     expect(read).not.toHaveBeenCalled();
   });
-  it('sanitizes source failures and does not turn missing data into zero', async () => {
+  it('sanitizes failed sources rather than reporting zero standings', async () => {
     read.mockRejectedValue(new Error('private provider diagnostics and password'));
     const response = await request(app()).get(path).set('Cookie',cookie);
     expect(response.status).toBe(503);
-    expect(response.body).toEqual({state:'unavailable',error:'Referral metrics are temporarily unavailable.'});
-    expect(response.body.totals).toBeUndefined();
+    expect(response.body).toEqual({state:'unavailable',error:'Referral rankings are temporarily unavailable.'});
+    expect(response.body.entries).toBeUndefined();
   });
 });

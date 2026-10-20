@@ -13,6 +13,7 @@ import { sign as cryptoSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import express from 'express';
+import { registerPlgRoutes } from './src/server/plg/routes';
 import path from 'path';
 import { promisify } from 'node:util';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -5771,16 +5772,22 @@ function registerAnalyticsRoutes(app: express.Express): void {
       });
     },
   };
-  api.get('/api/analytics/one/referrals', async (req, res) => {
+  // Public leaderboard handles still require a dashboard session, even in public aggregate mode.
+  app.use('/api/analytics/one/referrals', (req, res, next) => {
+    if (!(req as any).sessionUser) { res.status(401).json({ error: 'Sign in to view referral rankings.' }); return; }
+    next();
+  });
+  // Names are viewer-permitted. Never put them in the shared aggregate cache.
+  app.get('/api/analytics/one/referrals', async (req, res) => {
     const { parseReferralQuery } = await import('./src/lib/referrals');
     let query: ReturnType<typeof parseReferralQuery>;
     try { query = parseReferralQuery(req.query); }
-    catch { res.status(400).json({ error: 'Choose production or UAT and a valid date range of up to 366 days.' }); return; }
+    catch { res.status(400).json({ error: 'Choose a valid referral leaderboard and snapshot cursor.' }); return; }
     try {
-      const { readReferralMetrics } = await import('./src/server/referrals');
-      res.json(await readReferralMetrics(query));
+      const { readReferralRankings } = await import('./src/server/referrals');
+      res.json(await readReferralRankings(query, ((req as any).sessionUser as SessionUser).email, ONE_FIREBASE_AUTH_PROJECT));
     } catch {
-      res.status(503).json({ state: 'unavailable', error: 'Referral metrics are temporarily unavailable.' });
+      res.status(503).json({ state: 'unavailable', error: 'Referral rankings are temporarily unavailable.' });
     }
   });
   if (process.env.K_SERVICE && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
@@ -9182,14 +9189,22 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
   app.use(compression({ threshold: 1024 }));
 
   // 2. Body Parsing
-  app.use(express.json({ limit: '64kb' }));
+  app.use(express.json({ limit: '64kb', verify: (req, _res, buffer) => {
+    if (req.url?.startsWith('/integrations/plg/')) (req as any).plgRawBody = buffer.toString('utf8');
+  } }));
   app.use(express.urlencoded({ extended: false }));
+  app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.path.startsWith('/api/plg/') || req.path.startsWith('/integrations/plg/')) return res.status(400).json({ error: 'Invalid PLG request body.' });
+    next(error);
+  });
 
   // 3. Attach session user to req
   app.use((req, res, next) => {
     (req as any).sessionUser = getSessionUserFromReq(req, config.sessionSecret);
     next();
   });
+
+  registerPlgRoutes(app, config.isProduction);
 
   // 4. API No-Cache Headers & Protection Middleware
   app.use('/api', (_req, res, next) => {

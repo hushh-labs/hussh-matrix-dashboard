@@ -10,6 +10,9 @@ on:
       - 'playwright.config.ts'
       - 'vite.config.ts'
       - 'index.html'
+      - 'infra/one-plg/**'
+      - 'scripts/plg-worker.mjs'
+      - '.github/workflows/deploy-main.yml'
       - '.github/workflows/responsive-ui.yml'
 
 permissions:
@@ -20,6 +23,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verify-plg-infrastructure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+      - run: terraform fmt -check
+        working-directory: infra/one-plg
+      - run: terraform init -backend=false -input=false -lockfile=readonly
+        working-directory: infra/one-plg
+      - run: terraform validate -no-color
+        working-directory: infra/one-plg
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
