@@ -23,6 +23,8 @@ import {
 } from './service';
 import { syncOneEvidence } from './one-source';
 import { readOneAudience } from './one-audience';
+import { runAutomationCycle, setAutomationEnabled } from './automation';
+import { applyDeliveryEvent } from './delivery-events';
 
 export function registerPlgRoutes(
   app: express.Express,
@@ -85,7 +87,7 @@ export function registerPlgRoutes(
     return { email, role: value as 'admin' | 'operator' };
   };
   const machine = (req: express.Request, purpose: string) => {
-    const secret = purpose === 'sync' ? (config.syncSecret ?? '') : config.signingSecret;
+    const secret = purpose === 'sync' ? (config.syncSecret ?? '') : purpose === 'cycle' ? (config.cycleSecret ?? '') : config.signingSecret;
     const timestamp = req.get('X-PLG-Timestamp') || '';
     const signature = req.get('X-PLG-Signature') || '';
     const raw = (req as any).plgRawBody as string | undefined;
@@ -171,6 +173,14 @@ export function registerPlgRoutes(
       return res.json(await syncOneEvidence(getService().store));
     }),
   );
+  app.patch(
+    '/api/plg/automation',
+    handle(async (req, res) => {
+      const user = role(req, true);
+      return res.json(await getService().store.transaction((state) =>
+        setAutomationEnabled(state, req.body.enabled, user.email, Date.now())));
+    }),
+  );
   app.post(
     '/api/plg/audience',
     handle(async (req, res) => {
@@ -221,7 +231,17 @@ export function registerPlgRoutes(
     '/integrations/plg/run',
     handle(async (req, res) => {
       machine(req, 'run');
-      return res.json(await getService().run('Signed scheduler'));
+      const service = getService();
+      // Legacy signed workers share the same sync, lease and website pause.
+      return res.json(await runAutomationCycle(service, () => syncOneEvidence(service.store)));
+    }),
+  );
+  app.post(
+    '/integrations/plg/cycle',
+    handle(async (req, res) => {
+      machine(req, 'cycle');
+      const service = getService();
+      return res.json(await runAutomationCycle(service, () => syncOneEvidence(service.store)));
     }),
   );
   app.post(
@@ -241,36 +261,7 @@ export function registerPlgRoutes(
       } catch {
         throw new PlgError(401, 'Invalid delivery signature.');
       }
-      await getService().store.transaction((state) => {
-        const reason =
-          event.type === 'email.bounced'
-            ? 'bounced'
-            : event.type === 'email.complained'
-              ? 'complained'
-              : null;
-        if (reason)
-          for (const c of state.contacts)
-            if (
-              Array.isArray(event.data?.to) &&
-              event.data.to.some(
-                (e: unknown) => typeof e === 'string' && e.toLowerCase() === c.email,
-              )
-            ) {
-              if (c.suppressed !== reason) {
-                c.suppressed = reason;
-                timeline(
-                  c,
-                  'Delivery provider',
-                  `Promotional email suppressed: ${reason}.`,
-                  Date.now(),
-                );
-              }
-            }
-        if (event.type === 'email.delivered') {
-          const d = state.deliveries.find((d) => d.providerId === event.data?.email_id);
-          if (d) d.status = 'delivered';
-        }
-      });
+      await getService().store.transaction((state) => applyDeliveryEvent(state, event, Date.now()));
       return res.json({ received: true });
     }),
   );

@@ -6,6 +6,7 @@ import { registerPlgRoutes } from '../src/server/plg/routes';
 import { MemoryPlgStore } from '../src/server/plg/store';
 import { PlgService, preferenceToken, signValue, type PlgRuntime } from '../src/server/plg/service';
 import { enroll } from '../src/server/plg/engine';
+import { applyDeliveryEvent } from '../src/server/plg/delivery-events';
 import * as audienceSource from '../src/server/plg/one-audience';
 
 const secret = 'test-plg-signing-secret-more-than-32-characters';
@@ -17,6 +18,7 @@ const config: PlgRuntime = {
   operators: new Set(['operator@example.invalid']),
   signingSecret: secret,
   syncSecret: 'test-only-dedicated-sync-secret-over-32-characters',
+  cycleSecret: 'test-only-dedicated-cycle-secret-over-32-characters',
   webhookSecret: 'whsec_' + Buffer.from('test-webhook-signing-secret-value').toString('base64'),
   apiKey: '',
   from: '',
@@ -54,6 +56,20 @@ function app(runtime = config) {
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('requires administrator and same-origin authority to change automation', async () => {
+    for (const [user, origin, status] of [
+      ['', config.origin, 401], ['operator@example.invalid', config.origin, 403],
+      ['admin@example.invalid', 'https://foreign.example.invalid', 403],
+    ] as const) {
+      const req = request(app()).patch('/api/plg/automation').set('Origin', origin);
+      if (user) req.set('Test-User', user);
+      expect((await req.send({ enabled: true })).status).toBe(status);
+    }
+    expect((await request(app()).patch('/api/plg/automation').set('Test-User', 'admin@example.invalid')
+      .set('Origin', config.origin).send({ enabled: true })).status).toBe(200);
+    expect((await store.read()).automation?.enabled).toBe(true);
+    expect((await store.read()).deliveries).toHaveLength(0);
+  });
   it('protects all-agent sync and inspection with session, role and same-origin authority', async () => {
     for (const route of ['/api/plg/sync', '/api/plg/activity', '/api/plg/audience']) {
       expect((await request(app()).post(route).send({ contactId: 'anything' })).status).toBe(401);
@@ -82,7 +98,7 @@ describe('Private PLG API boundaries', () => {
   it('does not let a sync credential authorize delivery or enrollment', async () => {
     const timestamp = String(Date.now()),
       body = '{}';
-    for (const purpose of ['events', 'run']) {
+    for (const purpose of ['events', 'run', 'cycle']) {
       const denied = await request(app())
         .post(`/integrations/plg/${purpose}`)
         .set('Content-Type', 'application/json')
@@ -107,6 +123,22 @@ describe('Private PLG API boundaries', () => {
     // Authorized, but source configuration is absent in this fixture.
     expect(accepted.status).toBe(503);
     expect(accepted.body.error).toContain('evidence');
+  });
+  it('keeps the cycle worker key separate from enrollment, sync and preference signing', async () => {
+    const timestamp = String(Date.now()), body = '{}';
+    for (const purpose of ['events', 'run', 'sync']) {
+      expect((await request(app()).post(`/integrations/plg/${purpose}`)
+        .set('Content-Type', 'application/json').set('X-PLG-Timestamp', timestamp)
+        .set('X-PLG-Signature', signValue(`${purpose}\n${timestamp}\n${body}`, config.cycleSecret!)).send(body)).status).toBe(401);
+    }
+    expect((await request(app()).post('/integrations/plg/cycle')
+      .set('Content-Type', 'application/json').set('X-PLG-Timestamp', timestamp)
+      .set('X-PLG-Signature', signValue(`cycle\n${timestamp}\n${body}`, secret)).send(body)).status).toBe(401);
+    expect((await request(app()).post('/integrations/plg/cycle')
+      .set('Content-Type', 'application/json').set('X-PLG-Timestamp', timestamp)
+      .set('X-PLG-Signature', signValue(`cycle\n${timestamp}\n${body}`, config.cycleSecret!)).send(body)).status).toBe(503);
+    expect((await store.read()).automation?.lastCycle?.status).toBe('failed');
+    expect((await store.read()).deliveries).toHaveLength(0);
   });
   beforeEach(() => {
     store = new MemoryPlgStore();
@@ -234,5 +266,29 @@ describe('Private PLG API boundaries', () => {
     expect(result.status).toBe(503);
     expect(result.text).not.toContain('private-provider');
     expect(result.text).not.toContain('customer@');
+  });
+  it('reconciles signed delivery correlation without recipient crossover or status regression', async () => {
+    const contact = await store.transaction((state) => {
+      const c = enroll(state, input, 'admin', Date.now());
+      state.deliveries.push({ id: 'stable-delivery-id', contactId: c.id, templateId: 'memory-feedback', step: 'feedback',
+        key: 'permanent-step-key', status: 'uncertain', createdAt: new Date().toISOString(), subject: 'Welcome', body: 'Guide',
+        ctaLabel: 'Open One', ctaUrl: 'https://one.hushh.ai/', providerId: null });
+      return c;
+    });
+    const data = { email_id: 'provider_email_1', to: [contact.email], tags: { plg_delivery_id: 'stable-delivery-id' } };
+    await store.transaction((state) => applyDeliveryEvent(state, { type: 'email.delivered', data: { ...data, to: ['foreign@example.invalid'] } }, Date.now()));
+    expect((await store.read()).deliveries[0].status).toBe('uncertain');
+    await store.transaction((state) => applyDeliveryEvent(state, { type: 'email.delivered', data }, Date.now()));
+    expect((await store.read()).deliveries[0]).toMatchObject({ status: 'delivered', providerId: data.email_id });
+    const pause = (await store.read()).contacts[0].pauseUntil;
+    expect(Date.parse(pause!)).toBe(Date.parse((await store.read()).deliveries[0].createdAt) + 30 * 86_400_000);
+    for (const type of ['email.sent', 'email.bounced', 'email.delivered', 'email.complained', 'email.sent'])
+      await store.transaction((state) => applyDeliveryEvent(state, { type, data }, Date.now()));
+    const state = await store.read();
+    expect(state.deliveries[0].status).toBe('complained');
+    expect(state.contacts[0].suppressed).toBe('complained');
+    expect(state.contacts[0].pauseUntil).toBe(pause);
+    expect(state.contacts[0].firstValueAt).toBeNull();
+    expect(state.contacts[0].valueDays).toEqual([]);
   });
 });

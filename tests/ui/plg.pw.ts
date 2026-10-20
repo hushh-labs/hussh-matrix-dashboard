@@ -10,6 +10,11 @@ import {
   updateTemplate,
   registerPlgCatalog,
 } from '../../src/server/plg/engine';
+import { automationStatus } from '../../src/server/plg/automation';
+
+const automationRuntime = { enabled: true, deliveryEnabled: false, origin: 'https://metrics.example.invalid',
+  admins: new Set<string>(), operators: new Set<string>(), signingSecret: 'test-only-key-over-32-characters-long',
+  webhookSecret: '', apiKey: '', from: 'Rachel Morgan <rachel@example.invalid>', replyTo: 'rachel@example.invalid' };
 
 async function mockPlg(page: Page, denied = false, withAgents = false) {
   const state = initialPlgState();
@@ -30,6 +35,7 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
         role: 'admin',
         configured: true,
         deliveryEnabled: false,
+        automation: automationStatus(state, automationRuntime, Date.now()),
         state,
         queue: state.contacts.map((c) => candidate(state, c, Date.now())),
         metrics: metrics(state, Date.now()),
@@ -43,6 +49,9 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
     else if (pathname.endsWith('/settings')) {
       state.paused = input.paused;
       state.ready = input.ready;
+    } else if (pathname.endsWith('/automation')) {
+      state.automation ??= { enabled: false };
+      state.automation.enabled = input.enabled;
     } else if (pathname.includes('/templates/'))
       result = updateTemplate(state, pathname.split('/').at(-1)!, input, 'test-admin', Date.now());
     else if (pathname.endsWith('/preview'))
@@ -69,6 +78,23 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
   });
   return state;
 }
+test('shows automation blockers and changes future cycle controls without sending', async ({ page }) => {
+  const state = await mockPlg(page);
+  const mutations: string[] = [];
+  page.on('request', (request) => { if (request.method() !== 'GET') mutations.push(new URL(request.url()).pathname); });
+  await page.goto('/plg');
+  const panel = page.getByRole('region', { name: 'Automatic follow-up operations' });
+  await expect(panel).toContainText('Rachel Morgan');
+  await expect(panel).toContainText('Email provider authentication is missing');
+  await expect(panel).toContainText('Scheduled worker has not been observed');
+  await page.getByRole('button', { name: 'Enable automatic follow-ups', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause automatic follow-ups', exact: true })).toBeVisible();
+  expect(state.automation?.enabled).toBe(true);
+  await expect(panel).toContainText('Live email delivery is disabled');
+  expect(state.deliveries).toHaveLength(0);
+  expect(mutations).toEqual(['/api/plg/automation']);
+});
+
 test('enrolls an account and operates the shared follow-up queue without sending', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   const state = await mockPlg(page);

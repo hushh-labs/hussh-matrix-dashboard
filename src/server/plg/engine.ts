@@ -395,6 +395,8 @@ export function candidate(
   // per-account observation before inferring the absence of a completed task.
   const freshObservation = age(c.observationAt, now) <= DAY;
   const history = state.deliveries.filter((d) => d.contactId === c.id);
+  if (history.some((d) => d.status === 'sending' || d.status === 'uncertain'))
+    return stop('Delivery confirmation pending; automatic follow-up blocked');
   if (history.some((d) => age(d.createdAt, now) < DAY))
     return stop('One promotional message per 24 hours');
   if (

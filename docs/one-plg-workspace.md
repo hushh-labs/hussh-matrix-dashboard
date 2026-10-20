@@ -191,8 +191,10 @@ the One backend so a PLG outage never prevents a customer signing up.
 4. Preview the next messages. Preview ignores the global pause only; it still
    enforces readiness, permission, suppression, preferences and contact limits.
 5. Enable live delivery configuration and unpause only when launch is authorized.
-   No UI action sends email. Run `npm run plg:worker -- --send` from an approved
-   scheduler every 15 minutes. Without `--send` the command exits without sending.
+   Use the website's automatic follow-up control and the approved scheduled
+   `npm run plg:worker -- --cycle` job every 15 minutes. The server owns evidence
+   sync, a transactional lease and bounded sending in one cycle. Browsing and
+   previewing never send email; enabling future cycles can send eligible content.
    Each run processes at most ten due messages to bound worker duration.
 
 Daily subscribers are limited to one promotional email per 24 hours. Weekly
@@ -269,9 +271,28 @@ This view is not a complete app-wide DAU measure or historical backfill.
 Account switches and same-owner resets fence delayed callbacks before transport;
 reset/deletion also fence and erase the backend metadata.
 
-Provider identity, verified From/Reply-To and deployment provisioning are still
-required before a launch. The existing Resend adapter does not imply that the
-team's marketing provider has been chosen. These PRs do not enable live sends.
+The approved sender is Rachel Morgan, `rachel@hushh.ai`, with the same Reply-To.
+Its values use Secret Manager bindings. Provider account authentication, domain
+verification and controlled callback/unsubscribe testing remain launch requirements.
+A business address alone does not authenticate automated sending. See
+`infra/one-plg/README.md` for separate sender/delivery release gates.
+
+### Automatic operation from Matrix
+
+The **Automatic follow-ups** panel shows sender configuration, last observed
+worker heartbeat, successful sync, completed cycle, eligibility, exceptions and
+pilot limits. Only a PLG administrator can enable or pause automatic follow-ups;
+same-origin session checks apply. Campaign pause, readiness, template publication,
+permission, frequency, holdout, suppression and support-open rules remain
+authoritative. Routine cycles need no per-message operator action. Sync continues
+while sending is paused. Legacy signed workers use the same sync and pause gates.
+
+Failed sync prevents delivery. Missing complete observation coverage stays unknown
+and blocks behavioral inactivity reminders; neutral welcome and explicitly
+subscribed published newsletters retain their existing rules. Registered people
+are not automatically assigned marketing permission. Callback delivery states and
+product completion metrics stay separate. Failed cycle totals can be unknown after
+a partial send; inspect delivery history rather than treating unknown as zero.
 
 The workspace sends email only. WhatsApp/SMS delivery, automatic Firebase
 audience import, monitored reply ingestion, individual product-update broadcasts,
