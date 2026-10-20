@@ -93,6 +93,19 @@ describe('Private One audience contract', () => {
       await expect(readOneAudience(filters, options, (async () => Response.json(source)) as typeof fetch, NOW)).rejects.toThrow('unavailable');
     }
   });
+  it.each([['agent_email', 'mail.provider_send.v1'], ['agent_personal_information', 'memory.confirmed_save.v1']] as const)
+    ('requires explicit proof for a declared %s outcome while preserving its older catalog', async (agentId, proof) => {
+      const source: any = fixture(), row = source.rows[0], agent = source.catalog.agents[0], action = source.catalog.actions[0];
+      agent.id = row.agentId = action.agentId = agentId;
+      row.activity.lastActionId = action.id = `agent:${agentId}`;
+      row.verified = { supported: true, count: 0, lastAt: null, limited: false };
+      const fetcher = (async () => Response.json(source)) as typeof fetch;
+      expect((await readOneAudience({ ...filters, agentId }, options, fetcher, NOW)).rows[0].verified.supported).toBe(true);
+      agent.outcome = { status: 'supported', proof, label: 'Confirmed outcome', reason: 'Retained positive domain evidence only.' };
+      await expect(readOneAudience({ ...filters, agentId }, options, fetcher, NOW)).rejects.toThrow('unavailable');
+      row.verified.proof = proof;
+      expect((await readOneAudience({ ...filters, agentId }, options, fetcher, NOW)).rows[0].verified.proof).toBe(proof);
+    });
 });
 const runtime: PlgRuntime = {
   enabled: true,
@@ -565,6 +578,7 @@ describe('One retained task evidence bridge', () => {
       (r: any) => { delete r.accounts[0].verified[0].proof; },
       (r: any) => { r.accounts[0].verified[0].proof = 'client_reported'; },
       (r: any) => { r.accounts[0].verified[0].proof = 'mail.provider_send.v1'; },
+      (r: any) => { r.accounts[0].verified[0].agentId = 'agent_email'; delete r.accounts[0].verified[0].proof; },
       (r: any) => { r.accounts[0].verified.push(r.accounts[0].verified[0]); },
       (r: any) => { r.catalog.agents[1].outcome.proof = 'mail.provider_send.v1'; },
       (r: any) => { r.catalog.agents[1].public = false; },
