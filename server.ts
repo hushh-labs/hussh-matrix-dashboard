@@ -13,6 +13,7 @@ import { sign as cryptoSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import express from 'express';
+import { registerPlgRoutes } from './src/server/plg/routes';
 import path from 'path';
 import { promisify } from 'node:util';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -9313,14 +9314,22 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
   app.use(compression({ threshold: 1024 }));
 
   // 2. Body Parsing
-  app.use(express.json({ limit: '64kb' }));
+  app.use(express.json({ limit: '64kb', verify: (req, _res, buffer) => {
+    if (req.url?.startsWith('/integrations/plg/')) (req as any).plgRawBody = buffer.toString('utf8');
+  } }));
   app.use(express.urlencoded({ extended: false }));
+  app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.path.startsWith('/api/plg/') || req.path.startsWith('/integrations/plg/')) return res.status(400).json({ error: 'Invalid PLG request body.' });
+    next(error);
+  });
 
   // 3. Attach session user to req
   app.use((req, res, next) => {
     (req as any).sessionUser = getSessionUserFromReq(req, config.sessionSecret);
     next();
   });
+
+  registerPlgRoutes(app, config.isProduction);
 
   // 4. API No-Cache Headers & Protection Middleware
   app.use('/api', (_req, res, next) => {

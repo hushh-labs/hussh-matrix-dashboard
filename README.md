@@ -34,7 +34,11 @@ React SPA (Vite)  →  Express Server  →  BigQuery (kai_public_dashboard_feed)
 
 ## Run Locally
 
-**Prerequisites:** Node.js 20+, `gcloud auth application-default login` for BigQuery access.
+The private One activation workspace is available at `/plg`. See
+[One PLG workspace](docs/one-plg-workspace.md) for local setup, role allowlists,
+product-event integration and the deliberately disabled-by-default email worker.
+
+**Prerequisites:** Node.js 22+, `gcloud auth application-default login` for BigQuery access.
 
 The ADC identity needs:
 - `bigquery.jobs.create` on the BigQuery job project

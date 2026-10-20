@@ -95,6 +95,7 @@ const AppsPanel = lazy(() => import('./components/AppsPanel').then(module => ({ 
 import { FounderBriefingPanel } from './components/FounderBriefingPanel';
 const InstagramPanel = lazy(() => import('./components/InstagramPanel').then(module => ({ default: module.InstagramPanel })));
 const ReferralsPanel = lazy(() => import('./components/ReferralsPanel').then(module => ({ default: module.ReferralsPanel })));
+const PlgWorkspace = lazy(() => import('./components/PlgWorkspace').then(module => ({ default: module.PlgWorkspace })));
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
@@ -1181,9 +1182,10 @@ export default function Dashboard() {
   const [locationRoute, setLocationRoute] = useState<LocationAnalyticsRoute | null>(() => (
     typeof window === 'undefined' ? null : parseLocationAnalyticsPath(window.location.pathname)
   ));
-  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : isReferralsPath(window.location.pathname) ? 'referrals' : 'briefing'));
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : window.location.pathname === '/plg' ? 'plg' : isReferralsPath(window.location.pathname) ? 'referrals' : 'briefing'));
   const [briefRefreshKey, setBriefRefreshKey] = useState(0);
   const [instagramRefreshKey, setInstagramRefreshKey] = useState(0);
+  const [plgRefreshKey, setPlgRefreshKey] = useState(0);
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   // 30 days by default: the One app's agent volumes are small enough that a
   // 7-day window reads as noise rather than a trend.
@@ -1219,7 +1221,7 @@ export default function Dashboard() {
   const loadCompare = () => setCompareRefreshKey(key => key + 1);
 
   const changeDashboardTab = useCallback((tab: DashboardTab) => {
-    const path = tab === 'referrals' ? referralsPath : '/';
+    const path = tab === 'referrals' ? referralsPath : tab === 'plg' ? '/plg' : '/';
     if (locationRoute || window.location.pathname !== path) {
       window.history.pushState({ dashboardTab: tab }, '', path);
       setLocationRoute(null);
@@ -1263,7 +1265,7 @@ export default function Dashboard() {
     const handlePopState = (event: PopStateEvent) => {
       const route = parseLocationAnalyticsPath(window.location.pathname);
       setLocationRoute(route);
-      setActiveTab(route ? 'one' : isReferralsPath(window.location.pathname) ? 'referrals' : (isDashboardTab(event.state?.dashboardTab) ? event.state.dashboardTab : 'briefing'));
+      setActiveTab(route ? 'one' : window.location.pathname === '/plg' ? 'plg' : isReferralsPath(window.location.pathname) ? 'referrals' : (isDashboardTab(event.state?.dashboardTab) ? event.state.dashboardTab : 'briefing'));
       window.scrollTo({ top: 0 });
     };
     window.addEventListener('popstate', handlePopState);
@@ -1330,7 +1332,7 @@ export default function Dashboard() {
   const hushhTechRangeLabel = data?.hushhTech?.window
     ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
     : 'Selected range';
-  const statusText = activeTab === 'instagram'
+  const statusText = activeTab === 'plg' ? 'Private PLG workspace · verified product progress' : activeTab === 'instagram'
     ? 'Instagram reporting · stored observations'
     : activeTab === 'referrals'
     ? 'Referral rankings'
@@ -1728,6 +1730,7 @@ export default function Dashboard() {
       onRefresh={() => {
         if (activeTab === 'briefing') setBriefRefreshKey(key => key + 1);
         else if (activeTab === 'instagram') setInstagramRefreshKey(key => key + 1);
+        else if (activeTab === 'plg') setPlgRefreshKey(key => key + 1);
         else if (activeTab === 'compare') loadCompare();
         else loadData();
       }}>
@@ -1739,6 +1742,8 @@ export default function Dashboard() {
           <InstagramPanel refreshKey={instagramRefreshKey} />
         ) : activeTab === 'referrals' ? (
           <ReferralsPanel refreshKey={refreshKey} />
+        ) : activeTab === 'plg' ? (
+          <PlgWorkspace refreshKey={plgRefreshKey} />
         ) : activeTab === 'growth' ? (
           <GrowthPanel
             loading={loading}
