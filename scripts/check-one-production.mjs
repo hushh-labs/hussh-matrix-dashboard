@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { oneAccountSummaryIssues } from "../src/server/one-account-scope.mjs";
 import { resolve4, resolveCname } from 'node:dns/promises';
 
 const DEFAULT_DASHBOARD_URL = 'https://metrics.hussh.ai';
@@ -180,18 +181,7 @@ async function main() {
     assert(summary?.rangeTotals, `One app ${environment} range totals missing`);
     assert(summary?.activeUsers, `One app ${environment} active users missing`);
     assert(summary?.identifiedUsers, `One app ${environment} identified users missing`);
-    assert(summary?.registeredAccounts?.available === true, `One app ${environment} authoritative registered users unavailable`);
-    assert(Number.isInteger(Number(summary.registeredAccounts.totalAccounts))
-      && Number(summary.registeredAccounts.totalAccounts) >= 0,
-    `One app ${environment} total registered users invalid`);
-    assert(Number.isInteger(Number(summary.registeredAccounts.newAccounts))
-      && Number(summary.registeredAccounts.newAccounts) >= 0
-      && Number(summary.registeredAccounts.newAccounts) <= Number(summary.registeredAccounts.accountsCreatedByRangeEnd)
-      && Number(summary.registeredAccounts.accountsCreatedByRangeEnd) <= Number(summary.registeredAccounts.totalAccounts),
-    `One app ${environment} new registered users invalid`);
-    assert((summary.registeredAccounts.daily || []).reduce((total, row) => total + Number(row.newAccounts || 0), 0)
-      === Number(summary.registeredAccounts.newAccounts),
-    `One app ${environment} daily registrations do not reconcile`);
+    assert(oneAccountSummaryIssues(summary.registeredAccounts, environment).length === 0, `One app ${environment} account source contract invalid`);
     const selectedUsers = summary?.identifiedUsers?.selectedRange;
     assert(selectedUsers?.available === true, `One app ${environment} selected-range unique users unavailable`);
     assert(Number(selectedUsers.newUsers) + Number(selectedUsers.returningUsers) === Number(selectedUsers.totalUsers),
@@ -206,12 +196,6 @@ async function main() {
       assert(coverage === null || (Number(coverage) >= 0 && Number(coverage) <= 1), `One app ${environment} ${key} identity coverage invalid`);
     }
   }
-  assert(oneApp.body?.data?.production?.registeredAccounts?.totalAccounts
-    === oneApp.body?.data?.uat?.registeredAccounts?.totalAccounts,
-  'One app production and UAT shared registered-account totals differ');
-  assert(oneApp.body?.data?.production?.registeredAccounts?.newAccounts
-    === oneApp.body?.data?.uat?.registeredAccounts?.newAccounts,
-  'One app production and UAT shared new-account totals differ');
   results.push({
     check: 'one-app-analytics',
     status: 'ok',

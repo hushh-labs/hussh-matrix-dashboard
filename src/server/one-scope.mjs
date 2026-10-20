@@ -1,6 +1,22 @@
-/** Verified One application scope. Stream IDs are strings, not package aliases. */
+/** One collection scope. Verify live stream mappings before declaring cutover. */
 export const ONE_ANDROID_PACKAGE = 'com.hussh.app';
 export const ONE_ANDROID_STREAMS = { production: '15395548050', uat: '15395713075' };
+export const ONE_IOS_STREAMS = { production: '13695001361', uat: '14383415557' };
+export const ONE_WEB_STREAMS = { production: '13695004816', uat: '14383500973' };
+export const ONE_WEB_HOSTS = {
+  production: ['one.hushh.ai', 'one.hussh.ai'],
+  uat: ['uat.one.hushh.ai', 'uat.one.hussh.ai'],
+};
+export const ONE_REPORTING_SCOPE_VERSION = 'one-environment-v1';
+
+/** Private customer evidence must never be read from a UAT or arbitrary backend. */
+export function oneProductionEndpoint(value, pathname) {
+  try {
+    const url = new URL(value);
+    return url.origin === 'https://api.hushh.ai' && url.pathname === pathname
+      && !url.username && !url.password && !url.search && !url.hash ? url : null;
+  } catch { return null; }
+}
 export const ONE_ANDROID_TIMEZONE = 'Etc/GMT+8';
 export const ONE_ANDROID_EXPORT_FROM = '2026-10-07';
 // Export membership changed during October 7; October 8 is the first full day.
@@ -30,25 +46,73 @@ export function nativeRetentionWindowComplete(latestFirstOpen, completeThrough, 
 
 const literal = (value) => `'${String(value).replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
 
-export function oneAndroidSql(environment = 'production') {
+function validateEnvironment(environment) {
   if (!Object.hasOwn(ONE_ANDROID_STREAMS, environment)) throw new Error('Invalid One reporting environment');
-  return `(platform = 'ANDROID' AND app_info.id = '${ONE_ANDROID_PACKAGE}'
-    AND stream_id = '${ONE_ANDROID_STREAMS[environment]}'
-    AND COALESCE((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'debug_mode'), 0) != 1
-    AND COALESCE((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'debug_mode'), '') NOT IN ('1', 'true'))`;
 }
 
-export function oneSurfaceSql(webHost, environment = webHost === 'uat.one.hushh.ai' ? 'uat' : 'production') {
-  return `((platform = 'IOS' AND app_info.id = 'com.hushh.app')
-    OR ${oneAndroidSql(environment)}
-    OR (platform = 'WEB' AND NET.HOST((SELECT value.string_value FROM UNNEST(event_params)
-      WHERE key = 'page_location')) = ${literal(webHost)}))`;
+/** Shared by all platforms, including web and iOS; handle every debug value. */
+export function oneNonDebugSql(alias = '') {
+  if (alias && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw new Error('Invalid SQL alias');
+  const prefix = alias ? `${alias}.` : '';
+  return `NOT EXISTS (SELECT 1 FROM UNNEST(${prefix}event_params) debug_param
+    WHERE debug_param.key = 'debug_mode' AND (
+      COALESCE(debug_param.value.int_value, 0) = 1
+      OR LOWER(COALESCE(debug_param.value.string_value, '')) IN ('1', 'true'))) `;
 }
 
-/** Founder customers require a production backend tag; automatic untagged events cannot establish it. */
+export function oneAndroidSql(environment = 'production', { collectionOnly = false, alias = '' } = {}) {
+  validateEnvironment(environment);
+  const prefix = alias ? `${alias}.` : '';
+  const env = `(SELECT value.string_value FROM UNNEST(${prefix}event_params) WHERE key = 'env')`;
+  return `(${prefix}platform = 'ANDROID' AND ${prefix}app_info.id = '${ONE_ANDROID_PACKAGE}'
+    AND ${prefix}stream_id = '${ONE_ANDROID_STREAMS[environment]}'
+    AND ${oneNonDebugSql(alias)}${collectionOnly ? '' : ` AND ${env} = ${literal(environment)}`})`;
+}
+
+/**
+ * Backend-scoped product reporting. A production property or store package does
+ * not establish production use: legacy store builds can call the UAT backend.
+ * collectionOnly is reserved for explicitly labelled SDK collection diagnostics.
+ */
+export function oneSurfaceSql(webHost, environment = ONE_WEB_HOSTS.uat.includes(webHost) ? 'uat' : 'production', { collectionOnly = false, alias = '' } = {}) {
+  validateEnvironment(environment);
+  if (typeof webHost !== 'string' || !/^[a-z0-9.-]+$/i.test(webHost)) throw new Error('Invalid One web host');
+  if (ONE_WEB_HOSTS[environment === 'production' ? 'uat' : 'production'].includes(webHost)) throw new Error('One web host environment mismatch');
+  const hosts = ONE_WEB_HOSTS[environment].includes(webHost) ? ONE_WEB_HOSTS[environment] : [webHost];
+  const prefix = alias ? `${alias}.` : '';
+  const params = `${prefix}event_params`;
+  return `(((${prefix}platform = 'IOS' AND ${prefix}app_info.id = 'com.hushh.app'
+      AND ${prefix}stream_id = '${ONE_IOS_STREAMS[environment]}')
+    OR (${prefix}platform = 'ANDROID' AND ${prefix}app_info.id = '${ONE_ANDROID_PACKAGE}'
+      AND ${prefix}stream_id = '${ONE_ANDROID_STREAMS[environment]}')
+    OR (${prefix}platform = 'WEB' AND ${prefix}stream_id = '${ONE_WEB_STREAMS[environment]}'
+      AND NET.HOST((SELECT value.string_value FROM UNNEST(${params})
+        WHERE key = 'page_location')) IN (${hosts.map(literal).join(', ')})))
+    AND ${oneNonDebugSql(alias)}${collectionOnly ? '' : ` AND (SELECT value.string_value FROM UNNEST(${params}) WHERE key = 'env') = ${literal(environment)}`})`;
+}
+
+/** Founder and product reports use the same environment boundary. */
 export function oneFounderSurfaceSql(webHost) {
-  return `(${oneSurfaceSql(webHost)} AND (platform != 'ANDROID'
-    OR (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env') = 'production'))`;
+  return oneSurfaceSql(webHost, 'production');
+}
+
+/** Never serve an old property-wide feed under a new environment-scoped label. */
+export function oneFeedEnvironment(requested, sources) {
+  if (requested.length !== 3 || requested.some(value => typeof value !== 'string' || !value)) return null;
+  const matches = ['production', 'uat'].filter(environment =>
+    sources[environment]?.length === 3 && sources[environment].every((value, index) => value === requested[index]));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/** Each row must attest the same environment as the uniquely selected source. */
+export function validateOneFeedScope(rows, environment) {
+  validateEnvironment(environment);
+  const markers = rows.filter(row => row.metric_group === 'status' && row.metric_name === 'reporting_scope_version');
+  const sources = rows.filter(row => row.metric_group === 'status' && row.metric_name === 'source_environment');
+  return markers.length === 1 && sources.length === 1
+    && markers[0].metric_string_value === ONE_REPORTING_SCOPE_VERSION
+    && sources[0].metric_string_value === environment
+    && rows.every(row => row.source_environment === environment);
 }
 
 /** Empty telemetry is not evidence of zero customers. */
@@ -67,7 +131,9 @@ export function androidCaptureResult(result, range, environment = 'production') 
     latestEventAt: observed ? row.latestEventAt?.value ?? row.latestEventAt ?? null : null,
     events: num('events'), activeAppIds: num('activeAppIds'),
     identifiedAccounts: num('boundAppIds') > 0 ? num('identifiedAccounts') : null,
-    firstOpens: num('firstOpens'), routeVisits: num('routeVisits'),
+    // Automatic SDK first_open historically has no backend environment tag.
+    // A zero after filtering cannot prove zero installs/reinstalls.
+    firstOpens: null, firstOpenCoverage: 'unverified_backend_environment', routeVisits: num('routeVisits'),
     releases: observed && Array.isArray(row.releases) ? row.releases.slice(0,20).map(release=>({
       version: /^\d+\.\d+[\w.+-]{0,40}$/.test(release.version ?? '') ? release.version : 'unknown',
       installer: release.installer === 'com.android.vending' ? 'com.android.vending' : release.installer === 'unknown' ? 'unknown' : 'other',

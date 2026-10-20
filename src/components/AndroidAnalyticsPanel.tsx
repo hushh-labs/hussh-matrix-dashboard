@@ -30,7 +30,7 @@ export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one
       </div>
       {data.releases.some((row) => row.environment === 'uat') && <p className="mt-3 rounded-lg bg-warning-soft p-3 text-xs text-warning">Some Android events came from a build using the UAT backend. These measurements are not evidence of production-backend customers. Untagged automatic events do not establish backend environment.</p>}
     </>}
-    <p className="mt-3 text-xs leading-5 text-muted">Screen activity, activation, retention and feature use are in the One sections below. Firebase first_open counts a first launch after installation or reinstallation, not a Play Store download. Export data starts when the stream is included; missing historical raw events are not reconstructed.</p>
+    <p className="mt-3 text-xs leading-5 text-muted">Screen activity and feature use below require the selected backend environment. Automatic first_open events without backend provenance cannot establish environment-specific installs or retention. Store downloads are separate; missing historical raw events are not reconstructed.</p>
     <MetricsUpdateStatus period={startDate && endDate ? `${startDate} to ${endDate}` : undefined} updatedAt={resource.updatedAt} loading={loading} refreshing={resource.refreshing} error={error} />
     {environment==='production' ? <AndroidProviderReport report={report} loading={loading} error={error} /> : <p className="mt-4 text-xs text-muted">Play Store and Android history reports are available in Main analytics.</p>}
   </section>;

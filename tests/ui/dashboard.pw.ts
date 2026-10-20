@@ -224,7 +224,7 @@ test('daily agent traffic shows real drops, withholds missing data and preserves
   await expect(section).toBeVisible();
 });
 
-test('test-source empty cards lead to captured mobile metrics without mixing source counts or dates', async ({ page }) => {
+test('test-source empty cards never substitute production mobile metrics', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await mockDashboard(page);
   const uat = { ...one, sourceWebHost: 'uat.one.hushh.ai', platforms: one.platforms.filter(row => row.platform === 'WEB') };
@@ -233,12 +233,13 @@ test('test-source empty cards lead to captured mobile metrics without mixing sou
   const dates = await page.getByLabel('One app specific day', { exact: true }).inputValue();
   await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
   const platforms = page.getByRole('region', { name: 'One activity by platform', exact: true });
-  await expect(platforms).toContainText('iOS app and Android app activity is available in Main analytics for these same dates.');
+  await expect(platforms).toContainText('Production metrics are not used as a fallback.');
+  await expect(platforms.getByRole('button', { name: 'View captured mobile metrics', exact: true })).toHaveCount(0);
   await expect(platforms).toContainText('No iOS activity in Test analytics for these dates.');
   await expect(platforms).toContainText('No Android activity in Test analytics for these dates.');
   await expect(platforms.getByText('Active app-instance IDs', { exact: true })).toHaveCount(0);
   await assertFits(page);
-  await platforms.getByRole('button', { name: 'View captured mobile metrics', exact: true }).click();
+  await page.getByRole('tab', { name: 'Main analytics', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Main analytics', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(platforms.getByText('Active app-instance IDs', { exact: true })).toHaveCount(2);
   await expect(page.getByLabel('One app specific day', { exact: true })).toHaveValue(dates);

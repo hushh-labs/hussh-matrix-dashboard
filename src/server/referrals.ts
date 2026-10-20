@@ -7,6 +7,18 @@ import { hydrateReferralNames, referralViewer, type DirectoryAccount, type Direc
 const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
 const pools = new Map<string, Promise<pg.Pool>>();
 
+/** Reject an environment secret accidentally wired to the other database. */
+export function validateReferralSource(environment: string, config: { instance?: string; database?: string }) {
+  const expected = environment === 'production'
+    ? { instance: 'hushh-pda:us-central1:hushh-vault-db', database: 'hushh_vault' }
+    : environment === 'uat'
+      ? { instance: 'hushh-pda-uat:us-central1:hushh-uat-pg', database: 'postgres' }
+      : null;
+  if (!expected || config.instance !== expected.instance || config.database !== expected.database) {
+    throw new Error('Referral source environment mismatch');
+  }
+}
+
 async function bounded<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -25,6 +37,7 @@ async function poolFor(environment: string) {
         url: `https://secretmanager.googleapis.com/v1/${resource}:access`, timeout: 15_000,
       });
       const config = JSON.parse(Buffer.from(response.data.payload.data, 'base64').toString('utf8'));
+      validateReferralSource(environment, config);
       const connector = new Connector();
       try {
         const options = await bounded(connector.getOptions({ instanceConnectionName: config.instance }), 20_000);
@@ -79,14 +92,15 @@ async function readSource(environment: ReferralEnvironment, query: ReferralQuery
 export async function resolveReferralRankings(query: ReferralQuery,
   read: (environment: ReferralEnvironment, query: ReferralQuery) => Promise<ReferralSourcePage>): Promise<ReferralRankings> {
   const names: ReferralEnvironment[] = ['production', 'uat'];
+  const environment = query.environment ?? 'production';
   const pages = await Promise.allSettled(names.map(environment => read(environment,
-    environment === query.environment ? query : { ...query, afterRank: 0, snapshotId: undefined })));
+    environment === (query.environment ?? 'production') ? { ...query, environment }
+      : { ...query, environment, afterRank: 0, snapshotId: undefined })));
   const sources = names.map((environment, index) => ({ environment,
     state: pages[index].status === 'fulfilled' ? pages[index].value.state : 'unavailable' as const }));
   const environments = names.filter((_, index) => pages[index].status === 'fulfilled'
     && pages[index].value.state === 'available' && (pages[index].value.entryCount ?? 0) > 0);
-  const environment = query.environment ?? environments[0]
-    ?? names.find((_, index) => pages[index].status === 'fulfilled') ?? null;
+  // Empty or failed production is never replaced with testing activity.
   const selected = environment ? pages[names.indexOf(environment)] : undefined;
   // The app gates circle standings. Never synthesize them from private circles.
   if (query.board === 'circles') return { state: 'preview', board: query.board, environment, environments, sources,
@@ -95,8 +109,21 @@ export async function resolveReferralRankings(query: ReferralQuery,
   return { ...selected.value, board: query.board, environment, environments, sources };
 }
 
-export async function readReferralRankings(query: ReferralQuery, viewerEmail: string, firebaseProject: string): Promise<ReferralRankings> {
-  const lookupDirectory = directoryLookup(firebaseProject);
-  const viewerId = query.board === 'individual' ? await referralViewer(viewerEmail, lookupDirectory) : null;
-  return resolveReferralRankings(query, (environment, scope) => readSource(environment, scope, viewerId, lookupDirectory));
+export function resolveReferralRankingsForViewer(query: ReferralQuery, viewerEmail: string,
+  directories: Record<ReferralEnvironment, DirectoryLookup>,
+  read: typeof readSource = readSource): Promise<ReferralRankings> {
+  return resolveReferralRankings(query, async (environment, scope) => {
+    const lookup = directories[environment];
+    const viewerId = scope.board === 'individual' ? await referralViewer(viewerEmail, lookup) : null;
+    return read(environment, scope, viewerId, lookup);
+  });
+}
+
+export async function readReferralRankings(query: ReferralQuery, viewerEmail: string,
+  projects: Record<ReferralEnvironment, string>): Promise<ReferralRankings> {
+  // Missing UAT identity configuration keeps names anonymous; PROD is no fallback.
+  const lookup = (project: string): DirectoryLookup => project ? directoryLookup(project) : async () => [];
+  return resolveReferralRankingsForViewer(query, viewerEmail, {
+    production: lookup(projects.production), uat: lookup(projects.uat),
+  });
 }

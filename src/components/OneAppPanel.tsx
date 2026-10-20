@@ -214,7 +214,7 @@ function RegisteredUsers({ one }: { one: OneAppSummary }) {
   const accounts = one.registeredAccounts;
   if (!accounts) return null;
 
-  if (!accounts.available || accounts.totalAccounts === null || accounts.newAccounts === null) {
+  if (!accounts.available || accounts.registryScope !== 'isolated' || accounts.sharedAcrossEnvironments || accounts.totalAccounts === null || accounts.newAccounts === null) {
     return (
       <div className="flex items-start gap-3 rounded-2xl border border-[#d8c48b] bg-warning-soft p-4 text-warning">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
@@ -264,7 +264,7 @@ function RegisteredUsers({ one }: { one: OneAppSummary }) {
       <div className="flex items-start gap-3 rounded-2xl border border-[#b8e6c2] bg-[#f2fff5] p-4 text-[#1f6d32]">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <p className="text-sm font-semibold leading-5">
-          System of record: {accounts.sourceLabel}. Production and UAT share this One identity realm, while their backend routing and GA4 reporting stay separate.
+          System of record: {accounts.sourceLabel}. {accounts.identityRealm}. Only this environment's verified registry is counted.
           Each immutable Firebase account ID is counted once, so repeat sign-ins, sessions, events and devices cannot inflate these values.
           New means the account creation timestamp falls inside the selected range. Separately created accounts cannot be proven to belong to different humans, and deleted accounts are not present in the current registry snapshot.
         </p>
@@ -312,16 +312,17 @@ function IosIdentifiedUsers({ one }: { one: OneAppSummary }) {
 
 function OneAtAGlance({ one }: { one: OneAppSummary }) {
   const registered = one.registeredAccounts;
+  const isolated = registered?.available && registered.registryScope === 'isolated' && !registered.sharedAcrossEnvironments;
   const tiles = [
     {
       group: 'Users', label: 'Total registered accounts',
-      value: registered?.available ? registered.totalAccounts : null,
-      detail: 'Current Firebase accounts · production and UAT share this realm',
+      value: isolated ? registered.totalAccounts : null,
+      detail: isolated ? `Current ${registered.identityRealm} accounts` : registered?.note || 'Environment account membership has not been verified.',
     },
     {
       group: 'Users', label: 'New registered accounts',
-      value: registered?.available ? registered.newAccounts : null,
-      detail: 'Firebase accounts created during selected dates · shared production/UAT realm',
+      value: isolated ? registered.newAccounts : null,
+      detail: isolated ? 'Accounts created during the selected dates in this environment' : registered?.note || 'Environment account membership has not been verified.',
     },
     {
       group: 'Users', label: 'Active signed-in accounts',
@@ -351,7 +352,7 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
         ))}
       </div>
       <p className="text-xs leading-5 text-muted">
-        Active accounts and new registrations use {one.range?.startDate} to {one.range?.endDate}; total registrations are a current shared Firebase snapshot. Anonymous activity is excluded from account counts. Production and UAT use the same Firebase identity realm.
+        Active accounts and new registrations use {one.range?.startDate} to {one.range?.endDate}. Total registrations require a verified environment-specific registry. Anonymous activity is excluded from account counts. Account counts do not certify unique humans or complete staff/test exclusion.
       </p>
     </div>
   );
@@ -378,14 +379,6 @@ export function PlatformsAtAGlance({ one, environment, mainAnalytics, onViewMain
   }
 
   const sourceName = environment === 'uat' ? 'Test analytics' : 'Main analytics';
-  const sameDates = Boolean(one.range?.startDate && one.range?.endDate
-    && one.range.startDate === mainAnalytics?.range?.startDate && one.range.endDate === mainAnalytics?.range?.endDate);
-  const mobileInMain = environment === 'uat' && sameDates && mainAnalytics?.available
-    && mainAnalytics.platformsAvailable === true && Array.isArray(mainAnalytics.platforms)
-    ? mainAnalytics.platforms.filter(row => ['IOS', 'ANDROID'].includes(row.platform.toUpperCase())
-      && row.events > 0 && !one.platforms.some(current => current.platform.toUpperCase() === row.platform.toUpperCase()))
-    : [];
-  const mobileNames = mobileInMain.map(row => platformLabel(row.platform)).join(' and ');
   const platformCards = [
     { key: 'WEB', title: 'One web', scope: `${one.sourceWebHost ?? (environment === 'uat' ? 'uat.one.hushh.ai' : 'one.hushh.ai')} browsers only` },
     { key: 'IOS', title: 'One iOS', scope: 'iOS app activity' },
@@ -400,13 +393,6 @@ export function PlatformsAtAGlance({ one, environment, mainAnalytics, onViewMain
           Same selected dates for each surface. Signed-in accounts are users we can identify; browser/app IDs are not unique people.
         </p>
       </div>
-      {mobileInMain.length > 0 && (
-        <div className="rounded-xl border border-brand-600/20 bg-brand-50 p-4 text-sm leading-6 text-ink" role="status">
-          <p className="font-semibold">{mobileNames} activity is available in Main analytics for these same dates.</p>
-          <p className="mt-1 text-muted">Mobile apps can use the test backend while sending activity to Main analytics. The analytics source and the app backend are separate settings.</p>
-          {onViewMainAnalytics && <button type="button" onClick={onViewMainAnalytics} className="mt-3 rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">View captured mobile metrics</button>}
-        </div>
-      )}
       <div className="grid gap-4 lg:grid-cols-3">
         {platformCards.map(({ key, title, scope }) => {
           const row = one.platforms.find((item) => item.platform.toUpperCase() === key);
@@ -419,7 +405,6 @@ export function PlatformsAtAGlance({ one, environment, mainAnalytics, onViewMain
               {!row ? (
                 <div className="mt-5 text-sm leading-6">
                   <p className="font-semibold text-muted">No {key === 'WEB' ? 'web' : key === 'IOS' ? 'iOS' : 'Android'} activity in {sourceName} for these dates.</p>
-                  {mobileInMain.some(item => item.platform.toUpperCase() === key) && <p className="mt-2 text-brand-600">Captured app activity is in Main analytics. Use “View captured mobile metrics” above.</p>}
                 </div>
               ) : (
                 <>
@@ -444,9 +429,9 @@ export function PlatformsAtAGlance({ one, environment, mainAnalytics, onViewMain
           );
         })}
       </div>
-      {environment === 'uat' && mobileInMain.length === 0 && !one.platforms.some((row) => row.platform.toUpperCase() === 'IOS' || row.platform.toUpperCase() === 'ANDROID') && (
+      {environment === 'uat' && !one.platforms.some((row) => row.platform.toUpperCase() === 'IOS' || row.platform.toUpperCase() === 'ANDROID') && (
         <p className="rounded-xl border border-stroke bg-brand-50 p-3 text-xs font-semibold leading-5 text-brand-600">
-          This source has no mobile activity for these dates. Mobile apps can report to Main analytics even when they use the test backend. Check Main analytics or choose another date range.
+          No mobile activity with verified UAT environment and stream was observed for these dates. Production metrics are not used as a fallback.
         </p>
       )}
       <p className="text-xs leading-5 text-muted">These platform account rows can overlap and must not be added. The global active-account card deduplicates account IDs across surfaces. Store downloads, crashes and physical devices need separate sources and are not measured by these cards.</p>
@@ -623,7 +608,7 @@ function GrowthQuality({ one }: { one: OneAppSummary }) {
  * coverage, including gaps, rather than the cohort's position in the chart.
  */
 export function Retention({ one }: { one: OneAppSummary }) {
-  if (one.retention.length === 0) {
+  if (one.retentionAvailable === false || one.retention.length === 0) {
     return (
       <div className={cn(dashboardPanel, 'p-6 text-center')}>
         <p className="text-sm font-semibold text-muted">
@@ -748,7 +733,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
     return (
       <div className={cn(dashboardPanel, 'p-6 text-center')}>
         <p className="text-sm font-semibold text-muted">
-          No native first-open events (iOS/Android) recorded in this window.
+          Environment-specific first-open coverage is not verified; no install or conversion count is inferred.
         </p>
       </div>
     );
@@ -1231,7 +1216,7 @@ function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rang
         same account across devices, while clearly showing how much device traffic has no bound identity.
         Native and <code className="rounded bg-surface/70 px-1 py-0.5 text-xs">{one.sourceWebHost ?? 'one.hushh.ai'}</code> only;
         every other web host is excluded. {environment === 'production' && nativeUatTagged
-          ? 'Public mobile-build events tagged for the UAT backend remain visible, but backend environment and GA4 property are reported separately. '
+          ? 'Collection diagnostics contain UAT-tagged mobile events; these are excluded from the PROD account and behaviour totals. '
           : ''}Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
         {rangeLabel}
         {lagHours ? ` · data lands about ${lagHours}h behind` : ''}
@@ -1372,8 +1357,8 @@ export function OneAppPanel({
             </div>
             <p className="text-xs font-semibold leading-5 text-muted">
               {environment === 'production'
-                ? 'Live website and mobile app activity, including mobile builds using the test backend. Backend labels appear separately.'
-                : 'Activity sent to the test analytics source. Test-backend mobile builds may send their activity to Main analytics instead.'}
+                ? 'PROD-tagged activity from approved production web and mobile streams. UAT, debug and untagged activity are excluded.'
+                : 'UAT-tagged activity from approved UAT web and mobile streams. Production data is never a fallback.'}
             </p>
           </div>
           <div className="shrink-0">{dateControl}</div>
@@ -1383,7 +1368,7 @@ export function OneAppPanel({
           <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#465fff]/20 bg-[#465fff]/[0.06] px-4 py-3 text-sm font-semibold leading-5 text-brand-600">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
-              Some mobile activity here uses the test backend: {nativeUatTagged.map((row) => `${platformLabel(row.platform)} ${formatNumber(row.events)} recorded actions`).join(', ')}. These actions are included in Main analytics and are separate from live-backend customer activity.
+              Collection diagnostics: {nativeUatTagged.map((row) => `${platformLabel(row.platform)} ${formatNumber(row.events)} UAT-tagged events`).join(', ')} reached this analytics source. They are excluded from PROD account and behaviour totals.
             </p>
           </div>
         )}
@@ -1412,7 +1397,7 @@ export function OneAppPanel({
             <p><strong>First opens, activation, retention and agents:</strong> these describe device journeys, first value, week-1 return, and deliberate feature use. Their percentages use the stated device cohort as the denominator; they are not account growth.</p>
           </div>
           <p className="mt-3 border-t border-stroke pt-3 text-xs font-semibold text-muted">
-            Production and UAT are reporting-property selections, not a claim about which backend a mobile build calls. Public iOS builds can appear in the production GA4 property while still using the UAT backend.
+            Reporting requires both the selected backend environment tag and its approved app/stream/host. Property membership alone cannot qualify activity. {activeData.acquisitionScopeNote}
           </p>
         </details>
         <details className="group">

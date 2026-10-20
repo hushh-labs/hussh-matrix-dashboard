@@ -6,9 +6,18 @@ interchangeably.
 
 ## Headline registered-user KPIs
 
-The headline user KPIs come from the shared One Firebase Authentication realm.
-Production and UAT keep separate backend routing and GA4 properties, but both
-builds authenticate accounts in this same identity registry.
+Production and UAT already have separate GCP projects, backend services,
+databases and GA4 properties. Their documented Firebase Authentication realm
+is shared. A raw shared directory total therefore cannot prove environment
+membership, even when each immutable UID is deduplicated correctly.
+
+The environment-isolation reporting change withholds headline registration
+counts until its directory source is verified. Its current Firebase reader
+supports verified separate directories. Keeping shared Auth is also compatible
+with accurate reporting, but requires a separate, verified membership source
+from the existing environment backends; that reader is not implemented here.
+Neither new databases nor a Firebase migration is a prerequisite for filtering
+environment-labelled usage. See [environment isolation](environment-isolation.md).
 
 - **Total registered users**: current distinct Firebase Authentication account
   records, deduplicated by immutable Firebase UID.
@@ -77,7 +86,8 @@ other directly identifying value is not allowed.
   selected-range users, active-user windows, devices, totals, and platform rows.
 - A second reconciliation independently reads Firebase Authentication in
   memory and must exactly match total, new, created-through-range-end, and
-  disabled account aggregates for both dashboard environment views. It logs
+  disabled account aggregates independently for each verified dashboard source;
+  it no longer requires shared totals to match across both environments. It logs
   only counts and never account records or identifiers.
 
 ## One Location request fulfilment

@@ -42,7 +42,7 @@ describe('One Android reporting contract', () => {
     expect(androidCaptureResult({rows:[{events:0}]}, range)).toMatchObject({state:'waiting',events:null,identifiedAccounts:null});
     expect(androidCaptureResult({rows:[],error:'failure'},range)).toMatchObject({state:'unavailable',firstOpens:null});
     expect(androidCaptureResult({rows:[{events:5,firstOpens:0,boundAppIds:1,identifiedAccounts:1,activeAppIds:1}]},range))
-      .toMatchObject({state:'observed',firstOpens:0,identifiedAccounts:1});
+      .toMatchObject({state:'observed',firstOpens:null,firstOpenCoverage:'unverified_backend_environment',identifiedAccounts:1});
     expect(androidCaptureResult({rows:[{events:5,boundAppIds:0,identifiedAccounts:0}]},range).identifiedAccounts).toBeNull();
     const releases = androidCaptureResult({rows:[{events:5,releases:[{events:null},{events:undefined},{events:''},{events:'0'},{events:'5'}]}]},range).releases;
     expect(releases.map(row=>row.events)).toEqual([null,null,null,0,5]);

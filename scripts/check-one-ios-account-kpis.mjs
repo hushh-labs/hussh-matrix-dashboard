@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Read-only, aggregate-only reconciliation of the One iOS account KPIs. */
 import { BigQuery } from '@google-cloud/bigquery';
+import { oneSurfaceSql } from '../src/server/one-scope.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -44,6 +45,7 @@ const query = `
       AND (NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
         OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (SELECT day_suffix FROM finalized_dates))
       AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
+      AND ${oneSurfaceSql('one.hushh.ai', 'production')}
       AND event_name NOT IN (${ignored})
       AND user_id IS NOT NULL AND user_id != ''
   ), history AS (
