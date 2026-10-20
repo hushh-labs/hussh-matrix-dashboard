@@ -63,17 +63,18 @@ BEGIN
   END IF;
   RETURN jsonb_set(base, '{entries}', (
     SELECT COALESCE(jsonb_agg(row.item || jsonb_build_object(
-      'profileUserId', CASE WHEN row.item->>'handle' = 'Anonymous referrer' AND (
+      'profileUserId', CASE WHEN NULLIF(btrim(chosen_alias.handle), '') IS NULL AND (
         entry.user_id = viewer_user_id OR eligible.user_id IS NOT NULL
       ) THEN entry.user_id END,
-      'profileName', CASE WHEN row.item->>'handle' = 'Anonymous referrer'
+      'profileName', CASE WHEN NULLIF(btrim(chosen_alias.handle), '') IS NULL
         AND entry.user_id <> viewer_user_id THEN label.name END
     ) ORDER BY entry.rank), '[]'::jsonb)
     FROM jsonb_array_elements(base->'entries') row(item)
     JOIN public.one_referral_leaderboard_snapshot_entries entry
       ON entry.snapshot_id = (base->>'snapshotId')::uuid AND entry.rank = (row.item->>'rank')::integer
+    LEFT JOIN public.one_referral_display_handles chosen_alias ON chosen_alias.user_id = entry.user_id
     LEFT JOIN public.actor_profiles eligible ON eligible.user_id = entry.user_id
-      AND row.item->>'handle' = 'Anonymous referrer'
+      AND NULLIF(btrim(chosen_alias.handle), '') IS NULL
       AND eligible.user_id <> viewer_user_id AND eligible.public_profile_status = 'active'
       AND (
         EXISTS (SELECT 1 FROM public.vault_keys vault WHERE vault.user_id = entry.user_id AND vault.vault_status = 'active')
