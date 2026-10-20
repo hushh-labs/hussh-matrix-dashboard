@@ -5910,14 +5910,15 @@ function registerAnalyticsRoutes(app: express.Express): void {
     if (!(req as any).sessionUser) { res.status(401).json({ error: 'Sign in to view referral rankings.' }); return; }
     next();
   });
-  api.get('/api/analytics/one/referrals', async (req, res) => {
+  // Names are viewer-permitted. Never put them in the shared aggregate cache.
+  app.get('/api/analytics/one/referrals', async (req, res) => {
     const { parseReferralQuery } = await import('./src/lib/referrals');
     let query: ReturnType<typeof parseReferralQuery>;
     try { query = parseReferralQuery(req.query); }
     catch { res.status(400).json({ error: 'Choose a valid referral leaderboard and snapshot cursor.' }); return; }
     try {
       const { readReferralRankings } = await import('./src/server/referrals');
-      res.json(await readReferralRankings(query));
+      res.json(await readReferralRankings(query, ((req as any).sessionUser as SessionUser).email, ONE_FIREBASE_AUTH_PROJECT));
     } catch {
       res.status(503).json({ state: 'unavailable', error: 'Referral rankings are temporarily unavailable.' });
     }
