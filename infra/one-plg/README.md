@@ -1,7 +1,9 @@
 # One PLG infrastructure
 
 Reviewable provisioning for the pilot. Nothing in this directory has been
-applied. The user requires PR-only work and has not authorized a merge or release.
+applied. Matrix and the audience follow-up remain PR-only; their merge,
+provisioning and production activation have not been authorized. The earlier
+backend foundation PR8240 was separately authorized, merged and deployed to UAT.
 
 ## Resources
 
