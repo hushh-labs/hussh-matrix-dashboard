@@ -70,7 +70,7 @@ scoped AS (
       AND e.stream_id = '15395548050')
     OR (e.platform = 'WEB' AND e.stream_id = '13695004816'
       AND NET.HOST((SELECT value.string_value FROM UNNEST(e.event_params)
-        WHERE key = 'page_location')) = 'one.hushh.ai'))
+        WHERE key = 'page_location')) IN ('one.hushh.ai', 'one.hussh.ai')))
     AND NOT EXISTS (SELECT 1 FROM UNNEST(e.event_params) debug_param
     WHERE debug_param.key = 'debug_mode' AND (
       COALESCE(debug_param.value.int_value, 0) = 1

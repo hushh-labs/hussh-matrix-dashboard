@@ -3,6 +3,10 @@ export const ONE_ANDROID_PACKAGE = 'com.hussh.app';
 export const ONE_ANDROID_STREAMS = { production: '15395548050', uat: '15395713075' };
 export const ONE_IOS_STREAMS = { production: '13695001361', uat: '14383415557' };
 export const ONE_WEB_STREAMS = { production: '13695004816', uat: '14383500973' };
+export const ONE_WEB_HOSTS = {
+  production: ['one.hushh.ai', 'one.hussh.ai'],
+  uat: ['uat.one.hushh.ai', 'uat.one.hussh.ai'],
+};
 export const ONE_REPORTING_SCOPE_VERSION = 'one-environment-v1';
 
 /** Private customer evidence must never be read from a UAT or arbitrary backend. */
@@ -70,9 +74,11 @@ export function oneAndroidSql(environment = 'production', { collectionOnly = fal
  * not establish production use: legacy store builds can call the UAT backend.
  * collectionOnly is reserved for explicitly labelled SDK collection diagnostics.
  */
-export function oneSurfaceSql(webHost, environment = webHost === 'uat.one.hushh.ai' ? 'uat' : 'production', { collectionOnly = false, alias = '' } = {}) {
+export function oneSurfaceSql(webHost, environment = ONE_WEB_HOSTS.uat.includes(webHost) ? 'uat' : 'production', { collectionOnly = false, alias = '' } = {}) {
   validateEnvironment(environment);
   if (typeof webHost !== 'string' || !/^[a-z0-9.-]+$/i.test(webHost)) throw new Error('Invalid One web host');
+  if (ONE_WEB_HOSTS[environment === 'production' ? 'uat' : 'production'].includes(webHost)) throw new Error('One web host environment mismatch');
+  const hosts = ONE_WEB_HOSTS[environment].includes(webHost) ? ONE_WEB_HOSTS[environment] : [webHost];
   const prefix = alias ? `${alias}.` : '';
   const params = `${prefix}event_params`;
   return `(((${prefix}platform = 'IOS' AND ${prefix}app_info.id = 'com.hushh.app'
@@ -81,7 +87,7 @@ export function oneSurfaceSql(webHost, environment = webHost === 'uat.one.hushh.
       AND ${prefix}stream_id = '${ONE_ANDROID_STREAMS[environment]}')
     OR (${prefix}platform = 'WEB' AND ${prefix}stream_id = '${ONE_WEB_STREAMS[environment]}'
       AND NET.HOST((SELECT value.string_value FROM UNNEST(${params})
-        WHERE key = 'page_location')) = ${literal(webHost)}))
+        WHERE key = 'page_location')) IN (${hosts.map(literal).join(', ')})))
     AND ${oneNonDebugSql(alias)}${collectionOnly ? '' : ` AND (SELECT value.string_value FROM UNNEST(${params}) WHERE key = 'env') = ${literal(environment)}`})`;
 }
 

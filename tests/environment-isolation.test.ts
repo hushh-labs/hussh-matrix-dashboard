@@ -69,6 +69,11 @@ describe('One reporting environment boundary', () => {
     expect(prod).toContain("stream_id = '13695001361'");
     expect(uat).toContain("stream_id = '14383415557'");
     expect(prod).not.toContain("= 'uat'");
+    expect(prod).toContain("IN ('one.hushh.ai', 'one.hussh.ai')");
+    expect(uat).toContain("IN ('uat.one.hushh.ai', 'uat.one.hussh.ai')");
+    expect(oneSurfaceSql('one.hussh.ai', 'production')).toBe(prod);
+    expect(oneSurfaceSql('uat.one.hussh.ai')).toBe(uat);
+    expect(() => oneSurfaceSql('uat.one.hussh.ai', 'production')).toThrow('environment mismatch');
     expect(oneFounderSurfaceSql('one.hushh.ai')).toBe(prod);
     expect(() => oneSurfaceSql('one.hushh.ai', 'unknown')).toThrow();
     expect(() => oneSurfaceSql("one.hushh.ai' OR TRUE", 'production')).toThrow();

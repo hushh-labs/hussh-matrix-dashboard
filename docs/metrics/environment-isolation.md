@@ -21,6 +21,12 @@ summaries, current and historical account windows, Overview, Growth, founder
 reports, AI snapshots and generated aggregate feeds. Marketing acquisition
 retains a separate web-only denominator.
 
+Verified production web aliases are `one.hushh.ai` and `one.hussh.ai`; UAT
+aliases are `uat.one.hushh.ai` and `uat.one.hussh.ai`. The deployment source check
+found current web traffic on the `hussh.ai` aliases, so both approved spellings
+must remain eligible within their own stream/backend environment. No wildcard
+host or opposite-environment alias is admitted.
+
 Referral reporting uses the existing separate database connections. Before
 opening a pool, it validates the selected secret's instance and database against
 the environment contract; a UAT secret pointing at PROD is refused. This does not

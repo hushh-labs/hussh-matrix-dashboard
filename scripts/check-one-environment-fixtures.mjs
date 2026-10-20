@@ -10,9 +10,18 @@ function event(id, platform, stream, app, env, extra = {}) {
     params: [{ key: 'env', text: env }, ...(platform === 'WEB' ? [{ key: 'page_location', text: env === 'uat' ? 'https://uat.one.hushh.ai/one' : 'https://one.hushh.ai/one' }] : [])], ...extra });
 }
 event('prod-web', 'WEB', '13695004816', '', 'production');
+event('prod-web-alias', 'WEB', '13695004816', '', 'production', { params: [
+  { key: 'env', text: 'production' }, { key: 'page_location', text: 'https://one.hussh.ai/one' },
+] });
 event('prod-ios', 'IOS', '13695001361', 'com.hushh.app', 'production');
 event('prod-android', 'ANDROID', '15395548050', 'com.hussh.app', 'production');
 event('uat-web', 'WEB', '14383500973', '', 'uat');
+event('uat-web-alias', 'WEB', '14383500973', '', 'uat', { params: [
+  { key: 'env', text: 'uat' }, { key: 'page_location', text: 'https://uat.one.hussh.ai/one' },
+] });
+event('foreign-web-host', 'WEB', '13695004816', '', 'production', { params: [
+  { key: 'env', text: 'production' }, { key: 'page_location', text: 'https://uat.one.hussh.ai/one' },
+] });
 event('uat-ios', 'IOS', '14383415557', 'com.hushh.app', 'uat');
 event('uat-android', 'ANDROID', '15395713075', 'com.hussh.app', 'uat');
 event('legacy-public-uat', 'IOS', '13695001361', 'com.hushh.app', 'uat');
@@ -36,7 +45,7 @@ for (const environment of ['production', 'uat']) {
     SELECT ARRAY_AGG(id ORDER BY id) AS retained, COUNT(DISTINCT user_id) AS accounts
     FROM fixture WHERE ${oneSurfaceSql(environment === 'production' ? 'one.hushh.ai' : 'uat.one.hushh.ai', environment)}`;
   const [result] = await bq.query({ query, params: { fixtures: JSON.stringify(rows) }, location: 'US', maximumBytesBilled: '10000000', jobTimeoutMs: 30000 });
-  const expected = environment === 'production' ? ['prod-android','prod-ios','prod-web'] : ['uat-android','uat-ios','uat-web'];
+  const expected = environment === 'production' ? ['prod-android','prod-ios','prod-web','prod-web-alias'] : ['uat-android','uat-ios','uat-web','uat-web-alias'];
   assert.deepEqual(result[0].retained, expected);
   assert.equal(Number(result[0].accounts), 1);
   console.log(JSON.stringify({ environment, retainedSyntheticEvents: expected.length, distinctAccounts: 1, passed: true }));
