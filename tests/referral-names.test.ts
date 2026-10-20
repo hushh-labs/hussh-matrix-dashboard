@@ -25,6 +25,15 @@ describe('referral profile names',()=>{
     expect(lookup).not.toHaveBeenCalled();
     expect(result.entries.map(row=>row.handle)).toEqual(['Chosen alias',anonymous]);
   });
+  it('does not infer a real name behind a chosen alias equal to the anonymous wording',async()=>{
+    // The SQL projection omits candidates whenever an actual alias row exists,
+    // even if that chosen alias happens to read "Anonymous referrer".
+    const lookup=vi.fn(async()=>[{localId:'first-id',displayName:'Private Person'}]);
+    const result=await hydrateReferralNames({...page,entries:[
+      {rank:1,handle:anonymous,points:730,profileUserId:null,profileName:null},
+    ]},lookup);
+    expect(lookup).not.toHaveBeenCalled();expect(result.entries[0].handle).toBe(anonymous);
+  });
   it('does not reveal cached names for deleted or disabled accounts',async()=>{
     const result=await hydrateReferralNames(page,async()=>[{localId:'first-id',disabled:true,displayName:'Disabled Person'}]);
     expect(result.entries.every(row=>row.handle===anonymous)).toBe(true);
