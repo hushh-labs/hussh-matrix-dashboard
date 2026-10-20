@@ -45,13 +45,14 @@ export function PlgAgentActivityPanel({ state, busy, refresh, inspect }: {
         <p className="mt-1 text-xs text-muted">Includes internal and unavailable agents for coverage. Their presence does not enable them or create a campaign.</p>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="border-b border-stroke text-xs text-muted"><tr><th className="p-3">Agent</th><th className="p-3">Availability</th><th className="p-3">Observed accounts</th><th className="p-3">Execution returns</th><th className="p-3">App reports</th><th className="p-3">Errors</th></tr></thead>
+            <thead className="border-b border-stroke text-xs text-muted"><tr><th className="p-3">Agent</th><th className="p-3">Availability</th><th className="p-3">Verified value definition</th><th className="p-3">Observed accounts</th><th className="p-3">Execution returns</th><th className="p-3">App reports</th><th className="p-3">Errors</th></tr></thead>
             <tbody>{catalog.agents.map((a) => {
               const reports = state.contacts.flatMap((c) => c.activity?.agents.filter((row) => row.agentId === a.id) ?? []);
               const connected = state.contacts.some((c) => c.activity?.enabled && c.activity.epoch);
               return <tr key={a.id} className="border-b border-stroke last:border-0">
                 <td className="p-3"><button className="font-semibold text-ink underline-offset-4 hover:underline" onClick={() => setAgent(a.id)}>{a.label}</button></td>
                 <td className="p-3 text-muted">{!a.public ? 'Internal' : a.available ? 'Available' : 'Unavailable'}</td>
+                <td className="min-w-[240px] max-w-sm p-3 text-xs text-muted"><p className="font-medium text-ink">{a.outcome?.label ?? (['agent_personal_information', 'agent_email'].includes(a.id) ? 'Verified task completion' : !a.public ? 'Internal stage' : 'Outcome not measured')}</p>{a.outcome && <p className="mt-1 leading-5">{a.outcome.reason}</p>}</td>
                 <td className="p-3">{connected ? reports.length : 'Not collected'}</td>
                 <td className="p-3">{connected ? reports.reduce((n, row) => n + row.executed, 0) : '—'}</td>
                 <td className="p-3">{connected ? reports.reduce((n, row) => n + row.reported, 0) : '—'}</td>

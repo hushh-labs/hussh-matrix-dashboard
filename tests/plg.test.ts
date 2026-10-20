@@ -79,6 +79,20 @@ describe('Private One audience contract', () => {
     expect(result.rows).toEqual([]); expect(result.nextCursor).toBe(source.nextCursor);
     await expect(readOneAudience({ ...filters, query: 'x'.repeat(101) }, options)).rejects.toThrow('valid audience filters');
   });
+  it('accepts authoritative One outcomes and rejects proof belonging to another agent', async () => {
+    const source: any = fixture();
+    source.catalog.agents[0].outcome = { status: 'supported', proof: 'one.distinct_domain_effects.v1',
+      label: 'Distinct verified task outcomes', reason: 'Retained positive domain evidence only.' };
+    source.rows[0].verified = { supported: true, proof: 'one.distinct_domain_effects.v1', count: 1,
+      lastAt: new Date(NOW).toISOString(), limited: false };
+    const result = await readOneAudience(filters, options, (async () => Response.json(source)) as typeof fetch, NOW);
+    expect(result.rows[0].verified.count).toBe(1);
+    expect(result.catalog.agents[0].outcome?.status).toBe('supported');
+    for (const proof of [undefined, 'mail.provider_send.v1', 'execution_observed']) {
+      source.rows[0].verified.proof = proof;
+      await expect(readOneAudience(filters, options, (async () => Response.json(source)) as typeof fetch, NOW)).rejects.toThrow('unavailable');
+    }
+  });
 });
 const runtime: PlgRuntime = {
   enabled: true,
@@ -495,6 +509,75 @@ describe('One retained task evidence bridge', () => {
     expect(result.inspection?.deleted).toBe(true);
     state = await store.read();
     expect(state.contacts).toEqual([]);
+  });
+  const supportedSource = (change: (body: any) => void = () => {}) => v2Source((r) => {
+    r.catalog = structuredClone(catalog);
+    for (const agent of r.catalog.agents) {
+      const proof = ({ agent_one: 'one.distinct_domain_effects.v1', agent_calendar: 'calendar.provider_effect.v1', agent_email: 'mail.provider_send.v1' } as Record<string, string>)[agent.id];
+      agent.outcome = { status: 'supported', proof, label: 'Confirmed domain effect', reason: 'Retained positive evidence; missing records do not establish inactivity.' };
+    }
+    change(r);
+  });
+  it('activates Calendar from its domain proof while generic completion events stay rejected', async () => {
+    const store = await fixture();
+    await store.transaction((s) => { registerPlgCatalog(s, catalog); s.contacts[0].journey = 'agent_calendar'; });
+    await syncOneEvidence(store, options, supportedSource((r) => {
+      r.accounts[0].verified = [{ agentId: 'agent_calendar', proof: 'calendar.provider_effect.v1',
+        count: 1, firstAt: new Date(NOW).toISOString(), lastAt: new Date(NOW).toISOString(), days: [new Date(NOW).toISOString().slice(0, 10)] }];
+    }), NOW);
+    const once = await store.read();
+    expect(contactStage(once.contacts[0], NOW)).toBe('activated');
+    expect(() => ingestEvent(once, { eventId: 'untrusted-calendar', accountId: once.contacts[0].accountId,
+      journey: 'agent_calendar', environment: 'production', internal: false, occurredAt: new Date(NOW).toISOString(),
+      kind: 'task_completed', result: 'success', deliberate: true, verified: true, actionId: 'event' }, NOW)).toThrow('outcome adapter');
+  });
+  it('uses only the authoritative deduplicated One group when all-agent proofs are declared', async () => {
+    const store = await fixture();
+    await store.transaction((s) => { registerPlgCatalog(s, catalog); s.contacts[0].journey = 'agent_one'; });
+    const source = supportedSource((r) => {
+      const at = new Date(NOW).toISOString(), earlier = new Date(NOW - 3_600_000).toISOString();
+      r.accounts[0].verified = [
+        { agentId: 'agent_one', proof: 'one.distinct_domain_effects.v1', count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)] },
+        { agentId: 'agent_email', proof: 'mail.provider_send.v1', count: 1, firstAt: earlier, lastAt: earlier, days: [earlier.slice(0, 10)] },
+      ];
+    });
+    await syncOneEvidence(store, options, source, NOW);
+    const once = await store.read();
+    expect(once.contacts[0].firstValueAt).toBe(new Date(NOW).toISOString());
+    await syncOneEvidence(store, options, source, NOW);
+    expect(await store.read()).toEqual(once);
+  });
+  it('keeps an explicitly unmeasured One journey unknown while supporting legacy One fallback', async () => {
+    for (const legacy of [false, true]) {
+      const store = await fixture();
+      await store.transaction((s) => { registerPlgCatalog(s, catalog); s.contacts[0].journey = 'agent_one'; });
+      await syncOneEvidence(store, options, supportedSource((r) => {
+        if (legacy) delete r.catalog.agents[0].outcome;
+        else r.catalog.agents[0].outcome = { status: 'unmeasured', proof: null, label: 'Outcome not measured', reason: 'No aggregate proof is declared.' };
+        const at = new Date(NOW).toISOString();
+        r.accounts[0].verified = [{ agentId: 'agent_email', proof: 'mail.provider_send.v1', count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)] }];
+      }), NOW);
+      expect(Boolean((await store.read()).contacts[0].firstValueAt)).toBe(legacy);
+    }
+  });
+  it('rejects missing, unknown, cross-agent and duplicate outcome proofs without a partial import', async () => {
+    for (const mutate of [
+      (r: any) => { delete r.accounts[0].verified[0].proof; },
+      (r: any) => { r.accounts[0].verified[0].proof = 'client_reported'; },
+      (r: any) => { r.accounts[0].verified[0].proof = 'mail.provider_send.v1'; },
+      (r: any) => { r.accounts[0].verified.push(r.accounts[0].verified[0]); },
+      (r: any) => { r.catalog.agents[1].outcome.proof = 'mail.provider_send.v1'; },
+      (r: any) => { r.catalog.agents[1].public = false; },
+    ]) {
+      const store = await fixture(), before = await store.read();
+      await expect(syncOneEvidence(store, options, supportedSource((r) => {
+        const at = new Date(NOW).toISOString();
+        r.accounts[0].verified = [{ agentId: 'agent_calendar', proof: 'calendar.provider_effect.v1', count: 1,
+          firstAt: at, lastAt: at, days: [at.slice(0, 10)] }];
+        mutate(r);
+      }), NOW)).rejects.toThrow('unavailable');
+      expect(await store.read()).toEqual(before);
+    }
   });
   it('refreshes the request window and clock for a slow multi-batch sync', async () => {
     const store = new MemoryPlgStore();

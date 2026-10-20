@@ -13,10 +13,32 @@ interface Evidence extends SourceAccount {
   deleted: boolean;
   tasks: { actionId: string; occurredAt: string }[];
   activity?: Omit<PlgActivity, 'rollups'> & { agents: PlgAgentActivity[] };
-  verified?: { agentId: PlgAgentId; count: number; firstAt: string; lastAt: string; days: string[] }[];
+  verified?: { agentId: PlgAgentId; proof?: string; count: number; firstAt: string; lastAt: string; days: string[] }[];
 }
 const unavailable = () =>
   new PlgError(503, 'One task evidence is unavailable; no activity was inferred.');
+
+// These are domain proof contracts, separate from client reports or SDK returns.
+const outcomeProofs: Record<string, string> = {
+  agent_personal_information: 'memory.confirmed_save.v1', agent_email: 'mail.provider_send.v1',
+  agent_calendar: 'calendar.provider_effect.v1', agent_kai: 'kai.confirmed_analysis_save.v1',
+  agent_kyc: 'kyc.provider_reply.v1', agent_nav: 'nav.owner_decision.v1',
+  agent_location: 'location.domain_effect.v1', agent_wallet: 'wallet.confirmed_card_save.v1',
+  agent_career: 'career.confirmed_resume_save.v1', agent_documents: 'documents.approved_share.v1',
+  agent_connected_systems: 'crm.provider_readback.v1', agent_one: 'one.distinct_domain_effects.v1',
+};
+
+export function outcomeSupported(catalog: PlgCatalog, agentId: string): boolean {
+  const agent = catalog.agents.find((a) => a.id === agentId);
+  return agent?.outcome ? agent.outcome.status === 'supported' :
+    Boolean(agent?.public && ['agent_personal_information', 'agent_email'].includes(agentId));
+}
+
+export function outcomeProofMatches(catalog: PlgCatalog, agentId: string, proof: unknown): boolean {
+  if (!outcomeSupported(catalog, agentId)) return proof == null;
+  return proof === outcomeProofs[agentId] ||
+    (proof === undefined && ['agent_personal_information', 'agent_email'].includes(agentId));
+}
 
 export function readCatalog(value: any): PlgCatalog {
   if (!value || !/^[a-f0-9]{64}$/.test(value.revision) || !Array.isArray(value.agents) ||
@@ -25,7 +47,18 @@ export function readCatalog(value: any): PlgCatalog {
   const agents: PlgCatalog['agents'] = value.agents.map((a: any) => {
     if (!/^agent_[a-z0-9_]{1,120}$/.test(a.id) || typeof a.label !== 'string' || a.label.length > 160 ||
       typeof a.public !== 'boolean' || typeof a.available !== 'boolean') throw unavailable();
-    return { id: a.id, label: a.label, public: a.public, available: a.available };
+    let outcome;
+    if (a.outcome !== undefined) {
+      const o = a.outcome;
+      if (!o || !['supported', 'internal', 'unmeasured'].includes(o.status) ||
+        typeof o.label !== 'string' || !o.label || o.label.length > 160 ||
+        typeof o.reason !== 'string' || !o.reason || o.reason.length > 400 ||
+        /[\x00-\x1f\x7f]/.test(o.label + o.reason) ||
+        (o.status === 'supported' ? !a.public || !outcomeProofs[a.id] || o.proof !== outcomeProofs[a.id] : o.proof !== null) ||
+        (o.status === 'internal') !== !a.public) throw unavailable();
+      outcome = { status: o.status, proof: o.proof, label: o.label, reason: o.reason };
+    }
+    return { id: a.id, label: a.label, public: a.public, available: a.available, ...(outcome ? { outcome } : {}) };
   });
   if (new Set(agents.map((a) => a.id)).size !== agents.length) throw unavailable();
   const actions: PlgCatalog['actions'] = value.actions.map((a: any) => {
@@ -234,12 +267,12 @@ export async function syncOneEvidence(
           const activity = readActivity(row.activity, catalog!, requested.since, until);
           entry.activity = compact(activity);
           if (inspectionId) inspected = activity;
-          if (!Array.isArray(row.verified) || row.verified.length > 2) throw unavailable();
+          if (!Array.isArray(row.verified) || row.verified.length > catalog!.agents.length) throw unavailable();
           const verifiedAgents = new Set<string>();
           entry.verified = row.verified.map((v: any) => {
-            if (!['agent_personal_information', 'agent_email'].includes(v.agentId) || verifiedAgents.has(v.agentId) || v.count > 1000) throw unavailable();
+            if (!outcomeSupported(catalog!, v.agentId) || !outcomeProofMatches(catalog!, v.agentId, v.proof) || verifiedAgents.has(v.agentId) || v.count > 1000) throw unavailable();
             verifiedAgents.add(v.agentId);
-            return { agentId: v.agentId, ...interval(v, requested.since, until) };
+            return { agentId: v.agentId, ...(v.proof ? { proof: v.proof } : {}), ...interval(v, requested.since, until) };
           });
         }
         evidence.push(entry);
@@ -268,7 +301,8 @@ export async function syncOneEvidence(
       if (row.activity) contact.activity = row.activity;
       const focus = contact.journey === 'memory' ? 'agent_personal_information' : contact.journey === 'mail' ? 'agent_email' : contact.journey;
       for (const v of row.verified ?? []) {
-        if ((focus !== 'agent_one' && v.agentId !== focus) || Date.parse(v.lastAt) < now - 7 * DAY) continue;
+        const aggregateOne = focus === 'agent_one' && catalog?.agents.some((a) => a.id === 'agent_one' && a.outcome !== undefined);
+        if (((focus !== 'agent_one' || aggregateOne) && v.agentId !== focus) || Date.parse(v.lastAt) < now - 7 * DAY) continue;
         const first = new Date(Math.max(Date.parse(v.firstAt), Date.parse(contact.enrolledAt))).toISOString();
         if (!contact.firstValueAt || first < contact.firstValueAt) contact.firstValueAt = first;
         if (!contact.lastValueAt || v.lastAt > contact.lastValueAt) contact.lastValueAt = v.lastAt;

@@ -10,7 +10,7 @@ and all message templates start as drafts. No contacts are preloaded.
 
 The companion One backend exposes server-only `POST /api/one/plg/snapshot`.
 The dashboard's signed `POST /integrations/plg/sync` polls that route for
-already-enrolled accounts in batches of 20. Configure `PLG_ONE_SOURCE_URL` and
+already-enrolled accounts in batches of five (backend maximum 20). Configure `PLG_ONE_SOURCE_URL` and
 a dedicated `PLG_ONE_SOURCE_SECRET` matching backend `ONE_PLG_EXPORT_SECRET`.
 Requests authenticate `snapshot\n<TIMESTAMP_MS>\n<EXACT_RAW_JSON_BODY>` with
 HMAC-SHA256, a five-minute replay window and no redirects. No browser receives
@@ -21,9 +21,10 @@ That credential cannot authenticate enrollment events, delivery runs or
 preference links; the sync job never receives `PLG_SIGNING_SECRET`.
 
 The backend requires production runtime identity, an enabled flag and an
-independent private allowlist of at most 100 pilot UIDs. It queries existing
-confirmed Memory mutations and provider-confirmed Mail sends. The bridge imports
-opaque action IDs and timestamps, validates every batch before committing, and
+independent private allowlist of at most 100 pilot UIDs. Version1 queries
+confirmed Memory mutations and provider-confirmed Mail sends. Version2 adds
+the public-agent domain outcome contracts documented below, exporting compact
+counts, timestamps and UTC days rather than effect IDs. The bridge validates every batch before committing and
 deduplicates repeated queries. No prompts, content, domains, recipients or email
 bodies are exported.
 
@@ -235,15 +236,22 @@ Refreshing or inspecting activity cannot enroll users or send email.
 
 App reports and SDK returns establish **observed activity**, not a verified
 business result. Such accounts display **Agent activity observed**. They never
-inflate first value, verified DAU or retention. The only verified-value adapters
-remain explicit Memory commits and manually sent Mail. One's general journey
-can count either of those verified effects; another agent journey requires its
-own domain-verification adapter before it can qualify as verified activation.
-This distinction is visible even when a browser reports success.
+inflate first value or retention. All twelve public agents now declare a narrow
+domain outcome proof: confirmed Memory saves, Mail sends, Calendar changes,
+saved Kai analysis, reviewed Career resumes, saved Wallet cards, information-request
+replies, explicit Nav decisions, Location effects, approved document sharing and
+CRM provider readback. One uses the backend's distinct-effect union, so a shared
+Mail/KYC send or Memory/Kai save is counted once. Internal stages are shown as
+internal; unavailable agents remain unavailable. Saved analysis does not mean a
+trade, and an information-request reply does not mean identity verification.
+The catalog table and each audience row show the precise value definition.
 
 The client requests version 2 in five-account batches, validates the full
 catalog, ownership, source, phase, window and aggregate limits, and commits only
-after every batch validates. Version 1 remains supported for Memory/Mail; a
+after every batch validates. New proof identifiers must match the declared agent's
+allowlisted domain contract; missing/cross-agent/unknown proofs fail atomically.
+Generic event ingestion still cannot assert a new agent's business completion.
+Version 1 remains supported for Memory/Mail; a
 downgrade cannot activate a newly added agent. Repeated snapshots replace
 compact activity and merge verified UTC days without adding duplicate events.
 Inspection also honors authoritative account deletion and erases local records.
@@ -316,8 +324,9 @@ incomplete** observation is a correlated start with no matching terminal after
 telemetry; it is not confirmed abandonment. Counts combine distinct browser
 reports and SDK observations, so one user action can appear more than once.
 Tools and historical uncorrelated reports do not fabricate paired attempts.
-Only Memory/Mail support verified business outcomes. Other agents explicitly
-show unsupported business completion. Disabled/not-started coverage is unknown,
+Verified outcomes use the public-agent proof contracts above. The older backend's
+catalog remains compatible and only claims its original Memory/Mail support.
+Disabled/not-started execution coverage is unknown,
 not a zero-use assertion. This view does not change aggregate DAU/retention.
 
 The API reads 25 source accounts per page over the retained seven-day activity
@@ -337,7 +346,12 @@ Roll out backend and Matrix PRs separately, provision secret versions, verify
 the private source, then separately enable the reader/collection flags. Disable
 the flags to roll back. Never drop operation-key schema while a compatible
 writer still references it. No new PR is merged or live collection enabled by
-this implementation work.
+this implementation work. For all-agent outcomes, deploy this backward-compatible
+Matrix consumer first, then One migration367 and its backend writers/readers.
+Receipt capture is prospective, bounded and best effort; older missing receipts
+are never backfilled as completions. Failed/truncated sources stay explicit.
+Cohort maturity is based on elapsed enrollment/activation time and does not assert
+that every day was observed.
 
 ## Verify
 
