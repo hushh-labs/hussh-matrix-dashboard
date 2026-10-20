@@ -29,6 +29,7 @@ env:
   INSTAGRAM_CREDENTIAL_RESOURCE: projects/hushh-ai-prod/secrets/metrics-instagram-credential
   INSTAGRAM_ADMIN_EMAIL: i-neelesh@hushh.ai
   ONE_PLG_CONFIGURED: ${{ vars.ONE_PLG_CONFIGURED }}
+  ONE_PLG_AUDIENCE_CONFIGURED: ${{ vars.ONE_PLG_AUDIENCE_CONFIGURED }}
 
 jobs:
   deploy:
@@ -164,6 +165,21 @@ jobs:
             PLG_ENV_SUFFIX="|PLG_ENABLED=true|PLG_STORAGE=firestore|PLG_FIRESTORE_PROJECT=${PROJECT_ID}|PLG_FIRESTORE_DATABASE=one-plg-production|PLG_PUBLIC_ORIGIN=${PRODUCTION_URL}|PLG_ONE_SOURCE_URL=https://api.hushh.ai/api/one/plg/snapshot|PLG_DELIVERY_ENABLED=false"
             PLG_SECRET_SUFFIX=",PLG_SIGNING_SECRET=metrics-one-plg-signing-secret:latest,PLG_SYNC_SECRET=metrics-one-plg-sync-secret:latest,PLG_ONE_SOURCE_SECRET=metrics-one-plg-source-secret:latest,PLG_ADMIN_EMAILS=metrics-one-plg-admin-emails:latest,PLG_OPERATOR_EMAILS=metrics-one-plg-operator-emails:latest"
           fi
+          if [[ "${ONE_PLG_AUDIENCE_CONFIGURED}" == "true" ]]; then
+            if [[ "${ONE_PLG_CONFIGURED}" != "true" ]]; then
+              echo "The private audience reader requires the configured PLG workspace."
+              exit 1
+            fi
+            if [[ "$(gcloud secrets versions describe latest --secret=metrics-one-plg-audience-secret --project="${PROJECT_ID}" --format='value(state)')" != "ENABLED" ]]; then
+              echo "The private audience credential needs an enabled version."
+              exit 1
+            fi
+            PLG_ENV_SUFFIX+="|PLG_ONE_AUDIENCE_URL=https://api.hushh.ai/api/one/plg/audience"
+            PLG_SECRET_SUFFIX+=",PLG_ONE_AUDIENCE_SECRET=metrics-one-plg-audience-secret:latest"
+          else
+            # Clear the endpoint on rollback, even if a prior key mount remains.
+            PLG_ENV_SUFFIX+="|PLG_ONE_AUDIENCE_URL="
+          fi
           gcloud run deploy "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
@@ -238,7 +254,7 @@ jobs:
             'INSTAGRAM_CREDENTIAL_SECRET',
             'INSTAGRAM_ANALYTICS_ADMIN_EMAILS',
             'PLG_ENABLED', 'PLG_STORAGE', 'PLG_FIRESTORE_PROJECT', 'PLG_FIRESTORE_DATABASE',
-            'PLG_PUBLIC_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_DELIVERY_ENABLED',
+            'PLG_PUBLIC_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_ONE_AUDIENCE_URL', 'PLG_DELIVERY_ENABLED',
           ]);
           const plain = env.filter((entry) => entry.value && !allowedPlain.has(entry.name)).map((entry) => entry.name);
           if (plain.length > 0) {
@@ -267,6 +283,12 @@ jobs:
             for (const [name, value] of Object.entries(expected)) {
               if (byName.get(name)?.value !== value) throw new Error(`PLG release setting mismatch: ${name}`);
             }
+          }
+          if (process.env.ONE_PLG_AUDIENCE_CONFIGURED === 'true') {
+            if (process.env.ONE_PLG_CONFIGURED !== 'true' || byName.get('PLG_ONE_AUDIENCE_URL')?.value !== 'https://api.hushh.ai/api/one/plg/audience') throw new Error('Private audience release setting mismatch');
+            Object.assign(requiredSecrets, { PLG_ONE_AUDIENCE_SECRET: 'metrics-one-plg-audience-secret' });
+          } else if (byName.get('PLG_ONE_AUDIENCE_URL')?.value) {
+            throw new Error('Private audience endpoint must be disabled');
           }
           for (const [name, secretName] of Object.entries(requiredSecrets)) {
             if (byName.get(name)?.valueFrom?.secretKeyRef?.name !== secretName) {

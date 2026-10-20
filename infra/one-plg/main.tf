@@ -26,6 +26,7 @@ locals {
   secrets = toset([
     "metrics-one-plg-signing-secret", "metrics-one-plg-source-secret",
     "metrics-one-plg-sync-secret",
+    "metrics-one-plg-audience-secret",
     "metrics-one-plg-admin-emails", "metrics-one-plg-operator-emails"
   ])
 }
@@ -68,7 +69,7 @@ resource "google_secret_manager_secret_iam_member" "dashboard_access" {
 }
 
 resource "google_secret_manager_secret" "one_config" {
-  for_each  = toset(["ONE_PLG_EXPORT_SECRET", "ONE_PLG_EXPORT_ACCOUNT_IDS"])
+  for_each  = toset(["ONE_PLG_EXPORT_SECRET", "ONE_PLG_EXPORT_ACCOUNT_IDS", "ONE_PLG_AUDIENCE_SECRET"])
   project   = "hushh-pda"
   secret_id = each.key
   replication {

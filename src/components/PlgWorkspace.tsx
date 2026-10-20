@@ -27,18 +27,22 @@ import {
   plgJourneyOptions,
   plgJourneyLabel,
   type PlgContact,
+  type PlgAudienceFilters,
+  type PlgAudiencePage,
   type PlgTemplate,
   type PlgWorkspace as Workspace,
 } from '../lib/plg';
 import { cn } from '../lib/utils';
 import { dashboardCard } from '../lib/theme';
 import { PlgAgentActivityPanel, type PlgActivityInspection } from './PlgAgentActivityPanel';
+import { PlgAudiencePanel } from './PlgAudiencePanel';
 
-async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/plg/${path}`, {
     method,
     credentials: 'same-origin',
     cache: 'no-store',
+    signal,
     headers: {
       Accept: 'application/json',
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
@@ -72,7 +76,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents'>('queue');
+  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents' | 'people'>('queue');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
@@ -100,6 +104,8 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       setLoading(false);
     }
   }, []);
+  const loadAudience = useCallback((filters: PlgAudienceFilters, signal: AbortSignal) =>
+    api<PlgAudiencePage>('audience', 'POST', filters, signal), []);
   useEffect(() => {
     void reload();
   }, [reload, refreshKey]);
@@ -251,6 +257,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             ['content', 'Journeys and content'],
             ['results', 'Results and activity'],
             ['agents', 'Agents and actions'],
+            ['people', 'Agent people'],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -267,6 +274,9 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       {tab === 'agents' && <PlgAgentActivityPanel state={state} busy={busy}
         refresh={() => void mutate('sync', 'POST', {})}
         inspect={(contactId) => api<PlgActivityInspection>('activity', 'POST', { contactId })} />}
+      {tab === 'people' && <PlgAudiencePanel state={state} load={loadAudience} openContact={(contactId) => {
+        setSelected(contactId); setFilter('all'); setQuery(''); setTab('queue');
+      }} />}
       {tab === 'queue' && (
         <section className={cn(dashboardCard, 'p-5 sm:p-6')}>
           <div className="flex flex-wrap items-end justify-between gap-3">

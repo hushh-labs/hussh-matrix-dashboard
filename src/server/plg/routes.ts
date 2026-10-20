@@ -22,6 +22,7 @@ import {
   tokenContact,
 } from './service';
 import { syncOneEvidence } from './one-source';
+import { readOneAudience } from './one-audience';
 
 export function registerPlgRoutes(
   app: express.Express,
@@ -168,6 +169,14 @@ export function registerPlgRoutes(
     handle(async (req, res) => {
       role(req);
       return res.json(await syncOneEvidence(getService().store));
+    }),
+  );
+  app.post(
+    '/api/plg/audience',
+    handle(async (req, res) => {
+      role(req);
+      if (!config.enabled) throw new PlgError(503, 'PLG is not configured.');
+      return res.json(await readOneAudience(req.body));
     }),
   );
   app.post(

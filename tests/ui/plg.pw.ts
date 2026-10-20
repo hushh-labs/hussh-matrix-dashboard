@@ -48,6 +48,21 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
       result = { messages: [], candidates: state.contacts.map((c) => candidate(state, c, Date.now(), true)) };
     else if (pathname.endsWith('/activity')) result = { catalog: state.catalog, deleted: false,
       activity: { enabled: true, epoch: 'b'.repeat(64), mode: 'best_effort', limited: true, startedAt: new Date().toISOString(), rollups: [] } };
+    else if (pathname.endsWith('/audience')) result = {
+      version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live',
+      catalog: { revision: 'a'.repeat(64), agents: [
+        { id: 'agent_one', label: 'One', public: true, available: true },
+        { id: 'agent_calendar', label: 'Calendar', public: true, available: true }],
+        actions: [{ id: 'agent:agent_one', agentId: 'agent_one', label: 'One execution', kind: 'agent', proof: 'execution_observed' }] },
+      asOf: new Date().toISOString(), windowStart: new Date(Date.now() - 7 * 86400000).toISOString(),
+      graceMinutes: input.graceMinutes, scanned: 25, excluded: 0, campaignEnrollmentChanged: false,
+      nextCursor: input.cursor ? null : 'page-two.' + 'b'.repeat(64),
+      rows: input.cursor ? [] : [{ accountId: 'phone-only', agentId: input.agentId,
+        identity: { name: 'Registered person', email: null, emailVerified: false, phoneNumber: '+919876543210', phoneVerified: true, source: 'canonical', updatedAt: null },
+        activity: { coverage: 'observed', mode: 'best_effort', counts: { started: 1, returned: 0, failed: 0, cancelled: 0, blocked: 0, possibleIncomplete: 1, inProgress: 0, uncorrelated: 0, otherObservations: 0 },
+          collectionStartedAt: null, firstAttemptAt: new Date(Date.now() - 7200000).toISOString(), lastObservedAt: new Date(Date.now() - 7200000).toISOString(), lastReturnedAt: null, lastFailureAt: null, lastActionId: 'agent:agent_one' },
+        verified: { supported: false, count: 0, lastAt: null, limited: false } }],
+    };
     return route.fulfill({ json: result });
   });
   return state;
@@ -91,6 +106,35 @@ test('enrolls an account and operates the shared follow-up queue without sending
   expect(requests.some((url) => url.includes('/run') || url.includes('resend.com'))).toBe(false);
 });
 
+test('reads agent people with phone-only identity, filters and live pagination without enrolling', async ({ page }) => {
+  const state = await mockPlg(page);
+  const bodies: any[] = [], mutations: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().endsWith('/api/plg/audience')) bodies.push(request.postDataJSON());
+    else if (request.method() !== 'GET') mutations.push(request.url());
+  });
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Agent people', exact: true }).click();
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  await expect(page.getByText('+919876543210', { exact: true })).toBeVisible();
+  await expect(page.getByText('Not enrolled in campaigns', { exact: true })).toBeVisible();
+  await page.getByLabel('People agent').selectOption('agent_calendar');
+  await expect(page.getByLabel('People agent')).toHaveValue('agent_calendar');
+  await page.getByLabel('Attempt evidence').selectOption('possible_incomplete');
+  await page.getByLabel('Search name, email or phone').fill('+9198');
+  await page.getByLabel('No terminal observation after').selectOption('240');
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  expect(bodies.at(-1)).toMatchObject({ agentId: 'agent_calendar', segment: 'possible_incomplete', query: '+9198', graceMinutes: 240, cursor: null });
+  await page.getByRole('button', { name: 'Next source page' }).click();
+  await expect(page.getByText('0 matches on source page 2')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next source page' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Previous source page' }).click();
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  expect(state.contacts).toHaveLength(0); expect(state.deliveries).toHaveLength(0);
+  expect(mutations).toEqual([]);
+});
+
 test('edits content, verifies journeys and leaves immature cohorts unavailable', async ({ page }) => {
   const state = await mockPlg(page);
   await page.goto('/plg');
@@ -128,8 +172,9 @@ for (const width of [320, 768, 1440])
     await expect(page.getByText('Your first cohort starts here')).toBeVisible();
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
-    for (const label of ['Follow-up queue', 'Journeys and content', 'Results and activity', 'Agents and actions']) {
+    for (const label of ['Follow-up queue', 'Journeys and content', 'Results and activity', 'Agents and actions', 'Agent people']) {
       await page.getByRole('tab', { name: label }).click();
+      if (label === 'Agent people') await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,

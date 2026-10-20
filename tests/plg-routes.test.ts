@@ -6,6 +6,7 @@ import { registerPlgRoutes } from '../src/server/plg/routes';
 import { MemoryPlgStore } from '../src/server/plg/store';
 import { PlgService, preferenceToken, signValue, type PlgRuntime } from '../src/server/plg/service';
 import { enroll } from '../src/server/plg/engine';
+import * as audienceSource from '../src/server/plg/one-audience';
 
 const secret = 'test-plg-signing-secret-more-than-32-characters';
 const config: PlgRuntime = {
@@ -34,7 +35,7 @@ const input = {
   internal: false,
 };
 let store: MemoryPlgStore;
-function app() {
+function app(runtime = config) {
   const server = express();
   server.use(
     express.json({
@@ -49,20 +50,34 @@ function app() {
     if (req.get('Test-User')) (req as any).sessionUser = { email: req.get('Test-User') };
     next();
   });
-  registerPlgRoutes(server, false, new PlgService(store, config));
+  registerPlgRoutes(server, false, new PlgService(store, runtime));
   return server;
 }
 describe('Private PLG API boundaries', () => {
   it('protects all-agent sync and inspection with session, role and same-origin authority', async () => {
-    for (const route of ['/api/plg/sync', '/api/plg/activity']) {
+    for (const route of ['/api/plg/sync', '/api/plg/activity', '/api/plg/audience']) {
       expect((await request(app()).post(route).send({ contactId: 'anything' })).status).toBe(401);
       expect((await request(app()).post(route).set('Test-User', 'viewer@example.invalid').set('Origin', config.origin).send({ contactId: 'anything' })).status).toBe(403);
       expect((await request(app()).post(route).set('Test-User', 'operator@example.invalid').send({ contactId: 'anything' })).status).toBe(403);
-      const allowed = await request(app()).post(route).set('Test-User', 'operator@example.invalid').set('Origin', config.origin).send({ contactId: 'anything' });
+      const body = route.endsWith('/audience') ? { agentId: 'agent_one', segment: 'all', query: '', graceMinutes: 60 } : { contactId: 'anything' };
+      const allowed = await request(app()).post(route).set('Test-User', 'operator@example.invalid').set('Origin', config.origin).send(body);
       // Source configuration is intentionally absent; authenticated authority
       // reaches the integration, never a sender or enrollment bypass.
       expect(allowed.status).toBe(503);
     }
+  });
+  it('keeps audience reads behind activation and never enrolls or sends', async () => {
+    const source = vi.spyOn(audienceSource, 'readOneAudience').mockResolvedValue({ rows: [] } as any);
+    const allowed = () => request(app()).post('/api/plg/audience').set('Test-User', 'operator@example.invalid').set('Origin', config.origin).send({ agentId: 'agent_one' });
+    const disabled = await request(app({ ...config, enabled: false })).post('/api/plg/audience').set('Test-User', 'operator@example.invalid').set('Origin', config.origin).send({});
+    expect(disabled.status).toBe(503);
+    expect(source).not.toHaveBeenCalled();
+    const response = await allowed();
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(source).toHaveBeenCalledOnce();
+    expect((await store.read()).contacts).toHaveLength(0);
+    expect((await store.read()).deliveries).toHaveLength(0);
   });
   it('does not let a sync credential authorize delivery or enrollment', async () => {
     const timestamp = String(Date.now()),

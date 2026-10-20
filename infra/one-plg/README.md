@@ -8,7 +8,7 @@ applied. The user requires PR-only work and has not authorized a merge or releas
 - Native database `hushh-ai-prod/one-plg-production`, deletion protected, PITR
   enabled. The existing `(default)` database is Datastore mode and stays intact.
 - Database-scoped `roles/datastore.user` for the existing dashboard runtime.
-- Five Secret Manager containers in `hushh-ai-prod`, two in `hushh-pda`.
+- Six Secret Manager containers in `hushh-ai-prod`, three in `hushh-pda`.
   No secret values are Terraform inputs, resources or outputs.
 - Worker and scheduler identities. The worker can read its request key; it
   cannot read Firestore, the One source key, customer content or sender keys.
@@ -60,6 +60,24 @@ Server SDK access uses IAM. Do not grant browser clients access to this database
    until the separate sender integration is complete.
 
 ## Email remains a release prerequisite
+
+The private **Agent people** reader is a separate rollout. Populate independent
+`metrics-one-plg-audience-secret` (`hushh-ai-prod`) and
+`ONE_PLG_AUDIENCE_SECRET` (`hushh-pda`) with the same new HMAC key through secure
+stdin. Do not reuse signing, sync or snapshot keys. Runtime IAM grants only the
+corresponding dashboard/backend access; the sync worker receives neither key.
+After the follow-up backend migration366 and reader have been reviewed/released,
+separately enable backend `one_plg_audience_enabled` and repository variable
+`ONE_PLG_AUDIENCE_CONFIGURED=true` (requires `ONE_PLG_CONFIGURED=true`). The
+candidate workflow checks enabled version metadata, mounts the new key and
+verifies its exact secret reference. A false/unset audience variable clears the
+source URL on deploy, disabling the reader even if an older key mount remains.
+Expanded collection additionally needs `one_plg_activity_enabled` and
+`one_plg_activity_all_registered`, with canonical registered-contact admission.
+These settings do not enroll accounts, copy the full directory to Firestore,
+enable delivery or change messaging permission. Verify source traversal,
+missing/cleared phone handling and signed cursor filtering privately before
+launch. All flags remain off and no provisioning was performed in this PR.
 
 The team has not yet identified its marketing email provider, verified From
 identity or Reply-To address. Accessible secret-name inventories were checked in

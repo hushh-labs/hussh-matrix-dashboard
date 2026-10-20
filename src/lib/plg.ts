@@ -1,5 +1,53 @@
 /** Private PLG contract. Never include these records in aggregate analytics. */
 export type PlgAgentId = `agent_${string}`;
+export type PlgAudienceSegment = 'all' | 'possible_incomplete' | 'failed' | 'blocked' | 'cancelled' | 'returned' | 'verified' | 'unknown' | 'in_progress';
+export interface PlgAudienceFilters {
+  agentId: PlgAgentId;
+  segment: PlgAudienceSegment;
+  query: string;
+  graceMinutes: number;
+  cursor?: string | null;
+}
+export interface PlgAudiencePerson {
+  accountId: string;
+  agentId: PlgAgentId;
+  identity: {
+    name: string | null;
+    email: string | null;
+    emailVerified: boolean;
+    phoneNumber: string | null;
+    phoneVerified: boolean;
+    source: 'canonical' | 'firebase';
+    updatedAt: string | null;
+  };
+  activity: {
+    coverage: 'observed' | 'not_started' | 'unavailable' | 'reset_during_traversal' | 'limited';
+    mode: 'best_effort';
+    counts: Record<'started' | 'returned' | 'failed' | 'cancelled' | 'blocked' | 'possibleIncomplete' | 'inProgress' | 'uncorrelated' | 'otherObservations', number>;
+    collectionStartedAt: string | null;
+    firstAttemptAt: string | null;
+    lastObservedAt: string | null;
+    lastReturnedAt: string | null;
+    lastFailureAt: string | null;
+    lastActionId: string | null;
+  };
+  verified: { supported: boolean; count: number; lastAt: string | null; limited: boolean };
+}
+export interface PlgAudiencePage {
+  version: 1;
+  environment: 'production';
+  catalog: PlgCatalog;
+  asOf: string;
+  windowStart: string;
+  graceMinutes: number;
+  source: 'firebase_registered_accounts';
+  traversal: 'live';
+  scanned: number;
+  excluded: number;
+  rows: PlgAudiencePerson[];
+  nextCursor: string | null;
+  campaignEnrollmentChanged: false;
+}
 export type PlgJourney = 'memory' | 'mail' | PlgAgentId;
 export interface PlgCatalog {
   revision: string;

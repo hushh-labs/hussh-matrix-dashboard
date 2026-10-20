@@ -25,8 +25,61 @@ import {
 import type { PlgContact, PlgState, PlgCatalog } from '../src/lib/plg';
 import { syncOneEvidence } from '../src/server/plg/one-source';
 import { signValue } from '../src/server/plg/service';
+import { readOneAudience } from '../src/server/plg/one-audience';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
+
+describe('Private One audience contract', () => {
+  const filters = { agentId: 'agent_one' as const, segment: 'all' as const, query: '', graceMinutes: 60 };
+  const options = { url: 'https://one.example.invalid/api/one/plg/audience', secret: 'audience-test-key-with-more-than-32-characters' };
+  const fixture = () => ({
+    version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live',
+    catalog: { revision: 'a'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }],
+      actions: [{ id: 'agent:agent_one', agentId: 'agent_one', label: 'One', kind: 'agent', proof: 'execution_observed' }] },
+    asOf: new Date(NOW).toISOString(), windowStart: new Date(NOW - 7 * 86_400_000).toISOString(),
+    graceMinutes: 60, scanned: 1, excluded: 0, nextCursor: null, campaignEnrollmentChanged: false,
+    rows: [{ accountId: 'phone-only', agentId: 'agent_one',
+      identity: { name: null, email: null, emailVerified: false, phoneNumber: '+919876543210', phoneVerified: true, source: 'canonical', updatedAt: null, passwordHash: 'PRIVATE' },
+      activity: { coverage: 'observed', mode: 'best_effort', counts: { started: 1, returned: 0, failed: 0, cancelled: 0, blocked: 0,
+        possibleIncomplete: 1, inProgress: 0, uncorrelated: 0, otherObservations: 0 },
+        collectionStartedAt: new Date(NOW - 86_400_000).toISOString(), firstAttemptAt: new Date(NOW - 7_200_000).toISOString(),
+        lastObservedAt: new Date(NOW - 7_200_000).toISOString(), lastReturnedAt: null, lastFailureAt: null, lastActionId: 'agent:agent_one' },
+      verified: { supported: false, count: 0, lastAt: null, limited: false } }],
+  });
+  it('signs only the private audience purpose and projects phone-only accounts without provider fields', async () => {
+    const source = fixture();
+    const fetcher = (async (_url, init) => {
+      const headers = init!.headers as Record<string, string>;
+      expect(headers['X-PLG-Signature']).toBe(signValue(`audience\n${NOW}\n${init!.body}`, options.secret));
+      return Response.json(source);
+    }) as typeof fetch;
+    const result = await readOneAudience(filters, options, fetcher, NOW);
+    expect(result.rows[0].identity.phoneNumber).toBe('+919876543210');
+    expect(result.rows[0].identity.email).toBeNull();
+    expect(result.rows[0].activity.counts.possibleIncomplete).toBe(1);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+  it('rejects foreign ownership, unverified phone, invalid counts and unsupported business completion', async () => {
+    const mutations: ((s: ReturnType<typeof fixture>) => void)[] = [
+      (s) => { s.rows[0].agentId = 'agent_calendar'; },
+      (s) => { s.rows[0].identity.phoneVerified = false; },
+      (s) => { s.rows[0].activity.counts.possibleIncomplete = 2; },
+      (s) => { s.rows[0].verified.supported = true; },
+      (s) => { s.environment = 'uat'; },
+    ];
+    for (const mutate of mutations) {
+      const source = fixture(); mutate(source);
+      await expect(readOneAudience(filters, options, (async () => Response.json(source)) as typeof fetch, NOW)).rejects.toThrow('unavailable');
+    }
+    await expect(readOneAudience(filters, options, (async () => { throw new Error('PRIVATE'); }) as typeof fetch, NOW)).rejects.toThrow('No usage or contact details were inferred');
+  });
+  it('preserves empty filtered pages and continuation without assuming a total', async () => {
+    const source = fixture(); source.rows = []; source.nextCursor = ('a'.repeat(10) + '.' + 'b'.repeat(64)) as any;
+    const result = await readOneAudience(filters, options, (async () => Response.json(source)) as typeof fetch, NOW);
+    expect(result.rows).toEqual([]); expect(result.nextCursor).toBe(source.nextCursor);
+    await expect(readOneAudience({ ...filters, query: 'x'.repeat(101) }, options)).rejects.toThrow('valid audience filters');
+  });
+});
 const runtime: PlgRuntime = {
   enabled: true,
   deliveryEnabled: true,

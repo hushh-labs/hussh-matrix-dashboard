@@ -18,7 +18,7 @@ interface Evidence extends SourceAccount {
 const unavailable = () =>
   new PlgError(503, 'One task evidence is unavailable; no activity was inferred.');
 
-function readCatalog(value: any): PlgCatalog {
+export function readCatalog(value: any): PlgCatalog {
   if (!value || !/^[a-f0-9]{64}$/.test(value.revision) || !Array.isArray(value.agents) ||
     !value.agents.length || value.agents.length > 100 || !Array.isArray(value.actions) || value.actions.length > 3000)
     throw unavailable();

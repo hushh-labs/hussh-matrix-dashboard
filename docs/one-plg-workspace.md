@@ -278,6 +278,67 @@ entire registered audience. Second-week retention uses complete UTC days 8-14
 after the UTC activation date; allow the end of day 14 to pass before reporting.
 Existing/new and treatment/control records remain visible in the private data.
 
+## Registered people by agent
+
+The **Agent people** tab reads the live registered-account directory from One
+through private `POST /api/plg/audience`. It requires an authenticated PLG
+admin/operator, same-origin request and `PLG_ENABLED=true`; public aggregate
+analytics and machine sync credentials cannot access it. Server configuration:
+
+```dotenv
+PLG_ONE_AUDIENCE_URL=https://api.hushh.ai/api/one/plg/audience
+PLG_ONE_AUDIENCE_SECRET=
+```
+
+Bind the separate `metrics-one-plg-audience-secret` in `hushh-ai-prod` to
+`PLG_ONE_AUDIENCE_SECRET`, matching backend `ONE_PLG_AUDIENCE_SECRET` in
+`hushh-pda`. The Terraform additions provision containers/scoped IAM only and
+have not been applied. The sync worker does not receive the audience credential.
+Backend migration366, production/project gates and explicit default-off
+`ONE_PLG_AUDIENCE_ENABLED` are prerequisites. Expanded collection additionally
+needs `ONE_PLG_ACTIVITY_ENABLED` and `ONE_PLG_ACTIVITY_ALL_REGISTERED`; normal
+identity warmup must establish canonical registered-contact evidence before an
+account can be admitted. Auth-only accounts can still appear without a baseline.
+
+Select any catalog agent, evidence segment, name/email/international-phone search
+and no-terminal interval. Rows show current name, email, verified full E.164
+phone where present, evidence coverage, observed counts and timestamps. Saved
+One identity wins as a whole row, including intentionally cleared fields.
+Missing canonical rows may use current provider contact getters; transferred
+phone claims are checked. Disabled, deprovisioned, unclassified and deleted
+accounts are excluded. Missing fields remain visible, including phone-only users.
+Passwords, SDK records, tokens and provider diagnostics never reach the browser.
+
+Segments include possible incomplete, recent starts, observed failures, blocked,
+cancelled, returned, verified value and unknown/partial evidence. A **possible
+incomplete** observation is a correlated start with no matching terminal after
+15 minutes–24 hours (default one hour). It can mean a running call or missing
+telemetry; it is not confirmed abandonment. Counts combine distinct browser
+reports and SDK observations, so one user action can appear more than once.
+Tools and historical uncorrelated reports do not fabricate paired attempts.
+Only Memory/Mail support verified business outcomes. Other agents explicitly
+show unsupported business completion. Disabled/not-started coverage is unknown,
+not a zero-use assertion. This view does not change aggregate DAU/retention.
+
+The API reads 25 source accounts per page over the retained seven-day activity
+window. Search/segments filter each page; later pages can contain more matches,
+including after an empty page. No global count is inferred. Cursor signatures
+bind all filters and the activity anchor and expire after 15 minutes; refreshing
+starts a new traversal. The live directory may change during browsing.
+This bounded read avoids copying every registered person into the 750KB pilot
+campaign document. It never automatically enrolls a person, changes campaign
+recipient addresses, grants consent or sends a message. **Open follow-up** is
+available for an existing enrollment; other rows show **Not enrolled in campaigns**.
+Campaign enrollment, delivery prerequisites and existing pilot limits remain.
+
+The earlier reference to automatic Firebase audience import concerns campaign
+enrollment; live identity projection is now provided by this separate read.
+Roll out backend and Matrix PRs separately, provision secret versions, verify
+the private source, then separately enable the reader/collection flags. Disable
+the flags to roll back. Never drop operation-key schema while a compatible
+writer still references it. No new PR is merged or live collection enabled by
+this implementation work.
+
 ## Verify
 
 ```sh
