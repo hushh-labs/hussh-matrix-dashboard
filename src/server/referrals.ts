@@ -2,6 +2,7 @@ import { GoogleAuth } from 'google-auth-library';
 import { Connector } from '@google-cloud/cloud-sql-connector';
 import pg from 'pg';
 import type { ReferralEnvironment, ReferralQuery, ReferralRankings, ReferralSourcePage } from '../lib/referrals';
+import { hydrateReferralNames, referralViewer, type DirectoryAccount, type DirectoryLookup, type ReferralDirectoryPage } from './referral-names';
 
 const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
 const pools = new Map<string, Promise<pg.Pool>>();
@@ -44,26 +45,35 @@ async function poolFor(environment: string) {
   return pools.get(environment)!;
 }
 
-async function readSource(environment: ReferralEnvironment, query: ReferralQuery): Promise<ReferralSourcePage> {
+const directoryLookup = (project: string): DirectoryLookup => async criteria => {
+  const client = await auth.getClient();
+  const response = await client.request<{users?: DirectoryAccount[]}>({
+    url: `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(project)}/accounts:lookup`,
+    method: 'POST', data: criteria, timeout: 15_000,
+  });
+  return response.data.users ?? [];
+};
+
+async function readSource(environment: ReferralEnvironment, query: ReferralQuery, viewerId: string | null, lookupDirectory: DirectoryLookup): Promise<ReferralSourcePage> {
   const pool = await poolFor(environment);
   const client = await pool.connect();
+  let page: ReferralDirectoryPage;
   try {
     await client.query('BEGIN READ ONLY');
     await client.query("SET LOCAL statement_timeout = '15000ms'");
-    const result = await client.query('SELECT metrics_dashboard.referral_rankings($1::integer,$2::uuid) AS standings', [query.afterRank, query.snapshotId ?? null]);
-    const page = result.rows[0]?.standings as ReferralSourcePage | undefined;
+    const result = await client.query('SELECT metrics_dashboard.referral_rankings_for_viewer($1::integer,$2::uuid,$3::text) AS standings', [query.afterRank, query.snapshotId ?? null, viewerId]);
+    page = result.rows[0]?.standings as ReferralDirectoryPage | undefined;
     if (!page || !['available', 'waiting', 'expired'].includes(page.state) || !Array.isArray(page.entries)
       || page.entries.length > 20 || !page.entries.every(row => Number.isSafeInteger(row.rank) && row.rank > query.afterRank
         && typeof row.handle === 'string' && Number.isSafeInteger(row.points))) throw new Error('Referral source unavailable');
     await client.query('COMMIT');
-    // Whitelist the public leaderboard contract; never pass through provider fields.
-    return { state: page.state, snapshotId: page.snapshotId, snapshotGeneratedAt: page.snapshotGeneratedAt,
-      entryCount: page.entryCount, nextAfterRank: page.nextAfterRank,
-      entries: page.entries.map(({ rank, handle, points }) => ({ rank, handle, points })) };
   } catch {
     await client.query('ROLLBACK').catch(() => {});
     throw new Error('Referral source unavailable');
   } finally { client.release(); }
+  // Do not hold a database connection while Firebase verifies current accounts.
+  // Candidate UIDs/cache fields are never passed to the public API.
+  return hydrateReferralNames(page, lookupDirectory);
 }
 
 export async function resolveReferralRankings(query: ReferralQuery,
@@ -85,4 +95,8 @@ export async function resolveReferralRankings(query: ReferralQuery,
   return { ...selected.value, board: query.board, environment, environments, sources };
 }
 
-export const readReferralRankings = (query: ReferralQuery) => resolveReferralRankings(query, readSource);
+export async function readReferralRankings(query: ReferralQuery, viewerEmail: string, firebaseProject: string): Promise<ReferralRankings> {
+  const lookupDirectory = directoryLookup(firebaseProject);
+  const viewerId = query.board === 'individual' ? await referralViewer(viewerEmail, lookupDirectory) : null;
+  return resolveReferralRankings(query, (environment, scope) => readSource(environment, scope, viewerId, lookupDirectory));
+}

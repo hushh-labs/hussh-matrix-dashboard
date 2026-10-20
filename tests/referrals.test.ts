@@ -27,7 +27,8 @@ describe('referral ranking contract', () => {
     expect(isReferralsPath('/referral-analytics/')).toBe(true);
     expect(isReferralsPath('/referral-analytics/unknown')).toBe(false);
   });
-  it('requires sign-in before both uncached and cached rankings', async () => {
+  it('requires sign-in and never puts viewer names in the shared aggregate cache', async () => {
+    read.mockClear();
     read.mockResolvedValue(standings);
     const server = app();
     expect((await request(server).get(path)).status).toBe(401);
@@ -35,7 +36,8 @@ describe('referral ranking contract', () => {
     expect(response.status).toBe(200); expect(response.body.entries[0].points).toBe(730);
     expect(response.headers['cache-control']).toContain('no-store');
     const hit = await request(server).get(path).set('Cookie',cookie);
-    expect(hit.headers['x-metrics-cache']).toBe('HIT');
+    expect(hit.headers['x-metrics-cache']).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(2);
     expect((await request(server).get(path)).status).toBe(401);
   });
   it('keeps public leaderboard handles private even in public aggregate mode', async () => {
@@ -46,7 +48,7 @@ describe('referral ranking contract', () => {
     expect((await request(server).get(path).set('Cookie',cookie)).status).toBe(200);
     expect((await request(server).get(path)).status).toBe(401);
   });
-  it('isolates environments, boards, snapshot versions and cursors in cache', async () => {
+  it('keeps environments, boards, snapshot versions and cursors isolated', async () => {
     read.mockClear(); read.mockResolvedValue(standings);
     const server = app();
     const urls = [path, `${path}&environment=uat`, path.replace('individual','circles'),
@@ -55,6 +57,16 @@ describe('referral ranking contract', () => {
       `${path}&environment=production&snapshotId=36040968-628f-4093-8479-1c5b78fe2f0c`];
     for (const url of urls) expect((await request(server).get(url).set('Cookie',cookie)).status).toBe(200);
     expect(read).toHaveBeenCalledTimes(urls.length);
+  });
+  it('takes the viewer only from the signed session and separates two dashboard users', async () => {
+    read.mockClear(); read.mockResolvedValue(standings);
+    const otherCookie = `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({email:'second@hushh.ai',exp:Math.floor(Date.now()/1000)+3600}),secret))}`;
+    const server = app();
+    await request(server).get(`${path}&viewerUserId=someone-else&viewerEmail=someone-else@hushh.ai`).set('Cookie',cookie);
+    await request(server).get(path).set('Cookie',otherCookie);
+    expect(read.mock.calls[0][1]).toBe('qa@hushh.ai');
+    expect(read.mock.calls[1][1]).toBe('second@hushh.ai');
+    expect(read.mock.calls[0][0].viewerUserId).toBeUndefined();
   });
   it('rejects invalid input before contacting the source', async () => {
     read.mockClear();
