@@ -5785,7 +5785,9 @@ function registerAnalyticsRoutes(app: express.Express): void {
     catch { res.status(400).json({ error: 'Choose a valid referral leaderboard and snapshot cursor.' }); return; }
     try {
       const { readReferralRankings } = await import('./src/server/referrals');
-      res.json(await readReferralRankings(query, ((req as any).sessionUser as SessionUser).email, ONE_FIREBASE_AUTH_PROJECT));
+      res.json(await readReferralRankings(query, ((req as any).sessionUser as SessionUser).email, {
+        production: oneAccountSource('production').project, uat: oneAccountSource('uat').project,
+      }));
     } catch {
       res.status(503).json({ state: 'unavailable', error: 'Referral rankings are temporarily unavailable.' });
     }

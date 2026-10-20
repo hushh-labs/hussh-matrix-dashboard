@@ -4,6 +4,15 @@ export const ONE_ANDROID_STREAMS = { production: '15395548050', uat: '1539571307
 export const ONE_IOS_STREAMS = { production: '13695001361', uat: '14383415557' };
 export const ONE_WEB_STREAMS = { production: '13695004816', uat: '14383500973' };
 export const ONE_REPORTING_SCOPE_VERSION = 'one-environment-v1';
+
+/** Private customer evidence must never be read from a UAT or arbitrary backend. */
+export function oneProductionEndpoint(value, pathname) {
+  try {
+    const url = new URL(value);
+    return url.origin === 'https://api.hushh.ai' && url.pathname === pathname
+      && !url.username && !url.password && !url.search && !url.hash ? url : null;
+  } catch { return null; }
+}
 export const ONE_ANDROID_TIMEZONE = 'Etc/GMT+8';
 export const ONE_ANDROID_EXPORT_FROM = '2026-10-07';
 // Export membership changed during October 7; October 8 is the first full day.

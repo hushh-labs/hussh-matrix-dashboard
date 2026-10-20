@@ -4,6 +4,48 @@ import { oneSurfaceSql, oneFounderSurfaceSql, oneFeedEnvironment, validateOneFee
 import { oneAccountSource, readOneAccountCounts, oneIdentityAuthorityId } from '../src/server/one-account-scope.mjs';
 import { sanitizePublicPayload } from '../server';
 import { renderOneFeedSql } from '../scripts/render-one-feed-scope.mjs';
+import { normalizeAnalytics, type AllAnalyticsResponse } from '../src/lib/analytics-service';
+import type { FeedRow } from '../src/lib/types';
+
+describe('environment-scoped dashboard normalization', () => {
+  const rows = (environment: 'production' | 'uat', base: number): FeedRow[] =>
+    ['current_dau','current_wau','current_sessions','current_total_events','freshness_lag_minutes'].map((name, index) => ({
+      as_of_timestamp:'2026-10-20T00:00:00Z',source_environment:environment,source_project_id:'fixture',source_dataset:'fixture',
+      production_ready:false,known_blockers:null,metric_group:index === 4 ? 'status' : 'summary',metric_name:name,
+      metric_date:null,dimension_name:null,dimension_value:null,metric_value:null,metric_count:base + index,
+      metric_string_value:null,metric_timestamp:null,
+    }));
+  const fixture = (): AllAnalyticsResponse => ({
+    kai:{production:{environment:'production',rows:rows('production',100)},uat:{environment:'uat',rows:rows('uat',7)}},
+    hushhTech:{platform:'hushhtech',data:null},fetchedAt:'2026-10-20T00:00:00Z',
+  });
+  it('keeps UAT summary, platform card and freshness independent from PROD and from source outages', () => {
+    const input=fixture(), result=normalizeAnalytics(input);
+    expect(result.kaiUsage?.dau).toBe(100);
+    expect(result.kaiUatDailySummaryMetrics.find(m=>m.label==='UAT DB DAU')?.value).toBe(7);
+    expect(result.platforms.find(p=>p.environment==='uat')).toMatchObject({visitors:'7',change:'8 WAU',avgSession:'9 sessions'});
+    expect(result.kpiStats.find(k=>k.label==='One UAT Freshness')?.value).toBe('0h 11m');
+    input.kai.uat.rows=[];
+    const noUat=normalizeAnalytics(input);
+    expect(noUat.platforms.find(p=>p.environment==='uat')).toMatchObject({available:false,visitors:'—'});
+    expect(noUat.kaiUatDailySummaryMetrics.find(m=>m.label==='UAT DB DAU')?.displayValue).toBe('Waiting');
+    input.kai.production.rows=[]; input.kai.uat.rows=rows('uat',7);
+    const onlyUat=normalizeAnalytics(input);
+    expect(onlyUat.kaiUsage).toBeNull();
+    expect(onlyUat.platforms.find(p=>p.environment==='uat')?.visitors).toBe('7');
+  });
+  it('refuses a feed whose wrapper or any row belongs to the other environment', () => {
+    for (const corrupt of [
+      (input:AllAnalyticsResponse)=>{input.kai.uat.environment='production';},
+      (input:AllAnalyticsResponse)=>{input.kai.uat.rows.push(rows('production',100)[0]);},
+    ]) {
+      const input=fixture(); corrupt(input);
+      const result=normalizeAnalytics(input);
+      expect(result.platforms.find(p=>p.environment==='uat')?.available).toBe(false);
+      expect(result.kaiUsage?.dau).toBe(100);
+    }
+  });
+});
 
 describe('One reporting environment boundary', () => {
   it('refuses aliased PROD/UAT feed configurations instead of relabelling PROD as UAT', () => {

@@ -801,10 +801,10 @@ function buildKaiUatDailySummaryMetrics(kaiUsage: UsageSummary | null, kaiGa4: K
     metric('UAT app/browser IDs', asNumber(kaiGa4?.rangeTotals?.users), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('UAT GA4 Sessions', asNumber(kaiGa4?.rangeTotals?.sessions), ga4Source, ga4Ready ? undefined : 'Waiting'),
     metric('UAT GA4 Events', asNumber(kaiGa4?.rangeTotals?.events), ga4Source, ga4Ready ? undefined : 'Waiting'),
-    metric('UAT DB DAU', asNumber(kaiUsage?.dau), 'UAT DB aggregate'),
-    metric('UAT DB WAU', asNumber(kaiUsage?.wau), 'UAT DB aggregate'),
-    metric('UAT DB Sessions', asNumber(kaiUsage?.sessions), 'UAT DB aggregate'),
-    metric('UAT DB Events', asNumber(kaiUsage?.totalEvents), 'UAT DB aggregate'),
+    metric('UAT DB DAU', asNumber(kaiUsage?.dau), 'UAT DB aggregate', kaiUsage ? undefined : 'Waiting'),
+    metric('UAT DB WAU', asNumber(kaiUsage?.wau), 'UAT DB aggregate', kaiUsage ? undefined : 'Waiting'),
+    metric('UAT DB Sessions', asNumber(kaiUsage?.sessions), 'UAT DB aggregate', kaiUsage ? undefined : 'Waiting'),
+    metric('UAT DB Events', asNumber(kaiUsage?.totalEvents), 'UAT DB aggregate', kaiUsage ? undefined : 'Waiting'),
     metric('UAT Freshness Lag', asNumber(kaiUsage?.freshnessLagMinutes), 'minutes', formatMinutes(kaiUsage?.freshnessLagMinutes)),
   ];
 }
@@ -1652,8 +1652,11 @@ export async function fetchAllAnalytics(options?: FetchAllAnalyticsOptions): Pro
 }
 
 export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData {
-  const uatRows = result.kai.uat.rows ?? [];
-  const prodRows = result.kai.production.rows ?? [];
+  const sourceRows = (source: AllAnalyticsResponse['kai']['production'], environment: string) =>
+    source.environment === environment && (source.rows ?? []).every(row => row.source_environment === environment)
+      ? source.rows ?? [] : [];
+  const uatRows = sourceRows(result.kai.uat, 'uat');
+  const prodRows = sourceRows(result.kai.production, 'production');
   // Production only.
   //
   // This used to read `uatRows.length > 0 ? uatRows : prodRows`, so every
@@ -1702,7 +1705,7 @@ export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData 
     result.appStoreConnect?.error,
   ].filter((value): value is string => Boolean(value));
 
-  if (activeRows.length === 0 && !hushhTech && !one && !oneUat && !growth && !result.appStoreConnect?.data) {
+  if (activeRows.length === 0 && uatRows.length === 0 && !kaiGa4?.available && !kaiProduction && !hushhAi && !hushhTech && !one && !oneUat && !growth && !result.appStoreConnect?.data) {
     return {
       ...emptyDashboard('Analytics feeds are unavailable. Check BigQuery ADC/IAM, the hushhtech.com endpoint, and the Express server logs.', result.fetchedAt),
       feedWarnings,
@@ -1711,6 +1714,7 @@ export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData 
 
   const kaiFeed = parseStatus(activeRows);
   const kaiUsage = parseUsageSummary(activeRows);
+  const uatUsage = parseUsageSummary(uatRows);
   const kaiInvestorFunnel = parseFunnel(activeRows, 'investor_funnel');
   const kaiRiaFunnel = parseFunnel(activeRows, 'ria_funnel');
   const kaiDailyUsage = parseDailyUsage(activeRows);
@@ -1743,7 +1747,7 @@ export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData 
     kaiProductionReadinessMetrics: buildKaiProductionReadinessMetrics(kaiProduction),
     kaiUatFreshness: buildFreshnessFromSourceCards(kaiProduction?.uatSourceCards, result.fetchedAt, 'kai_uat'),
     kaiUatDailyStatus: buildKaiUatDailyStatus(uatRows, kaiGa4),
-    kaiUatDailySummaryMetrics: buildKaiUatDailySummaryMetrics(kaiUsage, kaiGa4),
+    kaiUatDailySummaryMetrics: buildKaiUatDailySummaryMetrics(uatUsage, kaiGa4),
     hushhTech: hushhTech,
     hushhTechAudienceMetrics: buildHushhTechAudienceMetrics(hushhTech),
     hushhTechBusinessMetrics: buildHushhTechBusinessMetrics(hushhTech),
@@ -1784,8 +1788,8 @@ export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData 
     dataQualityWarnings: hushhTech?.dataQualityWarnings ?? [],
     feedWarnings,
     sourceGroups: buildSourceGroups(kaiProduction, hushhAi, hushhTech),
-    platforms: buildPlatforms(kaiFeed, kaiUsage, kaiProduction, hushhAi, hushhTech),
-    kpiStats: buildKpiStats(kaiUsage, kaiGa4, kaiProduction, hushhAi, hushhTech),
+    platforms: buildPlatforms(parseStatus(uatRows), uatUsage, kaiProduction, hushhAi, hushhTech),
+    kpiStats: buildKpiStats(uatUsage, kaiGa4, kaiProduction, hushhAi, hushhTech),
     trafficData: buildTrafficData(allKaiRows, hushhAi, hushhTech),
     acquisitionChannels: buildAcquisitionChannels(hushhTech),
     topCountries: buildTopCountries(hushhTech),

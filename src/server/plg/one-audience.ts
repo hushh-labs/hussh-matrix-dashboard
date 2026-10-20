@@ -2,6 +2,7 @@ import type { PlgAudienceFilters, PlgAudiencePage, PlgAudiencePerson } from '../
 import { DAY, PlgError } from './engine';
 import { signValue } from './service';
 import { outcomeProofMatches, outcomeSupported, readCatalog } from './one-source';
+import { oneProductionEndpoint } from '../one-scope.mjs';
 
 const segments = ['all', 'possible_incomplete', 'failed', 'blocked', 'cancelled', 'returned', 'verified', 'unknown', 'in_progress'];
 const keys = ['started', 'returned', 'failed', 'cancelled', 'blocked', 'possibleIncomplete', 'inProgress', 'uncorrelated', 'otherObservations'] as const;
@@ -99,11 +100,8 @@ export async function readOneAudience(
   time: number | (() => number) = Date.now,
 ): Promise<PlgAudiencePage> {
   const filters = audienceFilters(input);
-  let endpoint: URL;
-  try {
-    endpoint = new URL(options.url);
-    if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== '/api/one/plg/audience' || options.secret.length < 32) return unavailable();
-  } catch { return unavailable(); }
+  const endpoint = oneProductionEndpoint(options.url, '/api/one/plg/audience');
+  if (!endpoint || options.secret.length < 32) return unavailable();
   const clock = typeof time === 'function' ? time : () => time;
   const timestamp = String(clock()), body = JSON.stringify(filters);
   try {

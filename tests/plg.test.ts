@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,9 +29,24 @@ import { readOneAudience } from '../src/server/plg/one-audience';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
 
+describe('production-only private evidence sources', () => {
+  it.each(['https://uat.api.hushh.ai', 'https://arbitrary.example.invalid', 'http://api.hushh.ai',
+    'https://api.hushh.ai:8443', 'https://api.hushh.ai@uat.example.invalid'])
+    ('refuses %s before fetching identities, signing requests or changing stored evidence', async origin => {
+      const secret = 'test-only-source-secret-over-32-characters';
+      const store = new MemoryPlgStore(), before = await store.read();
+      const fetcher = vi.fn(async () => Response.json({environment:'production'}));
+      await expect(syncOneEvidence(store,{url:`${origin}/api/one/plg/snapshot`,secret},fetcher as typeof fetch,NOW)).rejects.toThrow('unavailable');
+      await expect(readOneAudience({agentId:'agent_one',segment:'all',query:'',graceMinutes:60},
+        {url:`${origin}/api/one/plg/audience`,secret},fetcher as typeof fetch,NOW)).rejects.toThrow('unavailable');
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(await store.read()).toEqual(before);
+    });
+});
+
 describe('Private One audience contract', () => {
   const filters = { agentId: 'agent_one' as const, segment: 'all' as const, query: '', graceMinutes: 60 };
-  const options = { url: 'https://one.example.invalid/api/one/plg/audience', secret: 'audience-test-key-with-more-than-32-characters' };
+  const options = { url: 'https://api.hushh.ai/api/one/plg/audience', secret: 'audience-test-key-with-more-than-32-characters' };
   const fixture = () => ({
     version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live',
     catalog: { revision: 'a'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }],
@@ -618,7 +633,7 @@ describe('One retained task evidence bridge', () => {
       await syncOneEvidence(
         store,
         {
-          url: 'https://api.example.invalid/api/one/plg/snapshot',
+          url: 'https://api.hushh.ai/api/one/plg/snapshot',
           secret: 'test-only-source-secret-over-32-characters',
         },
         source,
@@ -638,7 +653,7 @@ describe('One retained task evidence bridge', () => {
     expect(await store.read()).toEqual(before);
   });
   const options = {
-    url: 'https://api.example.invalid/api/one/plg/snapshot',
+    url: 'https://api.hushh.ai/api/one/plg/snapshot',
     secret: 'test-only-source-secret-over-32-characters',
   };
   async function fixture() {
