@@ -49,8 +49,9 @@ const range = { startDate: '2026-09-01', endDate: '2026-09-30' } as OneAppSummar
 const testWeb = { available: true, platformsAvailable: true, platforms: [], range };
 const mainMobile = { available: true, platformsAvailable: true, range, platforms: [{ platform: 'IOS', events: 10, activeAccounts: 3, activeDeviceIds: 4 } as OneAppSummary['platforms'][number]] };
 const capturedElsewhere = render(testWeb, 'uat', mainMobile);
-assert.match(capturedElsewhere, /iOS app activity is available in Main analytics for these same dates/);
-assert.match(capturedElsewhere, /View captured mobile metrics/);
+assert.doesNotMatch(capturedElsewhere, /iOS app activity is available in Main analytics for these same dates/);
+assert.doesNotMatch(capturedElsewhere, /View captured mobile metrics/);
+assert.match(capturedElsewhere, /Production metrics are not used as a fallback/);
 assert.doesNotMatch(capturedElsewhere, /Active app-instance|>3<|>4</);
 for (const alternate of [undefined, { ...mainMobile, available: false }, { ...mainMobile, platformsAvailable: false }, { ...mainMobile, range: { ...range, endDate: '2026-09-29' } }]) {
   assert.doesNotMatch(render(testWeb, 'uat', alternate), /activity is available in Main analytics|View captured mobile metrics/);

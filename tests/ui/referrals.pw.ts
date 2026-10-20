@@ -46,14 +46,29 @@ for (const width of [320,390,768,1440]) test(`rankings only, pagination and layo
   await expect(page.locator('.dashboard-page-heading h1')).toHaveText('Referrals');
 });
 
-test('shows just the one environment that has standings',async({page})=>{
+test('keeps production selected and UAT explicit when only UAT has standings',async({page})=>{
   await mockDashboard(page);
-  await page.route('**/api/analytics/one/referrals?**',route=>route.fulfill({json:{...referralFixture(route.request().url()),environment:'uat',environments:['uat']}}));
+  await page.route('**/api/analytics/one/referrals?**',route=>{
+    const environment=new URL(route.request().url()).searchParams.get('environment');
+    const fixture=referralFixture(route.request().url());
+    return route.fulfill({json:{...fixture,environments:['uat'],...(environment==='production'?{entries:[],entryCount:0,nextAfterRank:null}:{})}});
+  });
   await page.goto('/referral-analytics');
   await expect(page.getByRole('heading',{name:'Individual rankings'})).toBeVisible();
-  await expect(page.getByRole('group',{name:'Referral environment'})).toHaveCount(0);
-  await expect(page.getByText('UAT',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Production',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(page.getByText('No individual standings yet.')).toBeVisible();
+  await expect(page.locator('tbody tr')).toHaveCount(0);
+  await page.getByRole('button',{name:'UAT',exact:true}).click();
   await expect(page.locator('tbody tr')).toHaveCount(20);
+});
+
+test('does not paint a foreign environment response under the selected production tab',async({page})=>{
+  await mockDashboard(page);
+  await page.route('**/api/analytics/one/referrals?**',route=>route.fulfill({json:{...referrals,environment:'uat'}}));
+  await page.goto('/referral-analytics');
+  await expect(page.getByRole('button',{name:'Production',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(page.getByText('Referral rankings temporarily unavailable.',{exact:true})).toBeVisible();
+  await expect(page.locator('tbody tr')).toHaveCount(0);
 });
 
 test('distinguishes unavailable, waiting, expired and genuinely empty standings',async({page})=>{

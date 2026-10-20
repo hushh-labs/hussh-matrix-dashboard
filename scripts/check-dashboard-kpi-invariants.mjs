@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { oneAccountSummaryIssues } from "../src/server/one-account-scope.mjs";
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -23,7 +24,7 @@ const close = (actual, expected, tolerance = 1e-9) =>
   number(actual) && number(expected) && Math.abs(actual - expected) <= tolerance;
 const sum = (rows, key) => rows.reduce((total, row) => total + Number(row?.[key] ?? 0), 0);
 
-function checkOneEnvironment(label, one) {
+function checkOneEnvironment(label, one, environment) {
   check(`${label}_available`, one?.available === true, `available=${String(one?.available)}`);
   if (!one?.available) return;
 
@@ -39,30 +40,8 @@ function checkOneEnvironment(label, one) {
     `reported=${active.stickiness}; calculated=${active.mau ? active.dau / active.mau : 'null'}`,
   );
 
-  const registered = one.registeredAccounts ?? {};
-  const registeredDaily = Array.isArray(registered.daily) ? registered.daily : [];
-  check(
-    `${label}_registered_accounts_authoritative`,
-    registered.available === true
-      && registered.countingUnit === 'account'
-      && registered.sharedAcrossEnvironments === true,
-    `available=${String(registered.available)}; source=${registered.sourceLabel}`,
-  );
-  check(
-    `${label}_registered_accounts_range_valid`,
-    number(registered.totalAccounts)
-      && registered.totalAccounts >= 0
-      && number(registered.newAccounts)
-      && registered.newAccounts >= 0
-      && registered.newAccounts <= registered.accountsCreatedByRangeEnd
-      && registered.accountsCreatedByRangeEnd <= registered.totalAccounts,
-    `new=${registered.newAccounts}; through end=${registered.accountsCreatedByRangeEnd}; total=${registered.totalAccounts}`,
-  );
-  check(
-    `${label}_registered_daily_reconciles`,
-    sum(registeredDaily, 'newAccounts') === registered.newAccounts,
-    `daily=${sum(registeredDaily, 'newAccounts')}; headline=${registered.newAccounts}`,
-  );
+  const registryIssues = oneAccountSummaryIssues(one.registeredAccounts, environment);
+  check(`${label}_registered_environment_contract`, registryIssues.length === 0, registryIssues.join("; ") || "Environment-specific or safely withheld");
 
   const identified = one.identifiedUsers ?? {};
   const selectedUsers = identified.selectedRange ?? {};
@@ -260,17 +239,8 @@ try {
   check('http_ok', response.ok, `HTTP ${response.status}`);
   const payload = await response.json();
 
-  checkOneEnvironment('one_production', payload.one?.data?.production);
-  checkOneEnvironment('one_uat', payload.one?.data?.uat);
-  check(
-    'one_shared_registered_accounts_match',
-    payload.one?.data?.production?.registeredAccounts?.totalAccounts
-      === payload.one?.data?.uat?.registeredAccounts?.totalAccounts
-      && payload.one?.data?.production?.registeredAccounts?.newAccounts
-      === payload.one?.data?.uat?.registeredAccounts?.newAccounts,
-    `production=${payload.one?.data?.production?.registeredAccounts?.totalAccounts}/${payload.one?.data?.production?.registeredAccounts?.newAccounts}; `
-      + `uat=${payload.one?.data?.uat?.registeredAccounts?.totalAccounts}/${payload.one?.data?.uat?.registeredAccounts?.newAccounts}`,
-  );
+  checkOneEnvironment('one_production', payload.one?.data?.production, 'production');
+  checkOneEnvironment('one_uat', payload.one?.data?.uat, 'uat');
   checkGrowth(payload.growth?.data);
   checkKai(payload.kai?.production?.rows);
 

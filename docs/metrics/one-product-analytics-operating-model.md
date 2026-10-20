@@ -4,6 +4,9 @@ This is the counting contract for the One KPI site. A larger number is not a
 better number if its unit, source, or release channel is wrong. Each KPI must
 show its date window, source, counting unit, availability, and definition.
 
+The [environment isolation contract](./environment-isolation.md) governs
+backend-scoped reporting, legacy shared-registry withholding and cutover proof.
+
 ## Sources of truth
 
 | Question | Source | Unit | Do not substitute |

@@ -7,18 +7,17 @@ const sourceName = (source: ReferralEnvironment) => source === 'production' ? 'P
 
 export function ReferralsPanel({ refreshKey }: { refreshKey: number }) {
   const [board, setBoard] = useState<ReferralBoard>('individual');
-  const [environment, setEnvironment] = useState<ReferralEnvironment>();
+  const [environment, setEnvironment] = useState<ReferralEnvironment>('production');
   const [pagination, setPagination] = useState({ refreshKey, cursors: [0], snapshotId: undefined as string | undefined });
   // Reset before committing a new refresh: do not fetch an old pinned page first.
   if (pagination.refreshKey !== refreshKey) setPagination({ refreshKey, cursors: [0], snapshotId: undefined });
   const { cursors, snapshotId } = pagination;
   const [retry, setRetry] = useState(0);
-  const params = new URLSearchParams({ board, afterRank: String(cursors.at(-1) ?? 0) });
-  if (environment) params.set('environment', environment);
+  const params = new URLSearchParams({ board, environment, afterRank: String(cursors.at(-1) ?? 0) });
   if (snapshotId) params.set('snapshotId', snapshotId);
   // A pinned page never polls into a different snapshot halfway through browsing.
   const resource = useMetricsResource<ReferralRankings>(`/api/analytics/one/referrals?${params}`, { refreshKey: refreshKey + retry });
-  const data = resource.data;
+  const data = resource.data?.environment === environment ? resource.data : null;
   const available = data?.state === 'available';
   const reset = () => setPagination({ refreshKey, cursors: [0], snapshotId: undefined });
   const restart = () => { reset(); setRetry(value => value + 1); };
@@ -34,12 +33,12 @@ export function ReferralsPanel({ refreshKey }: { refreshKey: number }) {
           className={`min-h-10 rounded-md px-5 text-sm font-semibold ${board === key ? 'bg-brand-500 text-white' : 'text-muted hover:text-ink'}`}>
           {key === 'individual' ? 'Individual' : 'Circles'}</button>)}
       </div>
-      {data && data.environments.length > 1 ? <div role="group" aria-label="Referral environment" className="inline-flex rounded-lg border border-stroke bg-surface p-1">
-        {data.environments.map(key => <button key={key} type="button" aria-pressed={data.environment === key}
+      <div role="group" aria-label="Referral environment" className="inline-flex rounded-lg border border-stroke bg-surface p-1">
+        {(['production', 'uat'] as const).map(key => <button key={key} type="button" aria-pressed={environment === key}
           onClick={() => { setEnvironment(key); reset(); }}
-          className={`min-h-10 rounded-md px-4 text-sm font-semibold ${data.environment === key ? 'bg-brand-500 text-white' : 'text-muted hover:text-ink'}`}>
+          className={`min-h-10 rounded-md px-4 text-sm font-semibold ${environment === key ? 'bg-brand-500 text-white' : 'text-muted hover:text-ink'}`}>
           {sourceName(key)}</button>)}
-      </div> : data?.environment && <span className="text-sm text-muted">{sourceName(data.environment)}</span>}
+      </div>
     </div>
 
     <section id="referral-standings" role="tabpanel" aria-labelledby={`referral-tab-${board}`} className="dashboard-card p-5 sm:p-6" aria-busy={loading}>

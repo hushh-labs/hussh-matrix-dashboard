@@ -1,3 +1,4 @@
+import { oneIdentityAuthorityId } from '../../src/server/one-account-scope.mjs';
 /** Synthetic aggregate data used only by intercepted browser-test requests. Never imported by src/. */
 import type { Page } from '@playwright/test';
 import type { AllAnalyticsResponse } from '../../src/lib/analytics-service';
@@ -40,6 +41,7 @@ export const founder: FounderBriefingData = {
 };
 
 export const one: OneAppSummary = {
+  reportingEnvironment: 'production', reportingScopeVersion: 'one-environment-v1',
   sourceLabel: 'Synthetic QA aggregate', sourceWebHost: 'one.hushh.ai', generatedAt: timestamp,
   available: true, windowDays: 30, range, rangeTotals: { users: 1460, sessions: 6230, events: 38400 },
   last24Hours: { users: 164, sessions: 420, events: 2300, available: true },
@@ -50,7 +52,7 @@ export const one: OneAppSummary = {
     selectedRange: { available: true, totalUsers: 1284, newUsers: 346, returningUsers: 938, ...range, newUserDefinition: 'First observed in analytics.' },
     dau: 148, wau: 704, mau: 1284, identifiedDevices: { dau: 154, wau: 742, mau: 1372 }, deviceCoverage: { dau: .94, wau: .95, mau: .94 }, complete: true, asOf: day(0) },
   iosIdentifiedUsers: { available: true, countingUnit: 'account', bundleId: 'com.hushh.app', totalUsers: 738, firstObservedUsers: 188, previouslyObservedUsers: 550, identityObservedSince: '2026-05-01', ...range, note: 'QA aggregate' },
-  registeredAccounts: { available: true, sourceLabel: 'Synthetic QA accounts', identityRealm: 'qa', sharedAcrossEnvironments: true, countingUnit: 'account', deduplication: 'Stable account',
+  registeredAccounts: { available: true, sourceLabel: 'Synthetic QA accounts', identityRealm: 'PROD QA', identityAuthorityId: oneIdentityAuthorityId('prod-fixture'), environment: 'production', registryScope: 'isolated', sharedAcrossEnvironments: false, countingUnit: 'account', deduplication: 'Stable account',
     totalAccounts: 8420, newAccounts: 412, accountsCreatedByRangeEnd: 8420, disabledAccounts: 3, ...range, generatedAt: timestamp, daily: daily.map(item => ({ date: item.eventDate, newAccounts: 12 })), note: 'Synthetic QA fixture' },
   activeByPlatformAvailable: true,
   activeByPlatform: ['IOS', 'ANDROID', 'WEB'].map((platform, index) => ({ platform, dauDevices: 90 - index * 20, wauDevices: 400 - index * 80, mauDevices: 800 - index * 140,
@@ -127,7 +129,7 @@ export const allAnalytics = {
   kai: { uat: { environment: 'uat', rows: [] }, production: { environment: 'production', rows: feedRows }, ga4: { platform: 'One UAT', data: ga4 },
     productionProduct: { platform: 'One', data: { productionFeed: { status }, uatFeed: { status: { ...status, sourceEnvironment: 'uat' } }, uatGa4: ga4, productionGa4: ga4, gcp, sourceCards: [sourceCard], uatSourceCards: [sourceCard] } } },
   hushhAi: { platform: 'hushh.ai', data: { ga4, gcp, searchConsole: null, sourceCards: [sourceCard] } }, hushhTech: { platform: 'hushhtech.com', data: null },
-  one: { platform: 'One', data: { production: one, uat: { ...one, sourceWebHost: 'uat.one.hushh.ai' } } },
+  one: { platform: 'One', data: { production: one, uat: { ...one, reportingEnvironment: 'uat', sourceWebHost: 'uat.one.hushh.ai', registeredAccounts: { ...one.registeredAccounts, identityRealm: 'UAT QA', identityAuthorityId: oneIdentityAuthorityId('uat-fixture'), environment: 'uat', totalAccounts: 50, newAccounts: 0, accountsCreatedByRangeEnd: 50, disabledAccounts: 0, daily: [] } } } },
   growth: { platform: 'All products', data: growth }, fetchedAt: timestamp,
   appStoreConnect: { platform: 'iOS', data: {
     appAppleId: 'qa', production: { available: false, note: 'QA provider waiting state', metrics: null },

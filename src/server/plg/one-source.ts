@@ -3,6 +3,7 @@ import type { PlgJourney, PlgCatalog, PlgActivity, PlgActivityRollup, PlgAgentAc
 import { DAY, eraseAccount, ingestEvent, PlgError, registerPlgCatalog } from './engine';
 import { signValue } from './service';
 import type { PlgStore } from './store';
+import { oneProductionEndpoint } from '../one-scope.mjs';
 
 interface SourceAccount {
   accountId: string;
@@ -135,21 +136,8 @@ export async function syncOneEvidence(
   // Stay below the worker's 180s HTTP budget. A slow pilot fails atomically
   // rather than continuing requests after its caller has abandoned the run.
   const deadline = clock() + 135_000;
-  let endpoint: URL;
-  try {
-    endpoint = new URL(options.url);
-    if (
-      endpoint.protocol !== 'https:' ||
-      endpoint.username ||
-      endpoint.password ||
-      endpoint.search ||
-      endpoint.hash ||
-      endpoint.pathname !== '/api/one/plg/snapshot'
-    )
-      throw unavailable();
-  } catch {
-    throw unavailable();
-  }
+  const endpoint = oneProductionEndpoint(options.url, '/api/one/plg/snapshot');
+  if (!endpoint) throw unavailable();
   if (options.secret.length < 32) throw unavailable();
   const state = await store.read();
   const selected = inspectionId ? state.contacts.filter((c) => c.id === inspectionId) : state.contacts;
