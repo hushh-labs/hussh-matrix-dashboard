@@ -129,7 +129,12 @@ export const allAnalytics = {
   kai: { uat: { environment: 'uat', rows: [] }, production: { environment: 'production', rows: feedRows }, ga4: { platform: 'One UAT', data: ga4 },
     productionProduct: { platform: 'One', data: { productionFeed: { status }, uatFeed: { status: { ...status, sourceEnvironment: 'uat' } }, uatGa4: ga4, productionGa4: ga4, gcp, sourceCards: [sourceCard], uatSourceCards: [sourceCard] } } },
   hushhAi: { platform: 'hushh.ai', data: { ga4, gcp, searchConsole: null, sourceCards: [sourceCard] } }, hushhTech: { platform: 'hushhtech.com', data: null },
-  one: { platform: 'One', data: { production: one, uat: { ...one, reportingEnvironment: 'uat', sourceWebHost: 'uat.one.hushh.ai', registeredAccounts: { ...one.registeredAccounts, identityRealm: 'UAT QA', identityAuthorityId: oneIdentityAuthorityId('uat-fixture'), environment: 'uat', totalAccounts: 50, newAccounts: 0, accountsCreatedByRangeEnd: 50, disabledAccounts: 0, daily: [] } } } },
+  one: { platform: 'One', data: { production: one, uat: { ...one, reportingEnvironment: 'uat', sourceWebHost: 'uat.one.hushh.ai', registeredAccounts: { ...one.registeredAccounts, identityRealm: 'UAT QA', identityAuthorityId: oneIdentityAuthorityId('uat-fixture'), environment: 'uat', totalAccounts: 50, newAccounts: 0, accountsCreatedByRangeEnd: 50, disabledAccounts: 0, daily: [] } }, registrations: {
+    available: true, scope: 'all_one_accounts', sourceLabel: 'Synthetic QA registry', identityAuthorityId: oneIdentityAuthorityId('shared-fixture'),
+    countingUnit: 'account', deduplication: 'Stable QA account', totalAccounts: 8420, newAccounts: 412,
+    accountsCreatedByRangeEnd: 8420, disabledAccounts: 3, ...range, generatedAt: timestamp,
+    daily: [{date:range.startDate,newAccounts:412}], note: 'Synthetic shared registry fixture across Main and Test.',
+  } } },
   growth: { platform: 'All products', data: growth }, fetchedAt: timestamp,
   appStoreConnect: { platform: 'iOS', data: {
     appAppleId: 'qa', production: { available: false, note: 'QA provider waiting state', metrics: null },

@@ -68,6 +68,49 @@ test('website selector isolates reports and keeps all products reachable', async
   await assertFits(page);
 });
 
+test('shared registration cards survive environment switches and follow the selected dates', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await mockDashboard(page);
+  const unavailable = { ...one.registeredAccounts!, available: false, registryScope: 'legacy_shared',
+    totalAccounts: null, newAccounts: null, accountsCreatedByRangeEnd: null, disabledAccounts: null, daily: [] };
+  const production = { ...one, registeredAccounts: unavailable };
+  const uat = { ...one, reportingEnvironment: 'uat', registeredAccounts: { ...unavailable, environment: 'uat', registryScope: 'unconfigured' },
+    identifiedUsers: { ...one.identifiedUsers!, selectedRange: { ...one.identifiedUsers!.selectedRange, totalUsers: 33, newUsers: 11, returningUsers: 22 } } };
+  await page.route('**/api/analytics/all?*', route => {
+    const query = new URL(route.request().url()).searchParams;
+    const startDate = query.get('one_start_date')!, endDate = query.get('one_end_date')!;
+    const shortRange = (Date.parse(endDate) - Date.parse(startDate)) / 86400000 < 7;
+    return route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: {
+      production, uat, registrations: { ...allAnalytics.one!.data!.registrations!, startDate, endDate, newAccounts: shortRange ? 77 : 412,
+        daily: [{date:startDate,newAccounts:shortRange ? 77 : 412}] },
+    } } } });
+  });
+  await page.goto('/'); await navigate(page, 'One app');
+  const total = page.getByRole('group', { name: 'Total registered accounts', exact: true });
+  const fresh = page.getByRole('group', { name: 'New registered accounts', exact: true });
+  const active = page.getByRole('group', { name: 'Active signed-in accounts', exact: true });
+  await expect(total).toContainText('8,420');
+  await expect(total).toContainText('All One accounts · Main + Test');
+  await expect(fresh).toContainText('412');
+  await expect(active).toContainText('1,284');
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
+  await expect(total).toContainText('8,420');
+  await expect(fresh).toContainText('412');
+  await expect(active).toContainText('33');
+  await page.getByRole('button', { name: '7 days', exact: true }).click();
+  await expect(fresh).toContainText('77');
+  await expect(total).toContainText('8,420');
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: {
+    production, uat, registrations: { ...allAnalytics.one!.data!.registrations!, available: false, totalAccounts: null, newAccounts: null,
+      accountsCreatedByRangeEnd: null, disabledAccounts: null, daily: [] },
+  } } } }));
+  await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(total.getByText('Not available', { exact: true })).toBeVisible();
+  await expect(fresh.getByText('Not available', { exact: true })).toBeVisible();
+  await expect(active).toContainText('33');
+  await assertFits(page);
+});
+
 for (const width of [390, 1440]) {
   test(`One keeps collection diagnostics out of the report at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -87,9 +130,9 @@ for (const width of [390, 1440]) {
     await page.goto('/'); await navigate(page, 'One app');
     await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
     await expect(page.getByText(/^Collection diagnostics:/)).toHaveCount(0);
-    await expect(page.getByText('Production totals exclude test traffic.', { exact: false })).not.toBeVisible();
+    await expect(page.getByText('Production activity excludes test traffic.', { exact: false })).not.toBeVisible();
     await page.getByText('Definitions & data sources', { exact: true }).click();
-    await expect(page.getByText('Production totals exclude test traffic.', { exact: false })).toBeVisible();
+    await expect(page.getByText('Production activity excludes test traffic.', { exact: false })).toBeVisible();
     await page.getByRole('button', { name: 'App health', exact: true }).click();
     const android = page.getByRole('region', { name: 'Android app analytics', exact: true });
     await expect(android.getByText('316', { exact: true })).toBeVisible();

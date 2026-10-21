@@ -11,6 +11,12 @@ counts need verified membership from the existing environment backend records.
 The current directory reader cannot establish that membership and withholds
 those counts; it must not turn a shared directory into two separate cohorts.
 
+The separate `data.registrations` aggregate exposes the actual shared One directory
+totals without assigning them to PROD or UAT. The registration cards explicitly
+say **All One accounts** and remain global across the Main/Test activity selector.
+The environment-scoped `registeredAccounts` fields retain the containment rules
+below. Restoring global totals does not declare environment membership verified.
+
 ## Reporting contract
 
 `src/server/one-scope.mjs` owns the environment predicate. One product facts

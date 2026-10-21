@@ -33,6 +33,8 @@ import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
+import { registrationTotals } from './src/server/one-registration-totals.mjs';
+import type { OneRegistrationTotals } from './src/lib/types';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -2335,6 +2337,33 @@ const oneRegisteredAccountsInflight = new Map<
   string,
   Promise<DataResult<OneRegisteredAccountsSummary>>
 >();
+
+const oneRegistrationTotalsCache = new AggregateCache<OneRegistrationTotals>({
+  freshMs: ONE_FIREBASE_AUTH_CACHE_TTL_MS, maxAgeMs: ONE_FIREBASE_AUTH_CACHE_TTL_MS, maxEntries: 64,
+});
+
+async function fetchOneRegistrationTotals(range: HushhAiDateRange): Promise<DataResult<OneRegistrationTotals>> {
+  // This is the existing shared One directory, explicitly outside the environment cohorts.
+  const project = oneAccountSource('production').project;
+  try {
+    const snapshot = await oneRegistrationTotalsCache.read(`${project}:${range.startDate}:${range.endDate}`, async () => {
+      const { GoogleAuth } = await import('google-auth-library');
+      const client = await new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] }).getClient();
+      const counts = await readOneAccountCounts(range, async (nextPageToken: string) => {
+        const response = await client.request<FirebaseAuthBatchResponse>({
+          url: `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(project)}/accounts:batchGet`,
+          method: 'GET', params: { maxResults: 1000, ...(nextPageToken ? { nextPageToken } : {}) }, timeout: 30_000,
+        });
+        return response.data ?? {};
+      });
+      return registrationTotals(range, project, counts);
+    });
+    return { data: snapshot.value, error: null };
+  } catch {
+    const data = registrationTotals(range, project, null);
+    return { data, error: data.note };
+  }
+}
 
 function unavailableOneRegisteredAccounts(
   range: HushhAiDateRange,
@@ -6910,15 +6939,16 @@ api.get('/api/analytics/one/android', async (req, res) => {
 
 api.get('/api/analytics/one/app', async (req, res) => {
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
-  const [production, uat] = await Promise.all([
+  const [production, uat, registrations] = await Promise.all([
     fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
     fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST, 'uat'),
+    fetchOneRegistrationTotals(oneRange),
   ]);
   const error = [production.error, uat.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
-  res.status(error && !production.data && !uat.data ? 502 : 200).json(sanitizePublicPayload({
+  res.status(error && !production.data && !uat.data && !registrations.data?.available ? 502 : 200).json(sanitizePublicPayload({
     platform: 'one.hushh.ai',
-    data: { production: production.data, uat: uat.data },
+    data: { production: production.data, uat: uat.data, registrations: registrations.data },
     error,
     fetchedAt,
   }));
@@ -6989,6 +7019,7 @@ api.get('/api/analytics/all', async (req, res) => {
     hushhTech,
     oneAppProduction,
     oneAppUat,
+    oneRegistrations,
     growth,
     appStoreConnect,
   ] = await Promise.all([
@@ -7005,6 +7036,7 @@ api.get('/api/analytics/all', async (req, res) => {
     optional(full, () => fetchHushhTechAnalytics(hushhTechRange)),
     optional(appData, () => fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true)),
     optional(appData, () => fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST, 'uat')),
+    optional(appData, () => fetchOneRegistrationTotals(oneRange)),
     optional(complete || view === 'growth', () => fetchGrowthSummary(oneRange)),
     optional(complete || view === 'apps', () => fetchAppStoreConnectSummary(appStoreConnectRange)),
   ]);
@@ -7060,7 +7092,7 @@ api.get('/api/analytics/all', async (req, res) => {
     hushhTech: { platform: 'hushhtech.com', data: hushhTech.data, error: hushhTech.error },
     one: {
       platform: 'one.hushh.ai',
-      data: { production: oneAppProduction.data, uat: oneAppUat.data },
+      data: { production: oneAppProduction.data, uat: oneAppUat.data, registrations: oneRegistrations.data },
       error: [oneAppProduction.error, oneAppUat.error].filter(Boolean).join('; ') || null,
     },
     growth: { platform: 'organisation', data: growth.data, error: growth.error },
