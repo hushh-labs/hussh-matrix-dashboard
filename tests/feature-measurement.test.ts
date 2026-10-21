@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import { AGENT_MEASUREMENTS, featureTrackingGap } from '../src/lib/agent-measurement-contract.mjs';
 import { exactCount, eventsPerDevice, eventVolumeExplanation, featureMeasurementNote, featureMeasurementState, unclassifiedEvents } from '../src/lib/feature-measurement';
 
 describe('feature metric units', () => {
+  it('measures revoke outcomes separately while retaining their general consent classification', () => {
+    const withdrawal = AGENT_MEASUREMENTS.find(row => row.key === 'revocation_submitted')!;
+    expect(withdrawal.events).toEqual(['consent_action_result']);
+    expect(withdrawal.predicate).toContain("action = 'revoke'");
+    expect(withdrawal.extraPredicate).toBe(withdrawal.predicate);
+    expect(featureTrackingGap('revocation_submitted')).toBeNull();
+    expect(featureMeasurementState('revocation_submitted', true, true, 0)).toBe('empty');
+    expect(featureMeasurementState('revocation_submitted', false, true, undefined)).toBe('unavailable');
+    expect(featureMeasurementNote('revocation_submitted')).toContain('Submitted attempts are excluded');
+  });
   it('distinguishes missing emitters, real empty results and unreadable sources', () => {
     for (const key of ['mail_signin_screen_view', 'inbox_viewed', 'autocategory_applied', 'kyc_reply_sent', 'preferences_updated']) {
       expect(featureMeasurementState(key, true, true, undefined)).toBe('not_tracked');

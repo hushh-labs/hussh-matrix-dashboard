@@ -3249,6 +3249,10 @@ ${capabilitySql.isDeliberate}
       -- rows instead of moving Google events out of the general auth totals.
       SELECT * REPLACE ('google_signin' AS feature_key) FROM classified_base
       WHERE eventName IN ('auth_started', 'auth_succeeded', 'auth_failed') AND action = 'google'
+      UNION ALL
+      -- A withdrawal result remains part of general consent outcomes too.
+      SELECT * REPLACE ('revocation_submitted' AS feature_key) FROM classified_base
+      WHERE eventName = 'consent_action_result' AND action = 'revoke'
     ), feature_totals AS (
     SELECT
       feature_key AS featureKey,

@@ -36,7 +36,9 @@ export const AGENT_MEASUREMENTS = [
   entry('consent', 'consent_action_outcome', event('consent_action_result'), ['consent_action_result']),
   entry('consent', 'data_unlock', any('one_consent_data_unlocked','data_unlocked','one_consent_data_unlock_requested'), ['one_consent_data_unlocked','data_unlocked','one_consent_data_unlock_requested'], absent),
   entry('consent', 'permission_granted', any('permission_granted','one_consent_permission_granted'), ['permission_granted','one_consent_permission_granted'], absent),
-  entry('consent', 'revocation_submitted', 'FALSE', [], 'Consent withdrawal has no separate measurement emitter yet.'),
+  // Revoke results also belong to the general consent-outcome total. Preserve
+  // both views without counting submitted attempts as completed withdrawals.
+  entry('consent', 'revocation_submitted', action('consent_action_result','revoke'), ['consent_action_result'], null, action('consent_action_result','revoke')),
   entry('gmail', 'account_connect_started', event('gmail_connect_started'), ['gmail_connect_started']),
   entry('gmail', 'account_connected', `(${action('gmail_connect_result','complete')}) OR ${event('one_gmail_connected')}`, ['gmail_connect_result','one_gmail_connected']),
   entry('gmail', 'receipt_sync_requested', event('gmail_sync_requested'), ['gmail_sync_requested']),

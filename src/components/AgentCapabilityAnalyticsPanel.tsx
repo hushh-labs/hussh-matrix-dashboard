@@ -293,12 +293,12 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'revocation_submitted',
-      label: 'Consent Revocation Audit',
-      icon: AlertTriangle,
-      status: 'gap',
-      badgeLabel: 'Instrumentation Gap',
-      badgeClass: 'bg-[#ff9500]/10 text-[#b36b00]',
-      explanation: 'Consent revocation flow is un-instrumented in webapp. Zero reflects missing GA4 event pipeline.',
+      label: 'Consent withdrawal results',
+      icon: ShieldCheck,
+      status: 'active',
+      badgeLabel: 'Data available',
+      badgeClass: 'bg-success-soft text-success',
+      explanation: 'Revoke outcomes emitted as consent_action_result with action=revoke. Submitted attempts are excluded.',
     },
   ],
   gmail: [
