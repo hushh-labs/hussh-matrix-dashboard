@@ -81,8 +81,12 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
 test('shows automation blockers and changes future cycle controls without sending', async ({ page }) => {
   const state = await mockPlg(page);
   const mutations: string[] = [];
-  page.on('request', (request) => { if (request.method() !== 'GET') mutations.push(new URL(request.url()).pathname); });
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() !== 'GET' && path !== '/api/plg/audience') mutations.push(path);
+  });
   await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Automation', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Automatic follow-up operations' });
   await expect(panel).toContainText('Rachel Morgan');
   await expect(panel).toContainText('Email provider authentication is missing');
@@ -103,6 +107,7 @@ test('enrolls an account and operates the shared follow-up queue without sending
     if (r.method() !== 'GET') requests.push(r.url());
   });
   await page.goto('/plg');
+  await page.getByRole('button', { name: 'Campaign follow-up queue', exact: true }).click();
   await expect(page.getByText('Your first cohort starts here')).toBeVisible();
   await expect(page.getByText('Live sending disabled')).toBeVisible();
   await page.getByRole('button', { name: 'Enroll account', exact: true }).click();
@@ -142,17 +147,18 @@ test('reads agent people with phone-only identity, filters and live pagination w
     else if (request.method() !== 'GET') mutations.push(request.url());
   });
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'Agent people', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Users & drop-offs', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: 'Campaign results', exact: true })).toHaveCount(0);
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   await expect(page.getByText('+919876543210', { exact: true })).toBeVisible();
   await expect(page.getByText('Not enrolled in campaigns', { exact: true })).toBeVisible();
   await expect(page.getByText('Distinct verified task outcomes.', { exact: false })).toBeVisible();
   await expect(page.getByText('No verified value observed', { exact: true })).toBeVisible();
-  await page.getByLabel('People agent').selectOption('agent_calendar');
-  await expect(page.getByLabel('People agent')).toHaveValue('agent_calendar');
-  await page.getByLabel('Attempt evidence').selectOption('possible_incomplete');
+  await page.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('agent_calendar');
+  await expect(page.getByRole('combobox', { name: 'Agent', exact: true })).toHaveValue('agent_calendar');
+  await page.getByLabel('Task status').selectOption('possible_incomplete');
   await page.getByLabel('Search name, email or phone').fill('+9198');
-  await page.getByLabel('No terminal observation after').selectOption('240');
+  await page.getByLabel('Time since start').selectOption('240');
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   expect(bodies.at(-1)).toMatchObject({ agentId: 'agent_calendar', segment: 'possible_incomplete', query: '+9198', graceMinutes: 240, cursor: null });
@@ -168,7 +174,7 @@ test('reads agent people with phone-only identity, filters and live pagination w
 test('edits content, verifies journeys and leaves immature cohorts unavailable', async ({ page }) => {
   const state = await mockPlg(page);
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'Journeys and content' }).click();
+  await page.getByRole('tab', { name: 'Messages', exact: true }).click();
   await page.getByLabel('memory task verified', { exact: false }).check();
   await page.getByRole('button', { name: /memory · demo/ }).click();
   await page.getByLabel('Subject', { exact: true }).fill('Save a useful note with One');
@@ -181,7 +187,7 @@ test('edits content, verifies journeys and leaves immature cohorts unavailable',
   await expect(page.getByRole('button', { name: 'Save message' })).toHaveCount(0);
   expect(state.ready.memory).toBe(true);
   expect(state.templates.find((t) => t.id === 'memory-demo')!.published).toBe(true);
-  await page.getByRole('tab', { name: 'Results and activity' }).click();
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
   await expect(page.getByText('Waiting for mature cohorts')).toHaveCount(2);
   await expect(page.getByText('Twenty percent of accounts', { exact: false })).toBeVisible();
 });
@@ -199,12 +205,22 @@ for (const width of [320, 768, 1440])
     await page.setViewportSize({ width, height: 1000 });
     await mockPlg(page, false, true);
     await page.goto('/plg');
-    await expect(page.getByText('Your first cohort starts here')).toBeVisible();
+    await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
-    for (const label of ['Follow-up queue', 'Journeys and content', 'Results and activity', 'Agents and actions', 'Agent people']) {
-      await page.getByRole('tab', { name: label }).click();
-      if (label === 'Agent people') await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+    for (const label of ['Users & drop-offs', 'Messages', 'Results', 'Automation']) {
+      await page.getByRole('tab', { name: label, exact: true }).click();
+      if (label === 'Users & drop-offs') {
+        await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Campaign follow-up queue', exact: true }).click();
+        await expect(page.getByText('Your first cohort starts here')).toBeVisible();
+        await page.getByRole('button', { name: 'Back to users', exact: true }).click();
+      }
+      if (label === 'Results') {
+        await page.getByRole('button', { name: 'View tracking coverage', exact: true }).click();
+        await expect(page.getByRole('heading', { name: 'Agents and actions', exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Back to results', exact: true }).click();
+      }
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
@@ -225,7 +241,8 @@ test('filters registered actions and inspects limited activity without claiming 
   const state = await mockPlg(page, false, true);
   enroll(state, { accountId: 'synthetic-ui-account', email: 'pilot@example.invalid', name: 'Pilot', journey: 'agent_calendar', cohort: 'existing', frequency: 'daily', consent: true, consentSource: 'Synthetic preference form', environment: 'production', internal: false }, 'test-operator', Date.now());
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'Agents and actions' }).click();
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  await page.getByRole('button', { name: 'View tracking coverage', exact: true }).click();
   await expect(page.getByText('Not collected', { exact: true })).toBeVisible();
   await page.getByLabel('Agent filter').selectOption('agent_calendar');
   await page.getByLabel('Search actions').fill('Create event');

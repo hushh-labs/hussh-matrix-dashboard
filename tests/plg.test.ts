@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   candidate,
+  candidateFromPolicy,
+  deliveryPolicy,
   contactStage,
   DAY,
   enroll,
@@ -490,6 +492,33 @@ function observe(
 }
 
 describe('PLG eligibility and measurement', () => {
+  it('keeps permanent claims and reservation order when frequency history is compacted', () => {
+    const s = initialPlgState(); ready(s);
+    const c = contact(s, NOW - 40 * DAY); observe(s, c);
+    c.frequency = 'daily';
+    c.firstValueAt = new Date(NOW - 30 * DAY).toISOString();
+    c.lastValueAt = new Date(NOW - 20 * DAY).toISOString();
+    c.valueDays = [c.firstValueAt.slice(0, 10)];
+    const history = [
+      { step: 'newsletter', days: 35, key: `${c.id}:memory-newsletter:1` },
+      { step: 'return', days: 2, key: 'return-earlier-reservation' },
+      { step: 'return', days: 8, key: 'return-later-reservation' },
+      { step: 'manual', days: 12, key: 'manual:old-global-claim' },
+      { step: 'welcome', days: 39, key: `${c.id}:welcome:activation` },
+    ] as const;
+    s.deliveries = history.map((d) => ({ id: d.key, contactId: c.id, step: d.step,
+      templateId: `memory-${d.step}`, key: d.key, createdAt: new Date(NOW - d.days * DAY).toISOString(),
+      status: 'sent', subject: '', body: '', ctaLabel: '', ctaUrl: '', providerId: null }));
+    const policy = deliveryPolicy(c, s.deliveries);
+    const context = { paused: s.paused, catalog: s.catalog, ready: s.ready, templates: s.templates };
+    expect(policy.latestPromotions).toHaveLength(3);
+    expect(policy.claimedKeys.has(`${c.id}:memory-newsletter:1`)).toBe(true);
+    expect(candidateFromPolicy(context, c, policy, NOW)).toMatchObject({ eligible: true, step: 'feedback' });
+    // Permanent claims remain authoritative after the 24-hour/seven-day windows.
+    const claimed = { ...policy, claimedKeys: new Set([...policy.claimedKeys, `${c.id}:feedback:${c.lastValueAt}`]) };
+    expect(candidateFromPolicy(context, c, claimed, NOW)).toMatchObject({ eligible: false, reason: 'This journey step has already been reserved or sent' });
+    expect(candidateFromPolicy(context, c, { ...policy, unresolved: true }, NOW).reason).toContain('confirmation pending');
+  });
   it('does not mistake a successful task for a complete activity observation', () => {
     const s = initialPlgState();
     ready(s);

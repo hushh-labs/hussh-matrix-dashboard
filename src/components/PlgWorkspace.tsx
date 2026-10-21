@@ -77,7 +77,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents' | 'people'>('queue');
+  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents' | 'people' | 'automation'>('people');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
@@ -178,11 +178,11 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               One activation and retention
             </p>
             <h2 className="mt-2 text-2xl font-semibold text-ink">
-              Help users reach their next useful result
+              See who needs their next useful result
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-              Automated guided tasks, relevant content and follow-ups based on
-              verified progress.
+              Find users by agent and task progress, prepare helpful messages,
+              and measure what brings them back.
             </p>
           </div>
           <span className="inline-flex items-center gap-2 rounded-full border border-stroke px-3 py-1.5 text-xs font-semibold text-muted">
@@ -200,6 +200,9 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button className={buttonStyle} onClick={() => setTab('automation')}>
+              {workspace.deliveryEnabled ? 'View automation status' : 'Review email setup'}
+            </button>
             <button
               className={buttonStyle}
               disabled={busy}
@@ -234,10 +237,29 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           {error}
         </div>
       )}
-      {workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="PLG views">
+        {([
+          ['people', 'Users & drop-offs'],
+          ['content', 'Messages'],
+          ['results', 'Results'],
+          ['automation', 'Automation'],
+        ] as const).map(([key, label]) => (
+          <button key={key} role="tab"
+            aria-selected={(tab === 'queue' ? 'people' : tab === 'agents' ? 'results' : tab) === key}
+            onClick={() => setTab(key)}
+            className={cn(buttonStyle, (tab === 'queue' ? 'people' : tab === 'agents' ? 'results' : tab) === key && 'border-ink bg-ink text-surface hover:bg-ink')}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
         refresh={() => void reload()}
         toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {tab === 'results' && <div>
+        <h3 className="text-lg font-semibold text-ink">Campaign results</h3>
+        <p className="mt-1 text-sm text-muted">These totals cover enrolled campaign accounts. Registered-user totals and app-wide DAU are separate One app analytics.</p>
+      </div>}
+      {tab === 'results' && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           [Users, 'Enrolled accounts', metrics.enrolled],
           [Workflow, 'Activity observed', metrics.observed],
@@ -253,28 +275,13 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             </div>
           );
         })}
-      </div>
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="PLG views">
-        {(
-          [
-            ['queue', 'Follow-up queue'],
-            ['content', 'Journeys and content'],
-            ['results', 'Results and activity'],
-            ['agents', 'Agents and actions'],
-            ['people', 'Agent people'],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            role="tab"
-            aria-selected={tab === key}
-            onClick={() => setTab(key)}
-            className={cn(buttonStyle, tab === key && 'border-ink bg-ink text-surface hover:bg-ink')}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      </div>}
+      {tab === 'people' && <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted">Registered One users, including people who have not joined email campaigns.</p>
+        <button className={buttonStyle} onClick={() => setTab('queue')}>Campaign follow-up queue</button>
+      </div>}
+      {tab === 'queue' && <button className={buttonStyle} onClick={() => setTab('people')}>Back to users</button>}
+      {tab === 'agents' && <button className={buttonStyle} onClick={() => setTab('results')}>Back to results</button>}
       {tab === 'agents' && <PlgAgentActivityPanel state={state} busy={busy}
         refresh={() => void mutate('sync', 'POST', {})}
         inspect={(contactId) => api<PlgActivityInspection>('activity', 'POST', { contactId })} />}
@@ -607,6 +614,10 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       )}
       {tab === 'results' && (
         <section className={cn(dashboardCard, 'space-y-6 p-6')}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted">Check which agents and actions supply the evidence behind these results.</p>
+            <button className={buttonStyle} onClick={() => setTab('agents')}>View tracking coverage</button>
+          </div>
           <div>
             <h3 className="text-lg font-semibold text-ink">Measure useful outcomes</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
