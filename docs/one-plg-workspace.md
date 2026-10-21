@@ -502,6 +502,9 @@ raw-event SELECT with this filter because a preaggregated legacy view cannot be
 filtered by account afterwards. No warehouse write grant or view mutation is
 needed. Explicit collection diagnostics, store reports and referral standings
 are separate source measurements and must not be presented as customer adoption.
+The separate all-One authentication registry introduced on main is preserved;
+its detailed view explicitly includes Main, Test and staff accounts. It is never
+used as a fallback for the selected environment's customer registration cards.
 
 Release the companion backend with its Secret Manager reporting policy, verify
 the private source contract, then deploy this strict consumer. An older backend

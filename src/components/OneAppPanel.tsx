@@ -29,6 +29,7 @@ import { FeatureUserBreakdownPanel } from './FeatureUserBreakdownPanel';
 import type {
   BreakdownMetric,
   OneAppSummary,
+  OneRegistrationTotals,
   OneCapabilityUsage,
   OneInstallFunnel,
   OnePlatformActives,
@@ -213,12 +214,10 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
   );
 }
 
-function RegisteredUsers({ one }: { one: OneAppSummary }) {
-  const accounts = one.registeredAccounts;
+function RegisteredUsers({ accounts }: { accounts: OneRegistrationTotals | null }) {
   if (!accounts) return null;
 
-  const verified = accounts.registryScope === 'production_contacts' || (accounts.registryScope === 'isolated' && !accounts.sharedAcrossEnvironments);
-  if (!accounts.available || !verified || accounts.totalAccounts === null || accounts.newAccounts === null) {
+  if (!accounts.available || accounts.totalAccounts === null || accounts.newAccounts === null) {
     return (
       <div className="flex items-start gap-3 rounded-2xl border border-[#d8c48b] bg-warning-soft p-4 text-warning">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
@@ -234,12 +233,12 @@ function RegisteredUsers({ one }: { one: OneAppSummary }) {
   });
   const tiles = [
     {
-      label: 'Total registered users',
+      label: 'All-One registered accounts',
       value: accounts.totalAccounts,
       detail: `Current unique account records · ${exactAccountCount(disabled)} disabled · ${snapshotAt}`,
     },
     {
-      label: 'New registered users',
+      label: 'New All-One accounts',
       value: accounts.newAccounts,
       detail: `${accounts.startDate} to ${accounts.endDate}`,
     },
@@ -268,7 +267,7 @@ function RegisteredUsers({ one }: { one: OneAppSummary }) {
       <div className="flex items-start gap-3 rounded-2xl border border-[#b8e6c2] bg-[#f2fff5] p-4 text-[#1f6d32]">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <p className="text-sm font-semibold leading-5">
-          System of record: {accounts.sourceLabel}. {accounts.identityRealm}. Only this environment's verified registry is counted.
+          System of record: {accounts.sourceLabel}. This shared authentication registry includes Main, Test and staff accounts; it is not a production customer count.
           Each immutable Firebase account ID is counted once, so repeat sign-ins, sessions, events and devices cannot inflate these values.
           New means the account creation timestamp falls inside the selected range. Separately created accounts cannot be proven to belong to different humans, and deleted accounts are not present in the current registry snapshot.
         </p>
@@ -314,23 +313,26 @@ function IosIdentifiedUsers({ one }: { one: OneAppSummary }) {
   );
 }
 
-function OneAtAGlance({ one }: { one: OneAppSummary }) {
-  const registered = one.registeredAccounts;
-  const isolated = registered?.available && (registered.registryScope === 'production_contacts' || (registered.registryScope === 'isolated' && !registered.sharedAcrossEnvironments));
+function OneAtAGlance({ one, registrations }: { one: OneAppSummary | null; registrations: OneRegistrationTotals | null }) {
+  // Shared authentication totals stay in their separate registry view; never
+  // substitute them for the selected environment's customer population.
+  const registered = one?.registeredAccounts;
+  const available = registered?.available && (registered.registryScope === 'production_contacts' ||
+    (registered.registryScope === 'isolated' && !registered.sharedAcrossEnvironments));
   const tiles = [
     {
       group: 'Users', label: 'Total registered accounts',
-      value: isolated ? registered.totalAccounts : null,
-      detail: isolated ? `Current ${registered.identityRealm} accounts` : 'Awaiting verified account counts',
+      value: available ? registered.totalAccounts : null,
+      detail: one?.reportingEnvironment === 'production' ? 'Verified production customer contacts · staff/test excluded' : 'Verified UAT account registry',
     },
     {
       group: 'Users', label: 'New registered accounts',
-      value: isolated ? registered.newAccounts : null,
-      detail: isolated ? 'Accounts created during the selected dates in this environment' : 'Awaiting verified account counts',
+      value: available ? registered.newAccounts : null,
+      detail: 'Selected environment · original account creation dates',
     },
     {
       group: 'Users', label: 'Active signed-in accounts',
-      value: one.identifiedUsers?.selectedRange.totalUsers ?? null,
+      value: one?.identifiedUsers?.selectedRange.totalUsers ?? null,
       detail: 'Across measured One web and app activity · one count per account, not a sum of platforms',
     },
   ];
@@ -339,7 +341,7 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
     <div className="mb-5 space-y-3">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {tiles.map((tile) => (
-          <div key={tile.label} className={cn(dashboardCard, 'p-4')}>
+          <div key={tile.label} role="group" aria-label={tile.label} className={cn(dashboardCard, 'p-4')}>
             <p className="mt-1 text-sm font-semibold text-ink">{tile.label}</p>
             <p className="mt-2 text-4xl font-semibold tabular-nums text-ink">
               {typeof tile.value === 'number' ? exactAccountCount(tile.value) : 'Not available'}
@@ -1191,7 +1193,7 @@ function Health({ metrics }: { metrics: BreakdownMetric[] }) {
  * number above can be trusted: what an active "person" actually is, and how old
  * the data is. Both used to be absent from the page entirely.
  */
-function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rangeLabel: string; environment: 'production' | 'uat' }) {
+function Provenance({ one, rangeLabel, environment, registrations }: { one: OneAppSummary; rangeLabel: string; environment: 'production' | 'uat'; registrations: OneRegistrationTotals | null }) {
   const lagHours = typeof one.expectedLagSeconds === 'number'
     ? Math.round(one.expectedLagSeconds / 3600)
     : null;
@@ -1207,13 +1209,13 @@ function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rang
         people. The signed-in-user cards separately count distinct stable account IDs and collapse the
         same account across devices, while clearly showing how much device traffic has no bound identity.
         Native and <code className="rounded bg-surface/70 px-1 py-0.5 text-xs">{one.sourceWebHost ?? 'one.hushh.ai'}</code> only;
-        every other web host is excluded. {environment === 'production' ? 'Production totals exclude test traffic. ' : ''}
+        every other web host is excluded. {environment === 'production' ? 'Production activity excludes test traffic. ' : ''}
         Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
         {rangeLabel}
         {lagHours ? ` · data lands about ${lagHours}h behind` : ''}
         {one.generatedAt ? ` · read ${new Date(one.generatedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''}.
       </p>
-      {one.registeredAccounts?.note && <p className="text-sm leading-6 text-muted">{one.registeredAccounts.note}</p>}
+      {registrations?.note && <p className="text-sm leading-6 text-muted">{registrations.note}</p>}
     </div>
   );
 }
@@ -1221,6 +1223,7 @@ function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rang
 export function OneAppPanel({
   one,
   oneUat,
+  registrations = null,
   loading = false,
   healthMetrics,
   rangeLabel,
@@ -1233,6 +1236,7 @@ export function OneAppPanel({
   loading?: boolean;
   one: OneAppSummary | null;
   oneUat: OneAppSummary | null;
+  registrations?: OneRegistrationTotals | null;
   healthMetrics: BreakdownMetric[];
   rangeLabel: string;
   locationRoute: LocationAnalyticsRoute | null;
@@ -1288,7 +1292,7 @@ export function OneAppPanel({
                 Test analytics
               </button>
             </div>
-            <span className="text-xs text-muted">{environment === 'production' ? 'Live product activity' : 'Test environment only'}</span>
+            <span className="text-xs text-muted">{environment === 'production' ? 'Live product activity' : 'Test activity'}</span>
           </div>
           <div className="shrink-0">{dateControl}</div>
         </div>);
@@ -1297,6 +1301,7 @@ export function OneAppPanel({
     return (
       <main className="space-y-10">
         <section>{filterHeader}
+        {!loading && registrations && <RegisteredUsers accounts={registrations} />}
         {loading ? <MetricsSkeleton /> : <div className={cn(dashboardPanel, 'p-8 text-center')}>
           <p className="text-base font-semibold text-ink">
             One app data is unavailable for this selection.
@@ -1368,14 +1373,14 @@ export function OneAppPanel({
             </h2>
           </div>
         </div>
-        <OneAtAGlance one={activeData} />
+        <OneAtAGlance one={activeData} registrations={registrations} />
         <ReportDetails title="Activity by platform" hint="iOS, Android and web">
           <PlatformsAtAGlance one={activeData} environment={environment} mainAnalytics={one} onViewMainAnalytics={() => setEnvironment('production')} />
         </ReportDetails>
 
         <ReportDetails title="Daily, weekly & monthly counts" hint="Accounts and devices">
           <div className="mt-4 flex flex-col gap-4">
-            <RegisteredUsers one={activeData} />
+            <RegisteredUsers accounts={registrations} />
             <IosIdentifiedUsers one={activeData} />
             <IdentifiedUsers one={activeData} />
             <ActiveDevices one={activeData} />
@@ -1472,7 +1477,7 @@ export function OneAppPanel({
             Reporting requires both the selected backend environment tag and its approved app/stream/host. Property membership alone cannot qualify activity. {activeData.acquisitionScopeNote}
           </p>
 
-        <Provenance one={activeData} rangeLabel={rangeLabel} environment={environment} />
+        <Provenance one={activeData} rangeLabel={rangeLabel} environment={environment} registrations={registrations} />
       </ReportDetails>
     </main>
   );
