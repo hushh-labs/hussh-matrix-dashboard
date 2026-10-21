@@ -5,6 +5,7 @@ import {
   type PlgCatalog,
   type PlgCandidate,
   type PlgContact,
+  type PlgDelivery,
   type PlgJourney,
   type PlgStage,
   type PlgState,
@@ -380,6 +381,43 @@ export function candidate(
   now: number,
   ignorePause = false,
 ): PlgCandidate {
+  return candidateFromPolicy(state, c, deliveryPolicy(c, state.deliveries), now, ignorePause);
+}
+
+/** Policy inputs for one account; a repository need not reconstruct delivery history. */
+export interface PlgDeliveryPolicy {
+  unresolved: boolean;
+  latestPromotions: readonly string[];
+  latestStepAt: Partial<Record<PlgStep, string>>;
+  lastReturnAt: string | null;
+  claimedKeys: ReadonlySet<string>;
+}
+
+/** Compatibility projection for the bounded v1 store. Preserve reservation order. */
+export function deliveryPolicy(c: PlgContact, deliveries: readonly PlgDelivery[]): PlgDeliveryPolicy {
+  const history = deliveries.filter((d) => d.contactId === c.id);
+  const latestStepAt: PlgDeliveryPolicy['latestStepAt'] = {};
+  for (const d of history) {
+    if (d.step === 'manual') continue;
+    const previous = latestStepAt[d.step];
+    if (!previous || Date.parse(d.createdAt) > Date.parse(previous)) latestStepAt[d.step] = d.createdAt;
+  }
+  return {
+    unresolved: history.some((d) => d.status === 'sending' || d.status === 'uncertain'),
+    latestPromotions: history.map((d) => d.createdAt).sort((a, b) => Date.parse(b) - Date.parse(a)).slice(0, 3),
+    latestStepAt,
+    lastReturnAt: history.filter((d) => d.step === 'return' && Date.parse(d.createdAt) >= Date.parse(c.lastValueAt ?? '')).at(-1)?.createdAt ?? null,
+    claimedKeys: new Set(history.map((d) => d.key)),
+  };
+}
+
+export function candidateFromPolicy(
+  state: Pick<PlgState, 'paused' | 'catalog' | 'ready' | 'templates'>,
+  c: PlgContact,
+  policy: PlgDeliveryPolicy,
+  now: number,
+  ignorePause = false,
+): PlgCandidate {
   const stage = contactStage(c, now);
   const out: PlgCandidate = {
     contactId: c.id,
@@ -405,24 +443,19 @@ export function candidate(
   // An observed activity is not an ongoing feed-health guarantee. Require a fresh
   // per-account observation before inferring the absence of a completed task.
   const freshObservation = age(c.observationAt, now) <= DAY;
-  const history = state.deliveries.filter((d) => d.contactId === c.id);
-  if (history.some((d) => d.status === 'sending' || d.status === 'uncertain'))
+  if (policy.unresolved)
     return stop('Delivery confirmation pending; automatic follow-up blocked');
-  if (history.some((d) => age(d.createdAt, now) < DAY))
+  if (policy.latestPromotions.some((at) => age(at, now) < DAY))
     return stop('One promotional message per 24 hours');
   if (
     c.frequency === 'weekly' &&
-    history.filter((d) => age(d.createdAt, now) < 7 * DAY).length >= 3
+    policy.latestPromotions.filter((at) => age(at, now) < 7 * DAY).length >= 3
   )
     return stop('Three promotional messages per seven days');
   const has = (step: PlgStep) =>
-    history.some(
-      (d) =>
-        d.step === step &&
-        (['repeat', 'return', 'feedback'].includes(step)
-          ? Date.parse(d.createdAt) >= Date.parse(c.lastValueAt ?? c.enrolledAt)
-          : true),
-    );
+    Boolean(policy.latestStepAt[step] &&
+      (!['repeat', 'return', 'feedback'].includes(step) ||
+        Date.parse(policy.latestStepAt[step]!) >= Date.parse(c.lastValueAt ?? c.enrolledAt)));
   let step: PlgStep | null = null;
   if (!freshObservation) {
     if (stage === 'blocked') return stop('Task failed; PLG assistance review needed');
@@ -444,11 +477,9 @@ export function candidate(
       if (!has('demo')) step = 'demo';
     } else if (!has('welcome')) step = 'welcome';
   } else if (stage === 'inactive') {
-    const lastReturn = history
-      .filter((d) => d.step === 'return' && Date.parse(d.createdAt) >= Date.parse(c.lastValueAt!))
-      .at(-1);
+    const lastReturn = policy.lastReturnAt;
     if (!lastReturn) step = 'return';
-    else if (age(lastReturn.createdAt, now) >= 7 * DAY && !has('feedback')) step = 'feedback';
+    else if (age(lastReturn, now) >= 7 * DAY && !has('feedback')) step = 'feedback';
   } else if (age(c.firstValueAt, now) >= 2 * DAY && !has('repeat')) step = 'repeat';
   if (!step) {
     const newsletter = state.templates.find(
@@ -456,9 +487,9 @@ export function candidate(
     );
     if (
       newsletter &&
-      !history.some((d) => d.key === `${c.id}:${newsletter.id}:${newsletter.version}`) &&
+      !policy.claimedKeys.has(`${c.id}:${newsletter.id}:${newsletter.version}`) &&
       (c.frequency === 'daily' ||
-        !history.some((d) => d.step === 'newsletter' && age(d.createdAt, now) < 7 * DAY))
+        age(policy.latestStepAt.newsletter, now) >= 7 * DAY)
     )
       step = 'newsletter';
   }
@@ -476,7 +507,7 @@ export function candidate(
     step === 'newsletter'
       ? `${c.id}:${template.id}:${template.version}`
       : `${c.id}:${step}:${['repeat', 'return', 'feedback'].includes(step) ? c.lastValueAt : 'activation'}`;
-  if (history.some((d) => d.key === key))
+  if (policy.claimedKeys.has(key))
     return stop('This journey step has already been reserved or sent');
   return {
     ...out,
