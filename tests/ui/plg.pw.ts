@@ -83,6 +83,7 @@ test('shows automation blockers and changes future cycle controls without sendin
   const mutations: string[] = [];
   page.on('request', (request) => { if (request.method() !== 'GET') mutations.push(new URL(request.url()).pathname); });
   await page.goto('/plg');
+  await page.getByText('Automatic follow-up settings', { exact: true }).click();
   const panel = page.getByRole('region', { name: 'Automatic follow-up operations' });
   await expect(panel).toContainText('Rachel Morgan');
   await expect(panel).toContainText('Email provider authentication is missing');

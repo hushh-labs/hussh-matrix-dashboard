@@ -1,3 +1,4 @@
+import { ReportDetails } from './ReportControls';
 import {
   cloneElement,
   useCallback,
@@ -234,9 +235,9 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           {error}
         </div>
       )}
-      {workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
+      {workspace.automation && <ReportDetails title="Automatic follow-up settings" hint={workspace.automation.enabled ? 'Enabled' : 'Paused'}><PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
         refresh={() => void reload()}
-        toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
+        toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} /></ReportDetails>}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           [Users, 'Enrolled accounts', metrics.enrolled],
