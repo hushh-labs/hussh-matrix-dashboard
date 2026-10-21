@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { GoogleAuth } from 'google-auth-library';
 import { oneAccountSummaryIssues } from '../src/server/one-account-scope.mjs';
+import { tsImport } from 'tsx/esm/api';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -109,7 +110,14 @@ for (const environment of ['production', 'uat']) {
     failures.push(`${environment}: registry authority does not match the independent source`);
     continue;
   }
-  const source = await authoritativeCounts(projectIds[environment]);
+  const source = reported.registryScope === 'production_contacts'
+    ? await (async () => {
+      // Use the private signed membership authority, never compare a customer
+      // subset against the unfiltered Firebase account registry.
+      const { readCustomerCohort, customerAccountCounts } = await tsImport('../src/server/one-customer-cohort.ts', import.meta.url);
+      return customerAccountCounts(await readCustomerCohort(), { startDate, endDate });
+    })()
+    : await authoritativeCounts(projectIds[environment]);
   sources[environment] = source;
   for (const field of fields) {
     if (Number(reported[field]) !== Number(source[field])) {

@@ -1,3 +1,4 @@
+import { ReportDetails, ReportTabs } from './ReportControls';
 import { MetricsSkeleton } from './MetricsLoading';
 import { AndroidAnalyticsPanel } from './AndroidAnalyticsPanel';
 import { Fragment, useState } from 'react';
@@ -95,6 +96,7 @@ function Block({
 }
 
 function ActiveDevices({ one }: { one: OneAppSummary }) {
+  if (one.activeUsers.available === false) return <p role="status" className="text-sm text-muted">Device activity is unavailable for this selection; no zero is inferred.</p>;
   const { dau, wau, mau, stickiness, asOf, identityScope } = one.activeUsers;
   const tiles = [
     { label: 'Daily active devices', value: dau, detail: asOf },
@@ -149,7 +151,7 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
     { label: 'Accounts first seen in this period', value: range.newUsers, detail: 'First-ever observed account activity in selected range' },
     { label: 'Returning active accounts', value: range.returningUsers, detail: 'First observed before selected range' },
   ];
-  const activityTiles = [
+  const activityTiles = users.activityAvailable === false ? [] : [
     { label: 'Accounts active in 1 day', value: users.dau, detail: users.asOf },
     { label: 'Accounts active in 7 days', value: users.wau, detail: `7 days to ${users.asOf}` },
     { label: 'Accounts active in 30 days', value: users.mau, detail: `30 days to ${users.asOf}` },
@@ -189,13 +191,14 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
           </div>
         ))}
       </div>
-      <div className={cn(dashboardCard, 'border-stroke bg-brand-50 p-4 text-sm leading-6 text-brand-600')}>
+      {users.activityAvailable === false && <p role="status" className="text-sm text-muted">Account DAU, WAU and MAU are unavailable for this selection; no zero is inferred.</p>}
+      {users.activityAvailable !== false && one.activeUsers.available !== false && <div className={cn(dashboardCard, 'border-stroke bg-brand-50 p-4 text-sm leading-6 text-brand-600')}>
         <strong>{formatNumber(users.dau)} identified accounts</strong> and <strong>{formatNumber(one.activeUsers.dau)} device/browser IDs</strong> on {users.asOf} are different counting units.
         {one.activeByPlatformAvailable !== false && one.activeByPlatform.length > 0 && (
           <> Those device IDs include {one.activeByPlatform.map((row) => `${formatNumber(row.dauDevices)} ${platformLabel(row.platform)}`).join(', ')}.</>
         )}
         {' '}An account counts once across devices only when One attaches its stable account ID. Unidentified browser/app IDs are not proven to be additional people, so the gap cannot be converted into a user count.
-      </div>
+      </div>}
       <div className="flex items-start gap-3 rounded-2xl border border-[#d8c48b] bg-warning-soft p-4 text-warning">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <p className="text-sm font-semibold leading-5">
@@ -214,7 +217,8 @@ function RegisteredUsers({ one }: { one: OneAppSummary }) {
   const accounts = one.registeredAccounts;
   if (!accounts) return null;
 
-  if (!accounts.available || accounts.registryScope !== 'isolated' || accounts.sharedAcrossEnvironments || accounts.totalAccounts === null || accounts.newAccounts === null) {
+  const verified = accounts.registryScope === 'production_contacts' || (accounts.registryScope === 'isolated' && !accounts.sharedAcrossEnvironments);
+  if (!accounts.available || !verified || accounts.totalAccounts === null || accounts.newAccounts === null) {
     return (
       <div className="flex items-start gap-3 rounded-2xl border border-[#d8c48b] bg-warning-soft p-4 text-warning">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
@@ -312,17 +316,17 @@ function IosIdentifiedUsers({ one }: { one: OneAppSummary }) {
 
 function OneAtAGlance({ one }: { one: OneAppSummary }) {
   const registered = one.registeredAccounts;
-  const isolated = registered?.available && registered.registryScope === 'isolated' && !registered.sharedAcrossEnvironments;
+  const isolated = registered?.available && (registered.registryScope === 'production_contacts' || (registered.registryScope === 'isolated' && !registered.sharedAcrossEnvironments));
   const tiles = [
     {
       group: 'Users', label: 'Total registered accounts',
       value: isolated ? registered.totalAccounts : null,
-      detail: isolated ? `Current ${registered.identityRealm} accounts` : registered?.note || 'Environment account membership has not been verified.',
+      detail: isolated ? `Current ${registered.identityRealm} accounts` : 'Awaiting verified account counts',
     },
     {
       group: 'Users', label: 'New registered accounts',
       value: isolated ? registered.newAccounts : null,
-      detail: isolated ? 'Accounts created during the selected dates in this environment' : registered?.note || 'Environment account membership has not been verified.',
+      detail: isolated ? 'Accounts created during the selected dates in this environment' : 'Awaiting verified account counts',
     },
     {
       group: 'Users', label: 'Active signed-in accounts',
@@ -333,16 +337,9 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
 
   return (
     <div className="mb-5 space-y-3">
-      <div>
-        <h3 className="text-lg font-semibold text-ink">One at a glance</h3>
-        <p className="mt-1 text-sm text-muted">
-          User reporting counts signed-in account IDs, not proven unique humans. Browser/app identifiers and screen visits are separate diagnostics below.
-        </p>
-      </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {tiles.map((tile) => (
           <div key={tile.label} className={cn(dashboardCard, 'p-4')}>
-            <p className="text-xs font-bold uppercase tracking-wide text-brand-600">{tile.group}</p>
             <p className="mt-1 text-sm font-semibold text-ink">{tile.label}</p>
             <p className="mt-2 text-4xl font-semibold tabular-nums text-ink">
               {typeof tile.value === 'number' ? exactAccountCount(tile.value) : 'Not available'}
@@ -351,9 +348,7 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
           </div>
         ))}
       </div>
-      <p className="text-xs leading-5 text-muted">
-        Active accounts and new registrations use {one.range?.startDate} to {one.range?.endDate}. Total registrations require a verified environment-specific registry. Anonymous activity is excluded from account counts. Account counts do not certify unique humans or complete staff/test exclusion.
-      </p>
+      <p className="report-footnote">Accounts are not verified unique people. Active accounts exclude anonymous activity.</p>
     </div>
   );
 }
@@ -1200,9 +1195,6 @@ function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rang
   const lagHours = typeof one.expectedLagSeconds === 'number'
     ? Math.round(one.expectedLagSeconds / 3600)
     : null;
-  const nativeUatTagged = (one.nativeEnvironments ?? []).some(
-    (row) => row.environment === 'uat' && row.events > 0,
-  );
 
   return (
     <div className={cn(dashboardPanel, 'flex flex-col gap-2 p-5')}>
@@ -1215,13 +1207,13 @@ function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rang
         people. The signed-in-user cards separately count distinct stable account IDs and collapse the
         same account across devices, while clearly showing how much device traffic has no bound identity.
         Native and <code className="rounded bg-surface/70 px-1 py-0.5 text-xs">{one.sourceWebHost ?? 'one.hushh.ai'}</code> only;
-        every other web host is excluded. {environment === 'production' && nativeUatTagged
-          ? 'Collection diagnostics contain UAT-tagged mobile events; these are excluded from the PROD account and behaviour totals. '
-          : ''}Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
+        every other web host is excluded. {environment === 'production' ? 'Production totals exclude test traffic. ' : ''}
+        Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
         {rangeLabel}
         {lagHours ? ` · data lands about ${lagHours}h behind` : ''}
         {one.generatedAt ? ` · read ${new Date(one.generatedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''}.
       </p>
+      {one.registeredAccounts?.note && <p className="text-sm leading-6 text-muted">{one.registeredAccounts.note}</p>}
     </div>
   );
 }
@@ -1253,18 +1245,58 @@ export function OneAppPanel({
    */
   dateControl: ReactNode;
 }) {
+  const [view, setView] = useState<'summary' | 'features' | 'retention' | 'health'>('summary');
   const [selectedAgentCapability, setSelectedAgentCapability] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
 
   const activeData = (environment === 'production' ? one : oneUat) as OneAppSummary;
-  const nativeUatTagged = (activeData?.nativeEnvironments ?? []).filter(
-    (row) => row.environment === 'uat' && row.events > 0,
-  );
+
+  // Keep the controls mounted while a date query loads so open date fields and focus survive.
+  const filterHeader = (<div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-stroke pb-5">
+          <div className="grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center flex-1">
+            <div
+              className="grid w-full grid-cols-2 gap-1 rounded-xl bg-subtle p-1 sm:flex sm:w-fit"
+              role="tablist"
+              aria-label="One app analytics source"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={environment === 'production'}
+                onClick={() => setEnvironment('production')}
+                className={cn(
+                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] sm:shrink-0 sm:px-4',
+                  environment === 'production'
+                    ? 'bg-surface text-ink shadow-sm'
+                    : 'text-muted hover:text-ink',
+                )}
+              >
+                Main analytics
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={environment === 'uat'}
+                onClick={() => setEnvironment('uat')}
+                className={cn(
+                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] sm:shrink-0 sm:px-4',
+                  environment === 'uat'
+                    ? 'bg-surface text-ink shadow-sm'
+                    : 'text-muted hover:text-ink',
+                )}
+              >
+                Test analytics
+              </button>
+            </div>
+            <span className="text-xs text-muted">{environment === 'production' ? 'Live product activity' : 'Test environment only'}</span>
+          </div>
+          <div className="shrink-0">{dateControl}</div>
+        </div>);
 
   if ((loading || !activeData || !activeData.available) && !locationRoute && !selectedAgentCapability) {
     return (
       <main className="space-y-10">
-        <div className="flex justify-end">{dateControl}</div>
+        <section>{filterHeader}
         {loading ? <MetricsSkeleton /> : <div className={cn(dashboardPanel, 'p-8 text-center')}>
           <p className="text-base font-semibold text-ink">
             One app data is unavailable for this selection.
@@ -1274,6 +1306,7 @@ export function OneAppPanel({
           </p>
           {environment === 'uat' && <button type="button" onClick={() => setEnvironment('production')} className="mt-4 rounded-lg bg-brand-50 px-4 py-2 text-brand-600">Back to Main analytics</button>}
         </div>}
+        </section>
       </main>
     );
   }
@@ -1318,92 +1351,29 @@ export function OneAppPanel({
   return (
     <main className="space-y-10">
       <section>
-        {/* Environment Selector Toggle Bar */}
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-stroke pb-5">
-          <div className="grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center flex-1">
-            <div
-              className="grid w-full grid-cols-2 gap-1 rounded-xl bg-subtle p-1 sm:flex sm:w-fit"
-              role="tablist"
-              aria-label="One app analytics source"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={environment === 'production'}
-                onClick={() => setEnvironment('production')}
-                className={cn(
-                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] sm:shrink-0 sm:px-4',
-                  environment === 'production'
-                    ? 'bg-surface text-ink shadow-sm'
-                    : 'text-muted hover:text-ink',
-                )}
-              >
-                Main analytics
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={environment === 'uat'}
-                onClick={() => setEnvironment('uat')}
-                className={cn(
-                  'min-h-10 min-w-0 rounded-lg px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] sm:shrink-0 sm:px-4',
-                  environment === 'uat'
-                    ? 'bg-surface text-ink shadow-sm'
-                    : 'text-muted hover:text-ink',
-                )}
-              >
-                Test analytics
-              </button>
-            </div>
-            <p className="text-xs font-semibold leading-5 text-muted">
-              {environment === 'production'
-                ? 'PROD-tagged activity from approved production web and mobile streams. UAT, debug and untagged activity are excluded.'
-                : 'UAT-tagged activity from approved UAT web and mobile streams. Production data is never a fallback.'}
-            </p>
-          </div>
-          <div className="shrink-0">{dateControl}</div>
-        </div>
+        {filterHeader}
 
-        {environment === 'production' && nativeUatTagged.length > 0 && (
-          <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#465fff]/20 bg-[#465fff]/[0.06] px-4 py-3 text-sm font-semibold leading-5 text-brand-600">
-            <Info className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>
-              Collection diagnostics: {nativeUatTagged.map((row) => `${platformLabel(row.platform)} ${formatNumber(row.events)} UAT-tagged events`).join(', ')} reached this analytics source. They are excluded from PROD account and behaviour totals.
-            </p>
-          </div>
-        )}
-
+        <ReportTabs label="One app report" value={view} onChange={setView} options={[
+          { value: 'summary', label: 'Summary' }, { value: 'features', label: 'Features' },
+          { value: 'retention', label: 'Retention' }, { value: 'health', label: 'App health' },
+        ]} />
+        {view === 'summary' && <div className="report-view-content">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className={dashboardLabel}>
               {environment === 'production' ? 'one.hushh.ai + mobile apps · Main analytics' : 'uat.one.hushh.ai · Test analytics'} · {rangeLabel}
             </p>
             <h2 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">
-              How many registered and active users does One have?
+              Accounts at a glance
             </h2>
           </div>
         </div>
         <OneAtAGlance one={activeData} />
-        <PlatformsAtAGlance one={activeData} environment={environment} mainAnalytics={one} onViewMainAnalytics={() => setEnvironment('production')} />
-        <AndroidAnalyticsPanel one={activeData} environment={environment} />
-        <details className={cn(dashboardCard, 'mb-4 p-4 text-sm leading-6 text-ink')}>
-          <summary className="cursor-pointer font-semibold text-ink">Plain-English guide to the numbers on this page</summary>
-          <div className="mt-3 grid gap-x-6 gap-y-2 md:grid-cols-2">
-            <p><strong>Registered users:</strong> distinct One account records in Firebase. “New” means the account was created during the selected dates. This does not prove one account per human.</p>
-            <p><strong>Active signed-in accounts:</strong> distinct account IDs attached to meaningful GA4 activity. One account counts once even after repeat visits or use on multiple devices. Activity without an account ID is excluded.</p>
-            <p><strong>First observed / returning:</strong> the account’s first tagged activity in the available export is inside / before the selected dates. First observed is not the same as a new registration.</p>
-            <p><strong>Active devices:</strong> distinct app-install or browser identifiers with meaningful activity. One person can have several; anonymous visits are included. These are not unique people.</p>
-            <p><strong>Daily / weekly / monthly:</strong> activity over 1 / 7 / 30 days, ending on the date printed on the tile. GA4’s finalized daily export may lag behind today or the selected end date.</p>
-            <p><strong>First opens, activation, retention and agents:</strong> these describe device journeys, first value, week-1 return, and deliberate feature use. Their percentages use the stated device cohort as the denominator; they are not account growth.</p>
-          </div>
-          <p className="mt-3 border-t border-stroke pt-3 text-xs font-semibold text-muted">
-            Reporting requires both the selected backend environment tag and its approved app/stream/host. Property membership alone cannot qualify activity. {activeData.acquisitionScopeNote}
-          </p>
-        </details>
-        <details className="group">
-          <summary className={cn(dashboardCard, 'cursor-pointer p-4 font-semibold text-ink')}>
-            More detail: daily / weekly / monthly accounts and device counts
-          </summary>
+        <ReportDetails title="Activity by platform" hint="iOS, Android and web">
+          <PlatformsAtAGlance one={activeData} environment={environment} mainAnalytics={one} onViewMainAnalytics={() => setEnvironment('production')} />
+        </ReportDetails>
+
+        <ReportDetails title="Daily, weekly & monthly counts" hint="Accounts and devices">
           <div className="mt-4 flex flex-col gap-4">
             <RegisteredUsers one={activeData} />
             <IosIdentifiedUsers one={activeData} />
@@ -1411,15 +1381,12 @@ export function OneAppPanel({
             <ActiveDevices one={activeData} />
             <ActivesByPlatform rows={activeData.activeByPlatform} available={activeData.activeByPlatformAvailable} />
           </div>
-        </details>
+        </ReportDetails>
+        </div>}
       </section>
 
-      <DailyAgentActivity one={activeData} onOpenAgent={key => {
-        if (key === 'location') onOpenLocation();
-        else setSelectedAgentCapability(key);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }} />
 
+      {view === 'retention' && <>
       <Block
         kicker="New and returning devices"
         title="Are devices coming back?"
@@ -1452,37 +1419,37 @@ export function OneAppPanel({
         <Activation one={activeData} />
       </Block>
 
+      </>}
+      {view === 'features' && <>
       <Block
-        kicker="Agents"
-        title="Which agents do devices use?"
-        hint="Ranked by recorded feature use. Automatic background activity is kept separate."
+        kicker="Features"
+        title="Explore features"
+        hint="Choose a feature to see its audience, activity and results."
       >
-        <div className="flex flex-col gap-4">
-          <AgentsClaimed />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {activeData.capabilities.map((capability, index) => (
-              <Fragment key={capability.key}>
-                <button
-                  type="button"
-                  aria-label={`Open detailed ${capability.label} analytics`}
-                  onClick={() => {
-                    if (capability.key === 'location') {
-                      onOpenLocation();
-                    } else {
-                      setSelectedAgentCapability(capability.key);
-                    }
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                  className="h-full rounded-2xl text-left transition-all duration-200 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[#465fff] focus-visible:ring-offset-2"
-                >
-                  <CapabilityCard capability={capability} index={index} sourceAvailable={activeData.capabilitiesAvailable} dailyAvailable={activeData.capabilityDailyAvailable === true} />
-                </button>
-              </Fragment>
-            ))}
-          </div>
+        <div className="feature-directory">
+          {activeData.capabilities.map(capability => <button key={capability.key} type="button"
+            aria-label={`Open detailed ${capability.label} analytics`} onClick={() => {
+              if (capability.key === 'location') onOpenLocation(); else setSelectedAgentCapability(capability.key);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}>
+            <span>{capability.label}<small>{!capability.instrumented ? 'Not measured yet' : activeData.capabilityDailyAvailable !== true ? 'Daily trend unavailable' : 'View feature activity and results'}</small></span>
+            <span>{activeData.capabilitiesAvailable && capability.instrumented ? exactCount(capability.accounts) : '—'}<small>accounts</small></span>
+            <span aria-hidden="true">→</span>
+          </button>)}
         </div>
       </Block>
 
+      <ReportDetails title="Compare daily feature activity">
+      <DailyAgentActivity one={activeData} onOpenAgent={key => {
+        if (key === 'location') onOpenLocation();
+        else setSelectedAgentCapability(key);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }} />
+
+      </ReportDetails>
+      </>}
+      {view === 'health' && <>
+      <AndroidAnalyticsPanel one={activeData} environment={environment} />
       <Block
         kicker="App performance"
         title="Is the app up?"
@@ -1491,9 +1458,22 @@ export function OneAppPanel({
         <Health metrics={healthMetrics} />
       </Block>
 
-      <section className={dashboardBand}>
+      </>}
+      <ReportDetails title="Definitions & data sources">
+          <div className="mt-3 grid gap-x-6 gap-y-2 md:grid-cols-2">
+            <p><strong>Registered users:</strong> distinct One account records in Firebase. “New” means the account was created during the selected dates. This does not prove one account per human.</p>
+            <p><strong>Active signed-in accounts:</strong> distinct account IDs attached to meaningful GA4 activity. One account counts once even after repeat visits or use on multiple devices. Activity without an account ID is excluded.</p>
+            <p><strong>First observed / returning:</strong> the account’s first tagged activity in the available export is inside / before the selected dates. First observed is not the same as a new registration.</p>
+            <p><strong>Active devices:</strong> distinct app-install or browser identifiers with meaningful activity. One person can have several; anonymous visits are included. These are not unique people.</p>
+            <p><strong>Daily / weekly / monthly:</strong> activity over 1 / 7 / 30 days, ending on the date printed on the tile. GA4’s finalized daily export may lag behind today or the selected end date.</p>
+            <p><strong>First opens, activation, retention and agents:</strong> these describe device journeys, first value, week-1 return, and deliberate feature use. Their percentages use the stated device cohort as the denominator; they are not account growth.</p>
+          </div>
+          <p className="mt-3 border-t border-stroke pt-3 text-xs font-semibold text-muted">
+            Reporting requires both the selected backend environment tag and its approved app/stream/host. Property membership alone cannot qualify activity. {activeData.acquisitionScopeNote}
+          </p>
+
         <Provenance one={activeData} rangeLabel={rangeLabel} environment={environment} />
-      </section>
+      </ReportDetails>
     </main>
   );
 }

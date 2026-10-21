@@ -1,3 +1,4 @@
+import { ReportDetails } from './ReportControls';
 import { MetricsSkeleton } from './MetricsLoading';
 import { Fragment, useMemo, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
@@ -865,14 +866,13 @@ export function GrowthPanel({
       </section>
 
       {sections.slice(1).map((section) => (
-        <Fragment key={section.kicker}>
-          <Block kicker={section.kicker} title={section.title} hint={section.hint}>
-            {section.body}
-          </Block>
-        </Fragment>
+        <ReportDetails key={section.kicker} title={section.title} hint={section.kicker}>
+          {section.hint && <p className="mb-4 text-sm leading-6 text-muted">{section.hint}</p>}
+          {section.body}
+        </ReportDetails>
       ))}
 
-      <section className={dashboardBand}>
+      <ReportDetails title="Source & counting definitions">
         <div className={cn(dashboardPanel, 'flex flex-col gap-2 p-5')}>
           <div className="flex items-center gap-2">
             <Info className="h-4 w-4 shrink-0 text-muted" />
@@ -890,7 +890,7 @@ export function GrowthPanel({
               : ''}
           </p>
         </div>
-      </section>
+      </ReportDetails>
     </main>
   );
 }

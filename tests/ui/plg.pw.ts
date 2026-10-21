@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { mockDashboard } from './fixtures';
+import { mkdir } from 'node:fs/promises';
+import { mockDashboard, one } from './fixtures';
 import {
   enroll,
   initialPlgState,
@@ -83,9 +84,12 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
 test('shows automation blockers and changes future cycle controls without sending', async ({ page }) => {
   const state = await mockPlg(page);
   const mutations: string[] = [];
-  page.on('request', (request) => { if (request.method() !== 'GET') mutations.push(new URL(request.url()).pathname); });
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() !== 'GET' && path !== '/api/plg/audience') mutations.push(path);
+  });
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'Messages and automation', exact: true }).click();
+  await page.getByRole('tab', { name: 'Automation', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Automatic follow-up operations' });
   await expect(panel).toContainText('Rachel Morgan');
   await expect(panel).toContainText('Email provider authentication is missing');
@@ -95,8 +99,7 @@ test('shows automation blockers and changes future cycle controls without sendin
   expect(state.automation?.enabled).toBe(true);
   await expect(panel).toContainText('Live email delivery is disabled');
   expect(state.deliveries).toHaveLength(0);
-  expect(mutations.filter((path) => path !== '/api/plg/audience')).toEqual(['/api/plg/automation']);
-  expect(mutations).toContain('/api/plg/audience'); // Read-only POST; StrictMode can remount it.
+  expect(mutations).toEqual(['/api/plg/automation']);
 });
 
 test('enrolls an account and operates the shared follow-up queue without sending', async ({ page }) => {
@@ -107,8 +110,9 @@ test('enrolls an account and operates the shared follow-up queue without sending
     if (r.method() !== 'GET') requests.push(r.url());
   });
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'Follow-ups', exact: true }).click();
+  await page.getByRole('button', { name: 'Campaign follow-up queue', exact: true }).click();
   await expect(page.getByText('No accounts enrolled in follow-ups yet')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run campaign', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Enroll account', exact: true }).click();
   await page.getByLabel('Firebase account UID').fill('synthetic-ui-account');
   await page.getByLabel('Email address', { exact: true }).fill('pilot@example.invalid');
@@ -133,7 +137,7 @@ test('enrolls an account and operates the shared follow-up queue without sending
     window.scrollTo(0, 0);
   });
   await page.screenshot({ path: test.info().outputPath('queue-1440.png'), fullPage: true });
-  await page.getByRole('tab', { name: 'Messages and automation', exact: true }).click();
+  await page.getByRole('tab', { name: 'Messages', exact: true }).click();
   await expect(page.getByText('Live sending disabled', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Preview next messages' }).click();
   await expect(page.getByRole('region', { name: 'Campaign preview' })).toContainText('0 eligible messages');
@@ -148,18 +152,19 @@ test('reads agent people with phone-only identity, filters and live pagination w
     else if (request.method() !== 'GET') mutations.push(request.url());
   });
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'People and usage', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Users & drop-offs', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: 'Campaign results', exact: true })).toHaveCount(0);
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   await expect(page.getByText('+919876543210', { exact: true })).toBeVisible();
   await expect(page.getByText('Not enrolled in campaigns', { exact: true })).toBeVisible();
   await page.getByText('Completion definition', { exact: true }).click();
   await expect(page.getByText('Distinct verified task outcomes.', { exact: false })).toBeVisible();
   await expect(page.getByText('No verified value observed', { exact: true })).toBeVisible();
-  await page.getByLabel('People agent').selectOption('agent_calendar');
-  await expect(page.getByLabel('People agent')).toHaveValue('agent_calendar');
-  await page.getByLabel('Attempt evidence').selectOption('possible_incomplete');
+  await page.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('agent_calendar');
+  await expect(page.getByRole('combobox', { name: 'Agent', exact: true })).toHaveValue('agent_calendar');
+  await page.getByLabel('Task status').selectOption('possible_incomplete');
   await page.getByLabel('Search name, email or phone').fill('+9198');
-  await page.getByLabel('No terminal observation after').selectOption('240');
+  await page.getByLabel('Time since start').selectOption('240');
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   expect(bodies.at(-1)).toMatchObject({ agentId: 'agent_calendar', segment: 'possible_incomplete', query: '+9198', graceMinutes: 240, cursor: null });
@@ -187,11 +192,11 @@ test('starts with people and searches beyond empty filtered source pages without
         verified: { supported: false, count: 0, lastAt: null, limited: false } }] };
   });
   await page.goto('/plg');
-  await expect(page.getByRole('tab', { name: 'People and usage', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Users & drop-offs', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Enrolled campaign accounts only')).toHaveCount(0);
-  await page.getByLabel('People agent').selectOption('agent_calendar');
-  await page.getByLabel('Attempt evidence').selectOption('failed');
+  await page.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('agent_calendar');
+  await page.getByLabel('Task status').selectOption('failed');
   await expect(page.getByText('Registered person', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Filters changed. Apply filters to update the results.')).toBeVisible();
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
@@ -247,7 +252,7 @@ test('keeps a bounded empty search resumable instead of claiming a global zero',
 test('edits content, verifies journeys and leaves immature cohorts unavailable', async ({ page }) => {
   const state = await mockPlg(page);
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'Messages and automation' }).click();
+  await page.getByRole('tab', { name: 'Messages', exact: true }).click();
   await page.getByLabel('memory task verified', { exact: false }).check();
   await page.getByRole('button', { name: /memory · demo/ }).click();
   await page.getByLabel('Subject', { exact: true }).fill('Save a useful note with One');
@@ -260,7 +265,7 @@ test('edits content, verifies journeys and leaves immature cohorts unavailable',
   await expect(page.getByRole('button', { name: 'Save message' })).toHaveCount(0);
   expect(state.ready.memory).toBe(true);
   expect(state.templates.find((t) => t.id === 'memory-demo')!.published).toBe(true);
-  await page.getByRole('tab', { name: 'Campaign results' }).click();
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
   await expect(page.getByText('Waiting for mature cohorts')).toHaveCount(2);
   await expect(page.getByText('Twenty percent of accounts', { exact: false })).toBeVisible();
 });
@@ -268,7 +273,7 @@ test('edits content, verifies journeys and leaves immature cohorts unavailable',
 test('filters the message library and closes a draft from the previous journey', async ({ page }) => {
   await mockPlg(page);
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'Messages and automation', exact: true }).click();
+  await page.getByRole('tab', { name: 'Messages', exact: true }).click();
   await expect(page.getByRole('button', { name: /Show all .* message templates/ })).toBeVisible();
   await page.getByRole('button', { name: /^memory · demo/ }).click();
   await expect(page.getByRole('button', { name: 'Save message' })).toBeVisible();
@@ -287,18 +292,68 @@ test('does not expose contacts to an unauthorized dashboard viewer', async ({ pa
   await expect(page.getByText('pilot@example.invalid')).toHaveCount(0);
 });
 
+test('keeps app-wide accounts and devices separate from the campaign cohort and changes reporting dates', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockPlg(page);
+  const reads: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/analytics/one/app') reads.push(request.url());
+  });
+  await page.goto('/plg');
+  expect(reads).toHaveLength(0);
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage.getByText('8,420', { exact: true })).toBeVisible();
+  await expect(usage.getByRole('row', { name: 'Signed-in accounts 148 704 1,284' })).toBeVisible();
+  await expect(usage.getByRole('row', { name: 'Device/browser IDs 164 780 1,460' })).toBeVisible();
+  await expect(usage).toContainText('latest finalized GA4 day');
+  await expect(page.getByText('Enrolled accounts', { exact: true }).locator('..')).toContainText('0');
+  await usage.getByLabel('Reporting period').selectOption('7');
+  await expect.poll(() => reads.length).toBe(2);
+  const query = new URL(reads.at(-1)!).searchParams;
+  expect((Date.parse(query.get('one_end_date')!) - Date.parse(query.get('one_start_date')!)) / 86400000 + 1).toBe(7);
+  await expect(usage).not.toHaveAttribute('aria-busy', 'true');
+  await mkdir('.codex/artifacts/plg', { recursive: true });
+  await page.screenshot({ path: '.codex/artifacts/plg/app-usage-1440.png', fullPage: true });
+});
+
+test('shows query failure as unavailable while preserving a healthy selected-range account read', async ({ page }) => {
+  await mockPlg(page);
+  await page.route('**/api/analytics/one/app?*', (route) => route.fulfill({ json: {
+    data: { production: { ...one, activeUsers: { ...one.activeUsers, available: false, dau: 0, wau: 0, mau: 0 },
+      identifiedUsers: { ...one.identifiedUsers, activityAvailable: false, dau: 0, wau: 0, mau: 0 } }, uat: null },
+    error: 'Sanitized aggregate read failure', fetchedAt: new Date().toISOString(),
+  } }));
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage).toContainText('Some source reads failed');
+  await expect(usage.getByRole('row', { name: 'Signed-in accounts Unavailable Unavailable Unavailable' })).toBeVisible();
+  await expect(usage.getByText('1,284', { exact: true })).toBeVisible();
+  await expect(usage.getByRole('cell', { name: '0', exact: true })).toHaveCount(0);
+});
+
 for (const width of [320, 768, 1440])
   test(`PLG views fit at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     await mockPlg(page, false, true);
     await page.goto('/plg');
-    await page.getByRole('tab', { name: 'Follow-ups', exact: true }).click();
-    await expect(page.getByText('No accounts enrolled in follow-ups yet')).toBeVisible();
+    await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
-    for (const label of ['Follow-ups', 'Messages and automation', 'Campaign results', 'Tracking details', 'People and usage']) {
-      await page.getByRole('tab', { name: label }).click();
-      if (label === 'People and usage') await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+    for (const label of ['Users & drop-offs', 'Messages', 'Results', 'Automation']) {
+      await page.getByRole('tab', { name: label, exact: true }).click();
+      if (label === 'Users & drop-offs') {
+        await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Campaign follow-up queue', exact: true }).click();
+        await expect(page.getByText('No accounts enrolled in follow-ups yet')).toBeVisible();
+        await page.getByRole('button', { name: 'Back to users', exact: true }).click();
+      }
+      if (label === 'Results') {
+        await page.getByRole('button', { name: 'View tracking coverage', exact: true }).click();
+        await expect(page.getByRole('heading', { name: 'Tracking details', exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Back to results', exact: true }).click();
+      }
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
@@ -319,7 +374,8 @@ test('filters registered actions and inspects limited activity without claiming 
   const state = await mockPlg(page, false, true);
   enroll(state, { accountId: 'synthetic-ui-account', email: 'pilot@example.invalid', name: 'Pilot', journey: 'agent_calendar', cohort: 'existing', frequency: 'daily', consent: true, consentSource: 'Synthetic preference form', environment: 'production', internal: false }, 'test-operator', Date.now());
   await page.goto('/plg');
-  await page.getByRole('tab', { name: 'Tracking details' }).click();
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  await page.getByRole('button', { name: 'View tracking coverage', exact: true }).click();
   await expect(page.getByText('Not collected', { exact: true })).toBeVisible();
   await page.getByLabel('Agent filter').selectOption('agent_calendar');
   await page.getByLabel('Search actions').fill('Create event');

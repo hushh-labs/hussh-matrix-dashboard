@@ -1,3 +1,4 @@
+import { ReportDetails, ReportTabs } from './ReportControls';
 import { useMetricsResource } from '../lib/use-metrics-resource';
 import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
 import { useMemo, useState } from 'react';
@@ -43,6 +44,7 @@ const stateCopy: Record<InstagramReport['state'], string> = {
 };
 
 export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
+  const [view, setView] = useState<'overview' | 'content' | 'campaign'>('overview');
   const [syncRefreshKey, setSyncRefreshKey] = useState(0);
   const resource = useMetricsResource<InstagramReport>('/api/analytics/instagram', { refreshKey: refreshKey + syncRefreshKey, refreshIntervalMs: 30_000 });
   const report = resource.data;
@@ -99,12 +101,8 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
     <div className={cn(dashboardCard, 'p-5 sm:p-8')}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-widest text-muted">Social performance</p>
-          <h2 id="instagram-title" className="mt-2 text-3xl font-semibold">Instagram</h2>
-          <p className="mt-2 text-sm text-muted">{report?.username ? `@${report.username}` : 'Company account'}</p>
-          {report?.media?.length ? <a href="#instagram-content" className="mt-2 inline-block text-sm font-semibold text-brand-600 underline">
-            View posts and Reels
-          </a> : null}
+          <h2 id="instagram-title" className="text-lg font-semibold">{report?.username ? `@${report.username}` : 'Company account'}</h2>
+          {report?.media?.length ? <button type="button" onClick={() => setView('content')} className="text-link mt-2">View posts and Reels</button> : null}
         </div>
         {report?.canSync && <button type="button" onClick={() => void sync()} disabled={syncing}
           className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white disabled:opacity-50">
@@ -115,6 +113,10 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         {loading ? 'Loading Instagram report…' : message || (report ? stateCopy[report.state] : 'Instagram reporting is unavailable.')}
       </p>
     </div>
+    <ReportTabs label="Instagram report" value={view} onChange={setView} options={[
+      { value: 'overview', label: 'Summary' }, { value: 'content', label: 'Posts & Reels' }, { value: 'campaign', label: 'Campaign links' },
+    ]} />
+    {view === 'content' && <ReportDetails title="Content inventory" hint="Past 365 days">
     <div className={cn(dashboardCard, 'p-5 sm:p-8')}>
       <h3 className="text-xl font-semibold">Content inventory</h3>
       <p className="mt-2 text-sm text-muted">Posts and Reels returned for the past 365 days. Counts describe collected content, not Instagram reach or unique viewers.</p>
@@ -139,6 +141,8 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       </p>
       <p className="mt-1 text-xs text-muted">Likes and views above add the latest per-item lifetime snapshots. Content views are not deduplicated account reach or seven-day account views.</p>
     </div>
+    </ReportDetails>}
+    {view === 'overview' && <>
     <div className={cn(dashboardPanel, 'p-5 sm:p-8')}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs font-bold uppercase tracking-widest text-muted">Reach · requested {accountRange}-day total</p>
@@ -187,6 +191,8 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       {report?.metricResults && Object.values(report.metricResults).some((status) => status !== 'available') &&
         <p className="mt-3 text-sm text-warning">Some optional metrics are unavailable or failed on the last sync. Available values remain stored.</p>}
     </div>
+    </>}
+    {view === 'content' && <>
     <div id="instagram-content" className={cn(dashboardPanel, 'p-5 sm:p-8')}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h3 className="text-xl font-semibold">Posts and Reels</h3>
@@ -240,6 +246,8 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         <button type="button" disabled={mediaPage >= mediaPages - 1} onClick={() => setMediaPage((page) => Math.min(mediaPages - 1, page + 1))} className="min-h-10 rounded-lg border border-stroke px-3 disabled:opacity-40">Next</button>
       </div>}
     </div>
+    </>}
+    {view === 'campaign' && <>
     <div className={cn(dashboardCard, 'p-5 sm:p-8')}>
       <h3 className="text-xl font-semibold">Instagram campaign link</h3>
       <p className="mt-2 text-sm text-muted">Create a tagged link to an owned landing page. This records the link placement, not the identity of an Instagram viewer or a particular Reel.</p>
@@ -266,5 +274,6 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       </div>}
       <p className="mt-4 text-xs text-muted">Website visits and signups are not joined to Instagram yet. Existing consent and event capture remain unchanged.</p>
     </div>
+    </>}
   </section>;
 }

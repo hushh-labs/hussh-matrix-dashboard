@@ -729,6 +729,8 @@ export interface OneCapabilityUsage {
 }
 
 export interface OneActiveUsers {
+  /** Query health and a valid finalized measurement day; absent on older API revisions. */
+  available?: boolean;
   countingUnit: 'device';
   identityScope: string;
   dau: number;
@@ -736,7 +738,7 @@ export interface OneActiveUsers {
   mau: number;
   /** DAU/MAU. Null rather than 0 when MAU is 0, so no-data never reads as collapse. */
   stickiness: number | null;
-  /** The day DAU is measured on -- the end of the selected range, not "today". */
+  /** Last finalized measurement day, which can precede the selected range end. */
   asOf: string;
 }
 
@@ -748,6 +750,8 @@ export interface OneActiveUsers {
  * never be mistaken for a complete unique-human count.
  */
 export interface OneIdentifiedUsers {
+  /** Health of the DAU/WAU/MAU query, independent of selectedRange and identity coverage. */
+  activityAvailable?: boolean;
   countingUnit: 'account';
   identityScope: string;
   selectedRange: {
@@ -783,7 +787,7 @@ export interface OneRegisteredAccounts {
   identityAuthorityId?: string;
   sharedAcrossEnvironments: boolean;
   environment?: 'production' | 'uat';
-  registryScope?: 'isolated' | 'legacy_shared' | 'unverified' | 'unconfigured';
+  registryScope?: 'isolated' | 'production_contacts' | 'legacy_shared' | 'unverified' | 'unconfigured';
   countingUnit: 'account';
   deduplication: string;
   /** Current unique account records in Firebase Authentication. */

@@ -72,13 +72,13 @@ export function accountScopeNote(source) {
 /** Contract checks used by probes; unavailable counts must not become zeros. */
 export function oneAccountSummaryIssues(summary, environment) {
   if (!summary || summary.countingUnit !== 'account' || summary.environment !== environment) return ['Missing environment account contract'];
-  if (typeof summary.available !== 'boolean' || !['isolated','legacy_shared','unverified','unconfigured'].includes(summary.registryScope)) return ['Invalid registry availability/scope'];
+  if (typeof summary.available !== 'boolean' || !['isolated','production_contacts','legacy_shared','unverified','unconfigured'].includes(summary.registryScope)) return ['Invalid registry availability/scope'];
   const fields = ['totalAccounts', 'newAccounts', 'accountsCreatedByRangeEnd', 'disabledAccounts'];
   if (!summary.available) {
     return fields.every(key => summary[key] === null) && (summary.daily || []).every(row => row.newAccounts === null) && !!summary.note
       ? [] : ['Unverified registry must withhold counts'];
   }
-  if (summary.registryScope !== 'isolated' || summary.sharedAcrossEnvironments !== false) return ['Shared/unverified registry cannot report environment registrations'];
+  if (summary.registryScope === 'production_contacts' ? environment !== 'production' : summary.registryScope !== 'isolated' || summary.sharedAcrossEnvironments !== false) return ['Shared/unverified registry cannot report environment registrations'];
   if (!/^sha256:[a-f0-9]{64}$/.test(summary.identityAuthorityId || '')) return ['Registry authority is missing'];
   if (!fields.every(key => Number.isSafeInteger(summary[key]) && summary[key] >= 0)) return ['Invalid account counts'];
   if (summary.newAccounts > summary.accountsCreatedByRangeEnd || summary.accountsCreatedByRangeEnd > summary.totalAccounts || summary.disabledAccounts > summary.totalAccounts) return ['Account counts do not reconcile'];

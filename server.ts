@@ -32,6 +32,8 @@ import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushh
 import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
+import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
+import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort } from './src/server/one-customer-cohort';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -550,6 +552,23 @@ async function queryBigQuery(
     uat: [BQ_UAT_PROJECT, BQ_UAT_DATASET, BQ_UAT_VIEW],
   });
   if (!environment) return { rows: [], error: 'One feed environment source is ambiguous or unconfigured.' };
+  if (environment === 'production') {
+    try {
+      const cohort = await readCustomerCohort();
+      // The materialized legacy aggregate has no account IDs left to filter.
+      // Execute its bounded read-only SELECT against raw events instead.
+      const source = readFileSync(path.join(__dirname, 'sql/kai_public_dashboard_feed.production.sql'), 'utf8');
+      const marker = '    -- END GENERATED ONE ENVIRONMENT SCOPE';
+      if (source.split(marker).length !== 2) throw new Error('Customer feed scope marker missing');
+      const scopedSource = source.replace(marker, `    AND ${customerEventSql(cohort, 'e')}\n${marker}`).trim().replace(/;$/, '');
+      const filter = range ? `WHERE metric_date IS NULL OR DATE(metric_date) BETWEEN DATE(${sqlStringLiteral(range.startDate)}) AND DATE(${sqlStringLiteral(range.endDate)})` : '';
+      const result = await queryBigQuerySql(BQ_JOB_PROJECT || projectId, `SELECT * FROM (${scopedSource}) ${filter}`);
+      requireFreshCohort(cohort);
+      return result;
+    } catch {
+      return { rows: [], error: 'Production customer feed is unavailable; unverified totals are withheld.' };
+    }
+  }
   const scoped = (rows: Record<string, unknown>[]): BigQueryFeedResult => validateOneFeedScope(rows, environment)
     ? { rows, error: null }
     : { rows: [], error: 'One feed environment scope has not been verified. Property-wide legacy totals are withheld.' };
@@ -1732,7 +1751,7 @@ async function fetchKaiGa4ExportSummary(
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
-  const scope = oneScope ? ` AND ${oneSurfaceSql(oneScope.webHost, oneScope.environment)}` : '';
+  const scope = oneScope ? ` AND ${await oneReportingSurfaceFilter(oneScope.webHost, oneScope.environment)}` : '';
   const dateFilter = ga4ExportSuffixFilter(range.startDate, range.endDate) + scope;
   const last7Range = defaultUtcRange(7);
   const last24Range = defaultUtcRange(2);
@@ -2294,6 +2313,11 @@ function oneAppSurfaceFilter(webHost: string): string {
   return oneSurfaceSql(webHost, webHost === ONE_APP_UAT_HOST ? 'uat' : 'production');
 }
 
+async function oneReportingSurfaceFilter(webHost: string, environment: 'production' | 'uat') {
+  const surface = oneSurfaceSql(webHost, environment);
+  return environment === 'production' ? `(${surface} AND ${customerEventSql(await readCustomerCohort())})` : surface;
+}
+
 interface FirebaseAuthAccountRecord {
   localId?: string;
   createdAt?: string;
@@ -2377,6 +2401,22 @@ async function fetchOneRegisteredAccountsUncached(
   environment: 'production' | 'uat',
 ): Promise<DataResult<OneRegisteredAccountsSummary>> {
   const source = oneAccountSource(environment);
+  if (environment === 'production') {
+    try {
+      const cohort = await readCustomerCohort();
+      const counts = customerAccountCounts(cohort, range);
+      return { data: { ...counts, available: true, sourceLabel: 'Verified production customer contacts',
+        identityRealm: source.identityRealm, identityAuthorityId: oneIdentityAuthorityId(source.project),
+        sharedAcrossEnvironments: source.sharedAcrossEnvironments, environment,
+        registryScope: 'production_contacts', countingUnit: 'account',
+        deduplication: 'One current production account counted once across devices',
+        startDate: range.startDate, endDate: range.endDate, generatedAt: cohort.asOf,
+        daily: dateSpine(range).map(date => ({ date, newAccounts: counts.daily.find(row => row.date === date)?.newAccounts ?? 0 })),
+        note: 'Current registered contacts verified in the production backend and authentication registry. Confirmed staff/test identities, disabled/deprovisioned/deleted accounts and unverified membership are excluded. Creation dates come from Firebase Authentication. One account is not proof of one unique human; traversal is live.' }, error: null };
+    } catch {
+      return { data: unavailableOneRegisteredAccounts(range, 'Production customer registrations could not be verified.', environment), error: 'Production customer registrations could not be verified.' };
+    }
+  }
   if (source.registryScope !== 'isolated') {
     return { data: unavailableOneRegisteredAccounts(range, accountScopeNote(source), environment), error: null };
   }
@@ -2441,6 +2481,7 @@ function fetchOneRegisteredAccounts(
   range: HushhAiDateRange,
   environment: 'production' | 'uat',
 ): Promise<DataResult<OneRegisteredAccountsSummary>> {
+  if (environment === 'production') return fetchOneRegisteredAccountsUncached(range, environment);
   const now = Date.now();
   for (const [cacheKey, entry] of oneRegisteredAccountsCache) {
     if (entry.expiresAt <= now) oneRegisteredAccountsCache.delete(cacheKey);
@@ -2532,7 +2573,8 @@ async function fetchOneAppSummary(
 ): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const table = `\`${projectId}.${dataset}.events_*\``;
-  const surfaceFilter = oneSurfaceSql(webHost, environment);
+  const surfaceFilter = await oneReportingSurfaceFilter(webHost, environment);
+  const customerFilter = environment === 'production' ? customerEventSql(await readCustomerCohort()) : 'TRUE';
   const backgroundNames = sqlNameList(ONE_BACKGROUND_EVENTS);
   const meaningful = `event_name NOT IN (${backgroundNames})`;
   // GA4 app-instance ids are scoped to a stream/platform. Always carry that
@@ -2859,7 +2901,7 @@ ${capabilitySql.isDeliberate}
         COALESCE(app_info.install_source, 'unknown') AS installer,
         COALESCE((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env'), 'unlabeled') AS environment
       FROM ${table} WHERE ${ga4ExportSuffixFilter(androidReadRange?.startDate ?? range.startDate, range.endDate, true, projectId, dataset)}
-        AND ${oneAndroidSql(androidEnvironment)}
+        AND ${oneAndroidSql(androidEnvironment)} AND ${customerFilter}
     ), releases AS (
       SELECT version, installer, environment, COUNT(*) AS events,
         COUNT(DISTINCT user_pseudo_id) AS appIds FROM scoped GROUP BY version, installer, environment
@@ -3249,6 +3291,10 @@ ${capabilitySql.isDeliberate}
       -- rows instead of moving Google events out of the general auth totals.
       SELECT * REPLACE ('google_signin' AS feature_key) FROM classified_base
       WHERE eventName IN ('auth_started', 'auth_succeeded', 'auth_failed') AND action = 'google'
+      UNION ALL
+      -- A withdrawal result remains part of general consent outcomes too.
+      SELECT * REPLACE ('revocation_submitted' AS feature_key) FROM classified_base
+      WHERE eventName = 'consent_action_result' AND action = 'revoke'
     ), feature_totals AS (
     SELECT
       feature_key AS featureKey,
@@ -3452,6 +3498,7 @@ ${capabilitySql.isDeliberate}
       },
       funnel: buildOneLocationFunnel(usersByStep),
       activeUsers: {
+        available: oneActiveQueryAvailable(active),
         countingUnit: 'device',
         identityScope: 'GA4 device/browser identifier; not cross-device deduplicated',
         dau: activeDauDevices,
@@ -3467,6 +3514,7 @@ ${capabilitySql.isDeliberate}
         asOf: activeAsOf,
       },
       identifiedUsers: {
+        activityAvailable: oneActiveQueryAvailable(active),
         countingUnit: 'account',
         identityScope: 'Distinct stable salted One account identifier (GA4 user_id); cross-device deduplicated where bound',
         selectedRange: {
@@ -5449,12 +5497,13 @@ function founderPeriod(range: HushhAiDateRange): FounderPeriod {
 
 const founderBriefingCache = new Map<string, { expiresAt: number; promise: Promise<FounderBriefingData> }>();
 
-function fetchFounderBriefing(current: HushhAiDateRange, previous: HushhAiDateRange): Promise<FounderBriefingData> {
-  const cacheKey = `${current.startDate}:${current.endDate}`;
+async function fetchFounderBriefing(current: HushhAiDateRange, previous: HushhAiDateRange): Promise<FounderBriefingData> {
+  const cohort = await readCustomerCohort();
+  const cacheKey = `${cohort.cacheKey}:${current.startDate}:${current.endDate}`;
   const cached = founderBriefingCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() && !analyticsQueryContext.getStore()?.refresh) return cached.promise;
   const table = `\`${ONE_APP_GA4_PROJECT}.${ONE_APP_GA4_DATASET}.events_*\``;
-  const surface = oneFounderSurfaceSql(ONE_APP_HOST);
+  const surface = `(${oneFounderSurfaceSql(ONE_APP_HOST)} AND ${customerEventSql(cohort)})`;
   const meaningful = `event_name NOT IN (${sqlNameList(ONE_BACKGROUND_EVENTS)})`;
   const platformScope = `platform IN ('IOS', 'ANDROID', 'WEB')`;
   const boundedSuffix = ga4ExportSuffixFilter(previous.startDate, current.endDate, true, ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET);
@@ -5738,6 +5787,11 @@ ${capabilitySql.isDeliberate}
 // API routes
 // ---------------------------------------------------------------------------
 
+function needsCustomerScope(pathname: string) {
+  return /^\/api\/analytics\/(?:all|founder|growth(?:\/|$)|(?:one|kai)(?:\/|$))/.test(pathname)
+    && !/\/(?:uat|ga4|android)$/.test(pathname);
+}
+
 function registerAnalyticsRoutes(app: express.Express): void {
   const snapshots = new AggregateCache<{ status: number; body: unknown }>({ freshMs: 60_000, maxAgeMs: 10 * 60_000, maxEntries: 100 });
   const handlers = new Map<string, express.RequestHandler>();
@@ -5756,10 +5810,17 @@ function registerAnalyticsRoutes(app: express.Express): void {
       for (const path of Array.isArray(paths) ? paths : [paths]) handlers.set(path, handler);
       app.get(paths, async (req, res) => {
         try {
+          if (req.path === '/api/analytics/all' && typeof req.query.view === 'string' && !['one', 'growth', 'apps', 'overview', 'platforms'].includes(req.query.view)) {
+            res.status(400).json({ error: 'Choose a valid metrics section.' }); return;
+          }
           const refresh = req.get('X-Metrics-Refresh') === '1';
           // Aggregate handlers need only query parameters; do not retain a session or cookie in cached loaders.
           const sourceRequest = { query: req.query } as express.Request;
-          const result = await snapshots.read(canonicalAnalyticsKey(req.originalUrl), () => capture(handler, sourceRequest, refresh), refresh);
+          const needsCustomers = needsCustomerScope(req.path);
+          const cohort = needsCustomers ? await readCustomerCohort() : null;
+          const key = `${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(req.originalUrl)}`;
+          const result = await snapshots.read(key, () => capture(handler, sourceRequest, refresh), refresh);
+          if (cohort) requireFreshCohort(cohort);
           res.set('X-Metrics-Cache', result.state);
           res.set('X-Metrics-Updated-At', new Date(result.at).toISOString());
           res.set('X-Metrics-Refreshing', result.refreshing ? '1' : '0');
@@ -5822,7 +5883,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
         const handler = handlers.get(parsed.pathname);
         if (!handler) continue;
         const req = { query: Object.fromEntries(parsed.searchParams) } as unknown as express.Request;
-        try { await snapshots.warm(canonicalAnalyticsKey(url), () => capture(handler, req)); } catch { /* Source state stays explicit. */ }
+        try {
+          const cohort = needsCustomerScope(parsed.pathname) ? await readCustomerCohort() : null;
+          await snapshots.warm(`${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(url)}`, () => capture(handler, req));
+        } catch { /* Source state stays explicit. */ }
       }
       } finally { warming = false; }
     };
@@ -5977,7 +6041,7 @@ async function fetchGrowthSummary(
   const project = ONE_APP_GA4_PROJECT;
   const table = `\`${project}.${ONE_APP_GA4_DATASET}.events_*\``;
   const queryProject = BQ_JOB_PROJECT || project;
-  const surface = oneAppSurfaceFilter(ONE_APP_HOST);
+  const surface = await oneReportingSurfaceFilter(ONE_APP_HOST, 'production');
   const meaningful = `event_name NOT IN (${sqlNameList(ONE_BACKGROUND_EVENTS)})`;
 
   // A year of first-touch history, so "users picked up over time" is a real
@@ -7896,33 +7960,43 @@ async function buildMetricsSnapshot(rangeInput: number | HushhAiDateRange, windo
 }
 
 async function getMetricsSnapshot(rangeDays: number): Promise<MetricsSnapshot> {
-  const key = `calendar:${clampChatRangeDays(rangeDays)}`;
+  const cohort = await readCustomerCohort();
+  const key = `${cohort.cacheKey}:calendar:${clampChatRangeDays(rangeDays)}`;
   const now = Date.now();
   if (metricsSnapshotCache?.key === key && metricsSnapshotCache.expiresAt > now) {
-    return metricsSnapshotCache.promise;
+    const result = await metricsSnapshotCache.promise;
+    requireFreshCohort(cohort);
+    return result;
   }
   const promise = buildMetricsSnapshot(clampChatRangeDays(rangeDays), 'calendar_days');
   metricsSnapshotCache = {
     key,
-    expiresAt: now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000,
+    expiresAt: Math.min(cohort.expiresAt, now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000),
     promise,
   };
-  return promise;
+  const result = await promise;
+  requireFreshCohort(cohort);
+  return result;
 }
 
 async function getLast24MetricsSnapshot(): Promise<MetricsSnapshot> {
-  const key = 'last_24_hours';
+  const cohort = await readCustomerCohort();
+  const key = `${cohort.cacheKey}:last_24_hours`;
   const now = Date.now();
   if (metricsSnapshotCache?.key === key && metricsSnapshotCache.expiresAt > now) {
-    return metricsSnapshotCache.promise;
+    const result = await metricsSnapshotCache.promise;
+    requireFreshCohort(cohort);
+    return result;
   }
   const promise = buildMetricsSnapshot(last24HourUtcRange(), 'last_24_hours');
   metricsSnapshotCache = {
     key,
-    expiresAt: now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000,
+    expiresAt: Math.min(cohort.expiresAt, now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000),
     promise,
   };
-  return promise;
+  const result = await promise;
+  requireFreshCohort(cohort);
+  return result;
 }
 
 function selectSnapshotProducts(snapshot: MetricsSnapshot, product: ProductKey | 'all'): MetricsSnapshot | ProductMetrics {

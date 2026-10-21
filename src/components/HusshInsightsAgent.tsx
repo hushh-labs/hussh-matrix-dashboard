@@ -366,10 +366,10 @@ export default function HusshInsightsAgent() {
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 24 }}
             onClick={() => setIsOpen(true)}
-            className="fixed bottom-[calc(1.25rem+env(safe-area-inset-bottom))] right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-brand-500 shadow-[0_2px_10px_rgba(0,0,0,0.14),0_18px_46px_rgba(0,0,0,0.24)] transition-shadow duration-200 hover:shadow-[0_4px_14px_rgba(0,0,0,0.18),0_22px_56px_rgba(0,0,0,0.28)] active:scale-95 sm:bottom-6 sm:right-6 sm:h-16 sm:w-16"
+            className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-10 w-10 items-center justify-center rounded-xl border border-stroke bg-surface text-brand-600 shadow-sm transition hover:bg-brand-50 active:scale-95 sm:bottom-5 sm:right-5"
             aria-label={`Open ${AGENT_NAME}`}
           >
-            <Sparkles className="h-6 w-6 text-white sm:h-7 sm:w-7" />
+            <MessageSquareText className="h-5 w-5" />
           </motion.button>
         )}
       </AnimatePresence>

@@ -6,6 +6,41 @@ readiness, campaign previews and measured first-value/returning-account counts.
 The module starts disabled. Campaigns start paused, journey readiness is false,
 and all message templates start as drafts. No contacts are preloaded.
 
+## Reading the workspace
+
+The default **Users & drop-offs** view reads the authorized live One directory;
+it is independent of campaign enrollment. **Messages** holds reviewed content,
+**Results** separates app-wide usage from campaign outcomes, and **Automation**
+shows worker health, setup blockers and pause controls. The campaign follow-up
+queue and agent/action coverage remain available inside their related views.
+
+Results loads the existing `/api/analytics/one/app` aggregate only when opened,
+using the shared session-scoped metrics resource. The reporting period supports
+7, 30 and 90 days. Registered totals require an available, isolated production
+registry. They describe current account records, including disabled accounts;
+deleted accounts are absent. New accounts are current records created during
+the requested dates, not a historical signup ledger.
+
+App-wide signed-in accounts and device/browser IDs are separate counting units.
+DAU/WAU/MAU use the latest finalized GA4 measurement day with 1/7/30-day windows,
+which can precede the selected end date. The source snapshot time does not make
+these realtime. Each activity query carries its own availability; failed,
+missing or malformed reads remain unavailable even if other sources succeeded.
+Older API responses without that proof cannot populate the new PLG activity
+cards. Selected-range signed-in totals have independent query health.
+
+Automation also distinguishes the last catalog/source refresh from the last
+enrolled-account evidence read. An empty cohort can refresh its action catalog
+without reaching the campaign evidence endpoint; it must not advance the
+evidence timestamp. Existing timestamps are not backfilled into this new proof.
+
+Campaign activation and retention cover enrolled accounts only. Audience page
+matches are not global totals, signup-to-activation conversion is not obtained
+by dividing independently scoped counts, and observed later usage is not proof
+that an email caused a return. Click and authenticated-return attribution still
+require their own recorded evidence. Seven-day best-effort attempt observations
+cannot reconstruct missing historical activity or prove complete collection.
+
 ## Backend evidence and release status
 
 The companion One backend exposes server-only `POST /api/one/plg/snapshot`.
@@ -48,8 +83,9 @@ and aborts a worker's `--sync-first --send` sequence. Sync itself sends no email
 Production now requires `PLG_FIRESTORE_DATABASE=one-plg-production`, a named
 Native database: the project's existing default is Datastore mode. See
 [infrastructure and release procedure](../infra/one-plg/README.md). Its scheduler
-starts paused and uses `--sync-only`. No provisioning, deployment, merge or
-customer send has been performed for this change.
+starts paused and uses `--sync-only` until the separate reviewed automation
+configuration is enabled. Source code and provisioning defaults do not attest
+to live deployment or sender readiness; verify the release and runtime flags.
 
 The team must confirm its marketing provider/account, verified From, display
 name, Reply-To and signed bounce/complaint callback. GCP secret-name inventories
@@ -444,18 +480,41 @@ remain intact. Storage capacity and delivery reconciliation use the full stored
 ledger, even when customer reports exclude its records. These are account counts,
 not proven unique people or comprehensive historical activity.
 
+App-wide production analytics reads the private signed `/api/one/plg/customer-cohort`
+projection, using the same exclusions and positive canonical backend membership.
+It fully traverses bounded pages before publishing a cohort, rejects changing
+policy revisions, duplicate IDs, truncated/failed pages and expired proofs, and
+keeps the hash directory server-only. Membership expires after at most five
+minutes in Matrix (the source traversal expires after ten). There is no stale
+membership fallback. Aggregate cache keys include the cohort revision and hard
+expiry is rechecked before a response. Production registration counts use Firebase
+creation dates for these eligible contacts, not database shadow creation dates;
+their scope is `production_contacts`, which does not claim Firebase login realms
+were moved. UAT keeps its separate sources. Current disabled/deleted accounts are
+excluded; unknown registration timestamps withhold registration totals.
+
+Production GA4 queries apply eligible hashed `user_id` membership to the event
+before aggregation. Anonymous events are excluded and are never attached through
+a shared device. Devices associated with eligible events remain explicitly
+device counts. This is a narrower reporting population than historical totals,
+not proof of all unique humans. The aggregate production feed uses its bounded
+raw-event SELECT with this filter because a preaggregated legacy view cannot be
+filtered by account afterwards. No warehouse write grant or view mutation is
+needed. Explicit collection diagnostics, store reports and referral standings
+are separate source measurements and must not be presented as customer adoption.
+
 Release the companion backend with its Secret Manager reporting policy, verify
 the private source contract, then deploy this strict consumer. An older backend
 without policy proofs fails closed. Do not promote Matrix PR #133 until the
 backend proof is verified in production. No source response or raw roster enters
 the public aggregate analytics API.
 
-People and usage opens first. **Follow-ups** and **Campaign results** explicitly
-measure enrolled campaign accounts; empty enrollment does not mean the app has no
-users. **Messages and automation** contains sending controls and draft messages,
-with a journey filter and a bounded initial list. **Tracking details** contains
-the technical agent/action catalog and enrolled-account inspection. The tabs
-stay above the selected view's status panels. Internal/unavailable agents are
+**Users & drop-offs** opens first. Its follow-up queue is a separate view for
+enrolled campaign accounts; empty enrollment does not mean the app has no users.
+**Messages** contains draft messages with a journey filter and bounded initial
+list. **Automation** contains sending controls. **Results** separates app-wide
+measurements from enrolled campaign results and links to tracking coverage.
+Internal/unavailable agents are
 hidden in the primary agent lists unless requested. Missing collection baselines
 and unsupported completions remain distinct from measured zero. Legacy completion
 coverage appears once for the selected agent rather than on every account row.

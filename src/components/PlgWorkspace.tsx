@@ -36,6 +36,7 @@ import { dashboardCard } from '../lib/theme';
 import { PlgAgentActivityPanel, type PlgActivityInspection } from './PlgAgentActivityPanel';
 import { PlgAudiencePanel } from './PlgAudiencePanel';
 import { PlgAutomationPanel } from './PlgAutomationPanel';
+import { PlgAppUsage } from './PlgAppUsage';
 
 async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/plg/${path}`, {
@@ -77,7 +78,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents' | 'people'>('people');
+  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents' | 'people' | 'automation'>('people');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
@@ -181,11 +182,11 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               One · Private PLG workspace
             </p>
             <h2 className="mt-2 text-2xl font-semibold text-ink">
-              People, usage and follow-ups
+              See who needs their next useful result
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-              Start with registered people and recorded usage. Manage permission-based
-              follow-ups and campaign results in their own views.
+              Find users by agent and task progress, prepare helpful messages,
+              and measure what brings them back.
             </p>
           </div>
           <span className="inline-flex items-center gap-2 rounded-full border border-stroke px-3 py-1.5 text-xs font-semibold text-muted">
@@ -203,6 +204,9 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button className={buttonStyle} onClick={() => setTab('automation')}>
+              {workspace.deliveryEnabled ? 'View automation status' : 'Review email setup'}
+            </button>
             <button
               className={buttonStyle}
               disabled={busy}
@@ -232,45 +236,44 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           </div>
         </div>}
       </section>
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="PLG views">
-        {(
-          [
-            ['people', 'People and usage'],
-            ['queue', 'Follow-ups'],
-            ['results', 'Campaign results'],
-            ['content', 'Messages and automation'],
-            ['agents', 'Tracking details'],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            role="tab"
-            aria-selected={tab === key}
-            onClick={() => setTab(key)}
-            className={cn(buttonStyle, tab === key && 'border-ink bg-ink text-surface hover:bg-ink')}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
       {error && (
         <div role="alert" className="rounded-xl border border-stroke bg-surface p-4 text-sm text-warning">
           {error}
         </div>
       )}
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="PLG views">
+        {([
+          ['people', 'Users & drop-offs'],
+          ['content', 'Messages'],
+          ['results', 'Results'],
+          ['automation', 'Automation'],
+        ] as const).map(([key, label]) => (
+          <button key={key} role="tab"
+            aria-selected={(tab === 'queue' ? 'people' : tab === 'agents' ? 'results' : tab) === key}
+            onClick={() => setTab(key)}
+            className={cn(buttonStyle, (tab === 'queue' ? 'people' : tab === 'agents' ? 'results' : tab) === key && 'border-ink bg-ink text-surface hover:bg-ink')}>
+            {label}
+          </button>
+        ))}
+      </div>
       {workspace.reporting && (workspace.reporting.pending > 0 || workspace.reporting.excluded > 0) &&
-        <p role="status" className={cn(dashboardCard, 'p-4 text-sm text-muted')}>
-          Customer reporting includes verified production registrations only. {workspace.reporting.pending} enrolled accounts await verification; {workspace.reporting.excluded} are excluded by the reporting policy. Their stored records are preserved.
+        <p role="status" className="text-sm text-muted">
+          Customer totals withhold {workspace.reporting.pending} accounts awaiting verification and {workspace.reporting.excluded} confirmed internal or test accounts.
         </p>}
-      {tab === 'content' && workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
+      {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
         refresh={() => void reload()}
         toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
-      {['queue', 'content', 'results'].includes(tab) && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Enrolled campaign accounts only">
+      {tab === 'results' && <PlgAppUsage refreshKey={refreshKey} />}
+      {tab === 'results' && <div>
+        <h3 className="text-lg font-semibold text-ink">Campaign results</h3>
+        <p className="mt-1 text-sm text-muted">These totals cover enrolled campaign accounts. Registered-user totals and app-wide DAU are separate One app analytics.</p>
+      </div>}
+      {tab === 'results' && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           [Users, 'Enrolled accounts', metrics.enrolled],
-          [Workflow, 'Enrolled accounts with activity', metrics.observed],
-          [CheckCircle2, 'Enrolled accounts with verified value', metrics.activated],
-          [RefreshCw, 'Enrolled accounts with repeat value', metrics.repeat],
+          [Workflow, 'Activity observed', metrics.observed],
+          [CheckCircle2, 'First value reached', metrics.activated],
+          [RefreshCw, 'Returned on another day', metrics.repeat],
         ].map(([Icon, label, value]) => {
           const Symbol = Icon as typeof Users;
           return (
@@ -282,6 +285,12 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           );
         })}
       </div>}
+      {tab === 'people' && <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted">Registered One users, including people who have not joined email campaigns.</p>
+        <button className={buttonStyle} onClick={() => setTab('queue')}>Campaign follow-up queue</button>
+      </div>}
+      {tab === 'queue' && <button className={buttonStyle} onClick={() => setTab('people')}>Back to users</button>}
+      {tab === 'agents' && <button className={buttonStyle} onClick={() => setTab('results')}>Back to results</button>}
       {tab === 'agents' && <PlgAgentActivityPanel state={state} busy={busy}
         refresh={() => void mutate('sync', 'POST', {})}
         inspect={(contactId) => api<PlgActivityInspection>('activity', 'POST', { contactId })} />}
@@ -294,7 +303,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             <div>
               <h3 className="text-lg font-semibold text-ink">Today’s follow-up queue</h3>
               <p className="mt-1 text-sm text-muted">
-                Enrolled campaign accounts only. Registered people appear in People and usage;
+                Enrolled campaign accounts only. Registered people appear in Users & drop-offs;
                 viewing them does not subscribe them to messages.
               </p>
             </div>
@@ -625,6 +634,10 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       )}
       {tab === 'results' && (
         <section className={cn(dashboardCard, 'space-y-6 p-6')}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted">Check which agents and actions supply the evidence behind these results.</p>
+            <button className={buttonStyle} onClick={() => setTab('agents')}>View tracking coverage</button>
+          </div>
           <div>
             <h3 className="text-lg font-semibold text-ink">Campaign results</h3>
             <p className="mt-2 text-sm leading-6 text-muted">

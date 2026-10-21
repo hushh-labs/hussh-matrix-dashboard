@@ -213,6 +213,7 @@ export interface PlgState {
     lease?: { id: string; until: string };
     lastCycle?: PlgCycle;
     lastSyncAt?: string;
+    lastEvidenceSyncAt?: string;
     lastSuccessAt?: string;
   };
 }
@@ -233,6 +234,8 @@ export interface PlgAutomationStatus {
   blockers: string[];
   lastCycle: PlgCycle | null;
   lastSyncAt: string | null;
+  /** Only an actual enrolled-account evidence read can advance this timestamp. */
+  lastEvidenceSyncAt?: string | null;
   lastSuccessAt: string | null;
   eligible: number;
   blockedReasons: { reason: string; accounts: number }[];

@@ -61,22 +61,22 @@ export function PlgAudiencePanel({ state, load, openContact }: {
     includeTechnicalAgents || (agent.public && agent.available) || agent.id === filters.agentId);
   return <section className="min-w-0 space-y-5" aria-label="Agent people">
     <div className={cn(dashboardCard, 'p-5 sm:p-6')}>
-      <h3 className="text-lg font-semibold text-ink">People and agent usage</h3>
+      <h3 className="text-lg font-semibold text-ink">Users and agent drop-offs</h3>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Find registered accounts and their recorded activity in the last seven days. Choose an agent, then apply your filters. Campaign enrollment is separate.</p>
-      <p className="mt-2 text-xs leading-5 text-muted">Production registered contacts · Confirmed staff, test and reviewer identities are excluded using the backend reporting policy. Shared sign-in identities without a production registration record are excluded. Accounts are distinct; they are not proven unique people.</p>
+      <p className="mt-2 text-xs leading-5 text-muted">Production account counts exclude confirmed staff, test and reviewer accounts. Accounts are distinct; they are not proven unique people.</p>
       <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="grid gap-1.5 text-xs font-semibold text-muted">People agent<select className={control} value={filters.agentId} onChange={(e) => change({ agentId: e.target.value as PlgAudienceFilters['agentId'] })}>
+        <label className="grid gap-1.5 text-xs font-semibold text-muted">Agent<select className={control} value={filters.agentId} onChange={(e) => change({ agentId: e.target.value as PlgAudienceFilters['agentId'] })}>
           {!catalog?.agents.some((a) => a.id === 'agent_one') && <option value="agent_one">One</option>}
           {selectableAgents?.map((a) => <option key={a.id} value={a.id}>{a.label}{a.public ? a.available ? '' : ' (unavailable)' : ' (internal)'}</option>)}
         </select></label>
-        <label className="grid gap-1.5 text-xs font-semibold text-muted">Attempt evidence<select className={control} value={filters.segment} onChange={(e) => change({ segment: e.target.value as PlgAudienceFilters['segment'] })}>
+        <label className="grid gap-1.5 text-xs font-semibold text-muted">Task status<select className={control} value={filters.segment} onChange={(e) => change({ segment: e.target.value as PlgAudienceFilters['segment'] })}>
           <option value="all">All production registered contacts</option><option value="possible_incomplete">Possible incomplete attempts</option>
           <option value="failed">Observed failures</option><option value="blocked">Blocked attempts</option><option value="cancelled">Cancelled attempts</option>
           <option value="returned">Return observations</option><option value="verified">Verified value observed</option>
           <option value="unknown">Unknown or partial evidence</option><option value="in_progress">Recent starts</option>
         </select></label>
         <label className="grid gap-1.5 text-xs font-semibold text-muted">Search name, email or phone<input className={control} value={filters.query} maxLength={100} onChange={(e) => change({ query: e.target.value })} placeholder="Name, email or +country code" /></label>
-        {filters.segment === 'possible_incomplete' && <label className="grid gap-1.5 text-xs font-semibold text-muted">No terminal observation after<select className={control} value={filters.graceMinutes} onChange={(e) => change({ graceMinutes: Number(e.target.value) })}>
+        {filters.segment === 'possible_incomplete' && <label className="grid gap-1.5 text-xs font-semibold text-muted">Time since start<select className={control} value={filters.graceMinutes} onChange={(e) => change({ graceMinutes: Number(e.target.value) })}>
           <option value={15}>15 minutes</option><option value={60}>1 hour</option><option value={240}>4 hours</option><option value={1440}>24 hours</option>
         </select></label>}
         <button className={cn(button, 'sm:col-span-2 lg:col-span-1')} disabled={busy} type="submit">{busy ? 'Loading people…' : 'Apply filters'}</button>
