@@ -7,6 +7,7 @@ import {
   enroll,
   ingestEnrollment,
   ingestEvent,
+  registerPlgCatalog,
   PlgError,
   timeline,
   updateContact,
@@ -52,6 +53,20 @@ export function registerPlgRoutes(
       service = new PlgService(store, config);
     }
     return service;
+  };
+  const synchronize = async () => {
+    const service = getService();
+    const state = await service.store.read();
+    if (state.contacts.length) return syncOneEvidence(service.store);
+    // An empty workspace has no pilot cohort to export. Its catalog is already
+    // available through the independently authenticated registered-people reader.
+    // Discard this bounded page's identities; retain only the validated catalog.
+    const page = await readOneAudience({ agentId: 'agent_one', segment: 'all', query: '', graceMinutes: 60 });
+    return service.store.transaction((draft) => {
+      if (draft.contacts.length) throw new PlgError(409, 'Enrollment changed during catalog refresh. Retry the sync.');
+      registerPlgCatalog(draft, page.catalog);
+      return { accounts: 0, imported: 0, erased: 0, retainedOnly: true };
+    });
   };
   const handle =
     (
@@ -170,7 +185,7 @@ export function registerPlgRoutes(
     '/api/plg/sync',
     handle(async (req, res) => {
       role(req);
-      return res.json(await syncOneEvidence(getService().store));
+      return res.json(await synchronize());
     }),
   );
   app.patch(
@@ -211,7 +226,7 @@ export function registerPlgRoutes(
     '/integrations/plg/sync',
     handle(async (req, res) => {
       machine(req, 'sync');
-      return res.json(await syncOneEvidence(getService().store));
+      return res.json(await synchronize());
     }),
   );
   app.post(
@@ -233,7 +248,7 @@ export function registerPlgRoutes(
       machine(req, 'run');
       const service = getService();
       // Legacy signed workers share the same sync, lease and website pause.
-      return res.json(await runAutomationCycle(service, () => syncOneEvidence(service.store)));
+      return res.json(await runAutomationCycle(service, synchronize));
     }),
   );
   app.post(
@@ -241,7 +256,7 @@ export function registerPlgRoutes(
     handle(async (req, res) => {
       machine(req, 'cycle');
       const service = getService();
-      return res.json(await runAutomationCycle(service, () => syncOneEvidence(service.store)));
+      return res.json(await runAutomationCycle(service, synchronize));
     }),
   );
   app.post(

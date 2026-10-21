@@ -56,6 +56,23 @@ function app(runtime = config) {
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('bootstraps the validated agent catalog without enrolling directory people or inventing coverage', async () => {
+    const catalog = { revision: 'a'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }], actions: [] };
+    const source = vi.spyOn(audienceSource, 'readOneAudience').mockResolvedValue({ catalog, rows: [{ accountId: 'PRIVATE', identity: { email: 'private@example.invalid' } }] } as any);
+    const sync = () => request(app()).post('/api/plg/sync').set('Test-User', 'operator@example.invalid').set('Origin', config.origin).send({});
+    const response = await sync();
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ accounts: 0, imported: 0, erased: 0 });
+    expect(response.text).not.toContain('PRIVATE');
+    const state = await store.read();
+    expect(state.catalog).toEqual(catalog);
+    expect(state.contacts).toHaveLength(0);
+    expect(state.deliveries).toHaveLength(0);
+    expect(Object.values(state.ready).every((ready) => !ready)).toBe(true);
+    await store.transaction((state) => enroll(state, input, 'admin', Date.now()));
+    expect((await sync()).status).toBe(503); // No configured cohort exporter.
+    expect(source).toHaveBeenCalledOnce(); // Never fall back after enrollment.
+  });
   it('requires administrator and same-origin authority to change automation', async () => {
     for (const [user, origin, status] of [
       ['', config.origin, 401], ['operator@example.invalid', config.origin, 403],

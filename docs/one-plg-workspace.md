@@ -294,6 +294,12 @@ are not automatically assigned marketing permission. Callback delivery states an
 product completion metrics stay separate. Failed cycle totals can be unknown after
 a partial send; inspect delivery history rather than treating unknown as zero.
 
+An empty workspace refreshes its catalog from one bounded page of the existing
+private registered-people contract and discards all identity rows. This loads agent
+coverage without a campaign cohort, enrollment or inferred activity. Once any
+account is enrolled, synchronization requires the strict cohort snapshot exporter;
+it never falls back to directory metadata after a source failure.
+
 The workspace sends email only. WhatsApp/SMS delivery, automatic Firebase
 audience import, monitored reply ingestion, individual product-update broadcasts,
 and content/video production remain separate integrations. The queue captures
