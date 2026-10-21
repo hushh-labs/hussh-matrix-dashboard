@@ -68,6 +68,41 @@ test('website selector isolates reports and keeps all products reachable', async
   await assertFits(page);
 });
 
+for (const width of [390, 1440]) {
+  test(`One keeps collection diagnostics out of the report at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await mockDashboard(page);
+    const production = { ...one,
+      nativeEnvironments: [
+        { platform: 'ANDROID', environment: 'uat', devices: 500, events: 10500 },
+        { platform: 'IOS', environment: 'uat', devices: 800, events: 427400 },
+      ],
+      androidCapture: { ...one.androidCapture!, releases: [
+        { version: '2.0', installer: 'com.android.vending', environment: 'uat', events: 10500 },
+      ] },
+    };
+    await page.route('**/api/analytics/all?*', route => route.fulfill({ json: {
+      ...allAnalytics, one: { platform: 'One', data: { production, uat: null } },
+    } }));
+    await page.goto('/'); await navigate(page, 'One app');
+    await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+    await expect(page.getByText(/^Collection diagnostics:/)).toHaveCount(0);
+    await expect(page.getByText('Production totals exclude test traffic.', { exact: false })).not.toBeVisible();
+    await page.getByText('Definitions & data sources', { exact: true }).click();
+    await expect(page.getByText('Production totals exclude test traffic.', { exact: false })).toBeVisible();
+    await page.getByRole('button', { name: 'App health', exact: true }).click();
+    const android = page.getByRole('region', { name: 'Android app analytics', exact: true });
+    await expect(android.getByText('316', { exact: true })).toBeVisible();
+    await expect(android.getByText('Synthetic QA Android aggregate.', { exact: true })).not.toBeVisible();
+    await expect(android.getByRole('table')).toHaveCount(0);
+    await android.getByText('Android definitions & data sources', { exact: true }).click();
+    await expect(android.getByText('Synthetic QA Android aggregate.', { exact: true })).toBeVisible();
+    await expect(android.getByRole('table')).toContainText('10,500');
+    await expect(page.getByText(/^Some Android events came from/)).toHaveCount(0);
+    await assertFits(page);
+  });
+}
+
 for (const width of [320, 390, 768, 1024, 1440, 1920]) {
   test(`all main pages fit at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
