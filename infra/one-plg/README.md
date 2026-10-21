@@ -1,100 +1,98 @@
 # One PLG infrastructure
 
-Reviewable provisioning for the pilot. Nothing in this directory has been
-applied. Matrix and the audience follow-up remain PR-only; their merge,
-provisioning and production activation have not been authorized. The earlier
-backend foundation PR8240 was separately authorized, merged and deployed to UAT.
+The production foundation uses the named Native Firestore database
+`hushh-ai-prod/one-plg-production`, protected against deletion with PITR enabled.
+The existing `(default)` Datastore database is separate. Runtime access is IAM
+scoped; browser clients receive no database access.
 
-## Resources
+## Runtime and sender configuration
 
-- Native database `hushh-ai-prod/one-plg-production`, deletion protected, PITR
-  enabled. The existing `(default)` database is Datastore mode and stays intact.
-- Database-scoped `roles/datastore.user` for the existing dashboard runtime.
-- Six Secret Manager containers in `hushh-ai-prod`, three in `hushh-pda`.
-  No secret values are Terraform inputs, resources or outputs.
-- Worker and scheduler identities. The worker can read its request key; it
-  cannot read Firestore, the One source key, customer content or sender keys.
-- A Cloud Run job using an immutable reviewed dashboard image, with automatic
-  retries disabled. It imports evidence using `--sync-only`; it cannot send email.
-- A paused Cloud Scheduler job. Its identity can invoke only that Cloud Run job.
+Secret values never enter Terraform inputs, outputs or plans. Provision containers
+with this configuration and populate enabled versions through Secret Manager stdin.
+The source, private audience, sync, cycle and preference signing keys are independent.
+Bind `metrics-one-plg-cycle-secret` to `PLG_CYCLE_SECRET`. The scheduled worker
+receives this dedicated key, not the preference/enrollment signing key.
 
-Google supports [separate database modes within a project](https://cloud.google.com/blog/products/databases/manage-multiple-firestore-databases-in-a-project)
-and [database-scoped IAM conditions](https://firebase.google.com/docs/firestore/manage-databases#configure_per-database_access_permissions).
-Server SDK access uses IAM. Do not grant browser clients access to this database.
+The approved sender is **Rachel Morgan**, From **rachel@hushh.ai**, Reply-To
+**rachel@hushh.ai**. Bind these through `metrics-one-plg-email-from` and
+`metrics-one-plg-reply-to`. An address establishes identity and reply routing;
+it does not establish provider authentication, domain verification or inbox
+monitoring. The existing One OTP sender remains restricted to OTP messages.
 
-## Release procedure, after separate approval
+The current adapter uses Resend. Its runtime secrets are
+`metrics-one-plg-resend-api-key` and `metrics-one-plg-resend-webhook-secret`.
+Empty containers are not working credentials. Use an organization-authorized
+sending account and domain-restricted sending key. Register signed events at
+`https://metrics.hussh.ai/integrations/plg/resend`, including sent, delivered,
+bounced, complained, failed and suppressed. Preserve receiving MX records.
 
-1. Enable the Firestore, Secret Manager, Cloud Run and Cloud Scheduler APIs if
-   needed. Use a separately authorized provisioning identity. Confirm the
-   named database does not already exist; import any existing resources into
-   state rather than replacing them. Use a private remote state backend with
-   locking and restricted IAM before applying this configuration.
-2. Run `terraform init`, `terraform fmt -check` and `terraform validate`. First
-   plan with default `worker_image=null`: this provisions storage, identities
-   and empty secret containers without a worker that depends on missing values.
-   Review before apply. Never put secret values in a plan or tfvars file.
-3. Populate independent signing and sync keys with at least 32 random bytes each, the explicit admin
-   and operator email lists, and the source key through Secret Manager secure
-   stdin. Source-key values must match in `metrics-one-plg-source-secret`
-   (`hushh-ai-prod`) and `ONE_PLG_EXPORT_SECRET` (`hushh-pda`). Never reuse the
-   application signing key, session key, OTP key or personal credentials.
-4. Populate `ONE_PLG_EXPORT_ACCOUNT_IDS` with the comma-separated production
-   customer Firebase UIDs explicitly enrolled in the pilot. Maximum 100.
-   This is private information: keep it out of Terraform state and PRs.
-   After all required secret versions and IAM are present, review a second plan
-   with `-var='worker_image=<reviewed image URI with sha256 digest>'` to create
-   the sync job and its paused scheduler.
-5. Review the backend companion PR, enable `one_plg_export_enabled` in its
-   existing production runtime-config secret, and release that exact reviewed
-   code through the backend's established release procedure. Its optional
-   secret bindings are production-only and use the two local secret names.
-6. Only after provisioning and secret versions are ready, set repository
-   variable `ONE_PLG_CONFIGURED=true` for the separately approved dashboard
-   release. The existing candidate workflow binds the named database and five
-   secrets, and explicitly keeps `PLG_DELIVERY_ENABLED=false`. It retains the
-   zero-traffic candidate and Google sign-in verification procedure.
-7. Use the private workspace to enroll the same accounts with explicit consent
-   records. Run `npm run plg:worker -- --sync-only` using Secret Manager-backed
-   settings. Verify imports, replay deduplication and a controlled deletion.
-   Review the worker image digest each release; apply a reviewed updated plan.
-8. After candidate promotion and a successful controlled sync, unpause the
-   scheduler through a reviewed configuration change. Keep campaigns paused
-   until the separate sender integration is complete.
+Repository release variables have separate meanings:
 
-## Email remains a release prerequisite
+- `ONE_PLG_CONFIGURED=true`: mount the named database and workspace/source keys.
+- `ONE_PLG_AUDIENCE_CONFIGURED=true`: mount the independent registered-people reader.
+- `ONE_PLG_SENDER_CONFIGURED=true`: mount From and Reply-To secret references.
+- `ONE_PLG_DELIVERY_CONFIGURED=true`: enable transport and mount provider secrets.
+  Set this only after authorized account/domain setup and a controlled delivery,
+  callback and unsubscribe test. It requires workspace and sender configuration.
 
-The private **Agent people** reader is a separate rollout. Populate independent
-`metrics-one-plg-audience-secret` (`hushh-ai-prod`) and
-`ONE_PLG_AUDIENCE_SECRET` (`hushh-pda`) with the same new HMAC key through secure
-stdin. Do not reuse signing, sync or snapshot keys. Runtime IAM grants only the
-corresponding dashboard/backend access; the sync worker receives neither key.
-After the follow-up backend migration366 and reader have been reviewed/released,
-separately enable backend `one_plg_audience_enabled` and repository variable
-`ONE_PLG_AUDIENCE_CONFIGURED=true` (requires `ONE_PLG_CONFIGURED=true`). The
-candidate workflow checks enabled version metadata, mounts the new key and
-verifies its exact secret reference. A false/unset audience variable clears the
-source URL on deploy, disabling the reader even if an older key mount remains.
-Expanded collection additionally needs `one_plg_activity_enabled` and
-`one_plg_activity_all_registered`, with canonical registered-contact admission.
-These settings do not enroll accounts, copy the full directory to Firestore,
-enable delivery or change messaging permission. Verify source traversal,
-missing/cleared phone handling and signed cursor filtering privately before
-launch. All flags remain off and no provisioning was performed in this PR.
+The candidate workflow validates enabled version metadata and exact secret
+bindings. Disabling the workspace explicitly clears workspace/delivery flags and
+the source endpoint. A disabled delivery flag overrides retained credential mounts.
+The existing zero-traffic candidate and verified promotion procedure remain.
 
-The team has not yet identified its marketing email provider, verified From
-identity or Reply-To address. Accessible secret-name inventories were checked in
-`hushh-ai-prod`, `hushh-pda` and `hushh-tech-prod`; no marketing-provider credential
-was identified. The existing One mail API's delegated sender is OTP-only.
+## Automatic cycle
 
-Do not substitute OTP or generic SMTP credentials. Once the team supplies the
-provider/account, verify sender/domain authentication, provider acceptance,
-signed bounce/complaint callbacks and one-click unsubscribe with a controlled
-recipient. Implement the matching adapter if the provider is not Resend. The
-current Resend adapter is retained, but no provider has been selected or bound.
+Use an immutable reviewed dashboard image digest as `worker_image`. The existing
+Cloud Run job and scheduler are extended rather than replaced:
+
+- Default `automatic_cycles=false` retains the sync-only worker.
+- `automatic_cycles=true` runs `node scripts/plg-worker.mjs --cycle` with its
+  dedicated cycle key. The worker has no Firestore, enrollment signing, source
+  or provider credentials.
+- Default `scheduler_enabled=false` keeps scheduled polling paused.
+- The endpoint owns a transactional five-minute lease, syncs authoritative
+  evidence, then evaluates website automation/campaign pauses, sender, consent,
+  suppression, holdout, readiness, publication and contact limits.
+- Source failure stops sending. Empty snapshots never prove inactivity.
+- The cycle budget is 210 seconds. Provider calls have a 15-second timeout and
+  new reservations stop with less than 20 seconds remaining. Worker HTTP timeout
+  is 240 seconds; job timeout is 300 seconds. Automatic job retries stay off.
+- Replayed requests cannot repeat a reserved journey step. Definitely unattempted
+  reservations can be released; ambiguous provider attempts cannot. Signed
+  callbacks correlate opaque delivery IDs and reconcile known outcomes without
+  downgrading delivery/failure states or repeating sends.
+- Website status reports observed heartbeat, sync, cycle, exceptions and capacity.
+  A recent heartbeat is not a guarantee of future scheduler execution.
+
+The legacy signed run endpoint shares this cycle, including fresh sync and the
+website pause. Prefer `--cycle`; do not combine it with legacy worker flags.
+
+## Apply and activate
+
+1. Use the existing private GCS state with locking. Import existing resources,
+   including containers already created by an operator; never recreate them.
+2. Run `terraform fmt -check`, `terraform init` and `terraform validate`. Review a
+   plan against current cloud state. Keep polling paused during rollout.
+3. Preserve existing identities, keys and database. Populate only actual sender
+   values/provider credentials through secure stdin; no placeholder versions.
+4. Release and promote the reviewed dashboard commit through its existing
+   candidate workflow. Apply the immutable worker-image/cycle plan after promotion.
+5. Run a controlled cycle and inspect private status. Configure One's existing
+   explicit export cohort and permission-backed enrollment source. A registered
+   account directory is not marketing permission or complete observation coverage.
+6. After successful sync, enable scheduled polling with a reviewed
+   `scheduler_enabled=true` plan. Keep outbound transport gated until sender
+   testing and content/readiness review are complete. Website controls then manage
+   routine operation without per-message operator work.
+
+The pilot admits at most 100 contacts and a 750 KB transactional document. Do not
+remove caps or prune deduplication/suppression history to simulate scale. A proven
+consent producer, complete coverage for inactivity journeys, mailbox reply handling
+and larger-cohort storage remain integration requirements, not inferred capabilities.
 
 ## Rollback
 
-Pause the scheduler and campaigns; disable the export flag and dashboard PLG
-feature. Roll back service revisions through the existing release procedures.
-Retain the database, deduplication ledger, suppression records and secrets.
-Do not destroy protected state as an application rollback.
+Pause automatic follow-ups and campaigns, then polling if required. Disable the
+relevant release variables and use the existing candidate/promotion path. Preserve
+Firestore, suppression, permanent reservations, signing-key continuity and previous
+healthy revision evidence. Do not destroy protected state as application rollback.

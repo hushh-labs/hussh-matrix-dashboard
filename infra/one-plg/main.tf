@@ -19,15 +19,27 @@ variable "worker_image" {
     error_message = "Use an immutable dashboard image digest from the existing production registry."
   }
 }
+variable "automatic_cycles" {
+  description = "Use the reviewed server-owned cycle instead of the legacy sync-only worker. Requires its signing-key version. Campaign sending still requires independent runtime and website gates."
+  type        = bool
+  default     = false
+}
+variable "scheduler_enabled" {
+  description = "Enable scheduled polling only after a controlled cycle succeeds on the promoted revision."
+  type        = bool
+  default     = false
+}
 
 locals {
   project = "hushh-ai-prod"
   runtime = "metrics-dashboard-runtime@hushh-ai-prod.iam.gserviceaccount.com"
   secrets = toset([
     "metrics-one-plg-signing-secret", "metrics-one-plg-source-secret",
-    "metrics-one-plg-sync-secret",
+    "metrics-one-plg-sync-secret", "metrics-one-plg-cycle-secret",
     "metrics-one-plg-audience-secret",
-    "metrics-one-plg-admin-emails", "metrics-one-plg-operator-emails"
+    "metrics-one-plg-admin-emails", "metrics-one-plg-operator-emails",
+    "metrics-one-plg-email-from", "metrics-one-plg-reply-to",
+    "metrics-one-plg-resend-api-key", "metrics-one-plg-resend-webhook-secret"
   ])
 }
 
@@ -96,6 +108,12 @@ resource "google_secret_manager_secret_iam_member" "worker_key" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.worker.email}"
 }
+resource "google_secret_manager_secret_iam_member" "worker_cycle_key" {
+  count     = var.automatic_cycles ? 1 : 0
+  secret_id = google_secret_manager_secret.config["metrics-one-plg-cycle-secret"].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.worker.email}"
+}
 
 resource "google_cloud_run_v2_job" "sync" {
   count               = var.worker_image == null ? 0 : 1
@@ -107,15 +125,27 @@ resource "google_cloud_run_v2_job" "sync" {
     parallelism = 1
     template {
       service_account = google_service_account.worker.email
-      timeout         = "240s"
+      timeout         = "300s"
       max_retries     = 0
       containers {
         image   = var.worker_image
         command = ["node"]
-        args    = ["scripts/plg-worker.mjs", "--sync-only"]
+        args    = ["scripts/plg-worker.mjs", var.automatic_cycles ? "--cycle" : "--sync-only"]
         env {
           name  = "PLG_PUBLIC_ORIGIN"
           value = "https://metrics.hussh.ai"
+        }
+        dynamic "env" {
+          for_each = var.automatic_cycles ? [1] : []
+          content {
+            name = "PLG_CYCLE_SECRET"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.config["metrics-one-plg-cycle-secret"].secret_id
+                version = "latest"
+              }
+            }
+          }
         }
         env {
           name = "PLG_SYNC_SECRET"
@@ -130,7 +160,7 @@ resource "google_cloud_run_v2_job" "sync" {
       }
     }
   }
-  depends_on = [google_secret_manager_secret_iam_member.worker_key]
+  depends_on = [google_secret_manager_secret_iam_member.worker_key, google_secret_manager_secret_iam_member.worker_cycle_key]
 }
 
 resource "google_service_account" "scheduler" {
@@ -153,7 +183,7 @@ resource "google_cloud_scheduler_job" "sync" {
   region           = "us-central1"
   schedule         = "*/15 * * * *"
   time_zone        = "Etc/UTC"
-  paused           = true
+  paused           = !var.scheduler_enabled
   attempt_deadline = "180s"
   http_target {
     http_method = "POST"

@@ -36,6 +36,7 @@ import { cn } from '../lib/utils';
 import { dashboardCard } from '../lib/theme';
 import { PlgAgentActivityPanel, type PlgActivityInspection } from './PlgAgentActivityPanel';
 import { PlgAudiencePanel } from './PlgAudiencePanel';
+import { PlgAutomationPanel } from './PlgAutomationPanel';
 
 async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/plg/${path}`, {
@@ -180,7 +181,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               Help users reach their next useful result
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-              A shared queue for the PLG team, with guided tasks, relevant content and follow-ups based on
+              Automated guided tasks, relevant content and follow-ups based on
               verified progress.
             </p>
           </div>
@@ -195,7 +196,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             {state.paused ? 'Campaigns paused' : 'Campaigns enabled'}
             <span className="text-muted">·</span>
             <span className="text-muted">
-              {workspace.deliveryEnabled ? 'Delivery configured' : 'Live sending disabled'}
+              {workspace.deliveryEnabled ? 'Delivery flag enabled; check readiness below' : 'Live sending disabled'}
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -233,6 +234,9 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           {error}
         </div>
       )}
+      {workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
+        refresh={() => void reload()}
+        toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           [Users, 'Enrolled accounts', metrics.enrolled],

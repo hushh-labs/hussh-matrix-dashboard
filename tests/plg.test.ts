@@ -26,6 +26,7 @@ import type { PlgContact, PlgState, PlgCatalog } from '../src/lib/plg';
 import { syncOneEvidence } from '../src/server/plg/one-source';
 import { signValue } from '../src/server/plg/service';
 import { readOneAudience } from '../src/server/plg/one-audience';
+import { automationStatus, runAutomationCycle, setAutomationEnabled } from '../src/server/plg/automation';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
 
@@ -163,6 +164,127 @@ function ready(state: PlgState) {
     t.published = true;
   });
 }
+describe('Server-owned automatic follow-up cycle', () => {
+  async function fixture() {
+    const store = new MemoryPlgStore();
+    await store.transaction((state) => {
+      contact(state);
+      ready(state);
+      setAutomationEnabled(state, true, 'admin', NOW);
+    });
+    return store;
+  }
+  it('fails closed on source failure and reports configuration without leaking credentials', async () => {
+    const store = await fixture();
+    const transport = vi.fn(async () => 'provider-id');
+    const service = new PlgService(store, runtime, () => NOW, transport);
+    await expect(runAutomationCycle(service, async () => { throw new Error('PRIVATE provider detail'); }, () => NOW)).rejects.toThrow('did not confirm');
+    expect(transport).not.toHaveBeenCalled();
+    const state = await store.read();
+    expect(state.deliveries).toHaveLength(0);
+    expect(state.automation?.lastCycle?.status).toBe('failed');
+    expect(state.automation?.lastCycle?.sent).toBeNull();
+    const status = automationStatus(state, { ...runtime, apiKey: '', from: 'invalid\r\nInjected: value' }, NOW);
+    expect(status.sender.configured).toBe(false);
+    expect(status.blockers).toContain('Email provider authentication is missing');
+    expect(JSON.stringify(status)).not.toContain('PRIVATE');
+    expect(JSON.stringify(status)).not.toContain(runtime.apiKey);
+    expect(JSON.stringify(status)).not.toContain(runtime.signingSecret);
+    const senderOnly = automationStatus(state, { ...runtime, deliveryEnabled: false, apiKey: '', webhookSecret: '' }, NOW);
+    expect(senderOnly.sender.configured).toBe(true);
+    expect(senderOnly.blockers).toContain('Live email delivery is disabled');
+    expect(senderOnly.blockers).toContain('Email provider authentication is missing');
+  });
+  it('leases concurrent cycles, syncs before sending and fences replayed worker requests', async () => {
+    const store = await fixture();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const transport = vi.fn(async () => 'provider-id');
+    const service = new PlgService(store, runtime, () => NOW, transport);
+    const sync = vi.fn(async () => { await gate; return { accounts: 1, imported: 0, erased: 0 }; });
+    const cycle = runAutomationCycle(service, sync, () => NOW);
+    await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce());
+    expect(transport).not.toHaveBeenCalled();
+    await expect(runAutomationCycle(service, sync, () => NOW)).rejects.toThrow('Another automatic cycle');
+    release();
+    expect(await cycle).toMatchObject({ status: 'completed', sent: 1 });
+    expect(await runAutomationCycle(service, async () => ({ accounts: 1, imported: 0, erased: 0 }), () => NOW)).toMatchObject({ status: 'completed', sent: 0 });
+    expect(transport).toHaveBeenCalledOnce();
+    expect((await store.read()).automation?.lastSyncAt).toBe(new Date(NOW).toISOString());
+  });
+  it('syncs while paused and recovers expired leases without resending uncertain reservations', async () => {
+    const store = await fixture();
+    const transport = vi.fn(async () => { throw new Error('ambiguous'); });
+    const service = new PlgService(store, runtime, () => NOW, transport);
+    const sync = vi.fn(async () => ({ accounts: 1, imported: 0, erased: 0 }));
+    await store.transaction((state) => setAutomationEnabled(state, false, 'admin', NOW));
+    expect(await runAutomationCycle(service, sync, () => NOW)).toMatchObject({ status: 'blocked', sent: 0 });
+    expect(sync).toHaveBeenCalledOnce();
+    expect(transport).not.toHaveBeenCalled();
+    await store.transaction((state) => {
+      setAutomationEnabled(state, true, 'admin', NOW);
+      state.automation!.lease = { id: 'crashed-worker', until: new Date(NOW - 1).toISOString() };
+    });
+    expect(await runAutomationCycle(service, sync, () => NOW)).toMatchObject({ status: 'blocked', uncertain: 1 });
+    const state = await store.read();
+    expect(candidate(state, state.contacts[0], NOW + 2 * DAY).reason).toContain('Delivery confirmation pending');
+    expect(transport).toHaveBeenCalledOnce();
+  });
+  it('honors a pause arriving during sync and the deadline before reserving a send', async () => {
+    const store = await fixture();
+    let clock = NOW;
+    const transport = vi.fn(async () => 'provider-id');
+    const service = new PlgService(store, runtime, () => clock, transport);
+    expect(await runAutomationCycle(service, async () => {
+      await store.transaction((state) => setAutomationEnabled(state, false, 'admin', clock));
+      return { accounts: 1, imported: 0, erased: 0 };
+    }, () => clock)).toMatchObject({ status: 'blocked', sent: 0 });
+    await store.transaction((state) => setAutomationEnabled(state, true, 'admin', clock));
+    await runAutomationCycle(service, async () => { clock += 200_000; return { accounts: 1, imported: 0, erased: 0 }; }, () => clock);
+    expect(transport).not.toHaveBeenCalled();
+    expect((await store.read()).deliveries).toHaveLength(0);
+  });
+  it('releases a definitely unsent reservation when a pause arrives before transport', async () => {
+    const store = await fixture();
+    const read = store.read.bind(store);
+    let reads = 0;
+    vi.spyOn(store, 'read').mockImplementation(async () => {
+      if (++reads === 2) await store.transaction((state) => { state.paused = true; });
+      return read();
+    });
+    const transport = vi.fn(async () => 'provider-id');
+    const service = new PlgService(store, runtime, () => NOW, transport);
+    expect(await service.run('worker')).toMatchObject({ sent: 0, uncertain: 0 });
+    expect(transport).not.toHaveBeenCalled();
+    expect((await store.read()).deliveries).toHaveLength(0);
+    await store.transaction((state) => { state.paused = false; });
+    expect(await service.run('worker')).toMatchObject({ sent: 1, uncertain: 0 });
+    expect(transport).toHaveBeenCalledOnce();
+  });
+  it('reports unknown totals after a partial cycle failure while retaining confirmed delivery evidence', async () => {
+    const store = await fixture();
+    await store.transaction((state) => { contact(state, NOW, '2'); });
+    const transaction = store.transaction.bind(store);
+    let failed = false;
+    vi.spyOn(store, 'transaction').mockImplementation((fn) => transaction((state) => {
+      const count = state.deliveries.length;
+      const result = fn(state);
+      if (!failed && count === 1 && state.deliveries.length === 2) {
+        failed = true;
+        throw new Error('Simulated reservation storage failure');
+      }
+      return result;
+    }));
+    const transport = vi.fn(async () => 'provider-id');
+    const service = new PlgService(store, runtime, () => NOW, transport);
+    await expect(runAutomationCycle(service, async () => ({ accounts: 2, imported: 0, erased: 0 }), () => NOW)).rejects.toThrow('did not confirm');
+    const state = await store.read();
+    expect(transport).toHaveBeenCalledOnce();
+    expect(state.deliveries).toHaveLength(1);
+    expect(state.deliveries[0].status).toBe('sent');
+    expect(state.automation?.lastCycle).toMatchObject({ status: 'failed', accounts: 2, sent: null, uncertain: null });
+  });
+});
 function observe(
   state: PlgState,
   c: PlgContact,

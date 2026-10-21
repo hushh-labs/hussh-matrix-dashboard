@@ -7,6 +7,7 @@ import {
   enroll,
   ingestEnrollment,
   ingestEvent,
+  registerPlgCatalog,
   PlgError,
   timeline,
   updateContact,
@@ -23,6 +24,8 @@ import {
 } from './service';
 import { syncOneEvidence } from './one-source';
 import { readOneAudience } from './one-audience';
+import { runAutomationCycle, setAutomationEnabled } from './automation';
+import { applyDeliveryEvent } from './delivery-events';
 
 export function registerPlgRoutes(
   app: express.Express,
@@ -50,6 +53,20 @@ export function registerPlgRoutes(
       service = new PlgService(store, config);
     }
     return service;
+  };
+  const synchronize = async () => {
+    const service = getService();
+    const state = await service.store.read();
+    if (state.contacts.length) return syncOneEvidence(service.store);
+    // An empty workspace has no pilot cohort to export. Its catalog is already
+    // available through the independently authenticated registered-people reader.
+    // Discard this bounded page's identities; retain only the validated catalog.
+    const page = await readOneAudience({ agentId: 'agent_one', segment: 'all', query: '', graceMinutes: 60 });
+    return service.store.transaction((draft) => {
+      if (draft.contacts.length) throw new PlgError(409, 'Enrollment changed during catalog refresh. Retry the sync.');
+      registerPlgCatalog(draft, page.catalog);
+      return { accounts: 0, imported: 0, erased: 0, retainedOnly: true };
+    });
   };
   const handle =
     (
@@ -85,7 +102,7 @@ export function registerPlgRoutes(
     return { email, role: value as 'admin' | 'operator' };
   };
   const machine = (req: express.Request, purpose: string) => {
-    const secret = purpose === 'sync' ? (config.syncSecret ?? '') : config.signingSecret;
+    const secret = purpose === 'sync' ? (config.syncSecret ?? '') : purpose === 'cycle' ? (config.cycleSecret ?? '') : config.signingSecret;
     const timestamp = req.get('X-PLG-Timestamp') || '';
     const signature = req.get('X-PLG-Signature') || '';
     const raw = (req as any).plgRawBody as string | undefined;
@@ -168,7 +185,15 @@ export function registerPlgRoutes(
     '/api/plg/sync',
     handle(async (req, res) => {
       role(req);
-      return res.json(await syncOneEvidence(getService().store));
+      return res.json(await synchronize());
+    }),
+  );
+  app.patch(
+    '/api/plg/automation',
+    handle(async (req, res) => {
+      const user = role(req, true);
+      return res.json(await getService().store.transaction((state) =>
+        setAutomationEnabled(state, req.body.enabled, user.email, Date.now())));
     }),
   );
   app.post(
@@ -201,7 +226,7 @@ export function registerPlgRoutes(
     '/integrations/plg/sync',
     handle(async (req, res) => {
       machine(req, 'sync');
-      return res.json(await syncOneEvidence(getService().store));
+      return res.json(await synchronize());
     }),
   );
   app.post(
@@ -221,7 +246,17 @@ export function registerPlgRoutes(
     '/integrations/plg/run',
     handle(async (req, res) => {
       machine(req, 'run');
-      return res.json(await getService().run('Signed scheduler'));
+      const service = getService();
+      // Legacy signed workers share the same sync, lease and website pause.
+      return res.json(await runAutomationCycle(service, synchronize));
+    }),
+  );
+  app.post(
+    '/integrations/plg/cycle',
+    handle(async (req, res) => {
+      machine(req, 'cycle');
+      const service = getService();
+      return res.json(await runAutomationCycle(service, synchronize));
     }),
   );
   app.post(
@@ -241,36 +276,7 @@ export function registerPlgRoutes(
       } catch {
         throw new PlgError(401, 'Invalid delivery signature.');
       }
-      await getService().store.transaction((state) => {
-        const reason =
-          event.type === 'email.bounced'
-            ? 'bounced'
-            : event.type === 'email.complained'
-              ? 'complained'
-              : null;
-        if (reason)
-          for (const c of state.contacts)
-            if (
-              Array.isArray(event.data?.to) &&
-              event.data.to.some(
-                (e: unknown) => typeof e === 'string' && e.toLowerCase() === c.email,
-              )
-            ) {
-              if (c.suppressed !== reason) {
-                c.suppressed = reason;
-                timeline(
-                  c,
-                  'Delivery provider',
-                  `Promotional email suppressed: ${reason}.`,
-                  Date.now(),
-                );
-              }
-            }
-        if (event.type === 'email.delivered') {
-          const d = state.deliveries.find((d) => d.providerId === event.data?.email_id);
-          if (d) d.status = 'delivered';
-        }
-      });
+      await getService().store.transaction((state) => applyDeliveryEvent(state, event, Date.now()));
       return res.json({ received: true });
     }),
   );

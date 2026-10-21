@@ -1,7 +1,9 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { PlgDelivery, PlgWorkspace } from '../../lib/plg';
-import { audit, candidate, DAY, iso, metrics, PlgError, timeline } from './engine';
+import { audit, candidate, iso, metrics, PlgError, timeline } from './engine';
 import type { PlgStore } from './store';
+import { automationStatus, deliveryBlockers } from './automation';
+import { applyAcceptedDelivery } from './delivery-events';
 
 export interface PlgRuntime {
   enabled: boolean;
@@ -11,6 +13,7 @@ export interface PlgRuntime {
   operators: Set<string>;
   signingSecret: string;
   syncSecret?: string;
+  cycleSecret?: string;
   webhookSecret: string;
   apiKey: string;
   from: string;
@@ -46,6 +49,7 @@ export function plgRuntime(): PlgRuntime {
     operators: emails(process.env.PLG_OPERATOR_EMAILS),
     signingSecret: process.env.PLG_SIGNING_SECRET || '',
     syncSecret: process.env.PLG_SYNC_SECRET || '',
+    cycleSecret: process.env.PLG_CYCLE_SECRET || '',
     webhookSecret: process.env.PLG_RESEND_WEBHOOK_SECRET || '',
     apiKey: process.env.PLG_RESEND_API_KEY || '',
     from: process.env.PLG_EMAIL_FROM || '',
@@ -115,6 +119,7 @@ export function resendTransport(config: PlgRuntime): PlgTransport {
         to: [to],
         reply_to: config.replyTo,
         subject: delivery.subject,
+        tags: [{ name: 'plg_delivery_id', value: delivery.id }],
         ...message,
       }),
     });
@@ -138,6 +143,7 @@ export class PlgService {
       role,
       configured: true,
       deliveryEnabled: this.runtime.deliveryEnabled,
+      automation: automationStatus(state, this.runtime, now),
       state,
       queue: state.contacts.map((c) => candidate(state, c, now)),
       metrics: metrics(state, now),
@@ -168,16 +174,8 @@ export class PlgService {
         .filter(Boolean),
     };
   }
-  async run(actor: string) {
-    if (
-      !this.runtime.deliveryEnabled ||
-      this.runtime.signingSecret.length < 32 ||
-      !this.runtime.apiKey ||
-      !this.runtime.from ||
-      !this.runtime.replyTo ||
-      !this.runtime.webhookSecret ||
-      !this.runtime.origin.startsWith('https:')
-    )
+  async run(actor: string, options?: { deadline: number; leaseId: string }) {
+    if (deliveryBlockers(this.runtime).length)
       throw new PlgError(409, 'Live delivery is disabled or incomplete. Use campaign preview.');
     const snapshot = await this.store.read();
     if (snapshot.paused) throw new PlgError(409, 'Campaigns are paused.');
@@ -187,8 +185,11 @@ export class PlgService {
       .filter((c) => candidate(snapshot, c, this.now()).eligible)
       .slice(0, 10);
     for (const item of due) {
+      // Leave enough time for the bounded provider request and receipt commit.
+      if (options && this.now() + 20_000 >= options.deadline) break;
       const now = this.now();
       const reserved = await this.store.transaction((state) => {
+        if (options && (!state.automation?.enabled || state.automation.lease?.id !== options.leaseId || Date.parse(state.automation.lease.until) <= now)) return null;
         const c = state.contacts.find((c) => c.id === item.id);
         if (!c) return null;
         const next = candidate(state, c, now);
@@ -217,9 +218,12 @@ export class PlgService {
       // No external side effect occurs inside a retried Firestore transaction.
       // Reservations are permanent. Ambiguous network failures require review;
       // never retry blindly after the provider's 24-hour idempotency window.
+      let attempted = false;
       try {
         const current = await this.store.read();
-        const c = current.contacts.find((c) => c.id === item.id)!;
+        const c = current.contacts.find((c) => c.id === item.id);
+        if (!c || (options && (!current.automation?.enabled || current.automation.lease?.id !== options.leaseId || this.now() + 15_000 >= options.deadline)))
+          throw new Error('Cycle paused or eligibility changed before send.');
         const check = candidate(
           {
             ...current,
@@ -234,24 +238,38 @@ export class PlgService {
           check.templateId !== reserved.delivery.templateId
         )
           throw new Error('Eligibility changed before send.');
+        attempted = true;
         const providerId = await this.transport({
           to: c.email,
           delivery: reserved.delivery,
           message: deliveryMessage(reserved.delivery, c.id, this.runtime),
         });
         await this.store.transaction((state) => {
-          const d = state.deliveries.find((d) => d.id === reserved.delivery.id)!;
-          d.status = 'sent';
+          const d = state.deliveries.find((d) => d.id === reserved.delivery.id);
+          const contact = state.contacts.find((c) => c.id === item.id);
+          // An authoritative account erasure may race a provider response.
+          // Never recreate an erased contact or its delivery history.
+          if (!d || !contact) return;
+          if (d.status === 'sending' || d.status === 'uncertain') d.status = 'sent';
           d.providerId = providerId;
-          const contact = state.contacts.find((c) => c.id === item.id)!;
-          if (d.step === 'feedback') contact.pauseUntil = iso(this.now() + 30 * DAY);
+          applyAcceptedDelivery(state, d);
           timeline(contact, actor, `Sent ${d.step} email.`, this.now());
         });
         sent++;
       } catch {
+        if (!attempted) {
+          // No provider request was attempted. Releasing this reservation lets
+          // an unpause or restored eligibility be evaluated on the next cycle.
+          await this.store.transaction((state) => {
+            state.deliveries = state.deliveries.filter((d) => d.id !== reserved.delivery.id);
+            audit(state, actor, 'Released an unsent reservation after eligibility changed.', this.now());
+          });
+          continue;
+        }
         await this.store.transaction((state) => {
-          const d = state.deliveries.find((d) => d.id === reserved.delivery.id)!;
-          d.status = 'uncertain';
+          const d = state.deliveries.find((d) => d.id === reserved.delivery.id);
+          if (!d) return;
+          if (d.status === 'sending') d.status = 'uncertain';
           audit(
             state,
             actor,

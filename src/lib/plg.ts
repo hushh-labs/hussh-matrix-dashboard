@@ -132,7 +132,7 @@ export interface PlgContact {
   enrolledAt: string;
   consentAt: string | null;
   consentSource: string;
-  suppressed: null | 'unsubscribed' | 'bounced' | 'complained';
+  suppressed: null | 'unsubscribed' | 'bounced' | 'complained' | 'provider_suppressed';
   owner: string;
   blocker: string;
   supportOpen: boolean;
@@ -167,7 +167,7 @@ export interface PlgDelivery {
   templateId: string;
   step: PlgStep | 'manual';
   key: string;
-  status: 'sending' | 'sent' | 'uncertain' | 'delivered' | 'manual';
+  status: 'sending' | 'sent' | 'uncertain' | 'delivered' | 'bounced' | 'complained' | 'failed' | 'manual';
   createdAt: string;
   subject: string;
   body: string;
@@ -188,6 +188,36 @@ export interface PlgState {
   /** Erased accounts cannot be re-enrolled by a delayed integration event. */
   erasedAccountHashes?: string[];
   audit: PlgTimeline[];
+  automation?: {
+    enabled: boolean;
+    lease?: { id: string; until: string };
+    lastCycle?: PlgCycle;
+    lastSyncAt?: string;
+    lastSuccessAt?: string;
+  };
+}
+export interface PlgCycle {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: 'running' | 'completed' | 'blocked' | 'failed';
+  reason: string | null;
+  accounts: number;
+  sent: number | null;
+  uncertain: number | null;
+}
+export interface PlgAutomationStatus {
+  enabled: boolean;
+  worker: 'never_observed' | 'recent' | 'stale';
+  sender: { from: string | null; replyTo: string | null; configured: boolean };
+  blockers: string[];
+  lastCycle: PlgCycle | null;
+  lastSyncAt: string | null;
+  lastSuccessAt: string | null;
+  eligible: number;
+  blockedReasons: { reason: string; accounts: number }[];
+  needsReconciliation: number;
+  capacity: { contacts: number; maxContacts: number; bytes: number; maxBytes: number };
 }
 export interface PlgCandidate {
   contactId: string;
@@ -202,6 +232,7 @@ export interface PlgWorkspace {
   role: 'admin' | 'operator';
   configured: boolean;
   deliveryEnabled: boolean;
+  automation?: PlgAutomationStatus;
   state: PlgState;
   queue: PlgCandidate[];
   metrics: {
