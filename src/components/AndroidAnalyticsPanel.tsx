@@ -1,6 +1,7 @@
 import type { OneAppSummary } from '../lib/types';
 import { useMetricsResource } from '../lib/use-metrics-resource';
 import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
+import { ReportDetails } from './ReportControls';
 
 const count = (value: number | null | undefined) => typeof value === 'number' ? value.toLocaleString('en-US') : 'Not available';
 
@@ -10,10 +11,10 @@ export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one
   const endDate = one.range?.endDate;
   const resource = useMetricsResource<any>(startDate && endDate && environment === 'production' ? '/api/analytics/one/android?' + new URLSearchParams({ start_date: startDate, end_date: endDate }) : null, { refreshIntervalMs: 30_000 });
   const { data: report, loading, error } = resource;
-  return <section className="mb-5 rounded-2xl border border-stroke bg-surface p-5" aria-label="Android capture and release diagnostics">
+  return <section className="mb-5 rounded-2xl border border-stroke bg-surface p-5" aria-label="Android app analytics">
     <h3 className="text-lg font-semibold">Android app analytics</h3>
     <p className="mt-1 text-xs text-muted">App usage from Firebase analytics. Store downloads are reported separately below.</p>
-    <p className="mt-3 text-sm" role="status">{data?.note ?? 'Android activity data is temporarily unavailable.'}</p>
+    {data?.state !== 'observed' && <p className="mt-3 text-sm" role="status">{data?.note ?? 'Android activity data is temporarily unavailable.'}</p>}
     {data?.state === 'observed' && <>
       <dl className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
@@ -21,16 +22,20 @@ export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one
           ['First opens / reinstalls', data.firstOpens], ['App screen visits', data.routeVisits],
         ].map(([label, value]) => <div key={String(label)}><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 text-2xl font-semibold">{count(value as number | null)}</dd></div>)}
       </dl>
-      <p className="mt-4 text-xs text-muted">{data.startDate} to {data.endDate} · GA4 reporting timezone {data.reportingTimezone} (UTC−08:00). Latest exported event: {data.latestEventAt ?? 'Unknown'}. Account rows across platforms can overlap.</p>
+    </>}
+    <ReportDetails title="Android definitions & data sources">
+      <p className="text-xs leading-5 text-muted">{data?.note}</p>
+      {data?.state === 'observed' && <>
+      <p className="mt-4 text-xs text-muted">{data.startDate} to {data.endDate} · GA4 reporting timezone {data.reportingTimezone}. Latest exported event: {data.latestEventAt ?? 'Unknown'}. Account rows across platforms can overlap.</p>
       <div className="mt-4 overflow-x-auto">
         <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="w-full text-left text-xs"><caption className="mb-2 text-left font-semibold">App versions and services used</caption>
           <thead><tr><th scope="col" className="py-2 pr-3">App version</th><th scope="col" className="pr-3">Installer</th><th scope="col" className="pr-3">Service environment</th><th scope="col" className="text-right">Events</th></tr></thead>
           <tbody>{data.releases.map((row, index) => <tr key={index} className="border-t border-stroke"><td className="py-2 pr-3">{row.version}</td><td className="pr-3">{row.installer === 'com.android.vending' ? 'Google Play' : row.installer === 'unknown' ? 'Unknown' : 'Other / sideload'}</td><td className="pr-3">{row.environment}</td><td className="text-right">{count(row.events)}</td></tr>)}</tbody>
         </table></div>
       </div>
-      {data.releases.some((row) => row.environment === 'uat') && <p className="mt-3 rounded-lg bg-warning-soft p-3 text-xs text-warning">Some Android events came from a build using the UAT backend. These measurements are not evidence of production-backend customers. Untagged automatic events do not establish backend environment.</p>}
-    </>}
+      </>}
     <p className="mt-3 text-xs leading-5 text-muted">Screen activity and feature use below require the selected backend environment. Automatic first_open events without backend provenance cannot establish environment-specific installs or retention. Store downloads are separate; missing historical raw events are not reconstructed.</p>
+    </ReportDetails>
     <MetricsUpdateStatus period={startDate && endDate ? `${startDate} to ${endDate}` : undefined} updatedAt={resource.updatedAt} loading={loading} refreshing={resource.refreshing} error={error} />
     {environment==='production' ? <AndroidProviderReport report={report} loading={loading} error={error} /> : <p className="mt-4 text-xs text-muted">Play Store and Android history reports are available in Main analytics.</p>}
   </section>;

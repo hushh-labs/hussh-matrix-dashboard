@@ -320,12 +320,12 @@ function OneAtAGlance({ one }: { one: OneAppSummary }) {
     {
       group: 'Users', label: 'Total registered accounts',
       value: isolated ? registered.totalAccounts : null,
-      detail: isolated ? `Current ${registered.identityRealm} accounts` : registered?.note || 'Environment account membership has not been verified.',
+      detail: isolated ? `Current ${registered.identityRealm} accounts` : 'Awaiting verified account counts',
     },
     {
       group: 'Users', label: 'New registered accounts',
       value: isolated ? registered.newAccounts : null,
-      detail: isolated ? 'Accounts created during the selected dates in this environment' : registered?.note || 'Environment account membership has not been verified.',
+      detail: isolated ? 'Accounts created during the selected dates in this environment' : 'Awaiting verified account counts',
     },
     {
       group: 'Users', label: 'Active signed-in accounts',
@@ -1194,9 +1194,6 @@ function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rang
   const lagHours = typeof one.expectedLagSeconds === 'number'
     ? Math.round(one.expectedLagSeconds / 3600)
     : null;
-  const nativeUatTagged = (one.nativeEnvironments ?? []).some(
-    (row) => row.environment === 'uat' && row.events > 0,
-  );
 
   return (
     <div className={cn(dashboardPanel, 'flex flex-col gap-2 p-5')}>
@@ -1209,13 +1206,13 @@ function Provenance({ one, rangeLabel, environment }: { one: OneAppSummary; rang
         people. The signed-in-user cards separately count distinct stable account IDs and collapse the
         same account across devices, while clearly showing how much device traffic has no bound identity.
         Native and <code className="rounded bg-surface/70 px-1 py-0.5 text-xs">{one.sourceWebHost ?? 'one.hushh.ai'}</code> only;
-        every other web host is excluded. {environment === 'production' && nativeUatTagged
-          ? 'Collection diagnostics contain UAT-tagged mobile events; these are excluded from the PROD account and behaviour totals. '
-          : ''}Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
+        every other web host is excluded. {environment === 'production' ? 'Production totals exclude test traffic. ' : ''}
+        Source {one.sourceLabel ?? 'GA4 export'} ·{' '}
         {rangeLabel}
         {lagHours ? ` · data lands about ${lagHours}h behind` : ''}
         {one.generatedAt ? ` · read ${new Date(one.generatedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''}.
       </p>
+      {one.registeredAccounts?.note && <p className="text-sm leading-6 text-muted">{one.registeredAccounts.note}</p>}
     </div>
   );
 }
@@ -1252,9 +1249,6 @@ export function OneAppPanel({
   const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
 
   const activeData = (environment === 'production' ? one : oneUat) as OneAppSummary;
-  const nativeUatTagged = (activeData?.nativeEnvironments ?? []).filter(
-    (row) => row.environment === 'uat' && row.events > 0,
-  );
 
   // Keep the controls mounted while a date query loads so open date fields and focus survive.
   const filterHeader = (<div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-stroke pb-5">
@@ -1357,15 +1351,6 @@ export function OneAppPanel({
     <main className="space-y-10">
       <section>
         {filterHeader}
-
-        {environment === 'production' && nativeUatTagged.length > 0 && (
-          <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#465fff]/20 bg-[#465fff]/[0.06] px-4 py-3 text-sm font-semibold leading-5 text-brand-600">
-            <Info className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>
-              Collection diagnostics: {nativeUatTagged.map((row) => `${platformLabel(row.platform)} ${formatNumber(row.events)} UAT-tagged events`).join(', ')} reached this analytics source. They are excluded from PROD account and behaviour totals.
-            </p>
-          </div>
-        )}
 
         <ReportTabs label="One app report" value={view} onChange={setView} options={[
           { value: 'summary', label: 'Summary' }, { value: 'features', label: 'Features' },
