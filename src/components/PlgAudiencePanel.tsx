@@ -86,10 +86,11 @@ export function PlgAudiencePanel({ state, load, openContact }: {
       {dirty && <p role="status" className="mt-4 text-sm font-medium text-ink">Filters changed. Apply filters to update the results.</p>}
       {selectedAgent && (selectedAgent.outcome ? selectedAgent.outcome.status !== 'supported' :
         !['agent_personal_information', 'agent_email'].includes(selectedAgent.id)) && <div role="status" className="mt-4 rounded-xl border border-stroke bg-canvas p-4 text-sm text-ink">
-          Completion tracking for {selectedAgent.label} is not available on the connected backend. Recorded usage can still appear below. This does not mean nobody used the agent.
-          {!selectedAgent.outcome && <p className="mt-1 text-xs text-muted">The connected backend uses the older outcome catalog; the newer tracking release must be deployed and verified.</p>}
+          This connection does not provide verified completion tracking for {selectedAgent.label}. Recorded usage remains visible below. This does not mean nobody used the agent.
         </div>}
-      <details className="mt-4 text-xs leading-5 text-muted"><summary className="cursor-pointer font-medium text-ink">How to read activity and completions</summary><p className="mt-2">A return means an execution was observed. A verified completion requires the agent's specific saved or provider-confirmed result. Possible incomplete means a start has no matching finish after the selected interval; it may still be running or missing telemetry. App and server observations can overlap, so their counts are not unique attempts. One's execution counts cover One itself, while its supported completion count combines distinct domain outcomes.</p></details>
+      <details className="mt-4 text-xs leading-5 text-muted"><summary className="cursor-pointer font-medium text-ink">How to read activity and completions</summary><p className="mt-2">A return means an execution was observed. A verified completion requires the agent's specific saved or provider-confirmed result. Possible incomplete means a start has no matching finish after the selected interval; it may still be running or missing telemetry. App and server observations can overlap, so their counts are not unique attempts. One's execution counts cover One itself, while its supported completion count combines distinct domain outcomes.</p>
+        {selectedAgent?.outcome && <p className="mt-2"><strong>Completion definition for {selectedAgent.label}:</strong> {selectedAgent.outcome.label}. {selectedAgent.outcome.reason}</p>}
+      </details>
       {error && <p role="alert" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">{error}</p>}
       {busy && <p role="status" className="mt-4 text-sm text-muted">{scanned ? `Searching more accounts… ${scanned} checked so far.` : 'Loading registered accounts…'}</p>}
     </div>
@@ -126,7 +127,6 @@ export function PlgAudiencePanel({ state, load, openContact }: {
               {counts.otherObservations > 0 && <p className="mt-1 text-xs text-muted">{counts.otherObservations} tool observations; these do not establish completed attempts.</p>}
               {person.verified.supported && <p className="mt-2 text-xs text-muted">{person.verified.count ? `${person.verified.count}${person.verified.limited ? '+' : ''} verified outcomes observed` : 'No verified value observed'}</p>}
               {person.verified.limited && <p className="mt-1 text-xs text-muted">Outcome evidence is partial; additional results may be outside retained bounds.</p>}
-              {agent?.outcome && <details className="mt-1 text-xs leading-5 text-muted"><summary className="cursor-pointer">Completion definition</summary>{agent.outcome.label}. {agent.outcome.reason}</details>}
             </td>
             <td className="max-w-[200px] p-3 text-xs"><p>{activity.lastObservedAt ? time(activity.lastObservedAt) : '—'}</p>{action && <p className="mt-1 text-muted">{action.label}</p>}{activity.firstAttemptAt && <p className="mt-2 text-muted">First start: {time(activity.firstAttemptAt)}</p>}</td>
             <td className="p-3">{enrolled ? <button className={button} onClick={() => openContact(enrolled.id)}>Open follow-up</button> : <span className="text-xs text-muted">Not enrolled in campaigns</span>}</td>

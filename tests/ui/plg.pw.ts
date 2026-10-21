@@ -157,7 +157,7 @@ test('reads agent people with phone-only identity, filters and live pagination w
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   await expect(page.getByText('+919876543210', { exact: true })).toBeVisible();
   await expect(page.getByText('Not enrolled in campaigns', { exact: true })).toBeVisible();
-  await page.getByText('Completion definition', { exact: true }).click();
+  await page.getByText('How to read activity and completions', { exact: true }).click();
   await expect(page.getByText('Distinct verified task outcomes.', { exact: false })).toBeVisible();
   await expect(page.getByText('No verified value observed', { exact: true })).toBeVisible();
   await page.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('agent_calendar');
@@ -184,12 +184,12 @@ test('starts with people and searches beyond empty filtered source pages without
     cursors.push(input.cursor);
     const index = input.cursor ? Number(input.cursor.slice(5)) : 0;
     return { ...result, scanned: 25, nextCursor: index < 2 ? `scan-${index + 1}` : null,
-      rows: index < 2 ? [] : [{ ...result.rows[0], accountId: 'later-match', agentId: input.agentId,
-        identity: { name: 'Later match', email: null, emailVerified: false, phoneNumber: null,
+      rows: index < 2 ? [] : ['Later match', 'Another match'].map((name, i) => ({ ...result.rows[0], accountId: `later-match-${i}`, agentId: input.agentId,
+        identity: { name, email: null, emailVerified: false, phoneNumber: null,
           phoneVerified: false, source: 'canonical', updatedAt: null },
         activity: { coverage: 'observed', mode: 'best_effort', counts: { started: 1, returned: 0, failed: 1, cancelled: 0, blocked: 0, possibleIncomplete: 0, inProgress: 0, uncorrelated: 0, otherObservations: 0 },
           collectionStartedAt: null, firstAttemptAt: null, lastObservedAt: null, lastReturnedAt: null, lastFailureAt: null, lastActionId: null },
-        verified: { supported: false, count: 0, lastAt: null, limited: false } }] };
+        verified: { supported: false, count: 0, lastAt: null, limited: false } })) };
   });
   await page.goto('/plg');
   await expect(page.getByRole('tab', { name: 'Users & drop-offs', exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -203,7 +203,12 @@ test('starts with people and searches beyond empty filtered source pages without
   await expect(page.getByText('Later match', { exact: true })).toBeVisible();
   expect(cursors).toEqual([null, 'scan-1', 'scan-2']);
   await expect(page.getByText('Checked 75 source accounts', { exact: false })).toBeVisible();
-  await expect(page.getByText('Completion tracking for Calendar is not available', { exact: false })).toHaveCount(1);
+  await expect(page.getByText('Another match', { exact: true })).toBeVisible();
+  await expect(page.getByText('This connection does not provide verified completion tracking for Calendar.', { exact: false })).toHaveCount(1);
+  await expect(page.getByText('Starts 1', { exact: false })).toHaveCount(2);
+  await expect(page.getByText('No verified value observed', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Business completion is not measured for this agent', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('Completion definition', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Next source page' })).toBeDisabled();
 });
 
