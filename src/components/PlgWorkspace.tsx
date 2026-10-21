@@ -77,12 +77,14 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents' | 'people'>('queue');
+  const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents' | 'people'>('people');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<PlgTemplate | null>(null);
+  const [contentJourney, setContentJourney] = useState('all');
+  const [showAllTemplates, setShowAllTemplates] = useState(false);
   const [preview, setPreview] = useState<{
     messages: {
       contactId: string;
@@ -151,6 +153,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const { state, metrics, queue, role } = workspace;
   const admin = role === 'admin';
   const person = state.contacts.find((c) => c.id === selected);
+  const contentTemplates = state.templates.filter((template) => contentJourney === 'all' || template.journey === contentJourney);
   const contacts = state.contacts.filter(
     (c) =>
       `${c.name} ${c.email} ${c.owner}`.toLowerCase().includes(query.toLowerCase()) &&
@@ -175,14 +178,14 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
         <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-7">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted">
-              One activation and retention
+              One · Private PLG workspace
             </p>
             <h2 className="mt-2 text-2xl font-semibold text-ink">
-              Help users reach their next useful result
+              People, usage and follow-ups
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-              Automated guided tasks, relevant content and follow-ups based on
-              verified progress.
+              Start with registered people and recorded usage. Manage permission-based
+              follow-ups and campaign results in their own views.
             </p>
           </div>
           <span className="inline-flex items-center gap-2 rounded-full border border-stroke px-3 py-1.5 text-xs font-semibold text-muted">
@@ -190,7 +193,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             Private · {role}
           </span>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stroke bg-canvas px-5 py-4 sm:px-7">
+        {tab === 'content' && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stroke bg-canvas px-5 py-4 sm:px-7">
           <div className="flex items-center gap-2 text-sm font-medium text-ink">
             {state.paused ? <Pause size={16} /> : <Play size={16} />}
             {state.paused ? 'Campaigns paused' : 'Campaigns enabled'}
@@ -227,41 +230,16 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               </button>
             )}
           </div>
-        </div>
+        </div>}
       </section>
-      {error && (
-        <div role="alert" className="rounded-xl border border-stroke bg-surface p-4 text-sm text-warning">
-          {error}
-        </div>
-      )}
-      {workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
-        refresh={() => void reload()}
-        toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          [Users, 'Enrolled accounts', metrics.enrolled],
-          [Workflow, 'Activity observed', metrics.observed],
-          [CheckCircle2, 'First value reached', metrics.activated],
-          [RefreshCw, 'Returned on another day', metrics.repeat],
-        ].map(([Icon, label, value]) => {
-          const Symbol = Icon as typeof Users;
-          return (
-            <div key={String(label)} className={cn(dashboardCard, 'p-5')}>
-              <Symbol size={18} className="mb-3 text-muted" />
-              <p className="text-xs text-muted">{String(label)}</p>
-              <p className="mt-1 text-3xl font-semibold text-ink">{String(value)}</p>
-            </div>
-          );
-        })}
-      </div>
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="PLG views">
         {(
           [
-            ['queue', 'Follow-up queue'],
-            ['content', 'Journeys and content'],
-            ['results', 'Results and activity'],
-            ['agents', 'Agents and actions'],
-            ['people', 'Agent people'],
+            ['people', 'People and usage'],
+            ['queue', 'Follow-ups'],
+            ['results', 'Campaign results'],
+            ['content', 'Messages and automation'],
+            ['agents', 'Tracking details'],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -275,6 +253,31 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           </button>
         ))}
       </div>
+      {error && (
+        <div role="alert" className="rounded-xl border border-stroke bg-surface p-4 text-sm text-warning">
+          {error}
+        </div>
+      )}
+      {tab === 'content' && workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
+        refresh={() => void reload()}
+        toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
+      {['queue', 'content', 'results'].includes(tab) && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Enrolled campaign accounts only">
+        {[
+          [Users, 'Enrolled accounts', metrics.enrolled],
+          [Workflow, 'Enrolled accounts with activity', metrics.observed],
+          [CheckCircle2, 'Enrolled accounts with verified value', metrics.activated],
+          [RefreshCw, 'Enrolled accounts with repeat value', metrics.repeat],
+        ].map(([Icon, label, value]) => {
+          const Symbol = Icon as typeof Users;
+          return (
+            <div key={String(label)} className={cn(dashboardCard, 'p-5')}>
+              <Symbol size={18} className="mb-3 text-muted" />
+              <p className="text-xs text-muted">{String(label)}</p>
+              <p className="mt-1 text-3xl font-semibold text-ink">{String(value)}</p>
+            </div>
+          );
+        })}
+      </div>}
       {tab === 'agents' && <PlgAgentActivityPanel state={state} busy={busy}
         refresh={() => void mutate('sync', 'POST', {})}
         inspect={(contactId) => api<PlgActivityInspection>('activity', 'POST', { contactId })} />}
@@ -287,7 +290,8 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             <div>
               <h3 className="text-lg font-semibold text-ink">Today’s follow-up queue</h3>
               <p className="mt-1 text-sm text-muted">
-                Prioritize assistance, setup blockers and relevant next tasks.
+                Enrolled campaign accounts only. Registered people appear in People and usage;
+                viewing them does not subscribe them to messages.
               </p>
             </div>
             <button
@@ -407,7 +411,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
             <div className="py-12 text-center">
               <Users className="mx-auto text-muted" size={28} />
               <p className="mt-3 font-semibold text-ink">
-                {state.contacts.length ? 'No accounts match this view' : 'Your first cohort starts here'}
+                {state.contacts.length ? 'No accounts match this view' : 'No accounts enrolled in follow-ups yet'}
               </p>
               <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted">
                 Enroll verified production accounts with their messaging preferences. Product signals
@@ -501,8 +505,17 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               ))}
             </div>
           </div>
+          <div className={cn(dashboardCard, 'flex flex-wrap items-end justify-between gap-4 p-5')}>
+            <label className="grid gap-2 text-sm font-medium text-ink">Message journey
+              <select className={inputStyle} value={contentJourney} onChange={(event) => { setContentJourney(event.target.value); setShowAllTemplates(false); setMessage(null); }}>
+                <option value="all">All journeys</option>
+                {plgJourneyOptions(state).map((journey) => <option key={journey.id} value={journey.id}>{journey.label}</option>)}
+              </select>
+            </label>
+            <p className="text-sm text-muted">{contentTemplates.length} templates · {contentTemplates.filter((template) => template.published).length} published. Drafts are not sent.</p>
+          </div>
           <div className="grid gap-4 md:grid-cols-2">
-            {state.templates.map((t) => (
+            {(showAllTemplates ? contentTemplates : contentTemplates.slice(0, 8)).map((t) => (
               <button
                 key={t.id}
                 onClick={() => setMessage({ ...t })}
@@ -521,6 +534,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               </button>
             ))}
           </div>
+          {!showAllTemplates && contentTemplates.length > 8 && <button className={buttonStyle} onClick={() => setShowAllTemplates(true)}>Show all {contentTemplates.length} message templates</button>}
           {message && (
             <form
               className={cn(dashboardCard, 'space-y-4 p-6')}
@@ -608,12 +622,18 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       {tab === 'results' && (
         <section className={cn(dashboardCard, 'space-y-6 p-6')}>
           <div>
-            <h3 className="text-lg font-semibold text-ink">Measure useful outcomes</h3>
+            <h3 className="text-lg font-semibold text-ink">Campaign results</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Only signed, verified product completions count as first value. Accounts are deduplicated across
-              devices. Cohort windows use UTC dates.
+              These results cover enrolled campaign accounts, not everyone using One. Only verified
+              product completions count as first value. Accounts are deduplicated across devices;
+              cohort windows use UTC dates.
             </p>
           </div>
+          {!state.contacts.length && <div role="status" className="rounded-xl border border-stroke bg-canvas p-5 text-sm text-ink">
+            <p className="font-semibold">Campaign measurement has no enrolled cohort yet.</p>
+            <p className="mt-2 text-muted">The campaign counts below are zero because no accounts are enrolled. They do not mean the app has no users or activity.</p>
+            <button className={cn(buttonStyle, 'mt-3')} onClick={() => setTab('people')}>View registered people and usage</button>
+          </div>}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-stroke p-5">
               <p className="text-sm text-muted">Seven-day activation</p>

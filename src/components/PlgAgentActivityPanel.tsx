@@ -14,6 +14,7 @@ export function PlgAgentActivityPanel({ state, busy, refresh, inspect }: {
   const [account, setAccount] = useState('');
   const [query, setQuery] = useState('');
   const [all, setAll] = useState(false);
+  const [includeInternal, setIncludeInternal] = useState(false);
   const [detail, setDetail] = useState<PlgActivityInspection | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -35,24 +36,25 @@ export function PlgAgentActivityPanel({ state, busy, refresh, inspect }: {
     <div className={cn(dashboardCard, 'p-5 sm:p-6')}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-2xl">
-          <h3 className="text-lg font-semibold text-ink">Agents and actions</h3>
+          <h3 className="text-lg font-semibold text-ink">Tracking details</h3>
           <p className="mt-2 text-sm leading-6 text-muted">Review activity across enrolled accounts. App reports and agent/tool returns show observed usage; they do not establish a successful business outcome or app-wide DAU.</p>
         </div>
         <button className={control} disabled={busy} onClick={refresh}>Refresh agent activity</button>
       </div>
+      {!state.contacts.length && <p role="status" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">No accounts are enrolled in campaign tracking. The table describes tracking coverage; its empty counts are not app-wide usage. Use People and usage to browse registered accounts.</p>}
       {!catalog ? <p role="status" className="mt-5 rounded-xl bg-canvas p-4 text-sm text-muted">Connect the One backend and refresh activity to load the registered agents and actions. Collection remains unknown until connected.</p> : <>
         <p className="mt-5 text-sm font-semibold text-ink">{catalog.agents.length} authored agents · {catalog.actions.length} action and execution identifiers</p>
-        <p className="mt-1 text-xs text-muted">Includes internal and unavailable agents for coverage. Their presence does not enable them or create a campaign.</p>
+        <label className="mt-3 flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={includeInternal} onChange={(e) => setIncludeInternal(e.target.checked)} />Show internal and unavailable agents</label>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="border-b border-stroke text-xs text-muted"><tr><th className="p-3">Agent</th><th className="p-3">Availability</th><th className="p-3">Verified value definition</th><th className="p-3">Observed accounts</th><th className="p-3">Execution returns</th><th className="p-3">App reports</th><th className="p-3">Errors</th></tr></thead>
-            <tbody>{catalog.agents.map((a) => {
+            <tbody>{catalog.agents.filter((a) => includeInternal || (a.public && a.available)).map((a) => {
               const reports = state.contacts.flatMap((c) => c.activity?.agents.filter((row) => row.agentId === a.id) ?? []);
               const connected = state.contacts.some((c) => c.activity?.enabled && c.activity.epoch);
               return <tr key={a.id} className="border-b border-stroke last:border-0">
                 <td className="p-3"><button className="font-semibold text-ink underline-offset-4 hover:underline" onClick={() => setAgent(a.id)}>{a.label}</button></td>
                 <td className="p-3 text-muted">{!a.public ? 'Internal' : a.available ? 'Available' : 'Unavailable'}</td>
-                <td className="min-w-[240px] max-w-sm p-3 text-xs text-muted"><p className="font-medium text-ink">{a.outcome?.label ?? (['agent_personal_information', 'agent_email'].includes(a.id) ? 'Verified task completion' : !a.public ? 'Internal stage' : 'Outcome not measured')}</p>{a.outcome && <p className="mt-1 leading-5">{a.outcome.reason}</p>}</td>
+                <td className="min-w-[240px] max-w-sm p-3 text-xs text-muted"><p className="font-medium text-ink">{a.outcome?.label ?? (['agent_personal_information', 'agent_email'].includes(a.id) ? 'Verified task completion' : !a.public ? 'Internal stage' : 'Requires the newer backend tracking release')}</p>{a.outcome && <details className="mt-1 leading-5"><summary className="cursor-pointer">Completion definition</summary>{a.outcome.reason}</details>}</td>
                 <td className="p-3">{connected ? reports.length : 'Not collected'}</td>
                 <td className="p-3">{connected ? reports.reduce((n, row) => n + row.executed, 0) : '—'}</td>
                 <td className="p-3">{connected ? reports.reduce((n, row) => n + row.reported, 0) : '—'}</td>
@@ -73,6 +75,7 @@ export function PlgAgentActivityPanel({ state, busy, refresh, inspect }: {
       </div>
       {error && <p role="alert" className="mt-4 text-sm text-muted">{error}</p>}
       {detail && <p role="status" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-muted">{detail.deleted ? 'The source reports this account was deleted; its PLG records were erased.' : !detail.activity?.enabled || !detail.activity.epoch ? 'Activity collection is unavailable or has not started for this account.' : detail.activity.limited ? 'The collection limit was reached. These are retained observations; missing actions cannot establish inactivity.' : 'Showing retained observations from the requested window. Collection is best effort; a return is not a verified business result.'}</p>}
+      {!account && <p role="status" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">Choose an enrolled account to load its action counts. Until then this is the action catalog, not a usage report.</p>}
       <div className="mt-4 overflow-x-auto">
         <table className="w-full min-w-[680px] text-left text-sm"><thead className="border-b border-stroke text-xs text-muted"><tr><th className="p-3">Registered action</th><th className="p-3">Evidence</th><th className="p-3">Started</th><th className="p-3">Returned</th><th className="p-3">Failed / blocked</th></tr></thead>
           <tbody>{(all ? actions : actions.slice(0, 50)).map((action) => {

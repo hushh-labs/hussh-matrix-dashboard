@@ -354,7 +354,7 @@ Existing/new and treatment/control records remain visible in the private data.
 
 ## Registered people by agent
 
-The **Agent people** tab reads the live registered-account directory from One
+The default **People and usage** tab reads the live registered-account directory from One
 through private `POST /api/plg/audience`. It requires an authenticated PLG
 admin/operator, same-origin request and `PLG_ENABLED=true`; public aggregate
 analytics and machine sync credentials cannot access it. Server configuration:
@@ -380,7 +380,9 @@ phone where present, evidence coverage, observed counts and timestamps. Saved
 One identity wins as a whole row, including intentionally cleared fields.
 Missing canonical rows may use current provider contact getters; transferred
 phone claims are checked. Disabled, deprovisioned, unclassified and deleted
-accounts are excluded. Missing fields remain visible, including phone-only users.
+accounts are excluded. These source eligibility rules do not establish a complete
+staff/test exclusion list or a customer-only production cohort. The UI states that
+limitation explicitly. Missing fields remain visible, including phone-only users.
 Passwords, SDK records, tokens and provider diagnostics never reach the browser.
 
 Segments include possible incomplete, recent starts, observed failures, blocked,
@@ -397,7 +399,13 @@ not a zero-use assertion. This view does not change aggregate DAU/retention.
 
 The API reads 25 source accounts per page over the retained seven-day activity
 window. Search/segments filter each page; later pages can contain more matches,
-including after an empty page. No global count is inferred. Cursor signatures
+including after an empty page. Filtered searches automatically continue past empty
+pages, stopping at a match, source exhaustion, six pages or a 20-second elapsed
+budget checked between requests. A slow request can exceed that elapsed budget.
+The continuation remains available when the bounded search stops early. The UI
+shows how many source accounts it checked and does not turn a partial traversal
+into a global zero. Changing filters hides the previous result until applied.
+No global count is inferred. Cursor signatures
 bind all filters and the activity anchor and expire after 15 minutes; refreshing
 starts a new traversal. The live directory may change during browsing.
 This bounded read avoids copying every registered person into the 750KB pilot
@@ -418,6 +426,38 @@ Receipt capture is prospective, bounded and best effort; older missing receipts
 are never backfilled as completions. Failed/truncated sources stay explicit.
 Cohort maturity is based on elapsed enrollment/activation time and does not assert
 that every day was observed.
+
+## Workspace navigation and live audit
+
+People and usage opens first. **Follow-ups** and **Campaign results** explicitly
+measure enrolled campaign accounts; empty enrollment does not mean the app has no
+users. **Messages and automation** contains sending controls and draft messages,
+with a journey filter and a bounded initial list. **Tracking details** contains
+the technical agent/action catalog and enrolled-account inspection. The tabs
+stay above the selected view's status panels. Internal/unavailable agents are
+hidden in the primary agent lists unless requested. Missing collection baselines
+and unsupported completions remain distinct from measured zero. Legacy completion
+coverage appears once for the selected agent rather than on every account row.
+
+Read-only production inspection on 2026-10-22 IST covered all five live tabs,
+recent-start filtering, queue filtering, action filtering, and a draft editor:
+
+- The stored campaign cohort had no enrolled accounts, delivery history or
+  published messages; all 56 message templates were drafts.
+- The first directory page returned 25 registered accounts with no collection
+  baseline. The recent-start filter returned an empty first page with a live next
+  cursor. Neither result establishes app-wide zero usage.
+- The connected legacy catalog had 19 authored agents and 521 action identifiers.
+  Its completion contract supports Memory/Mail only. The broader outcome adapters
+  require the separate One backend release and verification.
+- The directory visibly included a reviewer account. Do not report its counts as
+  verified external customers or certify all staff/test identities excluded.
+- Automatic follow-ups reported a blocked cycle, live delivery disabled, missing
+  provider authentication/callback setup, and no enrolled permission-backed cohort.
+
+No production account, permission, template, enrollment, sending setting or
+customer data was changed during this audit. Local browser tests use synthetic
+fixtures and establish UI behavior, not completeness of production telemetry.
 
 ## Verify
 
