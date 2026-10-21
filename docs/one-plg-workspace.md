@@ -457,6 +457,17 @@ that every day was observed.
 
 ## Verify
 
+PLG Results requests `/api/analytics/one/app?environment=production` with its
+selected dates. That API reads only production; UAT is not fetched and cannot
+replace a failed production source. The default API comparison contract remains
+available to the separate One analytics page. PLG checks the response scope and
+does not fetch the shared registration directory for its production-only read. It
+withholds mismatched or mixed-environment app aggregates. Private audience,
+snapshot and permission connectors continue to require the canonical production
+backend origin and an explicit production response. Shared Firebase sign-in
+identities do not turn UAT activity into production activity; registry totals
+remain unavailable where environment membership cannot be verified.
+
 ```sh
 npm run lint
 npm run build

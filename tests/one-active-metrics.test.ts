@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { oneActiveQueryAvailable } from '../src/server/one-active-metrics';
+import { oneAppScope, readOneAppEnvironments } from '../src/server/one-app-scope';
 
 describe('One active query evidence', () => {
+  it('keeps a production-only read isolated even when production is unavailable', async () => {
+    const read = vi.fn(async () => ({ data: null, error: 'Production source unavailable' }));
+    expect(oneAppScope(undefined)).toBe('all');
+    for (const invalid of ['', null, ['production', 'uat'], 'unknown']) expect(oneAppScope(invalid)).toBeNull();
+    expect(await readOneAppEnvironments('production', read)).toEqual({ production: { data: null, error: 'Production source unavailable' }, uat: null });
+    expect(read.mock.calls).toEqual([['production']]);
+    read.mockClear();
+    await readOneAppEnvironments('all', read);
+    expect(read.mock.calls).toEqual([['production'], ['uat']]);
+  });
   const row = { asOf: '2026-10-19', dau: 10, wau: 20, mau: 30,
     dauAccounts: 7, wauAccounts: 17, mauAccounts: 27,
     dauIdentifiedDevices: 8, wauIdentifiedDevices: 18, mauIdentifiedDevices: 28 };
