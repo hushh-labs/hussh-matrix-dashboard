@@ -15,8 +15,12 @@ Raw production capture diagnostics only scan dates on or after the export repair
 7 October 2026. Earlier-only windows return an explicit waiting state without a
 new diagnostic query; requested report dates remain unchanged. Historical GA4
 aggregate reads still cover the selected range. October 7 is a partial capture
-day; a full daily export must be observed before claiming complete coverage. The 100 MB scan cap can make a larger raw
-range unavailable rather than spend beyond the bound.
+day; a full daily export must be observed before claiming complete coverage. Capture shares the existing platform aggregate scan. Dry-run estimates enforce a
+maximum 100 MB incremental allowance over that baseline; the paid query retains
+that billed-byte limit, a 30-second job deadline and a 40-second client deadline.
+A failed optional estimate or an excessive increment preserves the baseline
+platform report and marks capture unavailable. Failed paid reads never launch a
+second scan. This does not backfill missing native events.
 
 Incomplete Android comparison history suppresses aggregate growth comparisons
 when Android contributes. Final daily exports take precedence over overlapping
@@ -277,7 +281,10 @@ misreporting GCS's ambiguous absent-object 403 as a missing Console grant.
 
 Provider cache: one hour, 32 entries, coalesced requests, 12 new ranges per ten
 minutes per replica. Added raw capture aggregate: five-minute/32-entry cache,
-12 new queries per ten minutes per replica, 100 MB scan cap, 30-second job limit.
+12 new capture attempts per ten minutes per replica, a 100 MB incremental scan
+allowance, and a 30-second job limit. Platform rows retain their 30-second cache;
+a capture-cache hit reads only the baseline platform columns. No CLI fallback
+can bypass the bound.
 Existing Cloud Run maximum is three replicas, so limits are per replica, not
 global quotas. No in-process scheduler is introduced: the existing GA4 daily
 and streaming exports supply data; provider reports are bounded cached reads.
@@ -299,6 +306,7 @@ npm ci
 npm run lint
 npm test
 npm run test:ui:one-platforms
+npm run test:metrics:android-capture-sql # inline fixture only, UAT job project
 npm run build
 git diff --check
 ```

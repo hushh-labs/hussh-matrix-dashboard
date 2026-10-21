@@ -29,6 +29,7 @@
     "test:metrics:one-reconciliation": "node scripts/check-one-metrics-reconciliation.mjs",
     "test:metrics:ios-accounts": "node scripts/check-one-ios-account-kpis.mjs",
     "test:metrics:ios-usage": "node scripts/check-one-ios-usage-kpis.mjs",
+    "test:metrics:android-capture-sql": "tsx scripts/check-one-android-capture-sql.ts",
     "test:metrics:one-platforms": "node scripts/check-one-platform-kpis.mjs",
     "test:ui:one-platforms": "tsx scripts/check-one-platform-render.tsx",
     "test:agent:product-routing": "tsx scripts/check-agent-product-routing.ts",

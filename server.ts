@@ -26,7 +26,7 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
-import { oneSurfaceSql, oneAndroidSql, oneFounderSurfaceSql, oneNonDebugSql, oneFeedEnvironment, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
+import { oneSurfaceSql, oneFounderSurfaceSql, oneNonDebugSql, oneFeedEnvironment, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
 import { oneAccountSource, oneIdentityAuthorityId, accountScopeNote, readOneAccountCounts } from './src/server/one-account-scope.mjs';
 import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushhtech-window.mjs';
 import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
@@ -34,6 +34,7 @@ import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals,
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
 import { oneAppScope, readOneAppEnvironments } from './src/server/one-app-scope';
+import { onePlatformCaptureQueries, readPlatformCapture, unpackPlatformCapture } from './src/server/one-platform-capture';
 import { registrationTotals } from './src/server/one-registration-totals.mjs';
 import type { OneRegistrationTotals } from './src/lib/types';
 
@@ -2537,20 +2538,38 @@ function buildOneLocationFunnel(usersByStep: Map<string, number>): OneAppFunnelS
   });
 }
 
-// Added aggregate: hard scan cap, finite cache and per-replica job budget.
-const androidCaptureCache = new Map<string, {at:number;promise:Promise<BigQueryFeedResult>}>();
-let androidCaptureBudget = {at:0,attempts:0};
-function queryAndroidCapture(projectId:string,query:string):Promise<BigQueryFeedResult> {
-  const key=`${projectId}:${query}`;const now=Date.now();const hit=androidCaptureCache.get(key);
-  if(hit && now-hit.at<300_000)return hit.promise;
-  if(now-androidCaptureBudget.at>600_000)androidCaptureBudget={at:now,attempts:0};
-  if(++androidCaptureBudget.attempts>12)return Promise.resolve({rows:[],error:'Android capture request budget reached'});
-  while(androidCaptureCache.size>=32)androidCaptureCache.delete(androidCaptureCache.keys().next().value!);
-  const promise=import('@google-cloud/bigquery').then(async({BigQuery})=>{
-    try {const [rows]=await new BigQuery({projectId}).query({query,location:'US',maximumBytesBilled:'100000000',jobTimeoutMs:30_000});return {rows:rows as Record<string,unknown>[],error:null};}
-    catch {return {rows:[],error:'Android capture query unavailable'};}
-  });
-  androidCaptureCache.set(key,{at:now,promise});return promise;
+// Capture metadata keeps its existing five-minute cache and 12-job budget.
+// Platform rows retain the canonical 30-second query cache and refresh behavior.
+const platformCaptureCache = new Map<string,{at:number;promise:Promise<BigQueryFeedResult>}>();
+let platformCaptureBudget = {at:0,attempts:0};
+async function queryOnePlatformCapture(projectId:string, queries:ReturnType<typeof onePlatformCaptureQueries>):Promise<BigQueryFeedResult> {
+  const key = `${projectId}:platform-capture:${crypto.createHash('sha256').update(queries.combined || queries.baseline).digest('hex')}`;
+  const baseline = async (capture:unknown):Promise<BigQueryFeedResult> => {
+    const platforms = await queryBigQuerySqlUncached(projectId,queries.baseline);
+    return platforms.error ? platforms : {rows:[{platforms:platforms.rows,androidCapture:capture}],error:null};
+  };
+  const load = async ():Promise<BigQueryFeedResult> => {
+    if (!queries.combined) return baseline({events:0});
+    const now=Date.now(), cached=platformCaptureCache.get(key);
+    if (cached && now-cached.at<300_000) {
+      const report=await cached.promise;
+      return baseline(report.error ? null : report.rows[0]?.androidCapture ?? null);
+    }
+    if(now-platformCaptureBudget.at>600_000) platformCaptureBudget={at:now,attempts:0};
+    if(platformCaptureBudget.attempts>=12) return baseline(null);
+    platformCaptureBudget.attempts++;
+    const promise=(async()=>{
+      try {return await readPlatformCapture(await bigQueryClient(projectId),queries);}
+      catch {return {rows:[],error:'One platform and Android aggregate query unavailable'};}
+    })();
+    while(platformCaptureCache.size>=32) platformCaptureCache.delete(platformCaptureCache.keys().next().value!);
+    platformCaptureCache.set(key,{at:now,promise});
+    return promise;
+  };
+  try {
+    if (analyticsQueryContext.getStore()?.refresh) return await load();
+    return (await queryCache.read(key,load)).value;
+  } catch { return {rows:[],error:'One platform and Android aggregate query unavailable'}; }
 }
 
 async function fetchOneAppSummary(
@@ -2767,46 +2786,9 @@ ${capabilitySql.isDeliberate}
     WHERE eventName = 'one_location_journey_action'
   `;
 
-  const platformQuery = `
-    WITH scoped AS (
-      SELECT platform, user_pseudo_id, NULLIF(user_id, '') AS accountId,
-        event_name,
-        NULLIF((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'route_id'), '') AS routeId
-      FROM ${table}
-      WHERE ${dateFilter} AND platform IN ('WEB', 'IOS', 'ANDROID')
-    ), named_routes AS (
-      SELECT platform, routeId
-      FROM scoped
-      WHERE event_name = 'page_view' AND REGEXP_CONTAINS(routeId, r'^[a-z][a-z0-9_]{0,60}$')
-        AND NOT REGEXP_CONTAINS(routeId, r'(^unknown$|^logout$|oauth_return$|_legacy_redirect$|^oauth_authorize$)')
-    ), route_counts AS (
-      SELECT platform, routeId, COUNT(*) AS visits
-      FROM named_routes GROUP BY platform, routeId
-    ), top_routes AS (
-      SELECT platform,
-        ARRAY_AGG(STRUCT(routeId, visits) ORDER BY visits DESC, routeId LIMIT 5) AS topProductScreens
-      FROM route_counts GROUP BY platform
-    ), summary AS (
-      SELECT platform,
-        COUNT(DISTINCT user_pseudo_id) AS users,
-        COUNT(*) AS events,
-        COUNT(DISTINCT IF(${meaningful}, user_pseudo_id, NULL)) AS activeDeviceIds,
-        COUNT(DISTINCT IF(${meaningful}, accountId, NULL)) AS activeAccounts,
-        COUNTIF(event_name = 'page_view') AS routeVisits
-      FROM scoped GROUP BY platform
-    ), named_summary AS (
-      SELECT platform, COUNT(*) AS namedRouteVisits, COUNT(DISTINCT routeId) AS distinctScreens
-      FROM named_routes GROUP BY platform
-    )
-    SELECT summary.*,
-      COALESCE(named_summary.namedRouteVisits, 0) AS namedRouteVisits,
-      COALESCE(named_summary.distinctScreens, 0) AS distinctScreens,
-      top_routes.topProductScreens
-    FROM summary
-    LEFT JOIN named_summary USING (platform)
-    LEFT JOIN top_routes USING (platform)
-    ORDER BY users DESC
-  `;
+  const androidReadRange = androidCaptureQueryRange(range, environment);
+  const platformQueries = onePlatformCaptureQueries({table, dateFilter, meaningful,
+    androidStartDate:androidReadRange?.startDate ?? null, environment});
 
   // Per-capability, per-day deliberate users. Drives the trend on each card: a
   // total alone cannot tell you whether a capability is growing or dying.
@@ -2878,32 +2860,6 @@ ${capabilitySql.isDeliberate}
       AND ${oneSurfaceSql(webHost, environment, { collectionOnly: true })}
     GROUP BY platform, environment
     ORDER BY platform, events DESC
-  `;
-
-  // Bounded aggregate metadata only; do not scan unavailable production history.
-  const androidEnvironment = environment;
-  const androidReadRange = androidCaptureQueryRange(range, androidEnvironment);
-  const androidQuery = `
-    WITH scoped AS (
-      SELECT event_name, event_timestamp, event_date, user_pseudo_id, NULLIF(user_id, '') AS accountId,
-        COALESCE(app_info.version, 'unknown') AS version,
-        COALESCE(app_info.install_source, 'unknown') AS installer,
-        COALESCE((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env'), 'unlabeled') AS environment
-      FROM ${table} WHERE ${ga4ExportSuffixFilter(androidReadRange?.startDate ?? range.startDate, range.endDate, true, projectId, dataset)}
-        AND ${oneAndroidSql(androidEnvironment)}
-    ), releases AS (
-      SELECT version, installer, environment, COUNT(*) AS events,
-        COUNT(DISTINCT user_pseudo_id) AS appIds FROM scoped GROUP BY version, installer, environment
-    ), totals AS (
-      SELECT COUNT(*) AS events,
-        COUNT(DISTINCT IF(${meaningful}, user_pseudo_id, NULL)) AS activeAppIds,
-        COUNT(DISTINCT IF(${meaningful}, accountId, NULL)) AS identifiedAccounts,
-        COUNT(DISTINCT IF(${meaningful} AND accountId IS NOT NULL, user_pseudo_id, NULL)) AS boundAppIds,
-        COUNTIF(event_name = 'first_open') AS firstOpens,
-        COUNTIF(event_name = 'page_view') AS routeVisits,
-        CAST(MIN(PARSE_DATE('%Y%m%d', event_date)) AS STRING) AS observedSince,
-        MAX(TIMESTAMP_MICROS(event_timestamp)) AS latestEventAt FROM scoped
-    ) SELECT *, ARRAY(SELECT AS STRUCT * FROM releases ORDER BY events DESC LIMIT 20) AS releases FROM totals
   `;
 
   const acquisitionQuery = `
@@ -3324,7 +3280,7 @@ ${capabilitySql.isDeliberate}
     surfaces,
     locationFeatures,
     locationBehavior,
-    platforms,
+    platformEnvelope,
     acquisition,
     daily,
     reliability,
@@ -3339,7 +3295,6 @@ ${capabilitySql.isDeliberate}
     activationStages,
     featureUsage,
     nativeEnvironments,
-    androidCapture,
     registeredAccounts,
   ] = await Promise.all([
     queryBigQuerySql(queryProject, funnelQuery),
@@ -3348,7 +3303,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, surfaceQuery),
     queryBigQuerySql(queryProject, locationFeatureQuery),
     queryBigQuerySql(queryProject, locationBehaviorQuery),
-    queryBigQuerySql(queryProject, platformQuery),
+    queryOnePlatformCapture(queryProject, platformQueries),
     queryBigQuerySql(queryProject, acquisitionQuery),
     queryBigQuerySql(queryProject, dailyQuery),
     queryBigQuerySql(queryProject, reliabilityQuery),
@@ -3363,9 +3318,10 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, activationQuery),
     queryBigQuerySql(queryProject, featureUsageQuery),
     queryBigQuerySql(queryProject, nativeEnvironmentQuery),
-    androidReadRange ? queryAndroidCapture(queryProject, androidQuery) : Promise.resolve({rows:[{events:0}],error:null}),
     fetchOneRegisteredAccounts(range, environment),
   ]);
+
+  const {platforms,androidCapture} = unpackPlatformCapture(platformEnvelope);
 
   const errors = [
     funnel.error,
@@ -3574,7 +3530,7 @@ ${capabilitySql.isDeliberate}
             ? 'App-install IDs and route-level page_view events from the One iOS bundle in this reporting property. Product screens use safe route IDs; automatic UIKit screen_view events remain a separate diagnostic.'
             : 'No One iOS app events are available in this reporting property and selected range.',
       },
-      androidCapture: androidCaptureResult(androidCapture, range, androidEnvironment),
+      androidCapture: androidCaptureResult(androidCapture, range, environment),
       registeredAccounts: registeredAccounts.data,
       // Missing environment provenance cannot establish a zero-install cohort.
       installFunnelAvailable: false,
