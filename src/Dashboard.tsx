@@ -1784,6 +1784,7 @@ export default function Dashboard() {
             loading={loading}
             one={data?.one ?? null}
             oneUat={data?.oneUat ?? null}
+            registrations={data?.oneRegistrations ?? null}
             healthMetrics={data?.oneHealthMetrics ?? []}
             rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
             locationRoute={locationRoute}

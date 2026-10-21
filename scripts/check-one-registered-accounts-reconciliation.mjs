@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { GoogleAuth } from 'google-auth-library';
 import { oneAccountSummaryIssues } from '../src/server/one-account-scope.mjs';
+import { registrationTotalsIssues } from '../src/server/one-registration-totals.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -91,6 +92,7 @@ async function dashboardCounts() {
   return {
     production: body?.data?.production?.registeredAccounts,
     uat: body?.data?.uat?.registeredAccounts,
+    registrations: body?.data?.registrations,
   };
 }
 
@@ -98,6 +100,19 @@ const dashboard = await dashboardCounts();
 const sources = {};
 const fields = ['totalAccounts', 'newAccounts', 'accountsCreatedByRangeEnd', 'disabledAccounts'];
 const failures = [];
+const shared = dashboard.registrations;
+let globalAuthoritative = null;
+if (shared || args.includes('--require-global')) {
+  failures.push(...registrationTotalsIssues(shared).map(issue => `all_one_accounts: ${issue}`));
+  if (shared?.available !== true) failures.push('All-One registration totals must be available');
+  else {
+    try {
+      globalAuthoritative = await authoritativeCounts(projectIds.production);
+      if (shared.identityAuthorityId !== `sha256:${createHash('sha256').update(projectIds.production).digest('hex')}`) failures.push('All-One registry authority mismatch');
+      for (const field of fields) if (shared[field] !== globalAuthoritative[field]) failures.push(`all_one_accounts.${field}: dashboard=${shared[field]}, source=${globalAuthoritative[field]}`);
+    } catch { failures.push('Independent All-One registry read failed'); }
+  }
+}
 for (const environment of ['production', 'uat']) {
   const reported = dashboard[environment];
   failures.push(...oneAccountSummaryIssues(reported, environment).map(issue => `${environment}: ${issue}`));
@@ -124,6 +139,8 @@ const report = {
   dashboardUrl,
   range: { startDate, endDate, days },
   authoritative: sources,
+  globalRegistrations: { available: shared?.available ?? false, authoritative: globalAuthoritative,
+    dashboard: shared ? Object.fromEntries(fields.map(field => [field, shared[field]])) : null },
   cutoverReady: Object.keys(sources).length === 2 && failures.length === 0,
   note: 'Withheld legacy/unconfigured registries can satisfy containment; --require-isolated is mandatory before declaring the identity cutover complete.',
   dashboard: {

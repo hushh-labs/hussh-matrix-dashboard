@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { oneAccountSummaryIssues } from "../src/server/one-account-scope.mjs";
+import { registrationTotalsIssues } from "../src/server/one-registration-totals.mjs";
 
 const args = process.argv.slice(2);
 const valueAfter = (flag, fallback) => {
@@ -259,6 +260,7 @@ for (const spec of [
     const one = spec.path === '/api/analytics/all' ? result.data?.one?.data : result.data?.data;
     assertOneSummary(one?.production, `${spec.path}.production`, 'one.hushh.ai', findings, 'production');
     assertOneSummary(one?.uat, `${spec.path}.uat`, 'uat.one.hushh.ai', findings, 'uat');
+    if (one?.registrations) findings.push(...registrationTotalsIssues(one.registrations).map(issue => `${spec.path}.registrations: ${issue}`));
     checks.push({
       endpoint: spec.path,
       bytes: result.bytes,

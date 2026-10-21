@@ -206,6 +206,7 @@ async function main() {
   assertPublicSafePayload(productionOnly.body, 'PLG production app analytics');
   assert(productionOnly.body?.environment === 'production', 'PLG app response lacks explicit production scope');
   assert(productionOnly.body?.data?.uat === null, 'PLG app response unexpectedly contains UAT');
+  assert(productionOnly.body?.data?.registrations === null, 'PLG app response unexpectedly contains the shared registration directory');
   assert(productionOnly.body?.data?.production?.reportingEnvironment === 'production', 'PLG app response is not production evidence');
   results.push({ check: 'plg-production-app-scope', status: 'ok', detail: 'production-only response; no UAT payload or fallback' });
 

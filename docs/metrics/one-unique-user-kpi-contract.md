@@ -11,8 +11,16 @@ databases and GA4 properties. Their documented Firebase Authentication realm
 is shared. A raw shared directory total therefore cannot prove environment
 membership, even when each immutable UID is deduplicated correctly.
 
-The environment-isolation reporting change withholds headline registration
-counts until its directory source is verified. Its current Firebase reader
+The two headline registration cards use a separate `data.registrations` aggregate
+from the existing shared One Firebase directory, labelled **All One accounts**.
+These global totals stay the same when switching Main/Test activity; only the
+selected dates change new registrations. They are not environment-specific
+cohorts. Directory failures return unavailable values, never activity-based
+substitutes or zeros. The independent registration probe requires and reconciles
+this source with `--require-global` during release verification.
+
+The environment-isolation reporting change still withholds environment registration
+counts until their membership is verified. Its current Firebase reader
 supports verified separate directories. Keeping shared Auth is also compatible
 with accurate reporting, but requires a separate, verified membership source
 from the existing environment backends; that reader is not implemented here.

@@ -805,6 +805,12 @@ export interface OneRegisteredAccounts {
   note: string;
 }
 
+/** Shared One directory totals. These are never an environment-specific cohort. */
+export interface OneRegistrationTotals extends Omit<OneRegisteredAccounts,
+  'environment' | 'registryScope' | 'sharedAcrossEnvironments' | 'identityRealm'> {
+  scope: 'all_one_accounts';
+}
+
 /**
  * Actives for one platform. Deliberately has no "total" sibling: web, iOS and
  * Android are separate device-id spaces and the account key that would join
@@ -1387,6 +1393,7 @@ export interface DashboardData {
   // one.hushh.ai — the One app (all agents + the One Location growth funnel)
   one: OneAppSummary | null;
   oneUat: OneAppSummary | null;
+  oneRegistrations?: OneRegistrationTotals | null;
   oneAgentMetrics: BreakdownMetric[];
   oneHealthMetrics: BreakdownMetric[];
   growth: GrowthSummary | null;

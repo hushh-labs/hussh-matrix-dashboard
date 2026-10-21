@@ -33,6 +33,7 @@ import type {
   ProductSourceCard,
   ProductSourceGroup,
   OneAppSummary,
+  OneRegistrationTotals,
   AppStoreConnectEnvironments,
 } from './types';
 
@@ -49,7 +50,7 @@ export interface AllAnalyticsResponse {
   hushhTech: { platform: string; data: HushhTechMetricsSummary | null; error?: string | null };
   one?: {
     platform: string;
-    data: { production: OneAppSummary | null; uat: OneAppSummary | null } | null;
+    data: { production: OneAppSummary | null; uat: OneAppSummary | null; registrations?: OneRegistrationTotals | null } | null;
     error?: string | null;
   };
   growth?: { platform: string; data: GrowthSummary | null; error?: string | null };
@@ -260,6 +261,7 @@ function emptyDashboard(error: string | null, lastUpdated: string | null): Dashb
     hushhAiDailySummaryMetrics: [],
     one: null,
     oneUat: null,
+    oneRegistrations: null,
     oneAgentMetrics: [],
     oneHealthMetrics: [],
     growth: null,
@@ -1694,6 +1696,7 @@ export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData 
       ? oneProductionCost / monthlyActive
       : null;
   const oneUat = result.one?.data?.uat ?? null;
+  const oneRegistrations = result.one?.data?.registrations ?? null;
   const feedWarnings = [
     result.kai.uat.error,
     result.kai.production.error,
@@ -1705,7 +1708,7 @@ export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData 
     result.appStoreConnect?.error,
   ].filter((value): value is string => Boolean(value));
 
-  if (activeRows.length === 0 && uatRows.length === 0 && !kaiGa4?.available && !kaiProduction && !hushhAi && !hushhTech && !one && !oneUat && !growth && !result.appStoreConnect?.data) {
+  if (activeRows.length === 0 && uatRows.length === 0 && !kaiGa4?.available && !kaiProduction && !hushhAi && !hushhTech && !one && !oneUat && !oneRegistrations?.available && !growth && !result.appStoreConnect?.data) {
     return {
       ...emptyDashboard('Analytics feeds are unavailable. Check BigQuery ADC/IAM, the hushhtech.com endpoint, and the Express server logs.', result.fetchedAt),
       feedWarnings,
@@ -1776,6 +1779,7 @@ export function normalizeAnalytics(result: AllAnalyticsResponse): DashboardData 
     hushhAiDailySummaryMetrics: buildHushhAiDailySummaryMetrics(hushhAi),
     one,
     oneUat,
+    oneRegistrations,
     oneAgentMetrics: buildOneAgentMetrics(one),
     oneHealthMetrics: buildOneHealthMetrics(kaiProduction),
     growth,
