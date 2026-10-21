@@ -1,6 +1,7 @@
 /** Scheduler entrypoint. Sync and delivery each require an explicit flag. */
 import { config } from 'dotenv';
 import { createHmac } from 'node:crypto';
+import { PLG_SYNC_REQUEST_TIMEOUT_MS } from '../src/lib/plg-budgets.mjs';
 config({ path: '.env.local', quiet: true });
 const origin = process.env.PLG_PUBLIC_ORIGIN;
 const secret = process.env.PLG_SIGNING_SECRET;
@@ -33,7 +34,7 @@ if (
     const response = await fetch(new URL(`/integrations/plg/${purpose}`, url), {
       method: 'POST',
       redirect: 'error',
-      signal: AbortSignal.timeout(purpose === 'sync' ? 180_000 : 240_000),
+      signal: AbortSignal.timeout(purpose === 'sync' ? PLG_SYNC_REQUEST_TIMEOUT_MS : 240_000),
       headers: {
         'Content-Type': 'application/json',
         'X-PLG-Timestamp': timestamp,

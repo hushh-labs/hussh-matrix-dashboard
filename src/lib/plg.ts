@@ -148,6 +148,14 @@ export interface PlgContact {
   valueDays: string[];
   pauseUntil: string | null;
   timeline: PlgTimeline[];
+  /** Canonical One permission; account identity alone never enables delivery. */
+  permission?: {
+    revision: number;
+    generation: string;
+    enabled: boolean;
+    eligible: boolean;
+    checkedAt: string;
+  };
 }
 export interface PlgTemplate {
   id: string;
@@ -175,6 +183,8 @@ export interface PlgDelivery {
   ctaUrl: string;
   resourceUrl?: string;
   providerId: string | null;
+  /** Immutable address proof for callbacks after an identity change. */
+  recipientHash?: string;
 }
 export interface PlgState {
   version: 1;
@@ -188,6 +198,10 @@ export interface PlgState {
   /** Erased accounts cannot be re-enrolled by a delayed integration event. */
   erasedAccountHashes?: string[];
   audit: PlgTimeline[];
+  /** Hash-only, generation-bound opt-outs survive a backend outage. */
+  pendingRevocations?: { accountHash: string; generation: string }[];
+  subscriptionSyncAt?: string;
+  subscriptionVersions?: Record<string, { revision: number; checkedAt: string }>;
   automation?: {
     enabled: boolean;
     lease?: { id: string; until: string };

@@ -5,9 +5,11 @@ import { Webhook } from 'svix';
 import { registerPlgRoutes } from '../src/server/plg/routes';
 import { MemoryPlgStore } from '../src/server/plg/store';
 import { PlgService, preferenceToken, signValue, type PlgRuntime } from '../src/server/plg/service';
-import { enroll } from '../src/server/plg/engine';
+import { accountHash, enroll, registerPlgCatalog } from '../src/server/plg/engine';
 import { applyDeliveryEvent } from '../src/server/plg/delivery-events';
 import * as audienceSource from '../src/server/plg/one-audience';
+import * as evidenceSource from '../src/server/plg/one-source';
+import { PLG_SYNC_REQUEST_TIMEOUT_MS } from '../src/lib/plg-budgets.mjs';
 
 const secret = 'test-plg-signing-secret-more-than-32-characters';
 const config: PlgRuntime = {
@@ -56,6 +58,47 @@ function app(runtime = config) {
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('finishes the signed sync path before its legacy worker timeout with response margin', async () => {
+    const started = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(started);
+    await store.transaction((s) => { enroll(s, input, 'admin', started); });
+    const source = vi.spyOn(evidenceSource, 'syncOneEvidence').mockImplementation(async (_store, _options, _fetcher, _clock, _inspection, deadline) => {
+      expect(deadline).toBeGreaterThan(started);
+      expect(deadline! - started).toBeLessThanOrEqual(PLG_SYNC_REQUEST_TIMEOUT_MS - 20_000);
+      return { accounts: 1, imported: 0, erased: 0, retainedOnly: true };
+    });
+    const timestamp = String(started), body = '{}';
+    const response = await request(app()).post('/integrations/plg/sync')
+      .set('Content-Type', 'application/json').set('X-PLG-Timestamp', timestamp)
+      .set('X-PLG-Signature', signValue(`sync\n${timestamp}\n${body}`, config.syncSecret!)).send(body);
+    expect(response.status).toBe(200);
+    expect(source).toHaveBeenCalledOnce();
+  });
+  it('refreshes a stale catalog lacking One before automatically enrolling a verified subscriber', async () => {
+    const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', at = new Date().toISOString();
+    const catalog = { revision: 'b'.repeat(64), agents: [{ id: 'agent_one' as const, label: 'One', public: true, available: true }], actions: [] };
+    await store.transaction((s) => { registerPlgCatalog(s, { revision: 'a'.repeat(64),
+      agents: [{ id: 'agent_calendar', label: 'Calendar', public: true, available: true }], actions: [] }); });
+    const reader = vi.spyOn(audienceSource, 'readOneAudience').mockResolvedValue({ catalog } as any);
+    vi.spyOn(evidenceSource, 'syncOneEvidence').mockImplementation(async (store) => {
+      expect((await store.read()).contacts[0]).toMatchObject({ accountId: input.accountId, journey: 'agent_one' });
+      return { accounts: 1, imported: 0, erased: 0, retainedOnly: true };
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url) => String(url).endsWith('/pull') ? Response.json({ version: 1, environment: 'production', changes: [{
+      accountHash: `sha256:${accountHash(input.accountId)}`, revision: 1, erased: false, enabled: true, eligible: true,
+      checkedAt: at, generation, frequency: 'weekly', chosenAt: at, consentAt: at, disclosureVersion: 'one-email-updates-v1',
+      accountId: input.accountId, email: input.email, name: input.name, cohort: 'existing',
+    }] }) : Response.json({ received: true })));
+    try {
+      const response = await request(app({ ...config, subscriptions: { enabled: true,
+        url: 'https://api.hushh.ai/api/one/plg/subscriptions', secret: 'test-only-subscription-key-over-32-characters' } }))
+        .post('/api/plg/sync').set('Test-User', 'operator@example.invalid').set('Origin', config.origin).send({});
+      expect(response.status).toBe(200);
+      expect(reader).toHaveBeenCalledOnce();
+      expect((await store.read()).contacts).toHaveLength(1);
+      expect((await store.read()).deliveries).toHaveLength(0);
+    } finally { vi.unstubAllGlobals(); }
+  });
   it('bootstraps the validated agent catalog without enrolling directory people or inventing coverage', async () => {
     const catalog = { revision: 'a'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }], actions: [] };
     const source = vi.spyOn(audienceSource, 'readOneAudience').mockResolvedValue({ catalog, rows: [{ accountId: 'PRIVATE', identity: { email: 'private@example.invalid' } }] } as any);
@@ -244,6 +287,29 @@ describe('Private PLG API boundaries', () => {
     ).toBe(200);
     expect((await store.read()).contacts[0].suppressed).toBe('unsubscribed');
     expect((await request(server).get(url + 'tampered')).status).toBe(400);
+  });
+  it('binds canonical unsubscribe to the email generation and durably preserves its retry intent', async () => {
+    const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const renewed = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const c = await store.transaction((s) => {
+      const c = enroll(s, input, 'admin', Date.now());
+      c.permission = { revision: 2, generation: renewed, enabled: true, eligible: true, checkedAt: new Date().toISOString() };
+      return c;
+    });
+    const server = app();
+    const oldLink = `/integrations/plg/unsubscribe/${preferenceToken(c.id, secret, generation)}`;
+    expect((await request(server).post(oldLink).type('form').send({})).status).toBe(200);
+    let state = await store.read();
+    expect(state.contacts[0].suppressed).toBeNull();
+    expect(state.pendingRevocations).toEqual([{ accountHash: `sha256:${accountHash(input.accountId)}`, generation }]);
+    const currentLink = `/integrations/plg/unsubscribe/${preferenceToken(c.id, secret, renewed)}`;
+    expect((await request(server).get(currentLink)).status).toBe(200);
+    expect((await store.read()).contacts[0].suppressed).toBeNull();
+    expect((await request(server).post(currentLink).type('form').send({})).status).toBe(200);
+    state = await store.read();
+    expect(state.contacts[0].suppressed).toBe('unsubscribed');
+    expect(state.pendingRevocations).toHaveLength(2);
+    expect((await request(server).post(`/integrations/plg/unsubscribe/${preferenceToken(c.id, secret)}`).type('form').send({})).status).toBe(409);
   });
   it('validates delivery signatures and immediately suppresses signed complaints', async () => {
     await store.transaction((s) => enroll(s, input, 'admin', Date.now()));

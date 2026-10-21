@@ -42,6 +42,13 @@ export function eraseAccount(state: PlgState, accountId: string, now: number) {
   ];
   audit(state, 'One product', 'Erased a deleted account and blocked delayed re-enrollment.', now);
 }
+export function eraseAccountHash(state: PlgState, hash: string, now: number) {
+  for (const contact of [...state.contacts]) {
+    if (accountHash(contact.accountId) === hash) eraseAccount(state, contact.accountId, now);
+  }
+  state.erasedAccountHashes = [...new Set([...(state.erasedAccountHashes ?? []), hash])];
+  state.pendingRevocations = state.pendingRevocations?.filter((item) => item.accountHash !== `sha256:${hash}`);
+}
 export function text(value: unknown, max: number, required = false): string {
   if (
     typeof value !== 'string' ||
@@ -242,13 +249,15 @@ export function updateContact(
   if (!c) throw new PlgError(404, 'Account not found.');
   for (const key of ['owner', 'blocker', 'notes'] as const)
     if (input[key] !== undefined) c[key] = text(input[key], key === 'notes' ? 400 : 120);
+  if (c.permission && input.frequency !== undefined && input.frequency !== c.frequency)
+    throw new PlgError(409, 'Manage the email frequency in the One account preference.');
   if (input.frequency !== undefined)
     c.frequency = choose(input.frequency, ['daily', 'weekly', 'updates']);
   if (input.supportOpen !== undefined) {
     if (typeof input.supportOpen !== 'boolean') throw new PlgError(400, 'Invalid support status.');
     c.supportOpen = input.supportOpen;
   }
-  if (input.unsubscribe === true) c.suppressed = 'unsubscribed';
+  if (input.unsubscribe === true && (!c.suppressed || c.suppressed === 'unsubscribed')) c.suppressed = 'unsubscribed';
   if (input.outreach && typeof input.outreach === 'object') {
     const outreach = input.outreach as Record<string, unknown>;
     const channel = choose(outreach.channel, ['email', 'whatsapp']);
@@ -383,6 +392,8 @@ export function candidate(
   };
   const stop = (reason: string) => ({ ...out, reason });
   if (c.suppressed) return stop(`Suppressed: ${c.suppressed}`);
+  if (c.permission && (!c.permission.enabled || !c.permission.eligible))
+    return stop('Current One email permission is unavailable or turned off');
   if (!c.consentAt) return stop('Messaging permission not recorded');
   if (c.group === 'control') return stop('Comparison group; requested support remains available');
   if (state.paused && !ignorePause) return stop('Campaigns paused');

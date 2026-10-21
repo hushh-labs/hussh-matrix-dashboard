@@ -23,12 +23,13 @@ it('emits explicit disabled PLG runtime flags and binds sender independently fro
     .split('\n').map((line) => line.replace(/^          /, '')).join('\n');
   const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
   const script = `set -e\nfunction gcloud() { if [[ "$1" == "firestore" ]]; then echo FIRESTORE_NATIVE; else echo ENABLED; fi; }\n${block}\nprintf '%s\\n' "$PLG_ENV_SUFFIX" "$PLG_SECRET_SUFFIX"`;
-  const invoke = (workspace: boolean, sender: boolean, delivery: boolean) => execFileSync(bash, ['-c', script], {
+  const invoke = (workspace: boolean, sender: boolean, delivery: boolean, subscriptions = false) => execFileSync(bash, ['-c', script], {
     encoding: 'utf8', env: { ...process.env, PROJECT_ID: 'example-project', PRODUCTION_URL: 'https://metrics.example.invalid',
-      ONE_PLG_CONFIGURED: String(workspace), ONE_PLG_SENDER_CONFIGURED: String(sender), ONE_PLG_DELIVERY_CONFIGURED: String(delivery), ONE_PLG_AUDIENCE_CONFIGURED: 'false' },
+      ONE_PLG_CONFIGURED: String(workspace), ONE_PLG_SENDER_CONFIGURED: String(sender), ONE_PLG_DELIVERY_CONFIGURED: String(delivery), ONE_PLG_AUDIENCE_CONFIGURED: 'false', ONE_PLG_SUBSCRIPTIONS_CONFIGURED: String(subscriptions) },
   });
   const disabled = invoke(false, false, false);
   expect(disabled).toContain('|PLG_ENABLED=false|PLG_DELIVERY_ENABLED=false|');
+  expect(disabled).toContain('PLG_ONE_SUBSCRIPTION_ENABLED=false|PLG_ONE_SUBSCRIPTION_URL=');
   const identity = invoke(true, true, false);
   expect(identity).toContain('PLG_DELIVERY_ENABLED=false');
   expect(identity).toContain('PLG_EMAIL_FROM=metrics-one-plg-email-from:latest');
@@ -36,4 +37,8 @@ it('emits explicit disabled PLG runtime flags and binds sender independently fro
   const live = invoke(true, true, true);
   expect(live).toContain('PLG_DELIVERY_ENABLED=true');
   expect(live).toContain('PLG_RESEND_API_KEY=metrics-one-plg-resend-api-key:latest');
+  const subscribed = invoke(true, true, false, true);
+  expect(subscribed).toContain('PLG_ONE_SUBSCRIPTION_ENABLED=true');
+  expect(subscribed).toContain('PLG_ONE_SUBSCRIPTION_SECRET=metrics-one-plg-subscription-secret:latest');
+  expect(subscribed).toContain('PLG_DELIVERY_ENABLED=false');
 });

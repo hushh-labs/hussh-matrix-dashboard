@@ -1,9 +1,10 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { PlgDelivery, PlgWorkspace } from '../../lib/plg';
-import { audit, candidate, iso, metrics, PlgError, timeline } from './engine';
+import { accountHash, audit, candidate, eraseAccountHash, iso, metrics, PlgError, timeline } from './engine';
 import type { PlgStore } from './store';
 import { automationStatus, deliveryBlockers } from './automation';
 import { applyAcceptedDelivery } from './delivery-events';
+import { OneSubscriptions } from './one-subscriptions';
 
 export interface PlgRuntime {
   enabled: boolean;
@@ -18,6 +19,7 @@ export interface PlgRuntime {
   apiKey: string;
   from: string;
   replyTo: string;
+  subscriptions?: { enabled: boolean; url: string; secret: string };
 }
 const emails = (value: string | undefined) =>
   new Set(
@@ -54,6 +56,11 @@ export function plgRuntime(): PlgRuntime {
     apiKey: process.env.PLG_RESEND_API_KEY || '',
     from: process.env.PLG_EMAIL_FROM || '',
     replyTo: process.env.PLG_REPLY_TO || '',
+    subscriptions: {
+      enabled: process.env.PLG_ONE_SUBSCRIPTION_ENABLED === 'true',
+      url: process.env.PLG_ONE_SUBSCRIPTION_URL || '',
+      secret: process.env.PLG_ONE_SUBSCRIPTION_SECRET || '',
+    },
   };
 }
 export function signValue(value: string, secret: string) {
@@ -66,29 +73,33 @@ export function equalSignature(a: string, b: string) {
     timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'))
   );
 }
-export function preferenceToken(contactId: string, secret: string) {
-  return `${contactId}.${signValue(`preferences:${contactId}`, secret)}`;
+export function preferenceToken(contactId: string, secret: string, generation?: string) {
+  const subject = generation ? `${contactId}:${generation}` : contactId;
+  return `${contactId}.${generation ? `${generation}.` : ''}${signValue(`preferences:${subject}`, secret)}`;
 }
-export function tokenContact(token: string, secret: string) {
-  const [id, signature, extra] = token.split('.');
+export function tokenPreference(token: string, secret: string) {
+  const parts = token.split('.');
+  const [id, generation, signature] = parts.length === 2 ? [parts[0], undefined, parts[1]] : parts;
   if (
     secret.length < 32 ||
-    extra ||
+    ![2, 3].includes(parts.length) ||
     !/^[a-f0-9-]{36}$/.test(id ?? '') ||
-    !equalSignature(signature ?? '', signValue(`preferences:${id}`, secret))
+    (generation !== undefined && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(generation)) ||
+    !equalSignature(signature ?? '', signValue(`preferences:${id}${generation ? `:${generation}` : ''}`, secret))
   )
     throw new PlgError(400, 'This preference link is invalid.');
-  return id;
+  return { id, generation };
 }
+export function tokenContact(token: string, secret: string) { return tokenPreference(token, secret).id; }
 export function escapeHtml(value: string) {
   return value.replace(
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
 }
-export function deliveryMessage(d: PlgDelivery, contactId: string, config: PlgRuntime) {
-  const preferences = `${config.origin}/integrations/plg/preferences/${preferenceToken(contactId, config.signingSecret)}`;
-  const unsubscribe = `${config.origin}/integrations/plg/unsubscribe/${preferenceToken(contactId, config.signingSecret)}`;
+export function deliveryMessage(d: PlgDelivery, contactId: string, config: PlgRuntime, generation?: string) {
+  const preferences = `${config.origin}/integrations/plg/preferences/${preferenceToken(contactId, config.signingSecret, generation)}`;
+  const unsubscribe = `${config.origin}/integrations/plg/unsubscribe/${preferenceToken(contactId, config.signingSecret, generation)}`;
   const plain = `${d.body}${d.resourceUrl ? `\n\nDemo or guide: ${d.resourceUrl}` : ''}\n\n${d.ctaLabel}: ${d.ctaUrl}\n\nPreferences: ${preferences}\nUnsubscribe: ${unsubscribe}`;
   return {
     text: plain,
@@ -135,6 +146,7 @@ export class PlgService {
     public runtime: PlgRuntime,
     private now = Date.now,
     private transport: PlgTransport = resendTransport(runtime),
+    private permissionSource = runtime.subscriptions ? new OneSubscriptions(runtime.subscriptions, fetch, now) : undefined,
   ) {}
   async workspace(role: 'admin' | 'operator'): Promise<PlgWorkspace> {
     const state = await this.store.read();
@@ -186,7 +198,7 @@ export class PlgService {
       .slice(0, 10);
     for (const item of due) {
       // Leave enough time for the bounded provider request and receipt commit.
-      if (options && this.now() + 20_000 >= options.deadline) break;
+      if (options && this.now() + (this.runtime.subscriptions?.enabled ? 55_000 : 20_000) >= options.deadline) break;
       const now = this.now();
       const reserved = await this.store.transaction((state) => {
         if (options && (!state.automation?.enabled || state.automation.lease?.id !== options.leaseId || Date.parse(state.automation.lease.until) <= now)) return null;
@@ -209,6 +221,7 @@ export class PlgService {
           ctaUrl: t.ctaUrl,
           resourceUrl: t.resourceUrl || '',
           providerId: null,
+          recipientHash: createHash('sha256').update(c.email).digest('hex'),
         };
         state.deliveries.push(d);
         timeline(c, actor, `Reserved ${d.step} email.`, now);
@@ -220,29 +233,51 @@ export class PlgService {
       // never retry blindly after the provider's 24-hour idempotency window.
       let attempted = false;
       try {
-        const current = await this.store.read();
-        const c = current.contacts.find((c) => c.id === item.id);
-        if (!c || (options && (!current.automation?.enabled || current.automation.lease?.id !== options.leaseId || this.now() + 15_000 >= options.deadline)))
-          throw new Error('Cycle paused or eligibility changed before send.');
-        const check = candidate(
-          {
-            ...current,
-            deliveries: current.deliveries.filter((d) => d.id !== reserved.delivery.id),
-          },
-          c,
-          this.now(),
-        );
-        if (
-          !check.eligible ||
-          check.key !== reserved.delivery.key ||
-          check.templateId !== reserved.delivery.templateId
-        )
-          throw new Error('Eligibility changed before send.');
+        const currentContact = async () => {
+          const current = await this.store.read();
+          const c = current.contacts.find((c) => c.id === item.id);
+          if (!c || (options && (!current.automation?.enabled || current.automation.lease?.id !== options.leaseId || this.now() + 15_000 >= options.deadline)))
+            throw new Error('Cycle paused or eligibility changed before send.');
+          if (c.email !== reserved.contact.email ||
+            c.permission?.revision !== reserved.contact.permission?.revision ||
+            c.permission?.generation !== reserved.contact.permission?.generation)
+            throw new Error('Reserved recipient or permission changed before send.');
+          const check = candidate(
+            { ...current, deliveries: current.deliveries.filter((d) => d.id !== reserved.delivery.id) },
+            c, this.now(),
+          );
+          if (!check.eligible || check.key !== reserved.delivery.key || check.templateId !== reserved.delivery.templateId)
+            throw new Error('Eligibility changed before send.');
+          return c;
+        };
+        let c = await currentContact();
+        if (c.permission || this.runtime.subscriptions?.enabled) {
+          if (!this.permissionSource || !c.permission)
+            throw new PlgError(503, 'Canonical One email permission is not available.');
+          const beforeCheck = { email: c.email, revision: c.permission.revision, generation: c.permission.generation };
+          const permission = await this.permissionSource.check(c);
+          if (!permission.allowed) {
+            await this.store.transaction((state) => {
+              if (permission.erased) eraseAccountHash(state, accountHash(c.accountId), this.now());
+              else {
+                const contact = state.contacts.find((row) => row.id === c.id);
+                if (contact?.permission && contact.permission.revision === beforeCheck.revision && contact.permission.generation === beforeCheck.generation)
+                  contact.permission.eligible = false;
+              }
+            });
+            throw new Error('Canonical permission unavailable or revoked.');
+          }
+          // Local unsubscribe, campaign pause or address changes may arrive
+          // while One performs its fresh recipient lookup. Fence them again.
+          c = await currentContact();
+          if (c.email !== beforeCheck.email || c.permission?.revision !== beforeCheck.revision || c.permission.generation !== beforeCheck.generation)
+            throw new Error('Permission changed before send.');
+        }
         attempted = true;
         const providerId = await this.transport({
           to: c.email,
           delivery: reserved.delivery,
-          message: deliveryMessage(reserved.delivery, c.id, this.runtime),
+          message: deliveryMessage(reserved.delivery, c.id, this.runtime, c.permission?.generation),
         });
         await this.store.transaction((state) => {
           const d = state.deliveries.find((d) => d.id === reserved.delivery.id);
@@ -256,7 +291,7 @@ export class PlgService {
           timeline(contact, actor, `Sent ${d.step} email.`, this.now());
         });
         sent++;
-      } catch {
+      } catch (error) {
         if (!attempted) {
           // No provider request was attempted. Releasing this reservation lets
           // an unpause or restored eligibility be evaluated on the next cycle.
@@ -264,6 +299,7 @@ export class PlgService {
             state.deliveries = state.deliveries.filter((d) => d.id !== reserved.delivery.id);
             audit(state, actor, 'Released an unsent reservation after eligibility changed.', this.now());
           });
+          if (error instanceof PlgError && error.status >= 500) throw error;
           continue;
         }
         await this.store.transaction((state) => {

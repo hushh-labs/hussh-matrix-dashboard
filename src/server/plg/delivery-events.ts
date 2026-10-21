@@ -1,4 +1,5 @@
 import type { PlgDelivery, PlgState } from '../../lib/plg';
+import { createHash } from 'node:crypto';
 import { DAY, iso, timeline } from './engine';
 
 export function applyAcceptedDelivery(state: PlgState, delivery: PlgDelivery) {
@@ -21,7 +22,7 @@ export function applyDeliveryEvent(state: PlgState, event: unknown, now: number)
   // Suppression is address-wide and permanent, including when a recipient has
   // messages from another campaign in the same authorized sending account.
   if (suppression) for (const c of state.contacts) {
-    if (recipients.includes(c.email) && c.suppressed !== 'unsubscribed' && c.suppressed !== 'complained' && c.suppressed !== suppression) {
+    if (recipients.includes(c.email) && c.suppressed !== 'complained' && c.suppressed !== suppression) {
       c.suppressed = suppression;
       timeline(c, 'Delivery provider', `Promotional email suppressed: ${suppression}.`, now);
     }
@@ -32,7 +33,12 @@ export function applyDeliveryEvent(state: PlgState, event: unknown, now: number)
     (typeof tag === 'string' ? state.deliveries.find((d) => d.id === tag && !d.providerId) : undefined);
   if (!d || d.status === 'manual') return;
   const contact = state.contacts.find((c) => c.id === d.contactId);
-  if (!contact || recipients.length !== 1 || recipients[0] !== contact.email) return;
+  if (!contact || recipients.length !== 1 || (d.recipientHash
+    ? createHash('sha256').update(recipients[0]).digest('hex') !== d.recipientHash
+    : recipients[0] !== contact.email)) return;
+  // A confirmed receipt can refer to the previous address after an identity
+  // update. Keep that provider fence on the same account rather than lose it.
+  if (suppression && contact.suppressed !== 'complained') contact.suppressed = suppression;
   const status: PlgDelivery['status'] | undefined = {
     'email.sent': 'sent', 'email.delivered': 'delivered', 'email.bounced': 'bounced',
     'email.complained': 'complained', 'email.failed': 'failed', 'email.suppressed': 'failed',

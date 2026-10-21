@@ -54,7 +54,7 @@ export function automationStatus(state: PlgState, config: PlgRuntime, now: numbe
   };
 }
 
-export type PlgSync = () => Promise<{ accounts: number; imported: number; erased: number }>;
+export type PlgSync = (deadline?: number) => Promise<{ accounts: number; imported: number; erased: number }>;
 export async function runAutomationCycle(service: PlgService, sync: PlgSync, now = Date.now) {
   const id = randomUUID();
   const started = now();
@@ -79,7 +79,7 @@ export async function runAutomationCycle(service: PlgService, sync: PlgSync, now
   try {
     // Sync is deliberately independent of the campaign pause. Failed or partial
     // source reads never reach sending and never become proof of inactivity.
-    const result = await sync();
+    const result = await sync(started + CYCLE_BUDGET_MS - 20_000);
     accounts = result.accounts;
     await service.store.transaction((state) => {
       if (state.automation?.lease?.id !== id || now() >= started + CYCLE_BUDGET_MS)

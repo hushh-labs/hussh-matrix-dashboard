@@ -27,8 +27,188 @@ import { syncOneEvidence } from '../src/server/plg/one-source';
 import { signValue } from '../src/server/plg/service';
 import { readOneAudience } from '../src/server/plg/one-audience';
 import { automationStatus, runAutomationCycle, setAutomationEnabled } from '../src/server/plg/automation';
+import { accountHash } from '../src/server/plg/engine';
+import { OneSubscriptions, applySubscription, queueSubscriptionRevocation, syncSubscriptions } from '../src/server/plg/one-subscriptions';
+import type { SubscriptionChange } from '../src/server/plg/one-subscriptions';
+import { applyDeliveryEvent } from '../src/server/plg/delivery-events';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
+
+describe('canonical One subscription projection and send fence', () => {
+  const options = { enabled: true, url: 'https://api.hushh.ai/api/one/plg/subscriptions', secret: 'test-only-subscription-key-over-32-characters' };
+  const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+  const renewed = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+  const change = (): SubscriptionChange => ({ accountHash: `sha256:${accountHash('customer-1')}`, revision: 1,
+    checkedAt: new Date(NOW).toISOString(), erased: false, enabled: true, eligible: true, generation,
+    frequency: 'weekly', chosenAt: new Date(NOW).toISOString(), consentAt: new Date(NOW).toISOString(),
+    accountId: 'customer-1', name: 'Customer', email: 'customer@example.invalid', cohort: 'existing' });
+  const wire = () => ({ version: 1, environment: 'production', changes: [{ ...change(), disclosureVersion: 'one-email-updates-v1', privateValue: 'PRIVATE' }] });
+  const catalog: PlgCatalog = { revision: 'a'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }], actions: [] };
+  const canonicalState = () => { const state = initialPlgState(); registerPlgCatalog(state, catalog); return state; };
+  const activeStore = async () => {
+    const store = new MemoryPlgStore();
+    await store.transaction((s) => {
+      registerPlgCatalog(s, catalog);
+      applySubscription(s, change(), NOW);
+      s.paused = false; s.ready.agent_one = true; s.contacts[0].group = 'treatment';
+      s.templates.find((t) => t.journey === 'agent_one' && t.step === 'welcome')!.published = true;
+    });
+    return store;
+  };
+  const runtime: PlgRuntime = { enabled: true, deliveryEnabled: true, origin: 'https://metrics.example.invalid',
+    admins: new Set(), operators: new Set(), signingSecret: 'test-only-preference-signing-key-over-32-characters',
+    webhookSecret: 'configured-for-test', apiKey: 'test-only', from: 'Test <sender@example.invalid>', replyTo: 'reply@example.invalid',
+    subscriptions: options };
+
+  it('signs dedicated purposes, bounds the response and imports only validated current identities', async () => {
+    const store = new MemoryPlgStore(), purposes: string[] = [];
+    await store.transaction((s) => { registerPlgCatalog(s, catalog); });
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      const purpose = String(url).split('/').at(-1)!; purposes.push(purpose);
+      expect(init.redirect).toBe('error');
+      expect(init.headers['X-PLG-Signature']).toBe(signValue(`subscriptions.${purpose}\n${NOW}\n${init.body}`, options.secret));
+      if (purpose === 'pull') { expect(init.body).toBe('{}'); return Response.json(wire()); }
+      expect(JSON.parse(init.body)).toEqual({ changes: [{ accountHash: change().accountHash, revision: 1 }] });
+      return Response.json({ received: true });
+    });
+    const source = new OneSubscriptions(options, fetcher as typeof fetch, () => NOW);
+    await syncSubscriptions(store, source, () => NOW);
+    expect(purposes).toEqual(['pull', 'ack']);
+    const state = await store.read();
+    expect(state.contacts[0]).toMatchObject({ accountId: 'customer-1', email: 'customer@example.invalid', permission: { revision: 1, eligible: true } });
+    expect(state.contacts[0].firstValueAt).toBeNull();
+    expect(state.subscriptionSyncAt).toBe(new Date(NOW).toISOString());
+    expect(JSON.stringify(state)).not.toContain('PRIVATE');
+    const supplementaryName = wire(); supplementaryName.changes[0].name = '😀'.repeat(60) + '\n';
+    const normalized = await new OneSubscriptions(options, (async () => Response.json(supplementaryName)) as typeof fetch, () => NOW).pull();
+    expect(normalized[0].name).toBe('😀'.repeat(50));
+    for (const origin of ['https://uat.api.hushh.ai', 'https://other.example.invalid', 'http://api.hushh.ai']) {
+      const denied = vi.fn();
+      await expect(new OneSubscriptions({ ...options, url: `${origin}/api/one/plg/subscriptions` }, denied).pull()).rejects.toThrow('permission');
+      expect(denied).not.toHaveBeenCalled();
+    }
+    for (const mutate of [
+      (s: any) => { s.environment = 'uat'; },
+      (s: any) => { s.changes[0].accountId = 'different-owner'; },
+      (s: any) => { s.changes[0].checkedAt = new Date(NOW - 121_000).toISOString(); },
+      (s: any) => { s.changes[0].enabled = false; },
+      (s: any) => { s.changes.push(s.changes[0]); },
+    ]) {
+      const body = wire(); mutate(body);
+      await expect(new OneSubscriptions(options, (async () => Response.json(body)) as typeof fetch, () => NOW).pull()).rejects.toThrow('permission');
+    }
+    await expect(new OneSubscriptions(options, (async () => new Response('x'.repeat(64_001))) as typeof fetch, () => NOW).pull()).rejects.toThrow('permission');
+  });
+  it('preserves new generations, provider suppression and opt-outs against stale projections', async () => {
+    const state = canonicalState(); applySubscription(state, { ...change(), cohort: 'new' }, NOW);
+    const c = state.contacts[0];
+    c.suppressed = 'unsubscribed'; queueSubscriptionRevocation(state, c);
+    applySubscription(state, { ...change(), revision: 2, generation: renewed, checkedAt: new Date(NOW + 1).toISOString() }, NOW);
+    expect(c.suppressed).toBeNull();
+    expect(c.cohort).toBe('new');
+    applySubscription(state, change(), NOW);
+    expect(c.permission?.generation).toBe(renewed);
+    c.suppressed = 'bounced';
+    applySubscription(state, { ...change(), revision: 3, generation, checkedAt: new Date(NOW + 2).toISOString() }, NOW);
+    expect(c.suppressed).toBe('bounced');
+    updateContact(state, c.id, { unsubscribe: true }, 'operator', NOW);
+    expect(c.suppressed).toBe('bounced');
+    expect(() => updateContact(state, c.id, { frequency: 'daily' }, 'operator', NOW)).toThrow('One account');
+    applySubscription(state, { ...change(), revision: 4, eligible: false }, NOW);
+    expect(c.permission?.enabled).toBe(true);
+    expect(candidate(state, c, NOW).eligible).toBe(false);
+    applySubscription(state, { ...change(), revision: 5, erased: true, enabled: false, eligible: false }, NOW);
+    expect(state.contacts).toHaveLength(0);
+    expect(state.pendingRevocations).toEqual([]);
+    applySubscription(state, { ...change(), revision: 6 }, NOW);
+    expect(state.contacts).toHaveLength(0);
+  });
+  it('replays committed projections after acknowledgement failure and retries durable opt-outs first', async () => {
+    const store = await activeStore();
+    await store.transaction((s) => { s.contacts[0].suppressed = 'unsubscribed'; queueSubscriptionRevocation(s, s.contacts[0]); });
+    const paths: string[] = []; let unavailableAck = true;
+    const source = new OneSubscriptions(options, (async (url, init) => {
+      const purpose = String(url).split('/').at(-1)!; paths.push(purpose);
+      if (purpose === 'revoke') { expect(JSON.parse(init!.body as string)).toEqual({ accountHash: change().accountHash, generation }); return Response.json({ revoked: true }); }
+      if (purpose === 'pull') return Response.json(wire());
+      if (unavailableAck) throw new Error('PRIVATE');
+      return Response.json({ received: true });
+    }) as typeof fetch, () => NOW);
+    await expect(syncSubscriptions(store, source, () => NOW)).rejects.toThrow('permission');
+    expect((await store.read()).pendingRevocations).toEqual([]);
+    expect((await store.read()).subscriptionSyncAt).toBeUndefined();
+    unavailableAck = false;
+    await syncSubscriptions(store, source, () => NOW);
+    expect(paths).toEqual(['revoke', 'pull', 'ack', 'pull', 'ack']);
+    expect((await store.read()).contacts).toHaveLength(1);
+    expect((await store.read()).contacts[0].suppressed).toBe('unsubscribed');
+    expect((await store.read()).deliveries).toHaveLength(0);
+  });
+  it('retains a hash-only fence for a disabled absent account and orders same-revision reconciliation', () => {
+    const state = canonicalState();
+    applySubscription(state, { ...change(), revision: 2, enabled: false, eligible: false }, NOW);
+    applySubscription(state, change(), NOW);
+    expect(state.contacts).toHaveLength(0);
+    expect(JSON.stringify(state)).not.toContain('customer@example.invalid');
+    applySubscription(state, { ...change(), revision: 3, eligible: false }, NOW);
+    applySubscription(state, { ...change(), revision: 3, checkedAt: new Date(NOW - 1).toISOString() }, NOW);
+    expect(state.contacts).toHaveLength(0);
+    applySubscription(state, { ...change(), revision: 3, checkedAt: new Date(NOW + 1).toISOString() }, NOW);
+    expect(state.contacts).toHaveLength(1);
+  });
+  it('preserves a signed provider complaint arriving between unsubscribe and explicit re-opt-in', () => {
+    const state = canonicalState(); applySubscription(state, change(), NOW);
+    const c = state.contacts[0]; c.suppressed = 'unsubscribed'; queueSubscriptionRevocation(state, c);
+    applyDeliveryEvent(state, { type: 'email.complained', data: { to: [c.email] } }, NOW);
+    expect(c.suppressed).toBe('complained');
+    applySubscription(state, { ...change(), revision: 2, generation: renewed }, NOW);
+    expect(c.suppressed).toBe('complained');
+    expect(state.pendingRevocations).toEqual([{ accountHash: change().accountHash, generation }]);
+  });
+  it('reports a fresh-permission outage as a failed cycle without an accepted message or success heartbeat', async () => {
+    const store = await activeStore(), transport = vi.fn(async () => 'provider-id');
+    await store.transaction((s) => { s.automation = { enabled: true }; });
+    const source = new OneSubscriptions(options, (async () => { throw new Error('PRIVATE'); }) as typeof fetch, () => NOW);
+    const service = new PlgService(store, runtime, () => NOW, transport, source);
+    await expect(runAutomationCycle(service, async () => ({ accounts: 1, imported: 0, erased: 0 }), () => NOW)).rejects.toThrow('did not confirm success');
+    const state = await store.read();
+    expect(state.automation?.lastCycle?.status).toBe('failed');
+    expect(state.automation?.lastSuccessAt).toBeUndefined();
+    expect(state.deliveries).toHaveLength(0);
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it('correlates a permanent provider complaint to the reserved address after identity reconciliation', async () => {
+    const store = await activeStore();
+    const source = new OneSubscriptions(options, (async () => Response.json({ allowed: true, erased: false })) as typeof fetch, () => NOW);
+    await new PlgService(store, runtime, () => NOW, async () => 'provider-id', source).run('Automatic cycle');
+    await store.transaction((state) => {
+      const contact = state.contacts[0];
+      contact.email = 'new-address@example.invalid';
+      applyDeliveryEvent(state, { type: 'email.complained', data: { email_id: 'provider-id', to: [change().email] } }, NOW);
+      expect(contact.suppressed).toBe('complained');
+      expect(state.deliveries[0].status).toBe('complained');
+    });
+  });
+  it.each(['revoked', 'outage', 'local_unsubscribe', 'erased', 'allowed'] as const)
+    ('checks fresh permission immediately before the provider: %s', async (outcome) => {
+      const store = await activeStore(), transport = vi.fn(async (_input: Parameters<import('../src/server/plg/service').PlgTransport>[0]) => 'provider-id');
+      const source = new OneSubscriptions(options, (async (url, init) => {
+        expect(String(url)).toBe(`${options.url}/check`);
+        expect(JSON.parse(init!.body as string)).toMatchObject({ accountId: 'customer-1', generation, revision: 1 });
+        if (outcome === 'outage') throw new Error('PRIVATE');
+        if (outcome === 'local_unsubscribe') await store.transaction((s) => { s.contacts[0].suppressed = 'unsubscribed'; });
+        return Response.json({ allowed: outcome === 'allowed' || outcome === 'local_unsubscribe', erased: outcome === 'erased' });
+      }) as typeof fetch, () => NOW);
+      const run = new PlgService(store, runtime, () => NOW, transport, source).run('Automatic cycle');
+      if (outcome === 'outage') await expect(run).rejects.toThrow('permission');
+      else await run;
+      expect(transport).toHaveBeenCalledTimes(outcome === 'allowed' ? 1 : 0);
+      const state = await store.read();
+      expect(state.deliveries).toHaveLength(outcome === 'allowed' ? 1 : 0);
+      if (outcome === 'erased') expect(state.contacts).toHaveLength(0);
+      if (outcome === 'allowed') expect(transport.mock.calls[0][0].message.text).toContain(`.${generation}.`);
+    });
+});
 
 describe('production-only private evidence sources', () => {
   it.each(['https://uat.api.hushh.ai', 'https://arbitrary.example.invalid', 'http://api.hushh.ai',
@@ -830,6 +1010,26 @@ describe('One retained task evidence bridge', () => {
     expect(state.contacts[0].observationAt).toBeUndefined();
     expect(JSON.stringify(state)).not.toContain('must never persist');
   });
+  it.each(['unsubscribe', 'revision', 'deletion'] as const)
+    ('fences in-flight positive evidence after %s while still applying authoritative erasure', async (change) => {
+      const store = await fixture();
+      await store.transaction((s) => {
+        s.contacts[0].permission = { revision: 1, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816',
+          enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
+      });
+      const source: typeof fetch = async (url, init) => {
+        await store.transaction((s) => {
+          if (change === 'revision') s.contacts[0].permission!.revision = 2;
+          else s.contacts[0].suppressed = 'unsubscribed';
+        });
+        return fetcher(change === 'deletion')(url, init);
+      };
+      const result = await syncOneEvidence(store, options, source, NOW);
+      const state = await store.read();
+      expect(result.imported).toBe(0);
+      if (change === 'deletion') expect(state.contacts).toHaveLength(0);
+      else expect(state.contacts[0].firstValueAt).toBeNull();
+    });
   it('erases contact records and blocks delayed re-enrollment after authoritative deletion', async () => {
     const store = await fixture();
     await store.transaction((state) => {

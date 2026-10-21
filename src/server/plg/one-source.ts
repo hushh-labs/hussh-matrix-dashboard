@@ -131,17 +131,20 @@ export async function syncOneEvidence(
   fetcher: typeof fetch = fetch,
   time: number | (() => number) = Date.now,
   inspectionId?: string,
+  cycleDeadline = Infinity,
 ) {
   const clock = typeof time === 'function' ? time : () => time;
   // Stay below the worker's 180s HTTP budget. A slow pilot fails atomically
   // rather than continuing requests after its caller has abandoned the run.
-  const deadline = clock() + 135_000;
+  const deadline = Math.min(clock() + 135_000, cycleDeadline);
   const endpoint = oneProductionEndpoint(options.url, '/api/one/plg/snapshot');
   if (!endpoint) throw unavailable();
   if (options.secret.length < 32) throw unavailable();
   const state = await store.read();
-  const selected = inspectionId ? state.contacts.filter((c) => c.id === inspectionId) : state.contacts;
+  const selected = state.contacts.filter((c) => (!inspectionId || c.id === inspectionId) &&
+    (!c.permission || (c.permission.enabled && c.permission.eligible && !c.suppressed)));
   if (inspectionId && !selected.length) throw new PlgError(404, 'Account is not enrolled.');
+  const permissions = new Map(selected.map((c) => [c.accountId, c.permission ? { ...c.permission } : null]));
   const accounts: SourceAccount[] = selected.map((c) => ({
     accountId: c.accountId,
     journey: c.journey,
@@ -284,6 +287,14 @@ export async function syncOneEvidence(
       if (row.deleted) {
         eraseAccount(draft, row.accountId, now);
         erased++;
+        continue;
+      }
+      const requestedPermission = permissions.get(row.accountId);
+      if (contact.suppressed || Boolean(contact.permission) !== Boolean(requestedPermission) ||
+        (contact.permission && (!contact.permission.enabled || !contact.permission.eligible ||
+          contact.permission.revision !== requestedPermission?.revision ||
+          contact.permission.generation !== requestedPermission?.generation))) {
+        if (inspectionId) throw new PlgError(409, 'Email permission changed while evidence was loading.');
         continue;
       }
       if (inspectionId) continue;

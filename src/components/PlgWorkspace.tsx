@@ -6,7 +6,6 @@ import {
   useState,
   type FormEvent,
   type ReactElement,
-  type ReactNode,
 } from 'react';
 import {
   CheckCircle2,
@@ -60,14 +59,15 @@ const buttonStyle =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-stroke bg-surface px-4 py-2.5 text-sm font-semibold text-ink transition hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50';
 const date = (value: string | null) =>
   value ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Not observed';
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, description }: { label: string; children: ReactElement<{ id?: string }>; description?: string }) {
   const id = useId();
   return (
     <div className="block space-y-1.5 text-xs font-semibold text-muted">
       <label className="block" htmlFor={id}>
         {label}
       </label>
-      {cloneElement(children as ReactElement<{ id?: string }>, { id })}
+      {cloneElement(children, { id })}
+      {description && <p className="mt-1 text-xs text-muted">{description}</p>}
     </div>
   );
 }
@@ -786,7 +786,7 @@ function ContactEditor({
       owner: data.get('owner'),
       blocker: data.get('blocker'),
       notes: data.get('notes'),
-      frequency: data.get('frequency'),
+      frequency: c.permission ? c.frequency : data.get('frequency'),
       supportOpen: data.get('supportOpen') === 'on',
       unsubscribe: data.get('unsubscribe') === 'on',
       ...(data.get('outreachRecorded') === 'on'
@@ -829,8 +829,8 @@ function ContactEditor({
             ))}
           </select>
         </Field>
-        <Field label="Email frequency">
-          <select name="frequency" defaultValue={c.frequency} className={inputStyle}>
+        <Field label="Email frequency" description={c.permission ? "Managed by the person's saved One email preference." : undefined}>
+          <select name="frequency" defaultValue={c.frequency} disabled={Boolean(c.permission)} className={inputStyle}>
             <option value="daily">Daily tips</option>
             <option value="weekly">Weekly digest</option>
             <option value="updates">Product updates only</option>

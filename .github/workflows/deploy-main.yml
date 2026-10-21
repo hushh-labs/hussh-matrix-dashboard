@@ -32,6 +32,7 @@ env:
   ONE_PLG_AUDIENCE_CONFIGURED: ${{ vars.ONE_PLG_AUDIENCE_CONFIGURED }}
   ONE_PLG_SENDER_CONFIGURED: ${{ vars.ONE_PLG_SENDER_CONFIGURED }}
   ONE_PLG_DELIVERY_CONFIGURED: ${{ vars.ONE_PLG_DELIVERY_CONFIGURED }}
+  ONE_PLG_SUBSCRIPTIONS_CONFIGURED: ${{ vars.ONE_PLG_SUBSCRIPTIONS_CONFIGURED }}
 
 jobs:
   deploy:
@@ -207,6 +208,14 @@ jobs:
             # Clear the endpoint on rollback, even if a prior key mount remains.
             PLG_ENV_SUFFIX+="|PLG_ONE_AUDIENCE_URL="
           fi
+          if [[ "${ONE_PLG_SUBSCRIPTIONS_CONFIGURED}" == "true" ]]; then
+            [[ "${ONE_PLG_CONFIGURED}" == "true" ]] || exit 1
+            [[ "$(gcloud secrets versions describe latest --secret=metrics-one-plg-subscription-secret --project="${PROJECT_ID}" --format='value(state)')" == "ENABLED" ]] || exit 1
+            PLG_ENV_SUFFIX+="|PLG_ONE_SUBSCRIPTION_ENABLED=true|PLG_ONE_SUBSCRIPTION_URL=https://api.hushh.ai/api/one/plg/subscriptions"
+            PLG_SECRET_SUFFIX+=",PLG_ONE_SUBSCRIPTION_SECRET=metrics-one-plg-subscription-secret:latest"
+          else
+            PLG_ENV_SUFFIX+="|PLG_ONE_SUBSCRIPTION_ENABLED=false|PLG_ONE_SUBSCRIPTION_URL="
+          fi
           gcloud run deploy "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
@@ -282,6 +291,7 @@ jobs:
             'INSTAGRAM_ANALYTICS_ADMIN_EMAILS',
             'PLG_ENABLED', 'PLG_STORAGE', 'PLG_FIRESTORE_PROJECT', 'PLG_FIRESTORE_DATABASE',
             'PLG_PUBLIC_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_ONE_AUDIENCE_URL', 'PLG_DELIVERY_ENABLED',
+            'PLG_ONE_SUBSCRIPTION_ENABLED', 'PLG_ONE_SUBSCRIPTION_URL',
           ]);
           const plain = env.filter((entry) => entry.value && !allowedPlain.has(entry.name)).map((entry) => entry.name);
           if (plain.length > 0) {
@@ -327,6 +337,12 @@ jobs:
             Object.assign(requiredSecrets, { PLG_ONE_AUDIENCE_SECRET: 'metrics-one-plg-audience-secret' });
           } else if (byName.get('PLG_ONE_AUDIENCE_URL')?.value) {
             throw new Error('Private audience endpoint must be disabled');
+          }
+          if (process.env.ONE_PLG_SUBSCRIPTIONS_CONFIGURED === 'true') {
+            if (process.env.ONE_PLG_CONFIGURED !== 'true' || byName.get('PLG_ONE_SUBSCRIPTION_ENABLED')?.value !== 'true' || byName.get('PLG_ONE_SUBSCRIPTION_URL')?.value !== 'https://api.hushh.ai/api/one/plg/subscriptions') throw new Error('Subscription release setting mismatch');
+            Object.assign(requiredSecrets, { PLG_ONE_SUBSCRIPTION_SECRET: 'metrics-one-plg-subscription-secret' });
+          } else if (byName.get('PLG_ONE_SUBSCRIPTION_ENABLED')?.value !== 'false' || byName.get('PLG_ONE_SUBSCRIPTION_URL')?.value) {
+            throw new Error('Subscription integration must be disabled');
           }
           for (const [name, secretName] of Object.entries(requiredSecrets)) {
             if (byName.get(name)?.valueFrom?.secretKeyRef?.name !== secretName) {
