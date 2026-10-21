@@ -17,7 +17,7 @@ export function applyDeliveryEvent(state: PlgState, event: unknown, now: number)
   const data = value.data;
   if (!data || typeof value.type !== 'string') return;
   const recipients = Array.isArray(data.to) ? data.to.filter((e): e is string => typeof e === 'string').map((e) => e.toLowerCase()) : [];
-  const suppression = value.type === 'email.bounced' ? 'bounced' : value.type === 'email.complained' ? 'complained' : null;
+  const suppression = value.type === 'email.bounced' ? 'bounced' : value.type === 'email.complained' ? 'complained' : value.type === 'email.suppressed' ? 'provider_suppressed' : null;
   // Suppression is address-wide and permanent, including when a recipient has
   // messages from another campaign in the same authorized sending account.
   if (suppression) for (const c of state.contacts) {

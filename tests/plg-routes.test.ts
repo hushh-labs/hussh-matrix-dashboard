@@ -308,4 +308,18 @@ describe('Private PLG API boundaries', () => {
     expect(state.contacts[0].firstValueAt).toBeNull();
     expect(state.contacts[0].valueDays).toEqual([]);
   });
+  it('persists a signed provider suppression so future journey steps stay blocked', async () => {
+    await store.transaction((state) => enroll(state, input, 'admin', Date.now()));
+    const payload = JSON.stringify({ type: 'email.suppressed', data: { to: [input.email] } });
+    const id = 'msg_suppressed_test', at = new Date();
+    const signature = new Webhook(config.webhookSecret).sign(id, at, payload);
+    const response = await request(app()).post('/integrations/plg/resend')
+      .set('Content-Type', 'application/json').set('svix-id', id)
+      .set('svix-timestamp', String(Math.floor(at.getTime() / 1000))).set('svix-signature', signature).send(payload);
+    expect(response.status).toBe(200);
+    const state = await store.read();
+    expect(state.contacts[0].suppressed).toBe('provider_suppressed');
+    const workspace = await new PlgService(store, config).workspace('admin');
+    expect(workspace.queue[0]).toMatchObject({ eligible: false, reason: 'Suppressed: provider_suppressed' });
+  });
 });

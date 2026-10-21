@@ -190,6 +190,10 @@ describe('Server-owned automatic follow-up cycle', () => {
     expect(JSON.stringify(status)).not.toContain('PRIVATE');
     expect(JSON.stringify(status)).not.toContain(runtime.apiKey);
     expect(JSON.stringify(status)).not.toContain(runtime.signingSecret);
+    const senderOnly = automationStatus(state, { ...runtime, deliveryEnabled: false, apiKey: '', webhookSecret: '' }, NOW);
+    expect(senderOnly.sender.configured).toBe(true);
+    expect(senderOnly.blockers).toContain('Live email delivery is disabled');
+    expect(senderOnly.blockers).toContain('Email provider authentication is missing');
   });
   it('leases concurrent cycles, syncs before sending and fences replayed worker requests', async () => {
     const store = await fixture();

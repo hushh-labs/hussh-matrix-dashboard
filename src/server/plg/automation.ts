@@ -34,7 +34,7 @@ export function automationStatus(state: PlgState, config: PlgRuntime, now: numbe
     sender: {
       from: senderConfigured(config) ? config.from : null,
       replyTo: mailbox.test(config.replyTo) ? config.replyTo : null,
-      configured: senderConfigured(config) && deliveryBlockers(config).length === 0,
+      configured: senderConfigured(config),
     },
     blockers: [
       ...(!(state.automation?.enabled) ? ['Automatic follow-ups are paused'] : []),

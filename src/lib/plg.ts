@@ -132,7 +132,7 @@ export interface PlgContact {
   enrolledAt: string;
   consentAt: string | null;
   consentSource: string;
-  suppressed: null | 'unsubscribed' | 'bounced' | 'complained';
+  suppressed: null | 'unsubscribed' | 'bounced' | 'complained' | 'provider_suppressed';
   owner: string;
   blocker: string;
   supportOpen: boolean;
