@@ -383,7 +383,7 @@ describe('Server-owned automatic follow-up cycle', () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const transport = vi.fn(async () => 'provider-id');
     const service = new PlgService(store, runtime, () => NOW, transport);
-    const sync = vi.fn(async () => { await gate; return { accounts: 1, imported: 0, erased: 0 }; });
+    const sync = vi.fn(async () => { await gate; return { accounts: 1, imported: 0, erased: 0, retainedOnly: true }; });
     const cycle = runAutomationCycle(service, sync, () => NOW);
     await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce());
     expect(transport).not.toHaveBeenCalled();
@@ -393,6 +393,19 @@ describe('Server-owned automatic follow-up cycle', () => {
     expect(await runAutomationCycle(service, async () => ({ accounts: 1, imported: 0, erased: 0 }), () => NOW)).toMatchObject({ status: 'completed', sent: 0 });
     expect(transport).toHaveBeenCalledOnce();
     expect((await store.read()).automation?.lastSyncAt).toBe(new Date(NOW).toISOString());
+    expect((await store.read()).automation?.lastEvidenceSyncAt).toBe(new Date(NOW).toISOString());
+  });
+  it('does not promote an empty catalog refresh into evidence-sync proof', async () => {
+    const store = new MemoryPlgStore();
+    const service = new PlgService(store, { ...runtime, deliveryEnabled: false }, () => NOW);
+    await runAutomationCycle(service, async () => ({ accounts: 0, imported: 0, erased: 0, retainedOnly: true }), () => NOW);
+    let status = automationStatus(await store.read(), runtime, NOW);
+    expect(status.lastSyncAt).toBe(new Date(NOW).toISOString());
+    expect(status.lastEvidenceSyncAt).toBeNull();
+    await store.transaction((state) => { state.automation!.lastEvidenceSyncAt = new Date(NOW - DAY).toISOString(); });
+    await runAutomationCycle(service, async () => ({ accounts: 0, imported: 0, erased: 0, retainedOnly: true }), () => NOW);
+    status = automationStatus(await store.read(), runtime, NOW);
+    expect(status.lastEvidenceSyncAt).toBe(new Date(NOW - DAY).toISOString());
   });
   it('syncs while paused and recovers expired leases without resending uncertain reservations', async () => {
     const store = await fixture();

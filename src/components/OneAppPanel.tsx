@@ -96,6 +96,7 @@ function Block({
 }
 
 function ActiveDevices({ one }: { one: OneAppSummary }) {
+  if (one.activeUsers.available === false) return <p role="status" className="text-sm text-muted">Device activity is unavailable for this selection; no zero is inferred.</p>;
   const { dau, wau, mau, stickiness, asOf, identityScope } = one.activeUsers;
   const tiles = [
     { label: 'Daily active devices', value: dau, detail: asOf },
@@ -150,7 +151,7 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
     { label: 'Accounts first seen in this period', value: range.newUsers, detail: 'First-ever observed account activity in selected range' },
     { label: 'Returning active accounts', value: range.returningUsers, detail: 'First observed before selected range' },
   ];
-  const activityTiles = [
+  const activityTiles = users.activityAvailable === false ? [] : [
     { label: 'Accounts active in 1 day', value: users.dau, detail: users.asOf },
     { label: 'Accounts active in 7 days', value: users.wau, detail: `7 days to ${users.asOf}` },
     { label: 'Accounts active in 30 days', value: users.mau, detail: `30 days to ${users.asOf}` },
@@ -190,13 +191,14 @@ function IdentifiedUsers({ one }: { one: OneAppSummary }) {
           </div>
         ))}
       </div>
-      <div className={cn(dashboardCard, 'border-stroke bg-brand-50 p-4 text-sm leading-6 text-brand-600')}>
+      {users.activityAvailable === false && <p role="status" className="text-sm text-muted">Account DAU, WAU and MAU are unavailable for this selection; no zero is inferred.</p>}
+      {users.activityAvailable !== false && one.activeUsers.available !== false && <div className={cn(dashboardCard, 'border-stroke bg-brand-50 p-4 text-sm leading-6 text-brand-600')}>
         <strong>{formatNumber(users.dau)} identified accounts</strong> and <strong>{formatNumber(one.activeUsers.dau)} device/browser IDs</strong> on {users.asOf} are different counting units.
         {one.activeByPlatformAvailable !== false && one.activeByPlatform.length > 0 && (
           <> Those device IDs include {one.activeByPlatform.map((row) => `${formatNumber(row.dauDevices)} ${platformLabel(row.platform)}`).join(', ')}.</>
         )}
         {' '}An account counts once across devices only when One attaches its stable account ID. Unidentified browser/app IDs are not proven to be additional people, so the gap cannot be converted into a user count.
-      </div>
+      </div>}
       <div className="flex items-start gap-3 rounded-2xl border border-[#d8c48b] bg-warning-soft p-4 text-warning">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <p className="text-sm font-semibold leading-5">

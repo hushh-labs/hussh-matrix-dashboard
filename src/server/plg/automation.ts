@@ -46,6 +46,7 @@ export function automationStatus(state: PlgState, config: PlgRuntime, now: numbe
     ],
     lastCycle: cycle,
     lastSyncAt: state.automation?.lastSyncAt ?? null,
+    lastEvidenceSyncAt: state.automation?.lastEvidenceSyncAt ?? null,
     lastSuccessAt: state.automation?.lastSuccessAt ?? null,
     eligible: queue.filter((c) => c.eligible).length,
     blockedReasons: [...reasons].map(([reason, accounts]) => ({ reason, accounts })),
@@ -85,6 +86,9 @@ export async function runAutomationCycle(service: PlgService, sync: PlgSync, now
       if (state.automation?.lease?.id !== id || now() >= started + CYCLE_BUDGET_MS)
         throw new PlgError(409, 'Automatic cycle budget or ownership expired.');
       state.automation.lastSyncAt = iso(now());
+      // retainedOnly describes privacy-limited evidence too, not its source.
+      // The empty catalog path checks zero enrolled accounts.
+      if (result.accounts > 0) state.automation.lastEvidenceSyncAt = iso(now());
     });
     const state = await service.store.read();
     const blockers = [

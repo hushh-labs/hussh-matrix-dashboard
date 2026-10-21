@@ -32,6 +32,7 @@ import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushh
 import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
+import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -3456,6 +3457,7 @@ ${capabilitySql.isDeliberate}
       },
       funnel: buildOneLocationFunnel(usersByStep),
       activeUsers: {
+        available: oneActiveQueryAvailable(active),
         countingUnit: 'device',
         identityScope: 'GA4 device/browser identifier; not cross-device deduplicated',
         dau: activeDauDevices,
@@ -3471,6 +3473,7 @@ ${capabilitySql.isDeliberate}
         asOf: activeAsOf,
       },
       identifiedUsers: {
+        activityAvailable: oneActiveQueryAvailable(active),
         countingUnit: 'account',
         identityScope: 'Distinct stable salted One account identifier (GA4 user_id); cross-device deduplicated where bound',
         selectedRange: {

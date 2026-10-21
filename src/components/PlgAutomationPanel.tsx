@@ -30,7 +30,8 @@ export function PlgAutomationPanel({ status, admin, busy, toggle, refresh }: {
       {[
         ['Automatic follow-ups', status.enabled ? 'Enabled' : 'Paused'],
         ['Worker heartbeat', status.worker === 'never_observed' ? 'Never observed' : status.worker === 'stale' ? 'Stale; check scheduler' : 'Recently observed'],
-        ['Last successful sync', time(status.lastSyncAt)],
+        ['Last catalog/source refresh', time(status.lastSyncAt)],
+        ['Last enrolled-account evidence read', time(status.lastEvidenceSyncAt ?? null)],
         ['Last completed cycle', time(status.lastSuccessAt)],
         ['From', status.sender.from ?? 'Not configured'],
         ['Reply-To', status.sender.replyTo ?? 'Not configured'],
@@ -38,6 +39,7 @@ export function PlgAutomationPanel({ status, admin, busy, toggle, refresh }: {
         ['Delivery confirmations pending', String(status.needsReconciliation)],
       ].map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 break-words font-medium text-ink">{value}</dd></div>)}
     </dl>
+    <p className="mt-4 text-xs leading-5 text-muted">A fresh heartbeat or catalog refresh does not prove enrolled-account evidence sync or email delivery is working. Only an actual cohort evidence read advances its separate timestamp.</p>
     <p className="mt-4 text-xs leading-5 text-muted">Sender configuration {status.sender.configured ? 'is present' : 'is incomplete'}. Domain verification and a controlled delivery test are separate launch checks. Reply-To routes replies to the mailbox; automatic inbox handling is not connected.</p>
     {status.lastCycle && <p className="mt-4 rounded-xl bg-canvas p-3 text-sm text-ink">
       Last cycle: {status.lastCycle.status} · {status.lastCycle.accounts} accounts synced · {status.lastCycle.sent ?? 'Unknown count'} accepted by email provider · {status.lastCycle.uncertain ?? 'Unknown count'} uncertain.

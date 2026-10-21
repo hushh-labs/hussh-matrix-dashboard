@@ -47,8 +47,8 @@ export const one: OneAppSummary = {
   last24Hours: { users: 164, sessions: 420, events: 2300, available: true },
   activation: { activatedUsers: 852, sharingUsers: 648 },
   funnel: ['Opened One', 'Signed in', 'Used a feature'].map((label, index) => ({ step: label, label, users: [1460, 1284, 948][index], conversionFromPrevious: index ? .8 : null, dropoffFromPrevious: index ? .2 : null })),
-  activeUsers: { countingUnit: 'device', identityScope: 'QA device aggregates.', dau: 164, wau: 780, mau: 1460, stickiness: .112, asOf: day(0) },
-  identifiedUsers: { countingUnit: 'account', identityScope: 'QA identified accounts.',
+  activeUsers: { available: true, countingUnit: 'device', identityScope: 'QA device aggregates.', dau: 164, wau: 780, mau: 1460, stickiness: .112, asOf: day(0) },
+  identifiedUsers: { activityAvailable: true, countingUnit: 'account', identityScope: 'QA identified accounts.',
     selectedRange: { available: true, totalUsers: 1284, newUsers: 346, returningUsers: 938, ...range, newUserDefinition: 'First observed in analytics.' },
     dau: 148, wau: 704, mau: 1284, identifiedDevices: { dau: 154, wau: 742, mau: 1372 }, deviceCoverage: { dau: .94, wau: .95, mau: .94 }, complete: true, asOf: day(0) },
   iosIdentifiedUsers: { available: true, countingUnit: 'account', bundleId: 'com.hushh.app', totalUsers: 738, firstObservedUsers: 188, previouslyObservedUsers: 550, identityObservedSince: '2026-05-01', ...range, note: 'QA aggregate' },
@@ -164,6 +164,7 @@ export async function mockDashboard(page: Page) {
     else if (path === '/api/analytics/founder') data = founder;
     else if (path === '/api/analytics/one/referrals') data = referralFixture(route.request().url());
     else if (path === '/api/analytics/all') data = allAnalytics;
+    else if (path === '/api/analytics/one/app') data = { data: { production: one, uat: null }, fetchedAt: timestamp, error: null };
     else if (path === '/api/analytics/growth/compare') data = { fetchedAt: timestamp, error: null, windows: ['30d', '90d', 'all'].map((key, index) => ({ key, label: ['Last 30 days', 'Last 90 days', 'All time'][index], range: { ...range, days: [30, 90, 180][index] }, data: growth, error: null })) };
     else if (path === '/api/analytics/one/android') data = { history: { state: 'permission_missing', daily: [] }, downloads: {}, vitals: { state: 'not_yet_available' } };
     else if (path === '/api/analytics/instagram') data = {
