@@ -311,6 +311,7 @@ test('keeps app-wide accounts and devices separate from the campaign cohort and 
   await usage.getByLabel('Reporting period').selectOption('7');
   await expect.poll(() => reads.length).toBe(2);
   const query = new URL(reads.at(-1)!).searchParams;
+  expect(query.get('environment')).toBe('production');
   expect((Date.parse(query.get('one_end_date')!) - Date.parse(query.get('one_start_date')!)) / 86400000 + 1).toBe(7);
   await expect(usage).not.toHaveAttribute('aria-busy', 'true');
   await mkdir('.codex/artifacts/plg', { recursive: true });
@@ -320,6 +321,7 @@ test('keeps app-wide accounts and devices separate from the campaign cohort and 
 test('shows query failure as unavailable while preserving a healthy selected-range account read', async ({ page }) => {
   await mockPlg(page);
   await page.route('**/api/analytics/one/app?*', (route) => route.fulfill({ json: {
+    environment: 'production',
     data: { production: { ...one, activeUsers: { ...one.activeUsers, available: false, dau: 0, wau: 0, mau: 0 },
       identifiedUsers: { ...one.identifiedUsers, activityAvailable: false, dau: 0, wau: 0, mau: 0 } }, uat: null },
     error: 'Sanitized aggregate read failure', fetchedAt: new Date().toISOString(),
@@ -331,6 +333,19 @@ test('shows query failure as unavailable while preserving a healthy selected-ran
   await expect(usage.getByRole('row', { name: 'Signed-in accounts Unavailable Unavailable Unavailable' })).toBeVisible();
   await expect(usage.getByText('1,284', { exact: true })).toBeVisible();
   await expect(usage.getByRole('cell', { name: '0', exact: true })).toHaveCount(0);
+});
+
+test('withholds app aggregates when a response mixes UAT into a production-only request', async ({ page }) => {
+  await mockPlg(page);
+  await page.route('**/api/analytics/one/app?*', (route) => route.fulfill({ json: {
+    environment: 'production', data: { production: one, uat: one }, error: null,
+  } }));
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage).toContainText('Production aggregates are unavailable. No zero is inferred.');
+  await expect(usage.getByText('8,420', { exact: true })).toHaveCount(0);
+  await expect(usage.getByText('1,284', { exact: true })).toHaveCount(0);
 });
 
 for (const width of [320, 768, 1440])

@@ -6,6 +6,7 @@ import { cn } from '../lib/utils';
 import type { OneAppSummary } from '../lib/types';
 
 interface AppResponse {
+  environment?: string;
   data?: { production: OneAppSummary | null; uat: OneAppSummary | null };
   error?: string | null;
   fetchedAt?: string;
@@ -19,10 +20,11 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [days, setDays] = useState(30);
   const endDate = new Date().toISOString().slice(0, 10);
   const startDate = new Date(Date.parse(endDate) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
-  const url = `/api/analytics/one/app?one_start_date=${startDate}&one_end_date=${endDate}`;
+  const url = `/api/analytics/one/app?environment=production&one_start_date=${startDate}&one_end_date=${endDate}`;
   const resource = useMetricsResource<AppResponse>(url, { refreshKey });
   const one = resource.data?.data?.production;
-  const production = one?.reportingEnvironment === 'production' ? one : null;
+  const production = resource.data?.environment === 'production' && resource.data?.data?.uat === null
+    && one?.reportingEnvironment === 'production' ? one : null;
   const registry = production?.registeredAccounts;
   const registryValid = registry?.available && registry.environment === 'production' &&
     (registry.registryScope === 'production_contacts' || (registry.registryScope === 'isolated' && !registry.sharedAcrossEnvironments));
@@ -45,7 +47,7 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-ink">App-wide One usage</h3>
-          <p className="mt-1 max-w-2xl text-sm text-muted">Verified production customer accounts and their identified activity, including accounts outside email campaigns. Confirmed staff/test identities are excluded.</p>
+          <p className="mt-1 max-w-2xl text-sm text-muted">Verified production customer accounts and their identified activity, including accounts outside email campaigns. Confirmed staff/test identities are excluded. UAT is never queried or used as a fallback.</p>
         </div>
         <label className="text-sm font-semibold text-muted">Reporting period
           <select className="ml-2 rounded-lg border border-stroke bg-surface p-2 text-ink" value={days} onChange={(event) => setDays(Number(event.target.value))}>
