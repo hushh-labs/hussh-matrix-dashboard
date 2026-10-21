@@ -20,12 +20,13 @@ import {
   plgRuntime,
   PlgService,
   signValue,
-  tokenContact,
+  tokenPreference,
 } from './service';
 import { syncOneEvidence } from './one-source';
 import { readOneAudience } from './one-audience';
 import { runAutomationCycle, setAutomationEnabled } from './automation';
 import { applyDeliveryEvent } from './delivery-events';
+import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
 
 export function registerPlgRoutes(
   app: express.Express,
@@ -54,16 +55,26 @@ export function registerPlgRoutes(
     }
     return service;
   };
-  const synchronize = async () => {
+  const synchronize = async (deadline = Date.now() + 190_000) => {
     const service = getService();
+    if (config.subscriptions?.enabled) {
+      if (!(await service.store.read()).catalog?.agents.some((a) => a.id === 'agent_one' && a.public && a.available)) {
+        if (Date.now() + 30_000 >= deadline) throw new PlgError(503, 'Automatic sync budget expired.');
+        const page = await readOneAudience({ agentId: 'agent_one', segment: 'all', query: '', graceMinutes: 60 });
+        await service.store.transaction((state) => { registerPlgCatalog(state, page.catalog); });
+      }
+      await syncSubscriptions(service.store, new OneSubscriptions(config.subscriptions, fetch, Date.now, Math.min(deadline, Date.now() + 75_000)));
+    }
     const state = await service.store.read();
-    if (state.contacts.length) return syncOneEvidence(service.store);
+    if (state.contacts.length) return syncOneEvidence(service.store, undefined, fetch, Date.now, undefined, deadline);
     // An empty workspace has no pilot cohort to export. Its catalog is already
     // available through the independently authenticated registered-people reader.
     // Discard this bounded page's identities; retain only the validated catalog.
+    if (Date.now() + 30_000 >= deadline) throw new PlgError(503, 'Automatic sync budget expired.');
     const page = await readOneAudience({ agentId: 'agent_one', segment: 'all', query: '', graceMinutes: 60 });
     return service.store.transaction((draft) => {
-      if (draft.contacts.length) throw new PlgError(409, 'Enrollment changed during catalog refresh. Retry the sync.');
+      if (draft.contacts.some((c) => !c.permission || (c.permission.enabled && c.permission.eligible && !c.suppressed)))
+        throw new PlgError(409, 'Enrollment changed during catalog refresh. Retry the sync.');
       registerPlgCatalog(draft, page.catalog);
       return { accounts: 0, imported: 0, erased: 0, retainedOnly: true };
     });
@@ -137,9 +148,11 @@ export function registerPlgRoutes(
     '/api/plg/contacts/:id',
     handle(async (req, res) => {
       const user = role(req);
-      const data = await getService().store.transaction((state) =>
-        updateContact(state, req.params.id as string, req.body, user.email, Date.now()),
-      );
+      const data = await getService().store.transaction((state) => {
+        const contact = updateContact(state, req.params.id as string, req.body, user.email, Date.now());
+        if (req.body.unsubscribe === true) queueSubscriptionRevocation(state, contact);
+        return contact;
+      });
       return res.json({ contact: data });
     }),
   );
@@ -284,7 +297,7 @@ export function registerPlgRoutes(
     handle(async (req, res) => {
       if (config.signingSecret.length < 32)
         throw new PlgError(503, 'Preferences are not configured.');
-      const id = tokenContact(req.params.token as string, config.signingSecret);
+      const { id, generation } = tokenPreference(req.params.token as string, config.signingSecret);
       const store = getService().store;
       const contact = (await store.read()).contacts.find((c) => c.id === id);
       if (!contact) throw new PlgError(404, 'Subscriber not found.');
@@ -295,10 +308,16 @@ export function registerPlgRoutes(
       if (req.method === 'POST') {
         await store.transaction((state) => {
           const c = state.contacts.find((c) => c.id === id)!;
+          if (c.permission && !generation)
+            throw new PlgError(409, 'Use the latest email link or manage preferences in your One account.');
           if (unsubscribe || req.body.unsubscribe === 'yes') {
-            c.suppressed = 'unsubscribed';
-            timeline(c, 'Subscriber', 'Unsubscribed from promotional email.', Date.now());
+            if (!c.permission || c.permission.generation === generation) {
+              if (!c.suppressed || c.suppressed === 'unsubscribed') c.suppressed = 'unsubscribed';
+              timeline(c, 'Subscriber', 'Unsubscribed from promotional email.', Date.now());
+            }
+            queueSubscriptionRevocation(state, c, generation);
           } else {
+            if (c.permission) throw new PlgError(409, 'Manage the email frequency in your One account.');
             c.frequency = choose(req.body.frequency, ['daily', 'weekly', 'updates']);
             timeline(c, 'Subscriber', 'Updated email frequency.', Date.now());
           }
@@ -313,7 +332,7 @@ export function registerPlgRoutes(
       return res
         .type('html')
         .send(
-          `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>One email preferences</title><style>body{font:17px/1.6 system-ui;margin:60px auto;padding:20px;max-width:540px}select,button{font:inherit;padding:10px;display:block;margin:15px 0}</style></head><body><main><h1>${unsubscribe ? 'Unsubscribe from One emails' : 'One email preferences'}</h1><form method="post" action="${action}">${unsubscribe ? '<p>Confirm that you want to stop promotional email.</p>' : `<label for="frequency">Email frequency</label><select id="frequency" name="frequency">${(['daily', 'weekly', 'updates'] as const).map((f) => `<option value="${f}" ${contact.frequency === f ? 'selected' : ''}>${f === 'updates' ? 'Product updates only' : f === 'daily' ? 'Daily tips' : 'Weekly digest'}</option>`).join('')}</select><label><input type="checkbox" name="unsubscribe" value="yes"> Stop promotional email</label>`}<button type="submit">${unsubscribe ? 'Confirm unsubscribe' : 'Save preferences'}</button></form></main></body></html>`,
+          `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>One email preferences</title><style>body{font:17px/1.6 system-ui;margin:60px auto;padding:20px;max-width:540px}select,button{font:inherit;padding:10px;display:block;margin:15px 0}</style></head><body><main><h1>${unsubscribe ? 'Unsubscribe from One emails' : 'One email preferences'}</h1><form method="post" action="${action}">${unsubscribe ? '<p>Confirm that you want to stop promotional email.</p>' : `${contact.permission ? '<p><a href="https://one.hushh.ai/one/profile/account">Manage your email frequency in One</a></p>' : `<label for="frequency">Email frequency</label><select id="frequency" name="frequency">${(['daily', 'weekly', 'updates'] as const).map((f) => `<option value="${f}" ${contact.frequency === f ? 'selected' : ''}>${f === 'updates' ? 'Product updates only' : f === 'daily' ? 'Daily tips' : 'Weekly digest'}</option>`).join('')}</select>`}<label><input type="checkbox" name="unsubscribe" value="yes"> Stop promotional email</label>`}<button type="submit">${unsubscribe ? 'Confirm unsubscribe' : 'Save preferences'}</button></form></main></body></html>`,
         );
     });
   app.get('/integrations/plg/preferences/:token', preferences(false));

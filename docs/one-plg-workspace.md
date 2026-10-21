@@ -219,6 +219,45 @@ an email already accepted by the provider cannot be recalled by a later event.
 
 ## Current release boundaries
 
+### Optional One email preference connector (disabled until paired release)
+
+One's separately validated preference producer records an explicit, unchecked-by-default
+email choice in signed-in setup and account settings. Registration does not subscribe
+an account. Matrix can pull its bounded production-only projection with a dedicated
+credential, commit changes atomically, then acknowledge only exact revisions. Duplicate
+projections replay safely; hash-only revision fences also cover absent contacts.
+
+Automatic enrollments use the generic One journey from the validated catalog; they
+do not assume that a person tried Memory. Original enrollment cohort and experiment
+assignment remain stable. Current address, name, permission and frequency reconcile
+without replacing historical task measurements. Turning permission off or temporarily
+losing a verified recipient blocks delivery. Backend unavailability is a failed cycle,
+never an inferred opt-out or successful send.
+
+Unsubscribe suppresses immediately and commits a hash-only, generation-bound revocation
+outbox in the same transaction. Scheduled cycles retry that intent before enrollment or
+sending. An old-generation link cannot cancel a later explicit re-opt-in. Provider
+bounce, complaint and suppression survive re-opt-in. Canonical frequency changes stay
+in One account settings. Each outbound attempt checks the current revision, generation
+and verified address with One, then rechecks local eligibility before the provider call.
+Positive evidence fetched before a concurrent opt-out is discarded; authoritative
+deletion still erases the account. Already accepted provider requests cannot be recalled.
+
+Configuration is `PLG_ONE_SUBSCRIPTION_ENABLED`, the exact production
+`PLG_ONE_SUBSCRIPTION_URL=https://api.hushh.ai/api/one/plg/subscriptions`, and
+Secret Manager-backed `PLG_ONE_SUBSCRIPTION_SECRET`, matching backend
+`ONE_PLG_SUBSCRIPTION_SECRET`. The deploy flag `ONE_PLG_SUBSCRIPTIONS_CONFIGURED`
+defaults disabled and clears the endpoint when disabled. Terraform owns the dashboard
+and backend secret containers and their scoped runtime accessors; the backend binder
+mounts the enabled backend credential version.
+The cycle worker receives neither credential.
+
+This connector retains the existing **100-contact / 750KB pilot limit**. At capacity
+the transaction fails without acknowledging the new projection or sending messages.
+Normalized scalable persistence, backend migration/production release, paired permission
+acceptance and authenticated delivery/callback acceptance remain release prerequisites.
+Do not enable broad enrollment or call this connector an unlimited rollout.
+
 ### All-agent observation pilot
 
 The **Agents and actions** tab discovers the authored product agents, generated
