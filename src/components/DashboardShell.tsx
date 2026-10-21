@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowRight, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, LogOut, Menu, Moon, RefreshCw, Search, Sun, X } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Menu, Moon, RefreshCw, Search, Sun, X } from 'lucide-react';
 import type { AuthUser } from '../lib/auth-service';
 import { dashboardNavigation, dashboardTabLabels, locationNavigation, type DashboardTab } from '../lib/dashboard-navigation';
 import { cn } from '../lib/utils';
@@ -46,6 +46,7 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [accountOpen, setAccountOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [dark, setDark] = useState(() => {
     try { return localStorage.getItem('matrix-theme') === 'dark'; } catch { return false; }
   });
@@ -88,6 +89,8 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
   const locationMatch = `${locationNavigation.label} ${locationNavigation.description}`.toLowerCase().includes(query.toLowerCase());
   const pageTitle = locationActive ? 'One Location' : dashboardTabLabels[activeTab];
   const pageDescription = locationActive ? locationNavigation.description : dashboardNavigation.find(item => item.key === activeTab)?.description;
+  const moreActive = ['overview', 'growth', 'compare', 'platforms', 'plg'].includes(activeTab);
+  useEffect(() => { if (moreActive) setMoreOpen(true); }, [moreActive]);
 
   return <div className={cn('dashboard-shell', collapsed && 'is-collapsed')}>
     <a href="#dashboard-content" className="skip-link">Skip to metrics</a>
@@ -100,28 +103,38 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
         <button className="icon-button sidebar-mobile-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={20} /></button>
       </div>
       <nav className="sidebar-scroll" aria-label="Dashboard sections">
-        {['Dashboard', 'Analytics', 'Products', 'Workspace'].map(group => <div className="sidebar-group" key={group}>
-          <p className="sidebar-group-label">{collapsed && !mobileOpen ? <span aria-hidden="true">•••</span> : group}</p>
+        {['Dashboard', 'Products'].map(group => <div className="sidebar-group" key={group}>
+          {group !== 'Dashboard' && <p className="sidebar-group-label">{collapsed && !mobileOpen ? <span aria-hidden="true">•••</span> : group}</p>}
           {dashboardNavigation.filter(item => item.group === group).map(item => <div key={item.key}>
             <button type="button" className={cn('sidebar-link', activeTab === item.key && !locationActive && 'is-active')}
               aria-current={activeTab === item.key && !locationActive ? 'page' : undefined} title={item.label} onClick={() => navigate(item.key)}>
               <item.icon size={21} strokeWidth={1.7} aria-hidden="true" /><span className="sidebar-link-label">{item.label}</span>
               {item.key === 'one' && <ChevronDown className="sidebar-link-arrow" size={16} />}
             </button>
-            {item.key === 'one' && <button type="button" className={cn('sidebar-link sidebar-sub-link', locationActive && 'is-active')}
+            {item.key === 'one' && (activeTab === 'one' || activeTab === 'referrals') && <button type="button" className={cn('sidebar-link sidebar-sub-link', locationActive && 'is-active')}
               title="One Location" onClick={openLocation} aria-current={locationActive ? 'page' : undefined}>
               <locationNavigation.icon size={18} aria-hidden="true" /><span className="sidebar-link-label">One Location</span>
             </button>}
-            {item.key === 'one' && dashboardNavigation.filter(child => child.group === 'One app').map(child => <button key={child.key} type="button"
+            {item.key === 'one' && (activeTab === 'one' || activeTab === 'referrals') && dashboardNavigation.filter(child => child.group === 'One app').map(child => <button key={child.key} type="button"
               className={cn('sidebar-link sidebar-sub-link', activeTab === child.key && 'is-active')}
               title={child.label} onClick={() => navigate(child.key)} aria-current={activeTab === child.key ? 'page' : undefined}>
               <child.icon size={18} aria-hidden="true" /><span className="sidebar-link-label">{child.label}</span>
             </button>)}
           </div>)}
         </div>)}
+        <div className="sidebar-more">
+          <button type="button" className={cn('sidebar-link', moreActive && !moreOpen && 'is-active')}
+            aria-label="More reports" aria-expanded={moreOpen} aria-controls="additional-reports" onClick={() => setMoreOpen(value => !value)}>
+            <ChevronDown size={18} className={cn('sidebar-more-chevron', moreOpen && 'is-open')} /><span className="sidebar-link-label">More reports</span>
+          </button>
+          {moreOpen && <div id="additional-reports">{dashboardNavigation.filter(item => item.group === 'Analytics' || item.group === 'Workspace').map(item =>
+            <button key={item.key} type="button" className={cn('sidebar-link', activeTab === item.key && 'is-active')}
+              title={item.label} aria-current={activeTab === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>
+              <item.icon size={19} strokeWidth={1.7} aria-hidden="true" /><span className="sidebar-link-label">{item.label}</span>
+            </button>)}</div>}
+        </div>
       </nav>
       <div className="sidebar-bottom">
-        <div className="sidebar-help"><span className="sidebar-help-dot" /><span>Business metrics, made clear.</span><p>Choose a page to explore your data.</p></div>
         <button type="button" className="sidebar-collapse" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed(value => !value)}>
           {collapsed ? <ChevronsRight size={18} /> : <><ChevronsLeft size={18} /><span>Collapse sidebar</span></>}
         </button>
@@ -132,11 +145,9 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
       <header className="dashboard-topbar">
         <button type="button" className="icon-button mobile-menu-button" aria-label="Open navigation" aria-expanded={mobileOpen} aria-controls="dashboard-navigation" onClick={() => setMobileOpen(true)}><Menu size={22} /></button>
         <span className="mobile-brand"><MatrixBrand /></span>
-        <button type="button" className="dashboard-search-trigger" onClick={() => setSearchOpen(true)} aria-label="Search pages">
-          <Search size={20} strokeWidth={1.7} /><span>Search pages...</span><kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K'}</kbd>
-        </button>
+        <span className="topbar-page-title">{pageTitle}</span>
         <div className="topbar-actions">
-          <button type="button" className="icon-button mobile-search-button" aria-label="Search pages" onClick={() => setSearchOpen(true)}><Search size={20} /></button>
+          <button type="button" className="icon-button" aria-label="Search pages" onClick={() => setSearchOpen(true)}><Search size={20} /></button>
           <button type="button" className="icon-button" aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => setDark(value => !value)}>{dark ? <Sun size={20} /> : <Moon size={20} />}</button>
           <button type="button" className="icon-button" aria-label="Refresh metrics" disabled={refreshing} onClick={onRefresh}><RefreshCw size={19} className={cn(refreshing && 'animate-spin')} /></button>
           {user && <div className="account-control" ref={accountRef}>
@@ -152,10 +163,9 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
       <div id="dashboard-content" className="metrics-content" tabIndex={-1}>
         <div className="dashboard-page-heading">
           <div><h1>{pageTitle}</h1><p>{pageDescription}</p></div>
-          <div className="dashboard-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('briefing')}>Home</button><ChevronRight size={16} /><span>{pageTitle}</span></div>
         </div>
-        <div className="dashboard-status" role="status"><span className={cn('status-dot', refreshing && 'is-updating')} /><span>{status}</span></div>
-        {activeTab !== 'referrals' && <details className="mb-5 rounded-lg border border-stroke bg-surface px-4 py-3 text-xs leading-5 text-muted">
+        {children}
+        {activeTab !== 'referrals' && activeTab !== 'briefing' && activeTab !== 'one' && <details className="global-metric-guide report-details text-xs leading-5 text-muted">
           <summary className="cursor-pointer font-semibold text-ink">Quick guide to the numbers</summary>
           <dl className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <div><dt className="font-semibold text-ink">Accounts</dt><dd>Different signed-in accounts. One account may use several devices; an account is not a verified unique person.</dd></div>
@@ -166,7 +176,7 @@ export function DashboardShell({ activeTab, locationActive, onNavigate, onLocati
             <div><dt className="font-semibold text-ink">Daily, weekly and monthly</dt><dd>1, 7 and 30 days ending on the date shown. Counts across days or agents can overlap.</dd></div>
           </dl>
         </details>}
-        {children}
+        <div className="dashboard-status" role="status"><span className={cn('status-dot', refreshing && 'is-updating')} /><span>{status}</span></div>
         <footer className="dashboard-footer"><span>hussh Matrix</span><span>{activeTab === 'plg' ? 'Private PLG operations · account access restricted' : activeTab === 'referrals' ? 'Published referral standings' : 'Aggregate metrics · source timestamps shown on each report'}</span></footer>
       </div>
     </div>

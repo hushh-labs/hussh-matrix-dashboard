@@ -1,7 +1,8 @@
 import { useMetricsResource } from '../lib/use-metrics-resource';
 import { MetricsSkeleton, MetricsUpdateStatus } from './MetricsLoading';
+import { ReportDetails, ReportTabs } from './ReportControls';
 import { SingleDayPicker } from './SingleDayPicker';
-import { ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Clock3, Info, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
+import { ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Clock3, Info } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { FounderAgent, FounderBriefingData, FounderMeasure, FounderPeriod } from '../lib/founder-briefing';
@@ -50,14 +51,14 @@ function ChangeBadge({ measure, neutralWhenNew = false }: { measure: FounderMeas
   </span>;
 }
 
-function MetricCard({ eyebrow, label, measure, note }: {
-  eyebrow: string; label: string; measure: FounderMeasure; note: string;
+function MetricCard({ label, measure, note }: {
+  label: string; measure: FounderMeasure; note: string;
 }) {
-  return <article className="dashboard-card founder-kpi">
-    <p className="dashboard-label">{eyebrow}</p>
+  return <article className="dashboard-card founder-kpi" title={note}>
+
     <h3 className="mt-2">{label}</h3>
     <div className="founder-kpi-value"><p>{number(measure.current)}</p><ChangeBadge measure={measure} /></div>
-    <details><summary>How this is counted</summary><p>{note}</p></details>
+    <p className="founder-kpi-note">{label === 'First-time accounts' ? 'First seen, not registrations' : label === 'Active accounts' ? 'Signed in · all platforms' : label === 'Returning accounts' ? 'First seen before this period' : 'At least one feature action'}</p>
   </article>;
 }
 
@@ -115,7 +116,6 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
   const resource = useMetricsResource<FounderBriefingData>(briefingUrl(period), { refreshKey, refreshIntervalMs: 30_000,
     prefetchUrls: [7, 30, 90].map(days => briefingUrl(founderPresetRange(days as 7 | 30 | 90))) });
   const brief = resource.data?.period && resource.data.one?.platforms && resource.data.one?.agents && resource.data.one?.daily && resource.data.search ? resource.data : null;
-  const loading = resource.loading || resource.refreshing;
   const error = resource.error || Boolean(resource.data && !brief);
 
   const applyRange = (next: FounderPeriod | null, kind: Selection) => {
@@ -134,8 +134,6 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
     .filter((agent) => agent.instrumented)
     .sort((a, b) => (b.identifiedAccounts.current ?? 0) - (a.identifiedAccounts.current ?? 0)
       || (b.interactions.current ?? 0) - (a.interactions.current ?? 0)), [brief]);
-  const mostAccounts = rankedAgents.find((agent) => (agent.identifiedAccounts.current ?? 0) > 0);
-  const mostInteractions = [...rankedAgents].sort((a, b) => (b.interactions.current ?? 0) - (a.interactions.current ?? 0))[0];
   const displayedAgents = [...(brief?.one.agents ?? [])].sort((a, b) => Number(b.instrumented) - Number(a.instrumented)
     || (b.identifiedAccounts.current ?? 0) - (a.identifiedAccounts.current ?? 0)
     || (b.interactions.current ?? 0) - (a.interactions.current ?? 0));
@@ -156,150 +154,86 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
   }));
   const hasPreviousLine = chartData.some((point) => point.previous !== null);
 
-  return <main className="space-y-5 pb-10">
-    <section className="dashboard-card report-filter" aria-label="Founder reporting period">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="flex items-center gap-2 text-sm font-semibold text-ink"><CalendarDays className="h-4 w-4 text-brand-600" /> Reporting period</p>
-          <p className="mt-1 text-xs text-muted">Live product data through {dayLabel(latestComplete)} · compared with the preceding equal-length period</p>
+  const qualityWarning = webIdentityGap || webPreviousIdentityGap || lowCoverage || !brief?.one.available
+    || !brief?.one.comparisonReady || !brief?.one.interactionComparisonReady || brief?.one.hasNativeEnvironmentConflict;
+
+  return <main className="overview-report">
+    <section className="overview-period" aria-label="Reporting period">
+      <span className="text-sm font-medium text-ink">Reporting period</span>
+      <ReportTabs label="Overview reporting period" value={selection}
+        options={[{ value: '7d', label: '7 days' }, { value: '30d', label: '30 days' }, { value: '90d', label: '90 days' }]}
+        onChange={value => applyRange(founderPresetRange(Number(value.replace('d', '')) as 7 | 30 | 90), value)} />
+      <details className="overview-more-dates">
+        <summary><CalendarDays size={15} aria-hidden="true" />More dates</summary>
+        <div className="overview-date-fields">
+          <button type="button" className="text-link" onClick={() => applyRange(founderCustomRange(latestComplete, latestComplete), 'day')}>Latest complete day</button>
+          <SingleDayPicker label="Briefing specific day" value={period.days === 1 ? period.endDate : ''} min={FOUNDER_EARLIEST_DATE} max={latestComplete}
+            onChange={day => applyRange(founderCustomRange(day, day), 'day')} />
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="min-w-0 flex-1 text-xs text-muted">Choose a month
+              <input type="month" value={draftMonth} min="2026-05" max={latestComplete.slice(0, 7)} onChange={event => setDraftMonth(event.target.value)} />
+            </label>
+            <button type="button" className="quiet-button" onClick={() => applyRange(founderMonthRange(draftMonth), 'month')}>View month</button>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="min-w-0 flex-1 text-xs text-muted">From<input type="date" value={draftStart} min={FOUNDER_EARLIEST_DATE} max={latestComplete} onChange={event => setDraftStart(event.target.value)} /></label>
+            <label className="min-w-0 flex-1 text-xs text-muted">To<input type="date" value={draftEnd} min={FOUNDER_EARLIEST_DATE} max={latestComplete} onChange={event => setDraftEnd(event.target.value)} /></label>
+            <button type="button" className="quiet-button" onClick={() => applyRange(founderCustomRange(draftStart, draftEnd), 'custom')}>Apply dates</button>
+          </div>
+          {rangeError && <p role="alert" className="text-xs text-danger">{rangeError}</p>}
         </div>
-        {loading && <span role="status" className="inline-flex items-center gap-2 text-xs text-brand-600"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Updating</span>}
-      </div>
-      <div className="filter-presets">
-        {([7, 30, 90] as const).map((days) => <button key={days} type="button"
-          aria-pressed={selection === `${days}d`}
-          onClick={() => applyRange(founderPresetRange(days), `${days}d`)}
-          className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${selection === `${days}d` ? 'bg-subtle text-ink' : 'bg-transparent text-muted'}`}>
-          Last {days} days
-        </button>)}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button type="button" onClick={() => applyRange(founderCustomRange(latestComplete, latestComplete), 'day')}
-          aria-pressed={selection === 'day' && period.endDate === latestComplete}
-          className="min-h-10 rounded-lg bg-brand-50 px-3 text-sm font-semibold text-brand-600">Latest complete day</button>
-        <SingleDayPicker label="Briefing specific day" value={period.days === 1 ? period.endDate : ''} min={FOUNDER_EARLIEST_DATE} max={latestComplete}
-          onChange={day => applyRange(founderCustomRange(day, day), 'day')} />
-      </div>
-      <details className="filter-custom"><summary>Custom dates or calendar month</summary>
-      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-40 flex-1 text-xs font-semibold text-muted">Choose a month
-            <input type="month" value={draftMonth} min="2026-05" max={latestComplete.slice(0, 7)} onChange={(event) => setDraftMonth(event.target.value)}
-              className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3 text-sm text-ink" />
-          </label>
-          <button type="button" onClick={() => applyRange(founderMonthRange(draftMonth), 'month')}
-            className={`min-h-10 rounded-lg px-3 text-sm font-semibold ${selection === 'month' ? 'bg-brand-500 text-white' : 'bg-brand-50 text-brand-600'}`}>View month</button>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-32 flex-1 text-xs font-semibold text-muted">From
-            <input type="date" value={draftStart} min={FOUNDER_EARLIEST_DATE} max={latestComplete} onChange={(event) => setDraftStart(event.target.value)}
-              className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3 text-sm text-ink" />
-          </label>
-          <label className="min-w-32 flex-1 text-xs font-semibold text-muted">To
-            <input type="date" value={draftEnd} min={FOUNDER_EARLIEST_DATE} max={latestComplete} onChange={(event) => setDraftEnd(event.target.value)}
-              className="mt-1 block min-h-10 w-full rounded-lg border border-stroke bg-surface px-3 text-sm text-ink" />
-          </label>
-          <button type="button" onClick={() => applyRange(founderCustomRange(draftStart, draftEnd), 'custom')}
-            className={`min-h-10 rounded-lg px-3 text-sm font-semibold ${selection === 'custom' ? 'bg-brand-500 text-white' : 'bg-brand-50 text-brand-600'}`}>Apply dates</button>
-        </div>
-      </div>
       </details>
-      {rangeError && <p role="alert" className="mt-3 text-xs font-medium text-danger">{rangeError}</p>}
+      <MetricsUpdateStatus period={rangeLabel(period)} updatedAt={brief ? resource.updatedAt : null} loading={resource.loading} refreshing={resource.refreshing} error={error} />
     </section>
-
-    <MetricsUpdateStatus period={rangeLabel(period)} updatedAt={brief ? resource.updatedAt : null} loading={resource.loading} refreshing={resource.refreshing} error={error} />
+    <p className="overview-comparison">Compared with the previous {period.days === 1 ? 'day' : `${period.days} days`} · completed days only</p>
     {resource.loading && !brief ? <MetricsSkeleton label="Loading the selected briefing period" />
-      : error && !brief ? <div role="alert" className="rounded-2xl border border-amber-200 bg-warning-soft p-6 text-sm text-warning">The production briefing is temporarily unavailable. No estimate is shown.</div>
+      : error && !brief ? <div role="alert" className="rounded-lg bg-warning-soft p-6 text-sm text-warning">The production briefing is temporarily unavailable. No estimate is shown.</div>
         : brief ? <>
-          {error && <p role="status" className="rounded-xl bg-warning-soft p-3 text-sm text-warning">Refresh failed; the previous period remains visible.</p>}
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard eyebrow="One · all platforms" label="Active signed-in accounts" measure={brief.one.activeAccounts}
-              note="A signed-in account is counted once across iOS, Android and web when an account identifier is available." />
-            <MetricCard eyebrow="One · audience growth" label="Accounts first seen in this period" measure={brief.one.firstObservedAccounts}
-              note="Signed-in accounts seen for the first time in available One analytics history. This is not a registration count." />
-            <MetricCard eyebrow="One · audience loyalty" label="Returning active accounts" measure={returningAccounts}
-              note="Active signed-in accounts first observed before this period. Repeat actions and extra devices do not add users." />
-            <MetricCard eyebrow="One · feature adoption" label="Accounts using features" measure={brief.one.agentEngagedAccounts}
-              note="Distinct signed-in accounts with at least one measured feature action—not a sum of agent rows." />
-
+          {error && <p role="status" className="rounded-lg bg-warning-soft p-3 text-sm text-warning">Refresh failed; the previous period remains visible.</p>}
+          <div className="overview-kpis">
+            <MetricCard label="Active accounts" measure={brief.one.activeAccounts} note="Distinct signed-in accounts across measured iOS, Android and web activity." />
+            <MetricCard label="First-time accounts" measure={brief.one.firstObservedAccounts} note="First seen in available analytics history during this period. This is not a registration count." />
+            <MetricCard label="Returning accounts" measure={returningAccounts} note="Active accounts first seen before this period." />
+            <MetricCard label="Using features" measure={brief.one.agentEngagedAccounts} note="Distinct accounts with a measured feature action. Accounts are not added across features." />
           </div>
-
-          <section className="grid gap-4 lg:grid-cols-[1.45fr_1fr]">
-            <div className="dashboard-card p-5 sm:p-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Audience over time</p>
-                  <h2 className="mt-1 text-xl font-semibold text-ink">The trend, day by day</h2></div>
-                <div className="flex rounded-lg bg-subtle p-1" role="group" aria-label="Trend measure">
-                  <button type="button" aria-pressed={chartMode === 'accounts'} onClick={() => setChartMode('accounts')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'accounts' ? 'bg-surface text-ink shadow-sm' : 'text-muted'}`}>Accounts</button>
-                  <button type="button" aria-pressed={chartMode === 'interactions'} onClick={() => setChartMode('interactions')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${chartMode === 'interactions' ? 'bg-surface text-ink shadow-sm' : 'text-muted'}`}>Feature actions</button>
-                </div>
+          {qualityWarning && <a className="overview-quality-note" href="#overview-data-quality" onClick={() => document.querySelector('#overview-data-quality > details')?.setAttribute('open', '')}><Info size={16} />Some data is incomplete. Review data quality before comparing totals.</a>}
+          <section className="overview-trend" aria-labelledby="overview-trend-title">
+            <div className="report-section-heading"><h2 id="overview-trend-title">Activity over time</h2>
+              <ReportTabs label="Trend measure" value={chartMode} options={[{ value: 'accounts', label: 'Accounts' }, { value: 'interactions', label: 'Feature actions' }]} onChange={setChartMode} />
+            </div>
+            {brief.one.available ? <>
+              <div className="overview-chart" role="img" aria-label={`Daily ${chartMode === 'accounts' ? 'identified active accounts' : 'feature actions'} trend for ${rangeLabel(brief.period)}`}>
+                <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 640, height: 210 }}>
+                  <AreaChart data={chartData} margin={{ top: 14, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid vertical={false} stroke="var(--matrix-stroke)" />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: 'var(--matrix-muted)', fontSize: 11 }} minTickGap={65} />
+                    <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: 'var(--matrix-muted)', fontSize: 11 }} />
+                    <Tooltip formatter={value => number(typeof value === 'number' ? value : null)} />
+                    {hasPreviousLine && <Area isAnimationActive={false} type="monotone" dataKey="previous" name="Previous period" fill="transparent" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="5 4" connectNulls={false} />}
+                    <Area isAnimationActive={false} type="monotone" dataKey="current" name="Selected period" fill="#465fff" fillOpacity={0.07} stroke="#465fff" strokeWidth={2} connectNulls={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
-              {brief.one.available ? <>
-                <div className="mt-5 h-60 w-full" role="img" aria-label={`Daily ${chartMode === 'accounts' ? 'identified active accounts' : 'feature actions'} trend for ${rangeLabel(brief.period)}`}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 8, right: 10, left: -20, bottom: 0 }}>
-                      <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="3 3" />
-                      <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#64748b', fontSize: 11 }} minTickGap={25} />
-                      <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#64748b', fontSize: 11 }} />
-                      <Tooltip formatter={(value) => number(typeof value === 'number' ? value : null)} />
-                      {hasPreviousLine && <Area type="monotone" dataKey="previous" name="Earlier period" fill="#cbd5e1" fillOpacity={0.12} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="5 4" />}
-                      <Area type="monotone" dataKey="current" name="Selected period" fill="#465fff" fillOpacity={0.16} stroke="#3641f5" strokeWidth={2.5} />
-                    </AreaChart>
-                  </ResponsiveContainer>
+              <div className="overview-legend"><span><i />Selected period</span>{hasPreviousLine && <span><i className="is-previous" />Previous period</span>}</div>
+              <ReportDetails title="View daily numbers">
+                <div className="metrics-table-scroll" role="region" aria-label="Daily accounts and feature actions" tabIndex={0}>
+                  <table><thead><tr><th scope="col">Date</th><th scope="col" className="text-right">Active accounts</th><th scope="col" className="text-right">Feature actions</th></tr></thead>
+                    <tbody>{brief.one.daily.map(point => <tr key={point.day}><th scope="row" className="text-left font-normal">{point.day}</th><td className="text-right">{number(point.activeAccounts)}</td><td className="text-right">{number(point.agentInteractions)}</td></tr>)}</tbody>
+                  </table>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted">
-                  <span><i className="mr-1 inline-block h-2 w-4 rounded bg-brand-500" /> Selected period</span>
-                  {hasPreviousLine && <span><i className="mr-1 inline-block h-2 w-4 rounded bg-slate-400" /> Earlier equal-length period</span>}
-                </div>
-                <details className="mt-4 border-t border-stroke pt-3"><summary className="cursor-pointer text-sm font-semibold text-brand-600">View daily numbers</summary>
-                  <div className="metrics-table-scroll mt-3" role="region" aria-label="Daily accounts and feature actions" tabIndex={0}>
-                    <table className="w-full text-left text-xs"><thead><tr className="text-muted"><th scope="col" className="py-3">Date</th><th scope="col" className="px-3 text-right">Active signed-in accounts</th><th scope="col" className="pl-3 text-right">Feature actions</th></tr></thead>
-                      <tbody>{brief.one.daily.map(point => <tr key={point.day} className="border-t border-stroke"><th scope="row" className="py-3 font-medium">{point.day}</th><td className="px-3 text-right">{number(point.activeAccounts)}</td><td className="pl-3 text-right">{number(point.agentInteractions)}</td></tr>)}</tbody>
-                    </table>
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-muted">An account can appear on several days. Adding daily counts does not give the unique total for the period. Repeated feature actions count again.</p>
-                </details>
-              </> : <p className="mt-6 text-sm text-muted">One activity source is unavailable; a trend cannot be shown.</p>}
-            </div>
-            <div className="dashboard-card p-5 sm:p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Founder readout</p>
-              <h2 className="mt-1 text-xl font-semibold text-ink">What stands out</h2>
-              <ul className="mt-5 space-y-4 text-sm leading-6 text-ink">
-                <li><strong className="text-ink">iOS:</strong> {number(ios?.identifiedAccounts.current ?? null)} signed-in accounts; <strong className="text-ink">web:</strong> {webIdentityGap ? 'user total unverified' : `${number(web?.identifiedAccounts.current ?? null)} signed-in accounts`}. <strong className="text-ink"> Android:</strong> {number(android?.identifiedAccounts.current ?? null)} signed-in accounts. These platform populations can overlap.</li>
-                <li>{mostAccounts ? <><strong className="text-ink">Most signed-in accounts used {mostAccounts.label}:</strong> {number(mostAccounts.identifiedAccounts.current)} in this period.</>
-                  : 'No agent has a verifiable signed-in audience in this range yet.'}</li>
-                <li>{mostInteractions ? <><strong className="text-ink">Most recorded actions:</strong> {mostInteractions.label} had {number(mostInteractions.interactions.current)}. Repeats count; this is not a user count.</>
-                  : 'Agent interaction data is not available yet.'}</li>
-                <li><strong className="text-ink">First useful action:</strong> {number(brief.one.activatedAccounts.current)} signed-in accounts shared or received a location.</li>
-              </ul>
-            </div>
+                <p className="report-footnote">Daily account counts can overlap. Adding them does not give the unique total for the period.</p>
+              </ReportDetails>
+            </> : <p className="py-8 text-sm text-muted">Activity data is unavailable for this period.</p>}
           </section>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <MetricCard eyebrow="One · iOS" label="Active iOS accounts" measure={ios?.identifiedAccounts ?? { current: null, previous: null }}
-              note="Distinct signed-in accounts active in the public iOS build. Unidentified activity is excluded." />
-            <MetricCard eyebrow="One · Android" label="Active Android accounts · live service"
-              measure={android?.identifiedAccounts ?? {current:null,previous:null}}
-              note={android?.captureState === 'observed' ? 'Distinct signed-in Android accounts with a production backend tag. Platform audiences overlap.' : 'Awaiting exported Android activity with a production backend tag. The current public build used UAT; missing history is not zero.'} />
-            <MetricCard eyebrow="One · web" label={webIdentityGap ? 'Web user count under review' : 'Active web accounts'}
-              measure={webMeasure}
-              note={webIdentityGap
-                ? `${number(web?.identifiedAccounts.current ?? null)} account IDs reached analytics, but only ${number(web?.signedInBoundIdentifiers ?? null)} of ${number(web?.signInIdentifiers ?? null)} sign-in browser identifiers later carried an account ID. This is not a reliable total of web users.`
-                : webPreviousIdentityGap
-                  ? 'Current signed-in accounts are shown, but growth is withheld: the earlier period did not reliably bind signed-in web activity to accounts.'
-                  : 'Distinct signed-in accounts active on one.hushh.ai. A person on both platforms is not added twice above.'} />
-          </div>
-
-          <section className="dashboard-card p-5 sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Inside One</p>
-                <h2 className="mt-1 text-xl font-semibold text-ink">What do people use most?</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">See which agents people use and whether recorded steps succeed. Accounts are counted once within each row; actions can repeat. The same account can appear in several rows.</p></div>
-              <button type="button" onClick={onExploreOne} className="inline-flex items-center gap-1 text-sm font-semibold text-brand-600 hover:text-sky-900">Explore full One analytics <ArrowRight className="h-4 w-4" /></button>
-            </div>
-            <div className="mt-5 overflow-x-auto">
+          <div className="overview-breakdowns">
+            <section aria-labelledby="top-features-title"><h2 id="top-features-title">Most used features</h2>
+              <div className="overview-feature-list">{rankedAgents.slice(0, 3).map(agent => <div className="overview-feature-row" key={agent.key}>
+                <span>{agent.label}</span><span className="feature-track" aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(100, (agent.identifiedAccounts.current ?? 0) / Math.max(1, rankedAgents[0]?.identifiedAccounts.current ?? 1) * 100))}%` }} /></span>
+                <strong>{number(agent.identifiedAccounts.current)}</strong><small>accounts</small>
+              </div>)}</div>
+              {!rankedAgents.length && <p className="report-footnote">Feature usage is not available yet.</p>}
+              <ReportDetails title="All feature results" hint={`${displayedAgents.length} features`}>
+                <p className="report-footnote">Accounts can appear in several rows. Actions include repeats.</p>
               <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="min-w-[760px] w-full text-left">
                 <thead><tr className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted">
                   <th scope="col" className="pb-3 pr-5">Feature / behaviour</th>
@@ -311,25 +245,26 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                 </tr></thead>
                 <tbody>{displayedAgents.map((agent) => <AgentRow key={agent.key} agent={agent} />)}</tbody>
               </table></div>
+                <p className="report-footnote">Waiting for result data means activity was recorded but its result has not arrived. Marketplace measures profile views, not purchases.</p>
+              </ReportDetails>
+            </section>
+            <section aria-labelledby="platform-activity-title"><h2 id="platform-activity-title">Platform activity</h2>
+              <div className="overview-platform-list">{[
+                { label: 'iOS', measure: ios?.identifiedAccounts ?? { current: null, previous: null } },
+                { label: 'Android', measure: android?.identifiedAccounts ?? { current: null, previous: null } },
+                { label: 'Web', measure: webMeasure },
+              ].map(platform => <div key={platform.label}><span>{platform.label}</span><strong>{number(platform.measure.current)}</strong><small>accounts</small></div>)}</div>
+              <p className="report-footnote">Accounts may overlap across platforms.{webIdentityGap ? ' Web totals are withheld while identity tracking is under review.' : ''}</p>
+            </section>
+          </div>
+          <ReportDetails title="Search performance" hint="One website">
+            <div className="flex flex-wrap items-end gap-8"><div><p className="text-sm text-muted">Google clicks</p><p className="text-3xl font-semibold">{number(brief.search.clicks.current)}</p></div>
+              <div><p className="text-sm text-muted">Search appearances</p><p className="text-3xl font-semibold">{number(brief.search.impressions.current)}</p></div><ChangeBadge measure={brief.search.clicks} />
             </div>
-            <p className="mt-4 text-xs leading-5 text-muted">Waiting for result data means activity was recorded, but its result has not arrived yet. Marketplace counts profile views; it does not count completed purchases.</p>
-          </section>
-
-          <section className="grid gap-4 lg:grid-cols-2">
-            <div className="dashboard-card p-5 sm:p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-600">Acquisition · One web</p>
-              <h2 className="mt-1 text-xl font-semibold text-ink">Discovery from Google Search</h2>
-              <div className="mt-4 flex flex-wrap items-end gap-7">
-                <div><p className="text-xs text-muted">Clicks</p><p className="text-3xl font-semibold text-ink">{number(brief.search.clicks.current)}</p></div>
-                <div><p className="text-xs text-muted">Impressions</p><p className="text-3xl font-semibold text-ink">{number(brief.search.impressions.current)}</p></div>
-                <ChangeBadge measure={brief.search.clicks} />
-              </div>
-              <p className="mt-4 text-sm leading-6 text-muted">Google Search Console counts search-result clicks and appearances for One’s production website. Clicks are neither unique visitors nor app users.</p>
-              {!brief.search.available && <p className="mt-2 text-xs font-medium text-warning">The selected Search Console export is incomplete; no value is guessed.</p>}
-            </div>
-            <div className="rounded-2xl border border-amber-200 bg-warning-soft p-5 sm:p-6">
-              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-warning"><ShieldAlert className="h-4 w-4" /> Data quality</p>
-              <h2 className="mt-1 text-xl font-semibold text-ink">What to keep in mind</h2>
+            <p className="report-footnote">Google search clicks and appearances are not unique visitors or app users.</p>
+            {!brief.search.available && <p className="report-footnote text-warning">The search export is incomplete; no value is guessed.</p>}
+          </ReportDetails>
+          <div id="overview-data-quality"><ReportDetails title="Data quality & definitions" hint={qualityWarning ? 'Review needed' : undefined}>
               <ul className="mt-4 space-y-2 text-sm leading-6 text-ink">
                 {webIdentityGap && <li>Web identity tracking needs repair: {number(web?.signInIdentifiers ?? null)} browser identifiers recorded a successful sign-in, but only {number(web?.signedInBoundIdentifiers ?? null)} of those later carried an account ID in this period. Sign-ins and browsers are <strong>not</strong> unique people. The web user total and its growth percentage are withheld.</li>}
                 {!webIdentityGap && webPreviousIdentityGap && <li>The earlier web period had {number(web?.previousSignedInBoundIdentifiers ?? null)} account-bound identifiers after {number(web?.previousSignInIdentifiers ?? null)} signed-in identifiers. Its identified-account count is not a reliable baseline, so web growth is withheld.</li>}
@@ -340,9 +275,16 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
                 {!brief.one.available && <li>The One GA4 source could not be verified for this selection.</li>}
                 {!lowCoverage && brief.one.comparisonReady && !brief.one.hasNativeEnvironmentConflict && brief.one.available && <li>Account-linked coverage and comparison history meet this briefing’s checks. Anonymous activity remains outside person counts.</li>}
               </ul>
-              <p className="mt-3 flex items-start gap-1.5 text-xs leading-5 text-warning"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> This briefing includes Android activity only when it is marked as using the live service. Test and debug Android activity is excluded.</p>
-            </div>
-          </section>
+            <dl className="overview-definitions">
+              <div><dt>Active accounts</dt><dd>Different signed-in accounts with measured activity. One account counts once across devices when its identifier is available.</dd></div>
+              <div><dt>First-time accounts</dt><dd>First seen in available analytics history in this period. This does not mean newly registered.</dd></div>
+              <div><dt>Returning accounts</dt><dd>Active accounts first seen before this period.</dd></div>
+              <div><dt>Using features</dt><dd>Accounts with at least one measured feature action. Repeated actions do not add accounts.</dd></div>
+              <div><dt>Missing data</dt><dd>0 means no matching activity was recorded. An em dash means unavailable or unmeasured.</dd></div>
+            </dl>
+            <p className="report-footnote">Android activity is included only when marked as using the live service. Test and debug activity is excluded. Accounts are not verified unique people.</p>
+          </ReportDetails></div>
+          <button type="button" onClick={onExploreOne} className="text-link overview-explore">Explore One app <ArrowRight size={16} /></button>
         </> : null}
   </main>;
 }

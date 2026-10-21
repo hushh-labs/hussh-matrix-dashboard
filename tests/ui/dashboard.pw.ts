@@ -5,7 +5,14 @@ import { allAnalytics, founder, mockDashboard, one } from './fixtures';
 
 async function navigate(page: Page, label: string) {
   if (page.viewportSize()!.width < 1280) await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button', { name: label, exact: true }).click();
+  const nav = page.getByRole('navigation', { name: 'Dashboard sections' });
+  if (!await nav.getByRole('button', { name: label, exact: true }).isVisible()) {
+    if (label === 'One Location' || label === 'Referrals') {
+      await nav.getByRole('button', { name: 'One app', exact: true }).click();
+      if (page.viewportSize()!.width < 1280) await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+    } else await nav.getByRole('button', { name: 'More reports', exact: true }).click();
+  }
+  await nav.getByRole('button', { name: label, exact: true }).click();
   await expect(page.locator('.dashboard-page-heading h1')).toHaveText(label);
   await expect(page.getByText('This page failed to render.')).toHaveCount(0);
 }
@@ -18,6 +25,48 @@ async function assertFits(page: Page) {
     expect(await table.evaluate(element => Boolean(element.closest('.metrics-table-scroll'))), 'Wide tables need an internal scroll region').toBe(true);
   }
 }
+
+test('overview stays focused and One reports reveal one subject at a time', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockDashboard(page); await page.goto('/');
+  await expect(page.locator('.founder-kpi')).toHaveCount(4);
+  const nav = page.getByRole('navigation', { name: 'Dashboard sections' });
+  await expect(nav.getByRole('button')).toHaveCount(5);
+  await expect(nav.getByRole('button', { name: 'More reports' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByLabel('Briefing specific day', { exact: true })).not.toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Most used features', exact: true })).toBeVisible();
+  await expect(page.getByRole('table')).toHaveCount(0);
+  await page.getByText('All feature results', { exact: true }).click();
+  await expect(page.getByRole('table')).toBeVisible();
+  await page.getByRole('button', { name: 'Explore One app', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Daily agent traffic', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Daily agent traffic', exact: true })).toHaveCount(0);
+  await page.getByText('Compare daily feature activity', { exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Daily agent traffic', exact: true })).toBeVisible();
+  await expect(page.locator('.feature-directory > button')).toHaveCount(one.capabilities.length);
+  await page.getByRole('button', { name: 'Retention', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Do they come back?', exact: true })).toBeVisible();
+  await expect(page.locator('.feature-directory')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+  await assertFits(page);
+});
+
+test('website selector isolates reports and keeps all products reachable', async ({ page }) => {
+  await mockDashboard(page); await page.goto('/');
+  await navigate(page, 'Website traffic');
+  await expect(page.getByRole('heading', { name: 'One website traffic and data status' })).toBeVisible();
+  const selector = page.getByRole('group', { name: 'Website report', exact: true });
+  await selector.getByRole('button', { name: 'hushh.ai', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Analytics status matrix' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'One website traffic and data status' })).toHaveCount(0);
+  await selector.getByRole('button', { name: 'hushhtech.com', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Complete report', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Analytics status matrix' })).toHaveCount(0);
+  await assertFits(page);
+});
 
 for (const width of [320, 390, 768, 1024, 1440, 1920]) {
   test(`all main pages fit at ${width}px`, async ({ page }) => {
@@ -67,6 +116,7 @@ test('agent detail pages, feature disclosures and the chat panel fit small scree
   await expect(page.locator('.founder-kpi').first()).toBeVisible();
   for (const label of ['Finance', 'Consent', 'Gmail', 'Advisor', 'Marketplace', 'Memory', 'Wallet', 'Calendar', 'KYC', 'Connected systems']) {
     await navigate(page, 'One app');
+    await page.getByRole('button', { name: 'Features', exact: true }).click();
     await page.getByRole('button', { name: `Open detailed ${label} analytics`, exact: true }).click();
     await expect(page.getByRole('button', { name: /back/i }).first()).toBeVisible();
     if (label === 'Finance') await expect(page.getByRole('img', { name: 'Daily agent device trend', exact: true })).toBeVisible();
@@ -111,7 +161,7 @@ test('overview keeps additional metrics and source coverage available on demand'
   await page.setViewportSize({ width: 320, height: 900 });
   await mockDashboard(page); await page.goto('/');
   await expect(page.locator('.founder-kpi').first()).toBeVisible();
-  await navigate(page, 'Analytics overview');
+  await navigate(page, 'Website traffic');
   await page.locator('summary').filter({ hasText: 'More product metrics' }).click();
   await expect(page.getByText('hushhtech.com Users', { exact: true })).toBeVisible();
   await page.locator('summary').filter({ hasText: 'Data sources and coverage' }).click();
@@ -138,12 +188,12 @@ test('sidebar collapse, persistent theme, charts and date filtering work', async
     return url.pathname === '/api/analytics/founder'
       && (Date.parse(url.searchParams.get('end_date') ?? '') - Date.parse(url.searchParams.get('start_date') ?? '')) / 86_400_000 + 1 === 7;
   });
-  await page.getByRole('button', { name: 'Last 7 days', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Last 7 days', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: '7 days', exact: true }).click();
+  await expect(page.getByRole('button', { name: '7 days', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const requested = new URL((await request).url());
   const days = (Date.parse(requested.searchParams.get('end_date')!) - Date.parse(requested.searchParams.get('start_date')!)) / 86_400_000 + 1;
   expect(days).toBe(7);
-  await page.getByText('Custom dates or calendar month', { exact: true }).click();
+  await page.getByText('More dates', { exact: true }).click();
   await expect(page.getByLabel('Choose a month')).toBeVisible();
 });
 
@@ -177,6 +227,7 @@ test('exact-day reporting and adjacent-day controls use existing API date parame
   await mockDashboard(page); await page.goto('/');
   await expect(page.locator('.founder-kpi').first()).toBeVisible();
   const requested = page.waitForRequest(request => request.url().includes('/api/analytics/founder?') && new URL(request.url()).searchParams.get('start_date') === '2026-09-30');
+  await page.getByText('More dates', { exact: true }).click();
   await page.getByLabel('Briefing specific day', { exact: true }).fill('2026-09-30');
   const url = new URL((await requested).url());
   expect(url.searchParams.get('end_date')).toBe('2026-09-30');
@@ -184,6 +235,7 @@ test('exact-day reporting and adjacent-day controls use existing API date parame
   await expect(page.getByLabel('Briefing specific day', { exact: true })).toHaveValue('2026-10-01');
   await page.getByRole('button', { name: 'Latest complete day', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Briefing specific day: next day', exact: true })).toBeDisabled();
+  await page.getByText('More dates', { exact: true }).click();
   await page.getByText('View daily numbers', { exact: true }).click();
   await expect(page.getByRole('region', { name: 'Daily accounts and feature actions', exact: true })).toBeVisible();
   await navigate(page, 'One app');
@@ -191,11 +243,11 @@ test('exact-day reporting and adjacent-day controls use existing API date parame
     const url = new URL(request.url());
     return url.pathname === '/api/analytics/all' && url.searchParams.get('one_start_date') === '2026-09-30' && url.searchParams.get('one_end_date') === '2026-09-30';
   });
+  await page.getByText('More dates', { exact: true }).click();
   await page.getByLabel('One app specific day', { exact: true }).fill('2026-09-30');
   await oneRequest;
   await page.getByRole('button', { name: 'One app specific day: previous day', exact: true }).click();
   await expect(page.getByLabel('One app specific day', { exact: true })).toHaveValue('2026-09-29');
-  await page.getByText('Custom date range', { exact: true }).click();
   await page.getByLabel('One app start date', { exact: true }).fill('2026-09-25');
   await page.getByLabel('One app end date', { exact: true }).fill('2026-09-30');
   const customRequest = page.waitForRequest(request => request.url().includes('one_start_date=2026-09-25') && request.url().includes('one_end_date=2026-09-30'));
@@ -210,6 +262,8 @@ test('daily agent traffic shows real drops, withholds missing data and preserves
   const production = { ...one, capabilities: one.capabilities.map(item => ({ ...item, daily })) };
   await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: { production, uat: null } } } }));
   await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  await page.getByText('Compare daily feature activity', { exact: true }).click();
   const section = page.getByRole('region', { name: 'Daily agent traffic', exact: true });
   await expect(section.getByRole('heading', { name: 'Which agents gained or lost traffic?' })).toBeVisible();
   const row = section.getByRole('row').filter({ has: page.getByRole('button', { name: 'Explore daily Finance activity', exact: true }) });
@@ -221,6 +275,7 @@ test('daily agent traffic shows real drops, withholds missing data and preserves
   await expect(page.getByText('One app data is unavailable for this selection.', { exact: true })).toBeVisible();
   await expect(section).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Main analytics' }).click();
+  await page.getByText('Compare daily feature activity', { exact: true }).click();
   await expect(section).toBeVisible();
 });
 
@@ -230,6 +285,8 @@ test('test-source empty cards never substitute production mobile metrics', async
   const uat = { ...one, sourceWebHost: 'uat.one.hushh.ai', platforms: one.platforms.filter(row => row.platform === 'WEB') };
   await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: { production: one, uat } } } }));
   await page.goto('/'); await navigate(page, 'One app');
+  await page.getByText('More dates', { exact: true }).click();
+  await page.getByText('Activity by platform', { exact: true }).click();
   const dates = await page.getByLabel('One app specific day', { exact: true }).inputValue();
   await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
   const platforms = page.getByRole('region', { name: 'One activity by platform', exact: true });
@@ -247,6 +304,7 @@ test('test-source empty cards never substitute production mobile metrics', async
   const differentRange = { ...one.range, startDate: '2026-01-01', endDate: '2026-01-01' };
   await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: { production: { ...one, range: differentRange }, uat } } } }));
   await page.reload(); await navigate(page, 'One app');
+  await page.getByText('Activity by platform', { exact: true }).click();
   await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
   await expect(platforms.getByRole('button', { name: 'View captured mobile metrics', exact: true })).toHaveCount(0);
   await expect(platforms).not.toContainText('activity is available in Main analytics');
@@ -256,6 +314,8 @@ test('failed daily query cannot appear as zero activity or a confirmed traffic d
   await mockDashboard(page);
   await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: { production: { ...one, capabilityDailyAvailable: false }, uat: null } } } }));
   await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  await page.getByText('Compare daily feature activity', { exact: true }).click();
   const section = page.getByRole('region', { name: 'Daily agent traffic', exact: true });
   await expect(section).toContainText('Daily agent data is unavailable');
   await expect(section.getByRole('table')).toHaveCount(0);
@@ -279,7 +339,8 @@ for (const width of [320, 1440]) {
     }
     for (const label of ['Finance', 'Consent', 'Gmail', 'Advisor', 'Marketplace', 'Memory', 'Wallet', 'Calendar', 'KYC', 'Connected systems']) {
       await navigate(page, 'One app');
-      await page.getByRole('button', { name: `Open detailed ${label} analytics`, exact: true }).click();
+      await page.getByRole('button', { name: 'Features', exact: true }).click();
+    await page.getByRole('button', { name: `Open detailed ${label} analytics`, exact: true }).click();
       await expect(page.getByRole('heading', { name: 'Which agents gained or lost traffic?', exact: true })).toBeVisible();
       await assertFits(page);
       await page.getByRole('button', { name: /back/i }).first().click();
@@ -290,6 +351,7 @@ for (const width of [320, 1440]) {
 test('Instagram filters, pagination, campaign links and metrics chat retain their behavior', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 }); await mockDashboard(page); await page.goto('/');
   await navigate(page, 'Instagram');
+  await page.getByRole('button', { name: 'Posts & Reels', exact: true }).click();
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByText('Page 2 of 2', { exact: true })).toBeVisible();
   await page.getByLabel('Type', { exact: true }).selectOption('REELS');
@@ -297,6 +359,7 @@ test('Instagram filters, pagination, campaign links and metrics chat retain thei
   await expect(page.getByRole('button', { name: 'Next', exact: true })).toHaveCount(0);
   await page.getByLabel('Published', { exact: true }).selectOption('7');
   await page.getByLabel('Sort by', { exact: true }).selectOption('views');
+  await page.getByRole('button', { name: 'Campaign links', exact: true }).click();
   await page.getByLabel('Campaign name', { exact: true }).fill('release-check');
   await page.getByLabel('Placement or variant', { exact: true }).fill('bio');
   const campaign = page.getByRole('link', { name: /utm_campaign=release-check/ });

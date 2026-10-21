@@ -1,3 +1,4 @@
+import { ReportDetails, ReportTabs } from './components/ReportControls';
 import { DashboardShell } from './components/DashboardShell';
 import { isReferralsPath, referralsPath } from './lib/referrals';
 import { SingleDayPicker } from './components/SingleDayPicker';
@@ -715,12 +716,16 @@ function DateRangeControl({
   onCustomRange,
   ariaLabelPrefix = 'Product',
   refreshing = false,
+  expanded = false,
+  onExpandedChange,
 }: {
   range: HushhAiDateRangeState;
   onPreset: (days: DatePreset) => void;
   onCustomRange: (next: HushhAiDateRangeState) => void;
   ariaLabelPrefix?: string;
   refreshing?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }) {
   const [draft, setDraft] = useState(range);
   useLayoutEffect(() => { setDraft(range); }, [range.startDate, range.endDate, range.preset]);
@@ -730,7 +735,7 @@ function DateRangeControl({
 
   return (
     <div
-      className="flex w-full min-w-0 max-w-full flex-col gap-2 rounded-lg border border-stroke bg-surface/88 p-2 shadow-sm backdrop-blur-xl md:w-[360px] md:shrink-0"
+      className="compact-report-dates"
       aria-busy={refreshing}
     >
       <div className="flex items-center gap-2">
@@ -762,9 +767,9 @@ function DateRangeControl({
           {refreshing ? 'Updating' : ''}
         </span>
       </div>
+      <details className="report-details text-xs text-muted" open={expanded} onToggle={event => onExpandedChange?.(event.currentTarget.open)}><summary>More dates</summary>
       <SingleDayPicker label={`${ariaLabelPrefix} specific day`} value={range.startDate === range.endDate ? range.endDate : ''} max={today}
         onChange={day => onCustomRange({ preset: 'custom', startDate: day, endDate: day })} />
-      <details className="rounded-lg bg-canvas px-2 py-1 text-xs text-muted"><summary className="min-h-8 cursor-pointer py-2 font-semibold">Custom date range</summary>
       <div className="mt-2 grid grid-cols-1 gap-2">
         <label className="flex min-h-10 items-center gap-2 rounded-lg bg-canvas px-2 text-xs font-bold text-muted">
           <CalendarDays className="h-3.5 w-3.5 shrink-0" />
@@ -792,7 +797,7 @@ function DateRangeControl({
       </div>
       {pending && <button type="button" onClick={() => { const next = normalizeCustomRange(draft); setDraft(next); onCustomRange(next); }} disabled={!draft.startDate || !draft.endDate} className="min-h-9 rounded-lg bg-[#465fff] px-3 text-xs font-bold text-white disabled:opacity-50">Apply dates</button>}
       </details>
-      <p className="px-1 text-[11px] leading-4 text-muted">Recent data may still arrive.</p>
+
     </div>
   );
 }
@@ -1182,6 +1187,12 @@ export default function Dashboard() {
   const [locationRoute, setLocationRoute] = useState<LocationAnalyticsRoute | null>(() => (
     typeof window === 'undefined' ? null : parseLocationAnalyticsPath(window.location.pathname)
   ));
+  const [dateEditors, setDateEditors] = useState<Record<string, boolean>>({});
+  const dateEditor = (label: string) => ({
+    expanded: dateEditors[label] ?? false,
+    onExpandedChange: (expanded: boolean) => setDateEditors(previous => previous[label] === expanded ? previous : { ...previous, [label]: expanded }),
+  });
+  const [trafficView, setTrafficView] = useState<'one' | 'hushh-ai' | 'hushhtech'>('one');
   const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : window.location.pathname === '/plg' ? 'plg' : isReferralsPath(window.location.pathname) ? 'referrals' : 'briefing'));
   const [briefRefreshKey, setBriefRefreshKey] = useState(0);
   const [instagramRefreshKey, setInstagramRefreshKey] = useState(0);
@@ -1337,8 +1348,8 @@ export default function Dashboard() {
     : activeTab === 'referrals'
     ? 'Referral rankings'
     : activeTab === 'briefing'
-    ? 'One production briefing · choose dates below'
-    : loading ? 'Loading the selected period' : usingMock ? 'Metrics temporarily unavailable · details below' : isRefreshing ? 'Updating metrics in the background' : 'Metrics ready · selected dates below';
+    ? 'One production · completed reporting days'
+    : loading ? 'Loading the selected period' : usingMock ? 'Metrics temporarily unavailable · details below' : isRefreshing ? 'Updating metrics in the background' : 'Metrics ready · dates shown on each report';
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
 
   const ga4SummaryRows = () => {
@@ -1757,7 +1768,7 @@ export default function Dashboard() {
                 refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(rangeForPreset(days))}
                 onCustomRange={setOneRange}
-                ariaLabelPrefix="Growth"
+                ariaLabelPrefix="Growth" {...dateEditor('Growth')}
               />
             )}
           />
@@ -1785,7 +1796,7 @@ export default function Dashboard() {
                 refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(rangeForPreset(days))}
                 onCustomRange={setOneRange}
-                ariaLabelPrefix="One app"
+                ariaLabelPrefix="One app" {...dateEditor('One app')}
               />
             )}
           />
@@ -1802,15 +1813,15 @@ export default function Dashboard() {
                 refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(rangeForPreset(days))}
                 onCustomRange={setOneRange}
-                ariaLabelPrefix="Hussh Connect"
+                ariaLabelPrefix="Hussh Connect" {...dateEditor('Hussh Connect')}
               />
             )}
           />
         ) : activeTab === 'overview' ? (
           loading ? <main className="space-y-6">
             <div className="grid gap-3 lg:grid-cols-2">
-              <DateRangeControl range={kaiRange} onPreset={days => setKaiRange(rangeForPreset(days))} onCustomRange={setKaiRange} ariaLabelPrefix="One web" />
-              <DateRangeControl range={hushhAiRange} onPreset={days => setHushhAiRange(rangeForPreset(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hussh AI" />
+              <DateRangeControl range={kaiRange} onPreset={days => setKaiRange(rangeForPreset(days))} onCustomRange={setKaiRange} ariaLabelPrefix="One web" {...dateEditor('One web')} />
+              <DateRangeControl range={hushhAiRange} onPreset={days => setHushhAiRange(rangeForPreset(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hussh AI" {...dateEditor('Hussh AI')} />
             </div>
             <MetricsSkeleton />
           </main> : <main className="space-y-10">
@@ -1834,6 +1845,10 @@ export default function Dashboard() {
               <div className="mt-5"><SourceMatrix groups={sourceGroups} onMetricClick={handleSourceMetricClick} /></div>
             </details>
 
+            <ReportTabs label="Website report" value={trafficView} onChange={setTrafficView} options={[
+              { value: 'one', label: 'One website' }, { value: 'hushh-ai', label: 'hushh.ai' }, { value: 'hushhtech', label: 'hushhtech.com' },
+            ]} />
+            {trafficView === 'one' && <>
             <section className={dashboardBand}>
               <SectionHeader
                 kicker="one.hushh.ai · production"
@@ -1844,7 +1859,7 @@ export default function Dashboard() {
                     refreshing={isRefreshing}
                     onPreset={(days) => setKaiRange(rangeForPreset(days))}
                     onCustomRange={setKaiRange}
-                    ariaLabelPrefix="One production"
+                    ariaLabelPrefix="One production" {...dateEditor('One production')}
                   />
                 )}
               />
@@ -1931,6 +1946,8 @@ export default function Dashboard() {
             </section>
 
 
+            </>}
+            {trafficView === 'hushh-ai' && <>
             <section className={dashboardBand}>
               <SectionHeader
                 kicker="hushh.ai"
@@ -1941,7 +1958,7 @@ export default function Dashboard() {
                     refreshing={isRefreshing}
                     onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
                     onCustomRange={setHushhAiRange}
-                    ariaLabelPrefix="Hussh AI"
+                    ariaLabelPrefix="Hussh AI" {...dateEditor('Hussh AI')}
                   />
                 )}
               />
@@ -2099,6 +2116,8 @@ export default function Dashboard() {
               </div>
             </section>
 
+            </>}
+            {trafficView === 'hushhtech' && <>
             <section className={dashboardBand}>
               <SectionHeader kicker="hushhtech.com" title="Complete report" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -2138,6 +2157,8 @@ export default function Dashboard() {
               </div>
             </section>
 
+            </>}
+            <ReportDetails title="Cross-product traffic & detailed breakdowns">
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_0.95fr]')}>
               <div className={cn(dashboardCard, 'p-5')}>
                 <SectionHeader kicker="Traffic" title="Ecosystem activity" />
@@ -2322,6 +2343,7 @@ export default function Dashboard() {
                 onItemClick={(item) => openHushhTechDetail(`HusshTech Coverage · ${item.label}`, item)}
               />
             </section>
+            </ReportDetails>
           </main>
         ) : (
           loading ? <MetricsSkeleton /> : <main className="space-y-10">

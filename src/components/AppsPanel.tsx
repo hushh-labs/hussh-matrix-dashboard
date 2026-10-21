@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { ReportTabs, ReportDetails } from './ReportControls';
 import { MetricsSkeleton } from './MetricsLoading';
 import type { ReactNode } from 'react';
 
@@ -40,6 +42,7 @@ interface AppsPanelProps {
 }
 
 export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateControl, loading = false }: AppsPanelProps) {
+  const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
   if (loading) return <main className="space-y-6"><div className="flex justify-end">{dateControl}</div><MetricsSkeleton /></main>;
   return (
     <main className="space-y-8">
@@ -50,8 +53,7 @@ export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateContro
             Hussh 1 &mdash; iOS, Android, Web
           </h2>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-muted">
-            Production and UAT are reported side by side and never added together.
-            For iOS, Production is the App Store and UAT is TestFlight.
+            App usage and downloads. Choose live or test data below.
           </p>
         </div>
         <div className="flex min-w-0 w-full flex-col items-start gap-2 sm:w-auto sm:shrink-0 sm:items-end">
@@ -60,23 +62,24 @@ export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateContro
         </div>
       </header>
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <EnvironmentColumn
+      <ReportTabs label="Hussh Connect environment" value={environment} onChange={setEnvironment}
+        options={[{ value: 'production', label: 'Production' }, { value: 'uat', label: 'UAT / TestFlight' }]} />
+      <div>
+        {environment === 'production' ? <EnvironmentColumn
           label="Production"
           sublabel="iOS: App Store · Android & Web: production"
           one={one}
           appStoreConnectCard={appStoreConnect?.production && (
             <AppStoreConnectCard title="Hussh 1 iOS — App Store" summary={appStoreConnect.production} />
           )}
-        />
-        <EnvironmentColumn
+        /> : <EnvironmentColumn
           label="UAT"
           sublabel="iOS: TestFlight · Android & Web: UAT"
           one={oneUat}
           appStoreConnectCard={appStoreConnect?.testflight && (
             <AppStoreConnectTestFlightCard title="Hussh 1 iOS — TestFlight" summary={appStoreConnect.testflight} />
           )}
-        />
+        />}
       </div>
     </main>
   );
@@ -105,10 +108,9 @@ function EnvironmentColumn({
       {one ? (
         <>
           <ActivesByPlatform rows={one.activeByPlatform} available={one.activeByPlatformAvailable} />
-          <InstallFunnel funnels={one.installFunnel} />
-          <Activation one={one} />
-          <Retention one={one} />
-          <LocationAgentByPlatform rows={one.locationAnalytics.platforms} />
+          <ReportDetails title="First launch & activation"><InstallFunnel funnels={one.installFunnel} /><Activation one={one} /></ReportDetails>
+          <ReportDetails title="Retention"><Retention one={one} /></ReportDetails>
+          <ReportDetails title="Location usage by platform"><LocationAgentByPlatform rows={one.locationAnalytics.platforms} /></ReportDetails>
         </>
       ) : (
         <div className={cn(dashboardPanel, 'p-6 text-center')}>

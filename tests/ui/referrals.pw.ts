@@ -5,9 +5,11 @@ import { mockDashboard, referrals, referralFixture } from './fixtures';
 for (const width of [320,390,768,1440]) test(`rankings only, pagination and layout at ${width}px`, async ({page}) => {
   await page.setViewportSize({width,height:1000});
   await mockDashboard(page); await page.goto('/');
-  await expect(page.locator('.dashboard-page-heading h1')).toHaveText('Founder briefing');
+  await expect(page.locator('.dashboard-page-heading h1')).toHaveText('Overview');
   if (width < 1280) await page.getByRole('button',{name:'Open navigation',exact:true}).click();
   const nav = page.getByRole('navigation',{name:'Dashboard sections'});
+  await nav.getByRole('button',{name:'One app',exact:true}).click();
+  if (width < 1280) await page.getByRole('button',{name:'Open navigation',exact:true}).click();
   await expect(nav.locator('.sidebar-sub-link')).toHaveText(['One Location','Referrals']);
   await nav.getByRole('button',{name:'Referrals',exact:true}).click();
   await expect(page).toHaveURL(/\/referral-analytics$/);
