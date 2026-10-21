@@ -32,6 +32,7 @@ import { OneSubscriptions, applySubscription, queueSubscriptionRevocation, syncS
 import type { SubscriptionChange } from '../src/server/plg/one-subscriptions';
 import { applyDeliveryEvent } from '../src/server/plg/delivery-events';
 
+const reportingProof = { scope: 'production_registered_contacts' as const, policyRevision: 'd'.repeat(64) };
 const NOW = Date.parse('2026-10-19T12:00:00Z');
 
 describe('canonical One subscription projection and send fence', () => {
@@ -50,6 +51,8 @@ describe('canonical One subscription projection and send fence', () => {
     await store.transaction((s) => {
       registerPlgCatalog(s, catalog);
       applySubscription(s, change(), NOW);
+      s.customerReporting = { policyRevision: reportingProof.policyRevision, checkedAt: new Date(NOW).toISOString() };
+      s.contacts[0].customerReporting = { eligible: true, policyRevision: reportingProof.policyRevision, checkedAt: new Date(NOW).toISOString() };
       s.paused = false; s.ready.agent_one = true; s.contacts[0].group = 'treatment';
       s.templates.find((t) => t.journey === 'agent_one' && t.step === 'welcome')!.published = true;
     });
@@ -229,7 +232,7 @@ describe('Private One audience contract', () => {
   const filters = { agentId: 'agent_one' as const, segment: 'all' as const, query: '', graceMinutes: 60 };
   const options = { url: 'https://api.hushh.ai/api/one/plg/audience', secret: 'audience-test-key-with-more-than-32-characters' };
   const fixture = () => ({
-    version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live',
+    version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live', customerReporting: reportingProof,
     catalog: { revision: 'a'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }],
       actions: [{ id: 'agent:agent_one', agentId: 'agent_one', label: 'One', kind: 'agent', proof: 'execution_observed' }] },
     asOf: new Date(NOW).toISOString(), windowStart: new Date(NOW - 7 * 86_400_000).toISOString(),
@@ -335,6 +338,8 @@ function contact(state: PlgState, at = NOW, suffix = '1') {
   );
   // Individual tests focus on delivery behavior, not assignment distribution.
   c.group = 'treatment';
+  state.customerReporting = { policyRevision: reportingProof.policyRevision, checkedAt: new Date(NOW).toISOString() };
+  c.customerReporting = { eligible: true, policyRevision: reportingProof.policyRevision, checkedAt: new Date(NOW).toISOString() };
   return c;
 }
 function ready(state: PlgState) {
@@ -407,6 +412,8 @@ describe('Server-owned automatic follow-up cycle', () => {
     });
     expect(await runAutomationCycle(service, sync, () => NOW)).toMatchObject({ status: 'blocked', uncertain: 1 });
     const state = await store.read();
+    state.customerReporting!.checkedAt = new Date(NOW + 2 * DAY).toISOString();
+    state.contacts[0].customerReporting!.checkedAt = new Date(NOW + 2 * DAY).toISOString();
     expect(candidate(state, state.contacts[0], NOW + 2 * DAY).reason).toContain('Delivery confirmation pending');
     expect(transport).toHaveBeenCalledOnce();
   });
@@ -775,8 +782,8 @@ describe('One retained task evidence bridge', () => {
       const requested = JSON.parse(init!.body as string).accounts;
       expect((init!.headers as Record<string, string>)['X-PLG-Version']).toBe('2');
       const at = new Date(NOW).toISOString();
-      const result = { version: 2, environment: 'production', retainedOnly: true, asOf: at, catalog,
-        accounts: requested.map((c: any) => ({ ...c, deleted: false, tasks: [], verified: [],
+      const result = { version: 2, environment: 'production', retainedOnly: true, customerReporting: reportingProof, asOf: at, catalog,
+        accounts: requested.map((c: any) => ({ ...c, deleted: false, reportingEligible: true, tasks: [], verified: [],
           privateContent: 'PRIVATE_ACCOUNT_CONTENT',
           activity: { enabled: true, mode: 'best_effort', limited: false, startedAt: at, epoch: 'b'.repeat(64),
             rollups: [{ actionId: 'calendar.event.create', agentId: 'agent_calendar', source: 'client_reported', phase: 'returned', count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)], privateContent: 'PRIVATE_ACTION_CONTENT' }] } })) };
@@ -793,6 +800,105 @@ describe('One retained task evidence bridge', () => {
     expect(state.ready.agent_calendar).toBe(false);
     expect(state.templates.filter((t) => t.journey === 'agent_calendar').every((t) => !t.published)).toBe(true);
     expect(state.paused).toBe(true);
+  });
+  it('requires customer scope and excludes staff across reports and sending without erasing records', async () => {
+    const store = await fixture();
+    const before = await store.read();
+    await expect(syncOneEvidence(store, options, v2Source((wire) => { delete wire.customerReporting; }), NOW)).rejects.toThrow('unavailable');
+    expect(await store.read()).toEqual(before);
+    await syncOneEvidence(store, options, v2Source(), NOW);
+    const transport = vi.fn(async () => 'provider-id');
+    const service = new PlgService(store, runtime, () => NOW, transport);
+    expect((await service.workspace('admin')).state.contacts).toHaveLength(1);
+    await store.transaction((state) => { ready(state); state.contacts[0].firstValueAt = new Date(NOW).toISOString(); });
+    await syncOneEvidence(store, options, v2Source((wire) => {
+      wire.accounts[0] = { ...wire.accounts[0], reportingEligible: false, activity: null, verified: [] };
+    }), NOW);
+    const retained = await store.read();
+    expect(retained.contacts).toHaveLength(1);
+    expect(retained.contacts[0].firstValueAt).toBe(new Date(NOW).toISOString());
+    expect(metrics(retained, NOW)).toMatchObject({ enrolled: 0, activated: 0, observed: 0 });
+    expect((await service.workspace('admin')).state.contacts).toHaveLength(0);
+    expect((await service.workspace('admin')).reporting).toEqual({ pending: 0, excluded: 1 });
+    expect((await service.preview()).messages).toEqual([]);
+    await service.run('operator');
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it('cannot restore customer eligibility when the recipient changes during a source read', async () => {
+    const store = await fixture();
+    const delayed: typeof fetch = async (url, init) => {
+      const response = await v2Source()(url, init);
+      await store.transaction((state) => {
+        state.contacts[0].email = 'replacement@example.invalid';
+        delete state.contacts[0].customerReporting;
+      });
+      return response;
+    };
+    await syncOneEvidence(store, options, delayed, NOW);
+    const state = await store.read();
+    expect(state.contacts[0].customerReporting).toBeUndefined();
+    expect(state.contacts[0].activity).toBeUndefined();
+    expect(metrics(state, NOW).enrolled).toBe(0);
+    expect(candidate(state, state.contacts[0], NOW).eligible).toBe(false);
+  });
+  it('rejects an older concurrent classification after a newer source result commits', async () => {
+    const store = await fixture();
+    const delayed: typeof fetch = async (url, init) => {
+      const response = await v2Source()(url, init);
+      await syncOneEvidence(store, options, v2Source((wire) => {
+        wire.asOf = new Date(NOW + 1000).toISOString();
+        wire.customerReporting = { ...reportingProof, policyRevision: 'e'.repeat(64) };
+        wire.accounts[0] = { ...wire.accounts[0], reportingEligible: false, activity: null, verified: [] };
+      }), NOW + 1000);
+      return response;
+    };
+    await expect(syncOneEvidence(store, options, delayed, NOW)).rejects.toThrow('newer customer reporting');
+    const state = await store.read();
+    expect(state.contacts[0].customerReporting?.eligible).toBe(false);
+    expect(state.customerReporting?.policyRevision).toBe('e'.repeat(64));
+  });
+  it('does not return inspection activity after a concurrent local opt-out', async () => {
+    const store = await fixture();
+    const id = (await store.read()).contacts[0].id;
+    const delayed: typeof fetch = async (url, init) => {
+      const response = await v2Source()(url, init);
+      await store.transaction((state) => { state.contacts[0].suppressed = 'unsubscribed'; });
+      return response;
+    };
+    await expect(syncOneEvidence(store, options, delayed, NOW, id)).rejects.toThrow('permission changed');
+    expect((await store.read()).contacts[0].activity).toBeUndefined();
+    expect((await store.read()).contacts[0].suppressed).toBe('unsubscribed');
+  });
+  it('holds skipped contacts after a policy change and expires old reporting proofs', async () => {
+    const store = await fixture();
+    await store.transaction((state) => {
+      state.contacts[0].suppressed = 'unsubscribed';
+      state.contacts[0].permission = { revision: 1, generation: 'a'.repeat(64), enabled: false,
+        eligible: false, checkedAt: new Date(NOW).toISOString() };
+    });
+    expect(metrics(await store.read(), NOW).enrolled).toBe(1);
+    await syncOneEvidence(store, options, v2Source((wire) => {
+      expect(wire.accounts).toEqual([]);
+      wire.customerReporting = { ...reportingProof, policyRevision: 'e'.repeat(64) };
+    }), NOW);
+    const service = new PlgService(store, runtime, () => NOW);
+    expect((await service.workspace('admin')).reporting).toEqual({ pending: 1, excluded: 0 });
+    expect(metrics(await store.read(), NOW).enrolled).toBe(0);
+    const fresh = await fixture();
+    expect(metrics(await fresh.read(), NOW).enrolled).toBe(1);
+    expect(metrics(await fresh.read(), NOW + DAY + 1).enrolled).toBe(0);
+  });
+  it('keeps real storage capacity and reconciliation visible for excluded records', async () => {
+    const store = new MemoryPlgStore();
+    await store.transaction((state) => {
+      for (let i = 0; i < 100; i++) contact(state, NOW, String(i)).customerReporting!.eligible = false;
+      state.deliveries.push({ contactId: state.contacts[0].id, status: 'uncertain' } as any);
+    });
+    const workspace = await new PlgService(store, runtime, () => NOW).workspace('admin');
+    expect(workspace.state.contacts).toEqual([]);
+    expect(workspace.automation.capacity.contacts).toBe(100);
+    expect(workspace.automation.needsReconciliation).toBe(1);
+    expect(workspace.automation.blockers).toContain('Pilot capacity needs attention before further growth');
   });
   it('tracks a new agent without promoting app reports to verified activation and replays compactly', async () => {
     const store = await fixture();
@@ -835,7 +941,7 @@ describe('One retained task evidence bridge', () => {
     let state = await store.read();
     expect(state.contacts[0].firstValueAt).toBeNull();
     const id = state.contacts[0].id;
-    const result = await syncOneEvidence(store, options, v2Source((r) => { r.accounts[0] = { ...r.accounts[0], deleted: true, activity: null, verified: [] }; }), NOW, id);
+    const result = await syncOneEvidence(store, options, v2Source((r) => { r.accounts[0] = { ...r.accounts[0], deleted: true, reportingEligible: false, activity: null, verified: [] }; }), NOW, id);
     expect(result.inspection?.deleted).toBe(true);
     state = await store.read();
     expect(state.contacts).toEqual([]);
@@ -925,9 +1031,9 @@ describe('One retained task evidence bridge', () => {
         JSON.stringify({
           version: 1,
           environment: 'production',
-          retainedOnly: true,
+          retainedOnly: true, customerReporting: reportingProof,
           asOf,
-          accounts: requested.map((c: object) => ({ ...c, deleted: false, tasks: [] })),
+          accounts: requested.map((c: object) => ({ ...c, deleted: false, reportingEligible: true, tasks: [] })),
         }),
       );
     }) as typeof fetch;
@@ -975,13 +1081,14 @@ describe('One retained task evidence bridge', () => {
         JSON.stringify({
           version: 1,
           environment: 'production',
-          retainedOnly: true,
+          retainedOnly: true, customerReporting: reportingProof,
           asOf: new Date(NOW).toISOString(),
           accounts: [
             {
               ...requested,
               accountId,
               deleted,
+              reportingEligible: !deleted,
               tasks:
                 deleted || !tasks
                   ? []

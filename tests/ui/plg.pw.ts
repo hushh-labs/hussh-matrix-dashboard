@@ -60,7 +60,7 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
     else if (pathname.endsWith('/activity')) result = { catalog: state.catalog, deleted: false,
       activity: { enabled: true, epoch: 'b'.repeat(64), mode: 'best_effort', limited: true, startedAt: new Date().toISOString(), rollups: [] } };
     else if (pathname.endsWith('/audience')) result = {
-      version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live',
+      version: 1, environment: 'production', customerReporting: { scope: 'production_registered_contacts', policyRevision: 'd'.repeat(64) }, source: 'firebase_registered_accounts', traversal: 'live',
       catalog: { revision: 'a'.repeat(64), agents: [
         { id: 'agent_one', label: 'One', public: true, available: true,
           outcome: { status: 'supported', proof: 'one.distinct_domain_effects.v1', label: 'Distinct verified task outcomes', reason: 'Shared domain effects count once.' } },

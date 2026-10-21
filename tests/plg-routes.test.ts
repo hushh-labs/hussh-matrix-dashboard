@@ -375,7 +375,11 @@ describe('Private PLG API boundaries', () => {
     expect(state.contacts[0].valueDays).toEqual([]);
   });
   it('persists a signed provider suppression so future journey steps stay blocked', async () => {
-    await store.transaction((state) => enroll(state, input, 'admin', Date.now()));
+    await store.transaction((state) => {
+      const contact = enroll(state, input, 'admin', Date.now());
+      state.customerReporting = { policyRevision: 'd'.repeat(64), checkedAt: new Date().toISOString() };
+      contact.customerReporting = { eligible: true, policyRevision: 'd'.repeat(64), checkedAt: new Date().toISOString() };
+    });
     const payload = JSON.stringify({ type: 'email.suppressed', data: { to: [input.email] } });
     const id = 'msg_suppressed_test', at = new Date();
     const signature = new Webhook(config.webhookSecret).sign(id, at, payload);

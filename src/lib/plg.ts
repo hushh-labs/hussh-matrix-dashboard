@@ -36,6 +36,7 @@ export interface PlgAudiencePerson {
 export interface PlgAudiencePage {
   version: 1;
   environment: 'production';
+  customerReporting: PlgCustomerReportingProof;
   catalog: PlgCatalog;
   asOf: string;
   windowStart: string;
@@ -48,6 +49,7 @@ export interface PlgAudiencePage {
   nextCursor: string | null;
   campaignEnrollmentChanged: false;
 }
+export interface PlgCustomerReportingProof { scope: 'production_registered_contacts'; policyRevision: string }
 export type PlgJourney = 'memory' | 'mail' | PlgAgentId;
 export interface PlgOutcomeCoverage {
   status: 'supported' | 'internal' | 'unmeasured';
@@ -148,6 +150,8 @@ export interface PlgContact {
   valueDays: string[];
   pauseUntil: string | null;
   timeline: PlgTimeline[];
+  /** Server-only classification from the signed production snapshot. */
+  customerReporting?: { eligible: boolean; policyRevision: string; checkedAt: string };
   /** Canonical One permission; account identity alone never enables delivery. */
   permission?: {
     revision: number;
@@ -188,6 +192,8 @@ export interface PlgDelivery {
 }
 export interface PlgState {
   version: 1;
+  /** Latest signed source policy; older contact proofs must be rechecked. */
+  customerReporting?: { policyRevision: string; checkedAt: string };
   paused: boolean;
   ready: Record<PlgJourney, boolean>;
   catalog?: PlgCatalog;
@@ -246,6 +252,7 @@ export interface PlgWorkspace {
   role: 'admin' | 'operator';
   configured: boolean;
   deliveryEnabled: boolean;
+  reporting?: { pending: number; excluded: number };
   automation?: PlgAutomationStatus;
   state: PlgState;
   queue: PlgCandidate[];

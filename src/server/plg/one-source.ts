@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { PlgJourney, PlgCatalog, PlgActivity, PlgActivityRollup, PlgAgentActivity, PlgAgentId } from '../../lib/plg';
+import type { PlgJourney, PlgCatalog, PlgActivity, PlgActivityRollup, PlgAgentActivity, PlgAgentId, PlgCustomerReportingProof } from '../../lib/plg';
 import { DAY, eraseAccount, ingestEvent, PlgError, registerPlgCatalog } from './engine';
 import { signValue } from './service';
 import type { PlgStore } from './store';
@@ -11,6 +11,7 @@ interface SourceAccount {
   since: string;
 }
 interface Evidence extends SourceAccount {
+  reportingEligible: boolean;
   deleted: boolean;
   tasks: { actionId: string; occurredAt: string }[];
   activity?: Omit<PlgActivity, 'rollups'> & { agents: PlgAgentActivity[] };
@@ -18,6 +19,12 @@ interface Evidence extends SourceAccount {
 }
 const unavailable = () =>
   new PlgError(503, 'One task evidence is unavailable; no activity was inferred.');
+
+export function readCustomerReporting(value: any): PlgCustomerReportingProof {
+  if (!value || value.scope !== 'production_registered_contacts' || typeof value.policyRevision !== 'string' || !/^[a-f0-9]{64}$/.test(value.policyRevision))
+    throw unavailable();
+  return { scope: value.scope, policyRevision: value.policyRevision };
+}
 
 // These are domain proof contracts, separate from client reports or SDK returns.
 const outcomeProofs: Record<string, string> = {
@@ -145,6 +152,7 @@ export async function syncOneEvidence(
     (!c.permission || (c.permission.enabled && c.permission.eligible && !c.suppressed)));
   if (inspectionId && !selected.length) throw new PlgError(404, 'Account is not enrolled.');
   const permissions = new Map(selected.map((c) => [c.accountId, c.permission ? { ...c.permission } : null]));
+  const recipients = new Map(selected.map((c) => [c.accountId, c.email]));
   const accounts: SourceAccount[] = selected.map((c) => ({
     accountId: c.accountId,
     journey: c.journey,
@@ -154,6 +162,8 @@ export async function syncOneEvidence(
   let catalog: PlgCatalog | undefined;
   let inspected: PlgActivity | undefined;
   let version: number | undefined;
+  let reporting: PlgCustomerReportingProof | undefined;
+  let sourceAt = Infinity;
   for (let offset = 0; offset < Math.max(accounts.length, 1); offset += 5) {
     const batchNow = clock();
     if (batchNow >= deadline) throw unavailable();
@@ -161,7 +171,7 @@ export async function syncOneEvidence(
       ...c,
       since: new Date(Math.max(Date.parse(c.since), batchNow - 7 * DAY)).toISOString(),
     }));
-    const body = JSON.stringify(batch.length ? { accounts: batch } : { version: 2, accounts: [] });
+    const body = JSON.stringify(batch.length ? { accounts: batch, customerReporting: true } : { version: 2, accounts: [], customerReporting: true });
     const timestamp = String(batchNow);
     try {
       const response = await fetcher(endpoint, {
@@ -195,6 +205,9 @@ export async function syncOneEvidence(
         reader.releaseLock();
       }
       const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const proof = readCustomerReporting(data.customerReporting);
+      if (reporting && reporting.policyRevision !== proof.policyRevision) throw unavailable();
+      reporting = proof;
       const until = Date.parse(data.asOf);
       const receivedAt = clock();
       if (receivedAt >= deadline) throw unavailable();
@@ -210,6 +223,7 @@ export async function syncOneEvidence(
       )
         throw unavailable();
       if (version !== undefined && version !== data.version) throw unavailable();
+      sourceAt = Math.min(sourceAt, until);
       version = data.version;
       if (data.version === 1 && batch.some((c) => !['memory', 'mail'].includes(c.journey)))
         throw unavailable();
@@ -228,10 +242,13 @@ export async function syncOneEvidence(
           seen.has(row.accountId) ||
           row.since !== requested.since ||
           typeof row.deleted !== 'boolean' ||
+          typeof row.reportingEligible !== 'boolean' ||
           !Array.isArray(row.tasks) ||
           row.tasks.length > 100 ||
           (data.version === 2 && row.tasks.length !== 0) ||
-          (row.deleted && row.tasks.length)
+          ((row.deleted || !row.reportingEligible) && row.tasks.length) ||
+          (row.deleted && row.reportingEligible) ||
+          (!row.reportingEligible && (row.activity != null || (row.verified?.length ?? 0) !== 0))
         )
           throw unavailable();
         seen.add(row.accountId);
@@ -250,12 +267,13 @@ export async function syncOneEvidence(
         const entry: Evidence = {
           ...requested,
           deleted: row.deleted,
+          reportingEligible: row.reportingEligible,
           tasks: row.tasks.map((t: { actionId: string; occurredAt: string }) => ({
             actionId: t.actionId,
             occurredAt: t.occurredAt,
           })),
         };
-        if (data.version === 2 && !row.deleted) {
+        if (data.version === 2 && !row.deleted && row.reportingEligible) {
           const activity = readActivity(row.activity, catalog!, requested.since, until);
           entry.activity = compact(activity);
           if (inspectionId) inspected = activity;
@@ -279,6 +297,9 @@ export async function syncOneEvidence(
     if (now >= deadline) throw unavailable();
     let imported = 0,
       erased = 0;
+    if (Date.parse(draft.customerReporting?.checkedAt ?? '') > sourceAt)
+      throw new PlgError(409, 'A newer customer reporting check has already completed.');
+    draft.customerReporting = { policyRevision: reporting!.policyRevision, checkedAt: new Date(sourceAt).toISOString() };
     if (!inspectionId && catalog) registerPlgCatalog(draft, catalog);
     for (const row of evidence) {
       const contact = draft.contacts.find((c) => c.accountId === row.accountId);
@@ -290,13 +311,21 @@ export async function syncOneEvidence(
         continue;
       }
       const requestedPermission = permissions.get(row.accountId);
-      if (contact.suppressed || Boolean(contact.permission) !== Boolean(requestedPermission) ||
-        (contact.permission && (!contact.permission.enabled || !contact.permission.eligible ||
+      if (contact.email !== recipients.get(row.accountId) ||
+        Boolean(contact.permission) !== Boolean(requestedPermission) ||
+        (contact.permission && (
           contact.permission.revision !== requestedPermission?.revision ||
           contact.permission.generation !== requestedPermission?.generation))) {
         if (inspectionId) throw new PlgError(409, 'Email permission changed while evidence was loading.');
         continue;
       }
+      contact.customerReporting = { eligible: row.reportingEligible, policyRevision: reporting!.policyRevision,
+        checkedAt: new Date(sourceAt).toISOString() };
+      if (contact.suppressed || (contact.permission && (!contact.permission.enabled || !contact.permission.eligible))) {
+        if (inspectionId) throw new PlgError(409, 'Email permission changed while evidence was loading.');
+        continue;
+      }
+      if (!row.reportingEligible) continue;
       if (inspectionId) continue;
       if (row.activity) contact.activity = row.activity;
       const focus = contact.journey === 'memory' ? 'agent_personal_information' : contact.journey === 'mail' ? 'agent_email' : contact.journey;

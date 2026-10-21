@@ -420,14 +420,35 @@ Roll out backend and Matrix PRs separately, provision secret versions, verify
 the private source, then separately enable the reader/collection flags. Disable
 the flags to roll back. Never drop operation-key schema while a compatible
 writer still references it. No new PR is merged or live collection enabled by
-this implementation work. For all-agent outcomes, deploy this backward-compatible
-Matrix consumer first, then One migration367 and its backend writers/readers.
+this implementation work. All-agent outcomes need One migration367 and its backend
+writers/readers. The customer reporting policy below additionally requires the
+backend policy proof before the strict Matrix consumer is promoted.
 Receipt capture is prospective, bounded and best effort; older missing receipts
 are never backfilled as completions. Failed/truncated sources stay explicit.
 Cohort maturity is based on elapsed enrollment/activation time and does not assert
 that every day was observed.
 
 ## Workspace navigation and live audit
+
+Customer reporting requires the backend's signed `production_registered_contacts`
+policy proof. People and usage excludes confirmed staff/test/reviewer identities
+using exact accounts, company domains, current/provider emails and verified aliases.
+A canonical production contact is required; an account present only in shared
+authentication is withheld. Names alone are never evidence of a fake account.
+
+Snapshots request `customerReporting:true`. Only current eligible proofs enter
+campaign reports, queues or delivery candidates. Missing, excluded, expired
+(24 hours) or old-policy proofs are held; recipient changes invalidate proof and
+concurrent stale reads cannot restore it. Stored accounts and delivery records
+remain intact. Storage capacity and delivery reconciliation use the full stored
+ledger, even when customer reports exclude its records. These are account counts,
+not proven unique people or comprehensive historical activity.
+
+Release the companion backend with its Secret Manager reporting policy, verify
+the private source contract, then deploy this strict consumer. An older backend
+without policy proofs fails closed. Do not promote Matrix PR #133 until the
+backend proof is verified in production. No source response or raw roster enters
+the public aggregate analytics API.
 
 People and usage opens first. **Follow-ups** and **Campaign results** explicitly
 measure enrolled campaign accounts; empty enrollment does not mean the app has no

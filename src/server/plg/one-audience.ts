@@ -1,7 +1,7 @@
 import type { PlgAudienceFilters, PlgAudiencePage, PlgAudiencePerson } from '../../lib/plg';
 import { DAY, PlgError } from './engine';
 import { signValue } from './service';
-import { outcomeProofMatches, outcomeSupported, readCatalog } from './one-source';
+import { outcomeProofMatches, outcomeSupported, readCatalog, readCustomerReporting } from './one-source';
 import { oneProductionEndpoint } from '../one-scope.mjs';
 
 const segments = ['all', 'possible_incomplete', 'failed', 'blocked', 'cancelled', 'returned', 'verified', 'unknown', 'in_progress'];
@@ -46,6 +46,7 @@ export function audienceFilters(value: unknown): PlgAudienceFilters {
 /** Whitelist every returned field; provider/SDK objects never reach the browser. */
 function page(value: unknown, filters: PlgAudienceFilters, now: number): PlgAudiencePage {
   const input = object(value), catalog = readCatalog(input.catalog);
+  const customerReporting = readCustomerReporting(input.customerReporting);
   const at = date(input.asOf, now + 10_000, now - 15 * 60_000), since = date(input.windowStart, now);
   if (!at || !since || Date.parse(at) - Date.parse(since) !== 7 * DAY || input.version !== 1 ||
     input.environment !== 'production' || input.source !== 'firebase_registered_accounts' || input.traversal !== 'live' ||
@@ -89,7 +90,7 @@ function page(value: unknown, filters: PlgAudienceFilters, now: number): PlgAudi
   if (new Set(rows.map((r) => r.accountId)).size !== rows.length) return unavailable();
   const nextCursor = text(input.nextCursor, 6000);
   if (nextCursor && !/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(nextCursor)) return unavailable();
-  return { version: 1, environment: 'production', catalog, asOf: at, windowStart: since, graceMinutes: filters.graceMinutes,
+  return { version: 1, environment: 'production', customerReporting, catalog, asOf: at, windowStart: since, graceMinutes: filters.graceMinutes,
     source: 'firebase_registered_accounts', traversal: 'live', scanned, excluded, rows, nextCursor, campaignEnrollmentChanged: false };
 }
 

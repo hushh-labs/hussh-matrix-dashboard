@@ -150,6 +150,7 @@ export function applySubscription(state: PlgState, change: SubscriptionChange, n
     // Provider bounce, complaint and suppression survive every re-enrollment.
     if (contact.suppressed === 'unsubscribed' && contact.permission && contact.permission.generation !== change.generation)
       contact.suppressed = null;
+    if (contact.email !== change.email) delete contact.customerReporting;
     contact.email = change.email!;
     contact.name = change.name!;
   }

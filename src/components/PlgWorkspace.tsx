@@ -258,6 +258,10 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           {error}
         </div>
       )}
+      {workspace.reporting && (workspace.reporting.pending > 0 || workspace.reporting.excluded > 0) &&
+        <p role="status" className={cn(dashboardCard, 'p-4 text-sm text-muted')}>
+          Customer reporting includes verified production registrations only. {workspace.reporting.pending} enrolled accounts await verification; {workspace.reporting.excluded} are excluded by the reporting policy. Their stored records are preserved.
+        </p>}
       {tab === 'content' && workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
         refresh={() => void reload()}
         toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}

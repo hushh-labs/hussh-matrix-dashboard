@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { PlgDelivery, PlgWorkspace } from '../../lib/plg';
-import { accountHash, audit, candidate, eraseAccountHash, iso, metrics, PlgError, timeline } from './engine';
+import { accountHash, audit, candidate, customerReportingCurrent, customerReportingEligible, eraseAccountHash, iso, metrics, PlgError, timeline } from './engine';
 import type { PlgStore } from './store';
 import { automationStatus, deliveryBlockers } from './automation';
 import { applyAcceptedDelivery } from './delivery-events';
@@ -149,13 +149,18 @@ export class PlgService {
     private permissionSource = runtime.subscriptions ? new OneSubscriptions(runtime.subscriptions, fetch, now) : undefined,
   ) {}
   async workspace(role: 'admin' | 'operator'): Promise<PlgWorkspace> {
-    const state = await this.store.read();
+    const stored = await this.store.read();
     const now = this.now();
+    const contacts = stored.contacts.filter((c) => customerReportingEligible(stored, c, now));
+    const ids = new Set(contacts.map((c) => c.id));
+    const state = { ...stored, contacts, deliveries: stored.deliveries.filter((d) => ids.has(d.contactId)) };
     return {
       role,
       configured: true,
       deliveryEnabled: this.runtime.deliveryEnabled,
-      automation: automationStatus(state, this.runtime, now),
+      reporting: { pending: stored.contacts.filter((c) => !customerReportingCurrent(stored, c, now)).length,
+        excluded: stored.contacts.filter((c) => c.customerReporting?.eligible === false && customerReportingCurrent(stored, c, now)).length },
+      automation: automationStatus(stored, this.runtime, now),
       state,
       queue: state.contacts.map((c) => candidate(state, c, now)),
       metrics: metrics(state, now),
