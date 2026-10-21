@@ -383,7 +383,7 @@ describe('Server-owned automatic follow-up cycle', () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const transport = vi.fn(async () => 'provider-id');
     const service = new PlgService(store, runtime, () => NOW, transport);
-    const sync = vi.fn(async () => { await gate; return { accounts: 1, imported: 0, erased: 0 }; });
+    const sync = vi.fn(async () => { await gate; return { accounts: 1, imported: 0, erased: 0, retainedOnly: true }; });
     const cycle = runAutomationCycle(service, sync, () => NOW);
     await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce());
     expect(transport).not.toHaveBeenCalled();
