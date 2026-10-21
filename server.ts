@@ -33,6 +33,7 @@ import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
+import { oneAppScope, readOneAppEnvironments } from './src/server/one-app-scope';
 
 // `.env.local` (git-ignored, per-developer) overrides `.env` (shared
 // defaults, if present) -- Vite's own convention via `loadEnv`, which the
@@ -6909,16 +6910,20 @@ api.get('/api/analytics/one/android', async (req, res) => {
 });
 
 api.get('/api/analytics/one/app', async (req, res) => {
+  const environment = oneAppScope(req.query.environment);
+  if (!environment) {
+    res.status(400).json({ error: 'Choose production, uat or all for One app reporting.' }); return;
+  }
   const oneRange = parseOneAppDateRange(req.query as Record<string, unknown>);
-  const [production, uat] = await Promise.all([
-    fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true),
-    fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST, 'uat'),
-  ]);
-  const error = [production.error, uat.error].filter(Boolean).join('; ') || null;
+  const { production, uat } = await readOneAppEnvironments(environment, (selected) => selected === 'production'
+    ? fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true)
+    : fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST, 'uat'));
+  const error = [production?.error, uat?.error].filter(Boolean).join('; ') || null;
   const fetchedAt = new Date().toISOString();
-  res.status(error && !production.data && !uat.data ? 502 : 200).json(sanitizePublicPayload({
+  res.status(error && !production?.data && !uat?.data ? 502 : 200).json(sanitizePublicPayload({
     platform: 'one.hushh.ai',
-    data: { production: production.data, uat: uat.data },
+    environment,
+    data: { production: production?.data ?? null, uat: uat?.data ?? null },
     error,
     fetchedAt,
   }));

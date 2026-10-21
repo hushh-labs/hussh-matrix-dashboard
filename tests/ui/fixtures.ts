@@ -164,7 +164,7 @@ export async function mockDashboard(page: Page) {
     else if (path === '/api/analytics/founder') data = founder;
     else if (path === '/api/analytics/one/referrals') data = referralFixture(route.request().url());
     else if (path === '/api/analytics/all') data = allAnalytics;
-    else if (path === '/api/analytics/one/app') data = { data: { production: one, uat: null }, fetchedAt: timestamp, error: null };
+    else if (path === '/api/analytics/one/app') data = { environment: new URL(route.request().url()).searchParams.get('environment') || 'all', data: { production: one, uat: null }, fetchedAt: timestamp, error: null };
     else if (path === '/api/analytics/growth/compare') data = { fetchedAt: timestamp, error: null, windows: ['30d', '90d', 'all'].map((key, index) => ({ key, label: ['Last 30 days', 'Last 90 days', 'All time'][index], range: { ...range, days: [30, 90, 180][index] }, data: growth, error: null })) };
     else if (path === '/api/analytics/one/android') data = { history: { state: 'permission_missing', daily: [] }, downloads: {}, vitals: { state: 'not_yet_available' } };
     else if (path === '/api/analytics/instagram') data = {
