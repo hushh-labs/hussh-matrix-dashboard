@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
-import { mockDashboard } from './fixtures';
+import { mockDashboard, one } from './fixtures';
 import {
   enroll,
   initialPlgState,
@@ -198,6 +198,47 @@ test('does not expose contacts to an unauthorized dashboard viewer', async ({ pa
   await expect(page.getByRole('heading', { name: 'Private PLG workspace' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Enroll account', exact: true })).toHaveCount(0);
   await expect(page.getByText('pilot@example.invalid')).toHaveCount(0);
+});
+
+test('keeps app-wide accounts and devices separate from the campaign cohort and changes reporting dates', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockPlg(page);
+  const reads: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/analytics/one/app') reads.push(request.url());
+  });
+  await page.goto('/plg');
+  expect(reads).toHaveLength(0);
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage.getByText('8,420', { exact: true })).toBeVisible();
+  await expect(usage.getByRole('row', { name: 'Signed-in accounts 148 704 1,284' })).toBeVisible();
+  await expect(usage.getByRole('row', { name: 'Device/browser IDs 164 780 1,460' })).toBeVisible();
+  await expect(usage).toContainText('latest finalized GA4 day');
+  await expect(page.getByText('Enrolled accounts', { exact: true }).locator('..')).toContainText('0');
+  await usage.getByLabel('Reporting period').selectOption('7');
+  await expect.poll(() => reads.length).toBe(2);
+  const query = new URL(reads.at(-1)!).searchParams;
+  expect((Date.parse(query.get('one_end_date')!) - Date.parse(query.get('one_start_date')!)) / 86400000 + 1).toBe(7);
+  await expect(usage).not.toHaveAttribute('aria-busy', 'true');
+  await mkdir('.codex/artifacts/plg', { recursive: true });
+  await page.screenshot({ path: '.codex/artifacts/plg/app-usage-1440.png', fullPage: true });
+});
+
+test('shows query failure as unavailable while preserving a healthy selected-range account read', async ({ page }) => {
+  await mockPlg(page);
+  await page.route('**/api/analytics/one/app?*', (route) => route.fulfill({ json: {
+    data: { production: { ...one, activeUsers: { ...one.activeUsers, available: false, dau: 0, wau: 0, mau: 0 },
+      identifiedUsers: { ...one.identifiedUsers, activityAvailable: false, dau: 0, wau: 0, mau: 0 } }, uat: null },
+    error: 'Sanitized aggregate read failure', fetchedAt: new Date().toISOString(),
+  } }));
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage).toContainText('Some source reads failed');
+  await expect(usage.getByRole('row', { name: 'Signed-in accounts Unavailable Unavailable Unavailable' })).toBeVisible();
+  await expect(usage.getByText('1,284', { exact: true })).toBeVisible();
+  await expect(usage.getByRole('cell', { name: '0', exact: true })).toHaveCount(0);
 });
 
 for (const width of [320, 768, 1440])

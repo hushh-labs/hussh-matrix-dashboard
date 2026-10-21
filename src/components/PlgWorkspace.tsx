@@ -36,6 +36,7 @@ import { dashboardCard } from '../lib/theme';
 import { PlgAgentActivityPanel, type PlgActivityInspection } from './PlgAgentActivityPanel';
 import { PlgAudiencePanel } from './PlgAudiencePanel';
 import { PlgAutomationPanel } from './PlgAutomationPanel';
+import { PlgAppUsage } from './PlgAppUsage';
 
 async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/plg/${path}`, {
@@ -255,6 +256,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
         refresh={() => void reload()}
         toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
+      {tab === 'results' && <PlgAppUsage refreshKey={refreshKey} />}
       {tab === 'results' && <div>
         <h3 className="text-lg font-semibold text-ink">Campaign results</h3>
         <p className="mt-1 text-sm text-muted">These totals cover enrolled campaign accounts. Registered-user totals and app-wide DAU are separate One app analytics.</p>

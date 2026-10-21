@@ -6,6 +6,41 @@ readiness, campaign previews and measured first-value/returning-account counts.
 The module starts disabled. Campaigns start paused, journey readiness is false,
 and all message templates start as drafts. No contacts are preloaded.
 
+## Reading the workspace
+
+The default **Users & drop-offs** view reads the authorized live One directory;
+it is independent of campaign enrollment. **Messages** holds reviewed content,
+**Results** separates app-wide usage from campaign outcomes, and **Automation**
+shows worker health, setup blockers and pause controls. The campaign follow-up
+queue and agent/action coverage remain available inside their related views.
+
+Results loads the existing `/api/analytics/one/app` aggregate only when opened,
+using the shared session-scoped metrics resource. The reporting period supports
+7, 30 and 90 days. Registered totals require an available, isolated production
+registry. They describe current account records, including disabled accounts;
+deleted accounts are absent. New accounts are current records created during
+the requested dates, not a historical signup ledger.
+
+App-wide signed-in accounts and device/browser IDs are separate counting units.
+DAU/WAU/MAU use the latest finalized GA4 measurement day with 1/7/30-day windows,
+which can precede the selected end date. The source snapshot time does not make
+these realtime. Each activity query carries its own availability; failed,
+missing or malformed reads remain unavailable even if other sources succeeded.
+Older API responses without that proof cannot populate the new PLG activity
+cards. Selected-range signed-in totals have independent query health.
+
+Automation also distinguishes the last catalog/source refresh from the last
+enrolled-account evidence read. An empty cohort can refresh its action catalog
+without reaching the campaign evidence endpoint; it must not advance the
+evidence timestamp. Existing timestamps are not backfilled into this new proof.
+
+Campaign activation and retention cover enrolled accounts only. Audience page
+matches are not global totals, signup-to-activation conversion is not obtained
+by dividing independently scoped counts, and observed later usage is not proof
+that an email caused a return. Click and authenticated-return attribution still
+require their own recorded evidence. Seven-day best-effort attempt observations
+cannot reconstruct missing historical activity or prove complete collection.
+
 ## Backend evidence and release status
 
 The companion One backend exposes server-only `POST /api/one/plg/snapshot`.
@@ -48,8 +83,9 @@ and aborts a worker's `--sync-first --send` sequence. Sync itself sends no email
 Production now requires `PLG_FIRESTORE_DATABASE=one-plg-production`, a named
 Native database: the project's existing default is Datastore mode. See
 [infrastructure and release procedure](../infra/one-plg/README.md). Its scheduler
-starts paused and uses `--sync-only`. No provisioning, deployment, merge or
-customer send has been performed for this change.
+starts paused and uses `--sync-only` until the separate reviewed automation
+configuration is enabled. Source code and provisioning defaults do not attest
+to live deployment or sender readiness; verify the release and runtime flags.
 
 The team must confirm its marketing provider/account, verified From, display
 name, Reply-To and signed bounce/complaint callback. GCP secret-name inventories
