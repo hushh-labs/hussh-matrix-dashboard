@@ -1,6 +1,7 @@
 import type express from 'express';
 import { Webhook } from 'svix';
 import { plgJourneyOptions } from '../../lib/plg';
+import { PLG_SYNC_BUDGET_MS } from '../../lib/plg-budgets.mjs';
 import {
   audit,
   choose,
@@ -55,7 +56,7 @@ export function registerPlgRoutes(
     }
     return service;
   };
-  const synchronize = async (deadline = Date.now() + 190_000) => {
+  const synchronize = async (deadline = Date.now() + PLG_SYNC_BUDGET_MS) => {
     const service = getService();
     if (config.subscriptions?.enabled) {
       if (!(await service.store.read()).catalog?.agents.some((a) => a.id === 'agent_one' && a.public && a.available)) {

@@ -9,6 +9,7 @@ import { accountHash, enroll, registerPlgCatalog } from '../src/server/plg/engin
 import { applyDeliveryEvent } from '../src/server/plg/delivery-events';
 import * as audienceSource from '../src/server/plg/one-audience';
 import * as evidenceSource from '../src/server/plg/one-source';
+import { PLG_SYNC_REQUEST_TIMEOUT_MS } from '../src/lib/plg-budgets.mjs';
 
 const secret = 'test-plg-signing-secret-more-than-32-characters';
 const config: PlgRuntime = {
@@ -57,6 +58,22 @@ function app(runtime = config) {
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('finishes the signed sync path before its legacy worker timeout with response margin', async () => {
+    const started = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(started);
+    await store.transaction((s) => { enroll(s, input, 'admin', started); });
+    const source = vi.spyOn(evidenceSource, 'syncOneEvidence').mockImplementation(async (_store, _options, _fetcher, _clock, _inspection, deadline) => {
+      expect(deadline).toBeGreaterThan(started);
+      expect(deadline! - started).toBeLessThanOrEqual(PLG_SYNC_REQUEST_TIMEOUT_MS - 20_000);
+      return { accounts: 1, imported: 0, erased: 0, retainedOnly: true };
+    });
+    const timestamp = String(started), body = '{}';
+    const response = await request(app()).post('/integrations/plg/sync')
+      .set('Content-Type', 'application/json').set('X-PLG-Timestamp', timestamp)
+      .set('X-PLG-Signature', signValue(`sync\n${timestamp}\n${body}`, config.syncSecret!)).send(body);
+    expect(response.status).toBe(200);
+    expect(source).toHaveBeenCalledOnce();
+  });
   it('refreshes a stale catalog lacking One before automatically enrolling a verified subscriber', async () => {
     const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', at = new Date().toISOString();
     const catalog = { revision: 'b'.repeat(64), agents: [{ id: 'agent_one' as const, label: 'One', public: true, available: true }], actions: [] };
