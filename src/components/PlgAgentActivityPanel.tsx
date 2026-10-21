@@ -54,7 +54,7 @@ export function PlgAgentActivityPanel({ state, busy, refresh, inspect }: {
               return <tr key={a.id} className="border-b border-stroke last:border-0">
                 <td className="p-3"><button className="font-semibold text-ink underline-offset-4 hover:underline" onClick={() => setAgent(a.id)}>{a.label}</button></td>
                 <td className="p-3 text-muted">{!a.public ? 'Internal' : a.available ? 'Available' : 'Unavailable'}</td>
-                <td className="min-w-[240px] max-w-sm p-3 text-xs text-muted"><p className="font-medium text-ink">{a.outcome?.label ?? (['agent_personal_information', 'agent_email'].includes(a.id) ? 'Verified task completion' : !a.public ? 'Internal stage' : 'Requires the newer backend tracking release')}</p>{a.outcome && <details className="mt-1 leading-5"><summary className="cursor-pointer">Completion definition</summary>{a.outcome.reason}</details>}</td>
+                <td className="min-w-[240px] max-w-sm p-3 text-xs text-muted"><p className="font-medium text-ink">{a.outcome?.label ?? (['agent_personal_information', 'agent_email'].includes(a.id) ? 'Verified task completion' : !a.public ? 'Internal stage' : 'Verified completion tracking not provided by this connection')}</p>{a.outcome && <details className="mt-1 leading-5"><summary className="cursor-pointer">Completion definition</summary>{a.outcome.reason}</details>}</td>
                 <td className="p-3">{connected ? reports.length : 'Not collected'}</td>
                 <td className="p-3">{connected ? reports.reduce((n, row) => n + row.executed, 0) : '—'}</td>
                 <td className="p-3">{connected ? reports.reduce((n, row) => n + row.reported, 0) : '—'}</td>
