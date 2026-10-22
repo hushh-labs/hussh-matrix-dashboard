@@ -104,12 +104,13 @@ source; an explicit `--end` remains available. The `--skip-dashboard` source aud
 describes full capture diagnostics and does not assert customer adoption.
 
 Before deploying, it snapshots the complete Cloud Run serving traffic split.
-If a failed candidate has acquired live traffic, rollback restores those exact
-revision percentages, including a pre-existing canary split. If the candidate
-still has zero traffic, a failed check preserves the current live allocation:
-an operator may have rolled back another revision during candidate checks.
-An unknown candidate never authorizes restoring an older traffic snapshot.
-The latest ready revision is not assumed to be the previously serving one.
+The zero-traffic workflow never writes a serving allocation, including after a
+failed check. A changed split may be an operator rollback or an intentional
+canary; even traffic on the candidate does not establish workflow ownership.
+Failures report the current split without restoring a stale snapshot. This
+also avoids a race between describing traffic and writing a replacement split.
+The saved split remains evidence for the operator's explicit promotion/rollback
+procedure below, not permission for an automatic traffic mutation.
 
 The OAuth client's only authorized redirect URI is
 `https://metrics.hussh.ai/auth/callback`. Do not try to verify Google sign-in

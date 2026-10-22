@@ -33,7 +33,7 @@ import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
-import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort } from './src/server/one-customer-cohort';
+import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort, withCustomerCohort } from './src/server/one-customer-cohort';
 import { oneAppScope, readOneAppEnvironments } from './src/server/one-app-scope';
 import { onePlatformCaptureQueries, readPlatformCapture, unpackPlatformCapture } from './src/server/one-platform-capture';
 import { registrationTotals } from './src/server/one-registration-totals.mjs';
@@ -5805,7 +5805,8 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const needsCustomers = needsCustomerScope(req.path, req.query.environment);
           const cohort = needsCustomers ? await readCustomerCohort() : null;
           const key = `${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(req.originalUrl)}`;
-          const result = await snapshots.read(key, () => capture(handler, sourceRequest, refresh), refresh);
+          const load = () => capture(handler, sourceRequest, refresh);
+          const result = await snapshots.read(key, cohort ? () => withCustomerCohort(cohort.cacheKey, load) : load, refresh);
           if (cohort) requireFreshCohort(cohort);
           res.set('X-Metrics-Cache', result.state);
           res.set('X-Metrics-Updated-At', new Date(result.at).toISOString());
@@ -5871,7 +5872,8 @@ function registerAnalyticsRoutes(app: express.Express): void {
         const req = { query: Object.fromEntries(parsed.searchParams) } as unknown as express.Request;
         try {
           const cohort = needsCustomerScope(parsed.pathname, req.query.environment) ? await readCustomerCohort() : null;
-          await snapshots.warm(`${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(url)}`, () => capture(handler, req));
+          const load = () => capture(handler, req);
+          await snapshots.warm(`${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(url)}`, cohort ? () => withCustomerCohort(cohort.cacheKey, load) : load);
         } catch { /* Source state stays explicit. */ }
       }
       } finally { warming = false; }
