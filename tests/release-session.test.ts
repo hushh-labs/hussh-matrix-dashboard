@@ -23,9 +23,9 @@ it('emits explicit disabled PLG runtime flags and binds sender independently fro
     .split('\n').map((line) => line.replace(/^          /, '')).join('\n');
   const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
   const script = `set -e\nfunction gcloud() { if [[ "$1" == "firestore" ]]; then echo FIRESTORE_NATIVE; else echo ENABLED; fi; }\n${block}\nprintf '%s\\n' "$PLG_ENV_SUFFIX" "$PLG_SECRET_SUFFIX"`;
-  const invoke = (workspace: boolean, sender: boolean, delivery: boolean, subscriptions = false) => execFileSync(bash, ['-c', script], {
+  const invoke = (workspace: boolean, sender: boolean, delivery: boolean, subscriptions = false, google = false) => execFileSync(bash, ['-c', script], {
     encoding: 'utf8', env: { ...process.env, PROJECT_ID: 'example-project', PRODUCTION_URL: 'https://metrics.example.invalid',
-      ONE_PLG_CONFIGURED: String(workspace), ONE_PLG_SENDER_CONFIGURED: String(sender), ONE_PLG_DELIVERY_CONFIGURED: String(delivery), ONE_PLG_AUDIENCE_CONFIGURED: 'false', ONE_PLG_SUBSCRIPTIONS_CONFIGURED: String(subscriptions) },
+      ONE_PLG_CONFIGURED: String(workspace), ONE_PLG_SENDER_CONFIGURED: String(sender), ONE_PLG_DELIVERY_CONFIGURED: String(delivery), ONE_PLG_AUDIENCE_CONFIGURED: 'false', ONE_PLG_SUBSCRIPTIONS_CONFIGURED: String(subscriptions), ONE_PLG_GOOGLE_MAIL_CONFIGURED: String(google) },
   });
   const disabled = invoke(false, false, false);
   expect(disabled).toContain('|PLG_ENABLED=false|PLG_DELIVERY_ENABLED=false|');
@@ -41,4 +41,8 @@ it('emits explicit disabled PLG runtime flags and binds sender independently fro
   expect(subscribed).toContain('PLG_ONE_SUBSCRIPTION_ENABLED=true');
   expect(subscribed).toContain('PLG_ONE_SUBSCRIPTION_SECRET=metrics-one-plg-subscription-secret:latest');
   expect(subscribed).toContain('PLG_DELIVERY_ENABLED=false');
+  const connected = invoke(true, true, false, false, true);
+  expect(connected).toContain('PLG_GOOGLE_MAIL_ENABLED=true');
+  expect(connected).toContain('PLG_DELIVERY_ENABLED=false');
+  expect(() => invoke(true, true, true, false, true)).toThrow();
 });
