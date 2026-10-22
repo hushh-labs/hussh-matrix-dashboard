@@ -39,6 +39,7 @@ locals {
     "metrics-one-plg-audience-secret", "metrics-one-plg-subscription-secret",
     "metrics-one-plg-admin-emails", "metrics-one-plg-operator-emails",
     "metrics-one-plg-email-from", "metrics-one-plg-reply-to",
+    "metrics-one-plg-google-mail",
     "metrics-one-plg-resend-api-key", "metrics-one-plg-resend-webhook-secret"
   ])
 }
@@ -77,6 +78,14 @@ resource "google_secret_manager_secret_iam_member" "dashboard_access" {
   for_each  = google_secret_manager_secret.config
   secret_id = each.value.id
   role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${local.runtime}"
+}
+
+# Only this refresh-token container accepts runtime versions. No project-wide
+# secret writer role and no credential payloads in Terraform state.
+resource "google_secret_manager_secret_iam_member" "google_mail_version_writer" {
+  secret_id = google_secret_manager_secret.config["metrics-one-plg-google-mail"].id
+  role      = "roles/secretmanager.secretVersionAdder"
   member    = "serviceAccount:${local.runtime}"
 }
 

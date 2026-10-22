@@ -37,6 +37,7 @@ import { PlgAgentActivityPanel, type PlgActivityInspection } from './PlgAgentAct
 import { PlgAudiencePanel } from './PlgAudiencePanel';
 import { PlgAutomationPanel } from './PlgAutomationPanel';
 import { PlgAppUsage } from './PlgAppUsage';
+import { PlgGoogleMailPanel } from './PlgGoogleMailPanel';
 
 async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/plg/${path}`, {
@@ -263,6 +264,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
         refresh={() => void reload()}
         toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
+      {tab === 'automation' && workspace.mailOwner && <PlgGoogleMailPanel templates={state.templates} />}
       {tab === 'results' && <PlgAppUsage refreshKey={refreshKey} />}
       {tab === 'results' && <div>
         <h3 className="text-lg font-semibold text-ink">Campaign results</h3>

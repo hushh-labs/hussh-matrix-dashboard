@@ -18,7 +18,7 @@ const automationRuntime = { enabled: true, deliveryEnabled: false, origin: 'http
   webhookSecret: '', apiKey: '', from: 'Rachel Morgan <rachel@example.invalid>', replyTo: 'rachel@example.invalid' };
 
 async function mockPlg(page: Page, denied = false, withAgents = false,
-  audience?: (input: PlgAudienceFilters, result: PlgAudiencePage) => PlgAudiencePage) {
+  audience?: (input: PlgAudienceFilters, result: PlgAudiencePage) => PlgAudiencePage, mailOwner = false) {
   const state = initialPlgState();
   if (withAgents) registerPlgCatalog(state, { revision: 'a'.repeat(64),
     agents: [{ id: 'agent_calendar', label: 'Calendar', public: true, available: true,
@@ -37,6 +37,7 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
         role: 'admin',
         configured: true,
         deliveryEnabled: false,
+        mailOwner,
         automation: automationStatus(state, automationRuntime, Date.now()),
         state,
         queue: state.contacts.map((c) => candidate(state, c, Date.now())),
@@ -81,6 +82,35 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
   });
   return state;
 }
+
+test('keeps work-mail previews separate and distinguishes acceptance from inbox confirmation', async ({ page }) => {
+  const state = await mockPlg(page, false, false, undefined, true);
+  const before = JSON.stringify(state);
+  let receipt: string | null = null;
+  const submissions: unknown[] = [];
+  await page.route('**/api/plg/google-mail/status', (route) => route.fulfill({ json: {
+    email: 'i-neelesh@hushh.ai', connected: true, connectedAt: Date.now(), pending: false,
+  } }));
+  await page.route('**/api/plg/mail-tests', (route) => {
+    if (route.request().method() === 'POST') {
+      submissions.push(route.request().postDataJSON()); receipt = 'accepted';
+      return route.fulfill({ status: 202, json: { test: { status: receipt } } });
+    }
+    return route.fulfill({ json: { tests: receipt ? [{ id: 'isolated-test', step: 'welcome', subject: '[PLG TEST]',
+      status: receipt, createdAt: Date.now(), confirmedAt: null }] : [] } });
+  });
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Automation', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Google work mailbox' });
+  await expect(panel).toContainText('Customer bounce handling must pass a separate release gate');
+  await panel.getByRole('button', { name: 'Send preview to my work email' }).click();
+  await expect(panel).toContainText('welcome · accepted');
+  expect(submissions).toEqual([{ templateId: state.templates[0].id }]);
+  receipt = 'inbox_confirmed';
+  await panel.getByRole('button', { name: 'Check connection and receipts' }).click();
+  await expect(panel).toContainText('welcome · inbox confirmed');
+  expect(JSON.stringify(state)).toBe(before);
+});
 test('shows automation blockers and changes future cycle controls without sending', async ({ page }) => {
   const state = await mockPlg(page);
   const mutations: string[] = [];
