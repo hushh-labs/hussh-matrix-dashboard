@@ -34,6 +34,7 @@ env:
   ONE_PLG_DELIVERY_CONFIGURED: ${{ vars.ONE_PLG_DELIVERY_CONFIGURED }}
   ONE_PLG_SUBSCRIPTIONS_CONFIGURED: ${{ vars.ONE_PLG_SUBSCRIPTIONS_CONFIGURED }}
   ONE_PLG_GOOGLE_MAIL_CONFIGURED: ${{ vars.ONE_PLG_GOOGLE_MAIL_CONFIGURED }}
+  ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED: ${{ vars.ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED }}
 
 jobs:
   deploy:
@@ -162,17 +163,22 @@ jobs:
           PLG_ENV_SUFFIX="|PLG_ENABLED=false|PLG_DELIVERY_ENABLED=false|PLG_ONE_SOURCE_URL="
           PLG_SECRET_SUFFIX=""
           PLG_DELIVERY_ENABLED=false
-          GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=false|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET="
+          GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=false|PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED=false|PLG_EMAIL_PROVIDER=resend|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET="
+          REMOVE_PROVIDER_SECRETS=()
+          if [[ "${ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED}" == "true" ]]; then
+            [[ "${ONE_PLG_GOOGLE_MAIL_CONFIGURED}" == "true" && "${ONE_PLG_SUBSCRIPTIONS_CONFIGURED}" == "true" ]] || exit 1
+          fi
           if [[ "${ONE_PLG_GOOGLE_MAIL_CONFIGURED}" == "true" ]]; then
             [[ "${ONE_PLG_CONFIGURED}" == "true" && "${ONE_PLG_SENDER_CONFIGURED}" == "true" ]] || exit 1
-            # This first Google-mail release enables owner connection and isolated
-            # previews only. Customer delivery requires the feedback release gate.
-            if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" ]]; then
-              echo "Google customer sending is held until feedback reconciliation is verified."
+            if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" && "${ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED}" != "true" ]]; then
+              echo "Google customer sending requires the feedback release."
               exit 1
             fi
             gcloud secrets describe metrics-one-plg-google-mail --project="${PROJECT_ID}" --format='value(name)' > /dev/null
-            GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=true|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET=projects/${PROJECT_ID}/secrets/metrics-one-plg-google-mail"
+            GOOGLE_CAMPAIGNS=false
+            [[ "${ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED}" != "true" ]] || GOOGLE_CAMPAIGNS=true
+            GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=true|PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED=${GOOGLE_CAMPAIGNS}|PLG_EMAIL_PROVIDER=google_workspace|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET=projects/${PROJECT_ID}/secrets/metrics-one-plg-google-mail"
+            REMOVE_PROVIDER_SECRETS=(--remove-secrets=PLG_RESEND_API_KEY,PLG_RESEND_WEBHOOK_SECRET)
           fi
           if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" ]]; then
             if [[ "${ONE_PLG_CONFIGURED}" != "true" || "${ONE_PLG_SENDER_CONFIGURED}" != "true" ]]; then
@@ -200,7 +206,7 @@ jobs:
             done
             PLG_SECRET_SUFFIX+=",PLG_EMAIL_FROM=metrics-one-plg-email-from:latest,PLG_REPLY_TO=metrics-one-plg-reply-to:latest"
           fi
-          if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" ]]; then
+          if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" && "${ONE_PLG_GOOGLE_MAIL_CONFIGURED}" != "true" ]]; then
             for secret in metrics-one-plg-resend-api-key metrics-one-plg-resend-webhook-secret; do
               [[ "$(gcloud secrets versions describe latest --secret="$secret" --project="${PROJECT_ID}" --format='value(state)')" == "ENABLED" ]] || exit 1
             done
@@ -237,6 +243,7 @@ jobs:
             --service-account="${RUNTIME_SERVICE_ACCOUNT}" \
             --update-env-vars="^|^GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}|GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}|ALLOWED_EMAIL_DOMAINS=hussh.ai,hushh.ai,hushhtech.com,hushh.labs,hush1one.com|REQUIRE_AUTH=true|INSTAGRAM_ANALYTICS_ENABLED=true|INSTAGRAM_USER_ID=${INSTAGRAM_ACCOUNT_ID}|INSTAGRAM_CREDENTIAL_SECRET=${INSTAGRAM_CREDENTIAL_RESOURCE}|INSTAGRAM_ANALYTICS_ADMIN_EMAILS=${INSTAGRAM_ADMIN_EMAIL}${PLG_ENV_SUFFIX}" \
             --update-secrets="GOOGLE_CLIENT_SECRET=metrics-dashboard-google-client-secret:latest,SESSION_SECRET=metrics-dashboard-session-secret:latest,ALLOWED_EMAILS=metrics-dashboard-allowed-emails:latest${PLG_SECRET_SUFFIX}" \
+            "${REMOVE_PROVIDER_SECRETS[@]}" \
             --allow-unauthenticated \
             --port=8080 \
             --memory=1Gi \
@@ -307,6 +314,7 @@ jobs:
             'PLG_PUBLIC_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_ONE_AUDIENCE_URL', 'PLG_DELIVERY_ENABLED',
             'PLG_ONE_SUBSCRIPTION_ENABLED', 'PLG_ONE_SUBSCRIPTION_URL',
             'PLG_GOOGLE_MAIL_ENABLED', 'PLG_GOOGLE_MAIL_CREDENTIAL_SECRET',
+            'PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED', 'PLG_EMAIL_PROVIDER',
           ]);
           const plain = env.filter((entry) => entry.value && !allowedPlain.has(entry.name)).map((entry) => entry.name);
           if (plain.length > 0) {
@@ -324,8 +332,16 @@ jobs:
               (byName.get('PLG_GOOGLE_MAIL_CREDENTIAL_SECRET')?.value || '') !==
                 (googleMailEnabled ? `projects/${process.env.PROJECT_ID}/secrets/metrics-one-plg-google-mail` : ''))
             throw new Error('Google mailbox release setting mismatch');
-          if (googleMailEnabled && process.env.ONE_PLG_DELIVERY_CONFIGURED === 'true')
-            throw new Error('Customer sending awaits the Google feedback release');
+          const googleFeedback = process.env.ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED === 'true';
+          if (byName.get('PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED')?.value !== String(googleFeedback) ||
+              byName.get('PLG_EMAIL_PROVIDER')?.value !== (googleMailEnabled ? 'google_workspace' : 'resend'))
+            throw new Error('Google feedback release setting mismatch');
+          if (googleFeedback && (!googleMailEnabled || process.env.ONE_PLG_SUBSCRIPTIONS_CONFIGURED !== 'true'))
+            throw new Error('Google feedback requires the canonical permission integration');
+          if (googleMailEnabled && (byName.has('PLG_RESEND_API_KEY') || byName.has('PLG_RESEND_WEBHOOK_SECRET')))
+            throw new Error('Google mail must not mount third-party mail credentials');
+          if (googleMailEnabled && process.env.ONE_PLG_DELIVERY_CONFIGURED === 'true' && !googleFeedback)
+            throw new Error('Google customer sending requires its feedback release');
           if (process.env.ONE_PLG_CONFIGURED === 'true') {
             Object.assign(requiredSecrets, {
               PLG_SIGNING_SECRET: 'metrics-one-plg-signing-secret',
@@ -352,7 +368,7 @@ jobs:
           }
           if (process.env.ONE_PLG_DELIVERY_CONFIGURED === 'true') {
             if (process.env.ONE_PLG_SENDER_CONFIGURED !== 'true') throw new Error('Delivery requires sender configuration');
-            Object.assign(requiredSecrets, { PLG_RESEND_API_KEY: 'metrics-one-plg-resend-api-key', PLG_RESEND_WEBHOOK_SECRET: 'metrics-one-plg-resend-webhook-secret' });
+            if (!googleMailEnabled) Object.assign(requiredSecrets, { PLG_RESEND_API_KEY: 'metrics-one-plg-resend-api-key', PLG_RESEND_WEBHOOK_SECRET: 'metrics-one-plg-resend-webhook-secret' });
           }
           if (process.env.ONE_PLG_AUDIENCE_CONFIGURED === 'true') {
             if (process.env.ONE_PLG_CONFIGURED !== 'true' || byName.get('PLG_ONE_AUDIENCE_URL')?.value !== 'https://api.hushh.ai/api/one/plg/audience') throw new Error('Private audience release setting mismatch');

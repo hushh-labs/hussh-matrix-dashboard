@@ -13,7 +13,14 @@ export interface MailTest {
 export interface MailControl {
   generation: number;
   pending?: { state: string; nonce: string; verifierHash: string; expiresAt: number; generation: number };
-  connection?: { version: string; connectedAt: number; generation: number };
+  connection?: { version: string; connectedAt: number; generation: number; feedbackAllowed?: boolean };
+  feedback?: {
+    cursor: string; checkedAt: number | null;
+    pending?: { ids: string[]; nextPage: string | null; upper: string };
+    pageToken?: string; upper?: string;
+    recovery?: { after: number; upper: string };
+  };
+  feedbackLease?: { id: string; until: number };
   tests: MailTest[];
   attempts: { id: string; at: number }[];
 }

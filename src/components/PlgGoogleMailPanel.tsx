@@ -3,7 +3,10 @@ import type { PlgTemplate } from '../lib/plg';
 import { dashboardCard } from '../lib/theme';
 import { cn } from '../lib/utils';
 
-interface Status { email: string; connected: boolean; connectedAt: number | null; pending: boolean; deliveryObservation: string }
+interface Status {
+  email: string; connected: boolean; connectedAt: number | null; pending: boolean; deliveryObservation: string;
+  reportReadingRequested?: boolean; feedbackAuthorized?: boolean; feedbackCheckedAt?: number | null; feedbackBacklog?: boolean;
+}
 interface Test { id: string; step: string; subject: string; status: string; createdAt: number; confirmedAt: number | null }
 async function api<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/plg/${path}`, { method: body === undefined ? 'GET' : 'POST',
@@ -39,10 +42,15 @@ export function PlgGoogleMailPanel({ templates }: { templates: PlgTemplate[] }) 
   const button = 'rounded-xl border border-stroke px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50';
   return <section aria-label="Google work mailbox" className={cn(dashboardCard, 'p-5 sm:p-7')}>
     <h3 className="text-lg font-semibold text-ink">Google work mailbox</h3>
-    <p className="mt-2 text-sm text-muted">Connect i-neelesh@hushh.ai to send through Google Workspace. Google will request permission to send mail and read message metadata, including headers and labels. Current verification reads only exact self-test message headers and inbox labels, without bodies. Customer bounce handling must pass a separate release gate before customer sending is enabled. The grant is stored in Google Secret Manager.</p>
+    <p className="mt-2 text-sm text-muted">Connect i-neelesh@hushh.ai to send through Google Workspace. {status?.reportReadingRequested
+      ? 'Customer automation requests sending and read-only mail access to reconcile Gmail submission records and structured failure reports. Report bodies are processed transiently and are not saved. This expands the earlier metadata-only grant and requires Google consent.'
+      : 'Operator previews request sending and message metadata, including headers and labels, without bodies. Customer bounce handling must pass a separate release gate before customer sending is enabled.'} The grant is stored in Google Secret Manager.</p>
     {error && <p role="alert" className="mt-3 text-sm text-muted">{error}</p>}
     {status && <>
       <p className="mt-3 text-sm text-ink">{status.email}: {status.connected ? 'Authorization saved' : 'Not connected'}</p>
+      {status.reportReadingRequested && <p className="mt-2 text-sm text-muted">
+        Report-reading authorization: {status.feedbackAuthorized ? 'Granted' : 'Reconnect required'} · Last complete feedback poll: {status.feedbackCheckedAt ? new Date(status.feedbackCheckedAt).toLocaleString() : 'Not observed'} · {status.feedbackBacklog ? 'Catching up; customer sending held' : 'No recorded pending page'}.
+      </p>}
       <div className="mt-4 flex flex-wrap gap-3">
         <button className={button} disabled={busy} onClick={() => void action(async () => {
           const result = await api<{ url: string }>('google-mail/connect', {});

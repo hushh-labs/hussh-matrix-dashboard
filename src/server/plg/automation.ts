@@ -3,6 +3,7 @@ import type { PlgAutomationStatus, PlgState } from '../../lib/plg';
 import { audit, candidate, iso, PlgError } from './engine';
 import type { PlgService } from './service';
 import type { PlgRuntime } from './service';
+import { MAIL_OWNER } from './google-mail-store';
 
 // One cycle is shorter than the worker request, job and lease budgets, in that order.
 export const CYCLE_BUDGET_MS = 210_000;
@@ -15,9 +16,15 @@ export function senderConfigured(config: PlgRuntime) {
 export function deliveryBlockers(config: PlgRuntime): string[] {
   return [
     ...(!config.deliveryEnabled ? ['Live email delivery is disabled'] : []),
-    ...(!config.apiKey ? ['Email provider authentication is missing'] : []),
+    ...(config.emailProvider === 'google_workspace'
+      ? (!config.googleMailCampaignsEnabled ? ['Google customer mail feedback is not enabled'] : [])
+      : (!config.apiKey ? ['Email provider authentication is missing'] : [])),
+    ...(config.emailProvider === 'google_workspace' && !config.subscriptions?.enabled
+      ? ['Canonical One email permission sync is required for Google customer mail'] : []),
     ...(!senderConfigured(config) ? ['Valid From and Reply-To addresses are required'] : []),
-    ...(!config.webhookSecret ? ['Signed delivery callbacks are not configured'] : []),
+    ...(config.emailProvider === 'google_workspace' && (config.from !== `Neelesh Meena <${MAIL_OWNER}>` || config.replyTo !== MAIL_OWNER)
+      ? ['Google sender and Reply-To must match the authorized work mailbox'] : []),
+    ...(config.emailProvider !== 'google_workspace' && !config.webhookSecret ? ['Signed delivery callbacks are not configured'] : []),
     ...(config.signingSecret.length < 32 ? ['Preference links and worker authentication are not configured'] : []),
     ...(!config.origin.startsWith('https:') ? ['A secure public origin is required'] : []),
   ];
@@ -90,6 +97,8 @@ export async function runAutomationCycle(service: PlgService, sync: PlgSync, now
       // The empty catalog path checks zero enrolled accounts.
       if (result.accounts > 0) state.automation.lastEvidenceSyncAt = iso(now());
     });
+    // Stop/suppression evidence is reconciled even while campaigns are paused.
+    await service.reconcileMail(Math.min(started + CYCLE_BUDGET_MS - 20_000, now() + 45_000));
     const state = await service.store.read();
     const blockers = [
       ...(!state.automation?.enabled ? ['Automatic follow-ups are paused'] : []),

@@ -187,8 +187,11 @@ export interface PlgDelivery {
   ctaUrl: string;
   resourceUrl?: string;
   providerId: string | null;
+  provider?: 'google_workspace' | 'resend';
   /** Immutable address proof for callbacks after an identity change. */
   recipientHash?: string;
+  /** Actual RFC header read through the exact durable Gmail acceptance ID. */
+  rfcMessageId?: string;
 }
 export interface PlgState {
   version: 1;
@@ -231,6 +234,7 @@ export interface PlgAutomationStatus {
   enabled: boolean;
   worker: 'never_observed' | 'recent' | 'stale';
   sender: { from: string | null; replyTo: string | null; configured: boolean };
+  emailFeedback?: { provider: 'google_workspace'; authorized: boolean; checkedAt: number | null; backlog: boolean };
   blockers: string[];
   lastCycle: PlgCycle | null;
   lastSyncAt: string | null;

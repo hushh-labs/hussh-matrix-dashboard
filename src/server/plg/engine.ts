@@ -70,16 +70,16 @@ export function taskUrl(value: unknown): string {
   try {
     url = new URL(text(value, 1000, true));
   } catch {
-    throw new PlgError(400, 'Use a task link on one.hushh.ai.');
+    throw new PlgError(400, 'Use a task link on one.hussh.ai or one.hushh.ai.');
   }
   if (
     url.protocol !== 'https:' ||
-    url.hostname !== 'one.hushh.ai' ||
+    !['one.hussh.ai', 'one.hushh.ai'].includes(url.hostname) ||
     url.username ||
     url.password ||
     url.port
   )
-    throw new PlgError(400, 'Use a task link on one.hushh.ai.');
+    throw new PlgError(400, 'Use a task link on one.hussh.ai or one.hushh.ai.');
   return url.toString();
 }
 export function resourceUrl(value: unknown): string {
@@ -91,6 +91,7 @@ export function resourceUrl(value: unknown): string {
     throw new PlgError(400, 'Use a valid HTTPS demo or guide link.');
   }
   const allowed = [
+    'one.hussh.ai',
     'one.hushh.ai',
     'hushh.ai',
     'www.hushh.ai',
@@ -160,7 +161,7 @@ export function initialPlgState(): PlgState {
         subject: copy[step][0],
         body: copy[step][1],
         ctaLabel: 'Open One',
-        ctaUrl: 'https://one.hushh.ai/',
+        ctaUrl: 'https://one.hussh.ai/',
         published: false,
         version: 1,
       })),

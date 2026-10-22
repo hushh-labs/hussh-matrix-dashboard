@@ -2,21 +2,12 @@ import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import type { PlgTemplate } from '../../lib/plg';
 import { PlgError } from './engine';
-import { GoogleMail, GoogleMailOAuth, GoogleMailUnattempted } from './google-mail';
-import { FirestoreMailControl, MAIL_OWNER, SecretManagerMailCredentials } from './google-mail-store';
+import { GoogleMail, GoogleMailUnattempted } from './google-mail';
+import { MAIL_OWNER } from './google-mail-store';
+import { configuredGoogleMail } from './google-mail-runtime';
 import { escapeHtml, type PlgRuntime } from './service';
 import { renderPlgTestPreview } from './test-preview';
 
-export function configuredGoogleMail() {
-  if (process.env.PLG_GOOGLE_MAIL_ENABLED !== 'true') return undefined;
-  if (!process.env.PLG_FIRESTORE_PROJECT || !process.env.PLG_FIRESTORE_DATABASE || !process.env.GOOGLE_CLIENT_ID ||
-    !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REDIRECT_URI)
-    throw new PlgError(503, 'Google mail is not configured.');
-  return new GoogleMail(new FirestoreMailControl(process.env.PLG_FIRESTORE_PROJECT, process.env.PLG_FIRESTORE_DATABASE),
-    new SecretManagerMailCredentials(process.env.PLG_GOOGLE_MAIL_CREDENTIAL_SECRET || ''),
-    new GoogleMailOAuth({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      redirectUri: process.env.GOOGLE_REDIRECT_URI }));
-}
 export function registerGoogleMailRoutes(app: express.Express, config: PlgRuntime,
   templates: () => Promise<PlgTemplate[]>, injected?: GoogleMail) {
   let mail = injected;

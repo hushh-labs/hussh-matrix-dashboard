@@ -1,10 +1,10 @@
 # Google Workspace mail connection
 
 The approved sender and Reply-To are Neelesh Meena <i-neelesh@hushh.ai>.
-This release adds mailbox authorization and seven isolated operator previews.
-It does **not** enable customer sending: the deployment refuses a combination
-of Google mailbox connection and live customer delivery until its separate
-feedback-reconciliation release is verified.
+Mailbox connection and seven isolated operator previews can be enabled first.
+Customer sending requires a separate feedback flag, expanded Google consent,
+canonical One permission sync and the existing campaign readiness gates.
+Deployment flags do not grant mailbox access or enroll existing accounts.
 
 ## Google resources
 
@@ -18,16 +18,26 @@ feedback-reconciliation release is verified.
 - GitHub variable `ONE_PLG_GOOGLE_MAIL_CONFIGURED=true` enables the connection
   controls through the normal main deployment. `ONE_PLG_DELIVERY_CONFIGURED`
   remains false. Existing production traffic stays under the release owner's control.
+- `ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED=true` additionally selects the report
+  reconciler and requires `ONE_PLG_SUBSCRIPTIONS_CONFIGURED=true`. Keep customer
+  delivery false while completing expanded consent and feedback acceptance.
+- The selected transport is `PLG_EMAIL_PROVIDER=google_workspace`. Google
+  deployments remove only legacy PLG provider credential mounts; they preserve
+  other runtime secrets and do not delete retained Secret Manager containers.
 
 ## Connect and verify
 
 1. Sign into Matrix as the configured mailbox owner with PLG admin access.
 2. Open PLG → Automation → Connect Google mailbox. Read the Google permissions:
-   `gmail.send` sends messages and `gmail.metadata` permits headers and labels,
-   without message bodies. The receipt check fetches only the
+   With the connection-only flag, `gmail.send` sends messages and
+   `gmail.metadata` permits headers and labels, without message bodies.
+   With the feedback flag, `gmail.readonly` replaces metadata-only access.
+   This broader permission requires a new owner grant; an earlier metadata
+   grant is insufficient. The application reads message headers and structured
+   delivery-failure reports transiently, and never changes mailbox labels,
+   read state or messages. The operator receipt check fetches only the
    accepted self-test message's metadata and, when needed, its exact thread for
-   a separate received copy. No mailbox search, message bodies, read-state changes
-   or arbitrary email endpoint is used.
+   a separate received copy. No arbitrary-recipient email endpoint exists.
 3. Grant the requested Google access. Google Workspace may require administrator
    approval or OAuth verification; GCP IAM alone does not authorize the mailbox.
    Ordinary dashboard login keeps its identity-only scopes and callback behavior.
@@ -40,9 +50,11 @@ feedback-reconciliation release is verified.
    Repeat for each of the seven steps. No destination override exists. Each step
    has at most one submitted test per rolling day, including ambiguous outcomes.
 7. Check receipts: `accepted` means only API acceptance; `inbox_confirmed` requires
-   an INBOX copy in the accepted message's exact thread with the same opaque
-   Message-ID and exact sender/recipient. Its received provider ID is stored
-   separately; Gmail's SENT copy is never assumed to have an INBOX label.
+   an INBOX copy in the accepted message's exact thread with the same actual
+   RFC Message-ID and exact sender/recipient. Gmail may rewrite the requested
+   header; the durable accepted Gmail ID establishes the authoritative metadata.
+   The received provider ID and actual RFC header are stored separately;
+   Gmail's SENT copy is never assumed to have an INBOX label.
    Missing or failing receipt checks retain the previous known status.
 
 Definite pre-submit failures are `failed` and can be repaired/retried manually.
@@ -57,17 +69,84 @@ Disconnect removes runtime authority and fences in-flight connection refreshes.
 It does not revoke the shared Google OAuth client or invalidate normal sign-in.
 Secret versions remain under the administrator's retention/revocation policy.
 
-External delivery, read/open activity, replies and verified product outcomes are
-not inferred from Gmail acceptance. Customer sending still requires canonical
-One permission sync, suppression, content/readiness, campaign and automation
-gates, and the pending Google feedback reconciler. Native app binaries need their
+## Customer feedback and recovery
+
+The worker polls Gmail history independently of the campaign pause. Before the
+first customer message, it records a mailbox checkpoint. Each cycle processes
+at most 20 referenced messages with four bounded readers and a 45-second budget.
+Only opaque references, checkpoints and correlated delivery facts are saved;
+message bodies are not persisted. Structured report attachments and responses
+have byte limits. Partial pages, read failures, changed connections or expired
+leases cannot advance the checkpoint or authorize a send.
+
+Before processing history, the worker binds retained accepted Gmail IDs to
+their actual RFC Message-ID using metadata reads with the exact configured
+sender, SENT label and immutable recipient hash. It backfills at most 20
+bindings per cycle, independently of history order: a failure report may appear
+before its SENT record or after an older checkpoint. Missing, ambiguous or
+unreadable bindings hold the checkpoint and customer sending. No subject, time,
+thread similarity or mailbox search is used to guess a missing acceptance ID.
+
+An expired history cursor (HTTP404) starts a paginated scan of retained mail,
+including Spam and Trash, from one day before the oldest retained Google
+reservation. A history checkpoint taken before that scan catches later arrivals
+in a subsequent incremental poll. Customer sending remains held until recovery
+and catch-up finish. Other provider failures never reset the cursor. A referenced
+message that is permanently deleted or cannot be read remains a visible blocked
+cycle: the system cannot reconstruct deleted reports or claim complete evidence.
+
+The reconciler accepts only these facts:
+
+- A SENT message fetched through an already durable accepted Gmail ID binds
+  that submission's actual RFC header. If the send response was lost before
+  its acceptance ID became durable, the reservation remains uncertain and
+  blocks further automated mail for that contact. It is never auto-reconstructed
+  or resent. Submission evidence never establishes delivery.
+- A structured RFC3464 hard-failure report must match the exact unpredictable
+  actual RFC Message-ID and recipient hash of one uniquely retained Google
+  submission. A matching failure suppresses that contact.
+  Temporary delays, positive reports and arbitrary text do not become bounces.
+- Replays are idempotent. Erased contacts and deliveries are never recreated,
+  and terminal complaint/bounce states are not reversed by later SENT evidence.
+
+Google mailbox reports are not signed provider webhooks. Their coverage depends
+on reports retained in the connected mailbox. External delivery, opens, replies,
+spam complaints and verified product outcomes are **not inferred** from acceptance
+or the absence of a failure report. Product outcomes retain their own backend
+proofs. No universal delivery or complaint coverage is claimed.
+
+Before each customer send, credentials are prepared, then One verifies the
+current recipient and permission revision/generation, followed by a local
+eligibility recheck. The transport checks the same saved connection generation
+and a complete feedback checkpoint no older than 20 minutes. Missing canonical
+permission, feedback authorization, a backlog or an outage holds sending.
+Preference links keep their signed, generation-bound unsubscribe/revocation path.
+New draft task links use the canonical `https://one.hussh.ai/` origin. Existing
+`https://one.hushh.ai/` links remain accepted; exact host validation rejects
+lookalike domains, embedded credentials and custom ports. Existing saved
+templates are not silently rewritten or published.
+
+Only after owner previews, feedback/cursor recovery, canonical enrollment,
+production-only source checks and campaign content/readiness pass may the normal
+deployment set `ONE_PLG_DELIVERY_CONFIGURED=true`. Campaign pause, per-journey
+readiness, template publishing, holdouts, frequency caps and automation switches
+still apply. The current campaign store is a **100-contact pilot**; increasing
+that capacity requires its own storage change. Native app binaries require their
 own governed release to ship newly bundled preference controls.
 
 Verification: `npm run lint`, `npm test`, `npm run build`, then hosted responsive
 UI checks and the existing zero-traffic production candidate probes. Use
 `tests/plg-google-mail.test.ts` for owner/origin, OAuth replay, UTF-8 MIME,
 ambiguous-send, receipt-correlation and analytics-isolation regressions.
+The same suite and `tests/plg-google-bindings.test.ts` cover canonical
+permission-to-provider order, rewritten headers, reports before SENT pages,
+historical acceptance backfill, unknown-send holds, correlated suppression,
+partial page fencing and expired-history recovery. Synthetic
+mailboxes and provider mocks are local only; production acceptance uses the
+explicitly authorized fixed work mailbox without customer analytics changes.
 
 Google references: [sending](https://developers.google.com/workspace/gmail/api/guides/sending),
 [OAuth offline authorization](https://developers.google.com/identity/protocols/oauth2/web-server),
-[Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes).
+[Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes),
+[history and full synchronization](https://developers.google.com/workspace/gmail/api/guides/sync),
+[message listing and its metadata-scope restriction](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list).

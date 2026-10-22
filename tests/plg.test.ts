@@ -761,6 +761,10 @@ describe('PLG eligibility and measurement', () => {
     expect(updateTemplate(s, 'memory-demo', template, 'admin', NOW).resourceUrl).toBe(
       template.resourceUrl,
     );
+    expect(updateTemplate(s, 'memory-demo', { ...template, ctaUrl: 'https://one.hussh.ai/one', resourceUrl: 'https://one.hussh.ai/guide' }, 'admin', NOW).ctaUrl)
+      .toBe('https://one.hussh.ai/one');
+    for (const ctaUrl of ['https://one.hussh.ai.evil.invalid/', 'https://one.hussh.ai@evil.invalid/', 'https://one.hussh.ai:8443/'])
+      expect(() => updateTemplate(s, 'memory-demo', { ...template, ctaUrl }, 'admin', NOW)).toThrow();
     expect(() =>
       updateTemplate(
         s,
