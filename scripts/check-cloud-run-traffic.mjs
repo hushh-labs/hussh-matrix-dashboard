@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { formatTrafficTargets } from './capture-cloud-run-traffic.mjs';
+import { formatTrafficTargets, candidateNeedsRollback } from './capture-cloud-run-traffic.mjs';
 
 const service = (traffic) => ({ status: { traffic } });
 assert.equal(formatTrafficTargets(service([
@@ -16,4 +16,11 @@ assert.throws(() => formatTrafficTargets(service([
 assert.throws(() => formatTrafficTargets(service([
   { latestRevision: true, percent: 100 },
 ])));
-console.log(JSON.stringify({ ok: true, checks: ['single-revision', 'canary-split', 'invalid-state'] }));
+const changedByOperator = service([{ revisionName: 'metrics-safe', percent: 100 }, { revisionName: 'metrics-candidate', tag: 'release-candidate' }]);
+assert.equal(candidateNeedsRollback(changedByOperator, 'metrics-unsafe=100', 'metrics-candidate'), false);
+assert.equal(candidateNeedsRollback(service([{ revisionName: 'metrics-unsafe', percent: 100 }]), 'metrics-unsafe=100', 'metrics-candidate'), false);
+assert.equal(candidateNeedsRollback(service([{ revisionName: 'metrics-candidate', percent: 100 }]), 'metrics-safe=100', 'metrics-candidate'), true);
+assert.equal(candidateNeedsRollback(service([{ revisionName: 'metrics-safe', percent: 80 }, { revisionName: 'metrics-candidate', percent: 20 }]), 'metrics-safe=100', 'metrics-candidate'), true);
+assert.equal(candidateNeedsRollback(changedByOperator, 'metrics-unsafe=100', undefined), false);
+assert.throws(() => candidateNeedsRollback(service([{ revisionName: 'metrics-candidate', percent: 20 }]), 'metrics-safe=100', 'metrics-candidate'));
+console.log(JSON.stringify({ ok: true, checks: ['single-revision', 'canary-split', 'invalid-state', 'preserve-operator-rollback', 'restore-serving-failed-candidate'] }));

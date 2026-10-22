@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import { tsImport } from 'tsx/esm/api';
 import { loadCustomerCohort, customerAccountCounts, customerEventSql, requireFreshCohort } from '../src/server/one-customer-cohort';
 import { oneReportingSurfaceSql, finalizedReportingEnd } from '../scripts/one-reporting-scope.mjs';
+import { AggregateCache } from '../src/server/aggregate-cache';
 
 vi.mock('tsx/esm/api', () => ({ tsImport: vi.fn() }));
 
@@ -14,6 +15,30 @@ const fixture = () => ({ version: 1, environment: 'production', scope: 'producti
 const options = (fetcher: typeof fetch) => ({ url: 'https://api.hushh.ai/api/one/plg/audience', secret, fetch: fetcher, now: () => now });
 
 describe('private production customer aggregate boundary', () => {
+  it('reuses bounded aggregates after an identical membership proof renews, but still requires fresh proof', async () => {
+    const rows = [fixture().rows[0], { analyticsUserId: 'd'.repeat(32), registeredAt: null }];
+    const first = await loadCustomerCohort(options(async () => Response.json({ ...fixture(), scanned: 2, rows })));
+    const later = now + 300_001;
+    const renewed = await loadCustomerCohort({ ...options(async () => Response.json({ ...fixture(), scanned: 2,
+      rows: [...rows].reverse(), asOf: new Date(later).toISOString(), expiresAt: new Date(later + 600_000).toISOString() })), now: () => later });
+    expect(renewed.cacheKey).toBe(first.cacheKey);
+    expect(renewed.asOf).not.toBe(first.asOf);
+    expect(customerEventSql(renewed)).toBe(customerEventSql(first));
+    const cache = new AggregateCache<number>({ freshMs: 60_000, maxAgeMs: 600_000, maxEntries: 4, now: () => later });
+    await cache.read(`${first.cacheKey}:7d`, async () => 2);
+    expect(await cache.read(`${renewed.cacheKey}:7d`, async () => { throw new Error('unnecessary cold query'); })).toMatchObject({ value: 2, state: 'HIT' });
+    expect(() => requireFreshCohort(first, later)).toThrow('could not be verified');
+    expect(requireFreshCohort(renewed, later)).toBe(renewed);
+    for (const change of [
+      { policyRevision: 'e'.repeat(64) },
+      { rows: [rows[0], { ...rows[1], analyticsUserId: 'f'.repeat(32) }] },
+      { rows: [rows[0], { ...rows[1], registeredAt: new Date(now - 1).toISOString() }] },
+    ]) {
+      const changed = await loadCustomerCohort(options(async () => Response.json({ ...fixture(), scanned: 2, rows, ...change })));
+      expect(changed.cacheKey).not.toBe(first.cacheKey);
+    }
+  });
+
   it('anchors release comparisons to a finalized export and rejects missing day evidence', async () => {
     const reader = { query: vi.fn<(_options: { query: string }) => Promise<[{ latest: string | null }[]]>>(async () => [[{ latest: '20261020' }]]) };
     expect(await finalizedReportingEnd(reader, 'hushh-pda', 'analytics_526603671')).toBe('2026-10-20');

@@ -426,10 +426,17 @@ jobs:
           echo "Interactive Google sign-in must be verified before manual promotion."
 
       - name: Roll back traffic after failed production verification
-        # Deploy itself may change traffic before failing. Restoring the exact
-        # prior allocation is safe even if no traffic change was reached.
+        # Restore only if this failed candidate is serving. An operator may have
+        # rolled back a different revision while this 0% candidate was checked.
         if: ${{ failure() && env.PREVIOUS_TRAFFIC != '' }}
         run: |
+          NEEDS_ROLLBACK="$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" --region="${REGION}" \
+            --format=json | node scripts/capture-cloud-run-traffic.mjs --needs-rollback)"
+          if [[ "${NEEDS_ROLLBACK}" != "true" ]]; then
+            echo "Failed candidate is not serving; preserving the current live traffic allocation."
+            exit 0
+          fi
           gcloud run services update-traffic "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \

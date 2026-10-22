@@ -25,11 +25,21 @@ export function formatTrafficTargets(service) {
   return targets.join(',');
 }
 
+/** A zero-traffic candidate must not undo an operator's newer traffic change. */
+export function candidateNeedsRollback(service, previous, candidate) {
+  const current = formatTrafficTargets(service);
+  if (current === previous || !candidate) return false;
+  return service.status.traffic.some(entry => entry.revisionName === candidate && Number(entry.percent) > 0);
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     let input = '';
     for await (const chunk of process.stdin) input += chunk;
-    process.stdout.write(formatTrafficTargets(JSON.parse(input)));
+    const service = JSON.parse(input);
+    process.stdout.write(process.argv.includes('--needs-rollback')
+      ? String(candidateNeedsRollback(service, process.env.PREVIOUS_TRAFFIC, process.env.CANDIDATE_REVISION))
+      : formatTrafficTargets(service));
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Cannot capture Cloud Run traffic.');
     process.exitCode = 1;

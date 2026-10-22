@@ -104,9 +104,12 @@ source; an explicit `--end` remains available. The `--skip-dashboard` source aud
 describes full capture diagnostics and does not assert customer adoption.
 
 Before deploying, it snapshots the complete Cloud Run serving traffic split.
-If deployment or any post-deploy check fails, rollback restores those exact
-revision percentages, including a pre-existing canary split; it does not
-assume the latest ready revision was the previously serving one.
+If a failed candidate has acquired live traffic, rollback restores those exact
+revision percentages, including a pre-existing canary split. If the candidate
+still has zero traffic, a failed check preserves the current live allocation:
+an operator may have rolled back another revision during candidate checks.
+An unknown candidate never authorizes restoring an older traffic snapshot.
+The latest ready revision is not assumed to be the previously serving one.
 
 The OAuth client's only authorized redirect URI is
 `https://metrics.hussh.ai/auth/callback`. Do not try to verify Google sign-in
