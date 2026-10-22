@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { Firestore } from '@google-cloud/firestore';
 import {
   candidate,
   candidateFromPolicy,
@@ -16,8 +18,10 @@ import {
   updateContact,
   updateTemplate,
   registerPlgCatalog,
+  eraseAccount,
 } from '../src/server/plg/engine';
-import { FilePlgStore, MemoryPlgStore } from '../src/server/plg/store';
+import { FilePlgStore, MemoryPlgStore, FirestorePlgStore, validatePlgState } from '../src/server/plg/store';
+import { PlgFirestoreStorage, PlgStorageMigration, PLG_LEGACY_PATH, PLG_STORAGE_AUTHORITY } from '../src/server/plg/firestore-storage';
 import {
   PlgService,
   preferenceToken,
@@ -1358,4 +1362,289 @@ describe('PLG persistence and delivery safety', () => {
       'invalid',
     );
   });
+});
+
+const storageEmulator = process.env.PLG_STORAGE_EMULATOR_TESTS === 'true';
+if (storageEmulator && !/^127\.0\.0\.1:\d{2,5}$/.test(process.env.FIRESTORE_EMULATOR_HOST ?? ''))
+  throw new Error('PLG storage integration tests require an explicit localhost Firestore emulator.');
+
+describe.skipIf(!storageEmulator)('normalized Firestore storage', () => {
+  const drain = 300_000;
+  const fixtureState = () => {
+    const s = initialPlgState(), c = contact(s);
+    c.suppressed = 'bounced';
+    c.permission = { enabled: true, eligible: true, revision: 7, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', checkedAt: new Date(NOW).toISOString() };
+    s.eventIds = ['eventhash:second', 'eventhash:first', 'eventhash:second'];
+    s.erasedAccountHashes = [accountHash('already-erased')];
+    s.pendingRevocations = [{ accountHash: `sha256:${accountHash(c.accountId)}`, generation: c.permission.generation }];
+    s.subscriptionVersions = { [accountHash(c.accountId)]: { revision: 7, checkedAt: c.permission.checkedAt } };
+    s.deliveries = ['sent', 'uncertain'].map((status, i) => ({ id: `accepted-${i}`, contactId: c.id,
+      templateId: 'memory-welcome', step: 'welcome', key: `durable-key-${i}`, status: status as 'sent' | 'uncertain',
+      createdAt: new Date(NOW - i * DAY).toISOString(), subject: 'Synthetic fixture', body: 'Synthetic fixture', ctaLabel: 'Open',
+      ctaUrl: 'https://one.hussh.ai/', provider: 'google_workspace', providerId: i ? null : 'accepted-provider',
+      recipientHash: accountHash(c.email), ...(i ? {} : { rfcMessageId: '<actual-accepted@example.invalid>' }) }));
+    s.automation = { enabled: false };
+    return s;
+  };
+  async function fixture(run: (f: Awaited<ReturnType<typeof setup>>) => Promise<void>, state = fixtureState()) {
+    const f = await setup(state);
+    try { await run(f); } finally { await f.db.terminate(); }
+  }
+  async function setup(state: PlgState) {
+    // One demo project and isolated demo databases keep synthetic data out of GCP.
+    const projectId = 'demo-plg-storage', databaseId = `demo-plg-${randomUUID().slice(0, 8)}`;
+    const db = new Firestore({ projectId, databaseId });
+    await db.doc(PLG_LEGACY_PATH).set({ payload: JSON.stringify(state), updatedAt: new Date().toISOString() });
+    let time = Date.now();
+    const clock = () => time;
+    const store = new PlgFirestoreStorage(db, validatePlgState, clock);
+    const migration = new PlgStorageMigration(db, validatePlgState, clock);
+    const attest = () => ({ protocol: 1 as const, checkedAt: time,
+      serving: { revision: 'hushh-matrix-dashboard-99999-test', sourceSha: 'a'.repeat(40) },
+      rollback: { revision: 'hushh-matrix-dashboard-99998-test', sourceSha: 'b'.repeat(40) } });
+    const stage = async () => {
+      let progress = await migration.begin(attest());
+      while (progress.copied < progress.total) progress = await migration.step(progress, 100);
+      return migration.verify(progress);
+    };
+    const activate = async () => {
+      const ready = await stage(); time += drain;
+      await migration.activate(ready, attest()); return ready;
+    };
+    return { db, projectId, databaseId, store, migration, clock, stage, activate, attest, advance: (ms = drain) => { time += ms; } };
+  }
+  function failSecondWrite(db: Firestore): Firestore {
+    return new Proxy(db, { get(target, key) {
+      if (key === 'runTransaction') return (fn: any, options?: any) => target.runTransaction(async tx => {
+        let writes = 0;
+        const proxy = new Proxy(tx, { get(transaction, method) {
+          const value = Reflect.get(transaction, method);
+          if (method === 'set' || method === 'delete') return (...args: any[]) => {
+            if (++writes === 2) throw new Error('Synthetic transaction interruption');
+            return value.apply(transaction, args);
+          };
+          return typeof value === 'function' ? value.bind(transaction) : value;
+        } });
+        return fn(proxy);
+      }, options);
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+  }
+  it('preserves exact ordered facts and optional fields through staging, cutover, writes and latest-state rollback', async () => {
+    await fixture(async f => {
+      const before = await f.store.read(), legacy = (await f.db.doc(PLG_LEGACY_PATH).get()).get('payload');
+      const staged = await f.stage();
+      expect((await f.db.doc(PLG_LEGACY_PATH).get()).get('payload')).toBe(legacy);
+      expect(await f.store.read()).toEqual(before);
+      f.advance(); await f.migration.activate(staged, f.attest());
+      const facade = new FirestorePlgStore(f.projectId, f.databaseId, f.db);
+      expect(await facade.read()).toEqual(before);
+      expect((await facade.read()).eventIds).toEqual(['eventhash:second', 'eventhash:first', 'eventhash:second']);
+      await f.store.transaction(s => { s.contacts[0].supportOpen = true; s.eventIds.push('new-event-after-cutover'); });
+      const latest = await f.store.read();
+      expect(latest.deliveries).toEqual(before.deliveries);
+      expect(latest.pendingRevocations).toEqual(before.pendingRevocations);
+      expect(latest.erasedAccountHashes).toEqual(before.erasedAccountHashes);
+      await expect(f.migration.rollback(f.attest())).rejects.toThrow('five minutes');
+      f.advance(); await f.migration.rollback(f.attest());
+      expect(await facade.read()).toEqual(latest);
+      while (!(await f.migration.cleanup(2)).complete) { /* bounded, resumable inactive-copy cleanup */ }
+      await facade.transaction(s => { s.ready.memory = true; });
+      expect((await f.store.read()).ready.memory).toBe(true);
+    });
+  }, 60_000);
+  it('keeps absent optional arrays absent rather than converting them to empty arrays', async () => {
+    const state = fixtureState(); delete state.pendingRevocations; delete state.erasedAccountHashes; delete state.subscriptionVersions;
+    await fixture(async f => {
+      await f.activate(); const actual = await f.store.read();
+      expect(actual).toEqual(state);
+      for (const field of ['pendingRevocations', 'erasedAccountHashes', 'subscriptionVersions']) expect(Object.hasOwn(actual, field)).toBe(false);
+    }, state);
+  }, 60_000);
+  it('resumes bounded idempotent staging after an atomic interruption without touching legacy authority', async () => {
+    await fixture(async f => {
+      const before = await f.store.read(), start = await f.migration.begin(f.attest());
+      expect(await f.migration.begin(f.attest())).toEqual(start);
+      const broken = new PlgStorageMigration(failSecondWrite(f.db), validatePlgState, f.clock);
+      await expect(broken.step(start, 2)).rejects.toThrow('Synthetic transaction interruption');
+      expect((await f.migration.begin(f.attest())).copied).toBe(0);
+      expect(await f.store.read()).toEqual(before);
+      let progress = await f.migration.step(start, 2);
+      expect(progress.copied).toBe(2);
+      expect((await f.migration.begin(f.attest())).copied).toBe(2);
+      while (progress.copied < progress.total) progress = await f.migration.step(progress, 2);
+      expect((await f.migration.verify(progress)).verified).toBe(true);
+      expect((await f.db.doc(PLG_STORAGE_AUTHORITY).get()).get('mode')).toBe('legacy');
+    });
+  }, 60_000);
+  it('rejects missing or altered staged records and a source change with identical payload but new updateTime', async () => {
+    await fixture(async f => {
+      let staged = await f.stage();
+      const records = f.db.collection(`one_plg_generations/${staged.generation}/one_plg_records`);
+      const first = (await records.limit(1).get()).docs[0];
+      await first.ref.update({ json: '"tampered"' });
+      await expect(f.migration.verify(staged)).rejects.toThrow();
+      const source = await f.db.doc(PLG_LEGACY_PATH).get();
+      await f.db.doc(PLG_LEGACY_PATH).set({ ...source.data()!, updatedAt: new Date(Date.now() + 1000).toISOString() });
+      await expect(f.migration.verify(staged)).rejects.toThrow('source changed');
+      await expect(f.migration.begin(f.attest())).rejects.toThrow('Discard');
+      while (!(await f.migration.cleanup(2)).complete) { /* source is still authoritative */ }
+      const fresh = await f.migration.begin(f.attest()); expect(fresh.generation).not.toBe(staged.generation);
+      staged = await f.stage();
+      const missing = (await f.db.collection(`one_plg_generations/${staged.generation}/one_plg_records`).limit(1).get()).docs[0];
+      await missing.ref.delete();
+      f.advance(); await expect(f.migration.activate(staged, f.attest())).rejects.toThrow();
+      expect((await f.db.doc(PLG_STORAGE_AUTHORITY).get()).get('mode')).toBe('legacy');
+    });
+  }, 60_000);
+  it('rejects unsafe cutover conditions, missing rollback compatibility and an undrained writer window', async () => {
+    await fixture(async f => {
+      const staged = await f.stage();
+      await expect(f.migration.activate(staged, f.attest())).rejects.toThrow('five minutes');
+      f.advance();
+      await expect(f.migration.activate(staged, { ...f.attest(), rollback: f.attest().serving })).rejects.toThrow('rollback');
+      await expect(f.migration.activate(staged, { ...f.attest(), checkedAt: f.clock() - drain - 1 })).rejects.toThrow('rollback');
+      expect((await f.db.doc(PLG_STORAGE_AUTHORITY).get()).get('mode')).toBe('legacy');
+    });
+    for (const fault of ['campaigns', 'scheduler', 'lease', 'sending'] as const) await fixture(async f => {
+      await f.store.transaction(s => {
+        if (fault === 'campaigns') s.paused = false;
+        if (fault === 'scheduler') s.automation!.enabled = true;
+        if (fault === 'lease') s.automation!.lease = { id: 'active', until: new Date(f.clock() + drain * 3).toISOString() };
+        if (fault === 'sending') s.deliveries[0].status = 'sending';
+      });
+      await expect(f.migration.begin(f.attest())).rejects.toThrow('Quiesce');
+      expect((await f.db.doc(PLG_STORAGE_AUTHORITY).get()).get('mode')).toBe('legacy');
+    });
+  }, 60_000);
+  it('serializes concurrent normalized writers and aborts every queued write on callback failure', async () => {
+    await fixture(async f => {
+      await f.activate();
+      await Promise.all(['one', 'two'].map(key => f.store.transaction(s => { s.eventIds.push(key); })));
+      const before = await f.store.read(); expect(before.eventIds.slice(-2).sort()).toEqual(['one', 'two']);
+      const broken = new PlgFirestoreStorage(failSecondWrite(f.db), validatePlgState, f.clock);
+      await expect(broken.transaction(s => { s.eventIds.push('not-committed'); s.contacts[0].suppressed = 'unsubscribed'; }))
+        .rejects.toThrow('Synthetic transaction interruption');
+      expect(await f.store.read()).toEqual(before);
+    });
+  }, 60_000);
+  it('invalidates a staged source when an old writer races cutover, then fences old v1 writers after activation', async () => {
+    await fixture(async f => {
+      const staged = await f.stage(); f.advance();
+      let read!: () => void, release!: () => void;
+      const observed = new Promise<void>(resolve => { read = resolve; }), proceed = new Promise<void>(resolve => { release = resolve; });
+      const oldWrite = f.db.runTransaction(async tx => {
+        const ref = f.db.doc(PLG_LEGACY_PATH), snapshot = await tx.get(ref);
+        const s = JSON.parse(snapshot.get('payload')); validatePlgState(s); read(); await proceed;
+        s.eventIds.push('old-writer-committed-before-cutover');
+        tx.set(ref, { payload: JSON.stringify(s), updatedAt: new Date().toISOString() });
+      });
+      await observed;
+      const activation = f.migration.activate(staged, f.attest());
+      // Attach the rejection observer before releasing the deliberately held transaction.
+      const rejected = expect(activation).rejects.toThrow('source changed'); release(); await oldWrite; await rejected;
+      expect((await f.store.read()).eventIds).toContain('old-writer-committed-before-cutover');
+      while (!(await f.migration.cleanup()).complete) { /* discard the now-stale copy */ }
+      await f.activate(); const before = await f.store.read();
+      await expect(f.db.runTransaction(async tx => {
+        const ref = f.db.doc(PLG_LEGACY_PATH), snapshot = await tx.get(ref);
+        const s = JSON.parse(snapshot.get('payload')); validatePlgState(s);
+        tx.set(ref, { payload: JSON.stringify(s) });
+      })).rejects.toThrow('Invalid PLG state');
+      expect(await f.store.read()).toEqual(before);
+    });
+  }, 60_000);
+  it('fails large erasures before any contact, accepted fact or tombstone is partially changed', async () => {
+    const state = fixtureState(), sample = state.deliveries[0];
+    state.deliveries = Array.from({ length: 401 }, (_, i) => ({ ...sample, id: `retained-${i}`, key: `key-${i}` }));
+    await fixture(async f => {
+      await f.activate(); const before = await f.store.read();
+      await expect(f.store.transaction(s => eraseAccount(s, s.contacts[0].accountId, f.clock()))).rejects.toThrow('safe budget');
+      expect(await f.store.read()).toEqual(before);
+      expect((await f.store.read()).deliveries).toHaveLength(401);
+    }, state);
+  }, 60_000);
+  it('preserves legacy compatibility when a valid v1 history exceeds the normalized record budget', async () => {
+    const state = initialPlgState(); state.eventIds = Array(20_001).fill('duplicate');
+    await fixture(async f => {
+      const facade = new FirestorePlgStore(f.projectId, f.databaseId, f.db);
+      expect(await facade.read()).toEqual(state);
+      await facade.transaction(s => { s.paused = true; });
+      await expect(f.migration.begin(f.attest())).rejects.toThrow('record capacity');
+      expect(await facade.read()).toEqual(state);
+      expect((await f.db.doc(PLG_STORAGE_AUTHORITY).get()).get('mode')).toBe('legacy');
+    }, state);
+  }, 60_000);
+  it('fences activation during interrupted cleanup and never deletes an active generation', async () => {
+    await fixture(async f => {
+      const staged = await f.stage(), before = await f.store.read();
+      const broken = new PlgStorageMigration(failSecondWrite(f.db), validatePlgState, f.clock);
+      await expect(broken.cleanup(2)).rejects.toThrow('Synthetic transaction interruption');
+      expect((await f.migration.begin(f.attest())).copied).toBe(staged.total);
+      expect((await f.migration.cleanup(2)).complete).toBe(false);
+      f.advance(); await expect(f.migration.activate(staged, f.attest())).rejects.toThrow();
+      await expect(f.migration.begin(f.attest())).rejects.toThrow('cleanup');
+      while (!(await f.migration.cleanup(2)).complete) { /* finish the same tracked generation */ }
+      expect((await f.db.collection(`one_plg_generations/${staged.generation}/one_plg_records`).get()).empty).toBe(true);
+      expect(await f.store.read()).toEqual(before);
+      await f.activate();
+      await expect(f.migration.cleanup()).rejects.toThrow('Active normalized');
+      expect(await f.store.read()).toEqual(before);
+    });
+  }, 60_000);
+  it.each(['staging', 'retired'] as const)('holds erasure until the %s copy is gone, then applies the authoritative retry', async mode => {
+    await fixture(async f => {
+      const original = await f.store.read(), account = original.contacts[0];
+      let generation: string;
+      if (mode === 'staging') generation = (await f.stage()).generation;
+      else { generation = (await f.activate()).generation; f.advance(); await f.migration.rollback(f.attest()); }
+      await expect(f.store.transaction(s => eraseAccount(s, account.accountId, f.clock()))).rejects.toThrow('cleanup is pending');
+      expect(await f.store.read()).toEqual(original);
+      expect((await f.db.collection(`one_plg_generations/${generation}/one_plg_records`).get()).empty).toBe(true);
+      expect((await f.db.doc(`one_plg_generations/${generation}`).get()).exists).toBe(false);
+      await f.store.transaction(s => eraseAccount(s, account.accountId, f.clock()));
+      const erased = await f.store.read();
+      expect(erased.contacts).toHaveLength(0); expect(erased.deliveries).toHaveLength(0);
+      expect(erased.erasedAccountHashes).toContain(accountHash(account.accountId));
+      const retained = (await f.db.doc(PLG_LEGACY_PATH).get()).get('payload');
+      expect(retained).not.toContain(account.email); expect(retained).not.toContain('accepted-provider');
+    });
+  }, 60_000);
+  it('durably retries bounded inactive-copy cleanup without falsely reporting a large erasure complete', async () => {
+    const state = fixtureState(), sample = state.deliveries[0];
+    state.deliveries = Array.from({ length: 401 }, (_, i) => ({ ...sample, id: `private-copy-${i}`, key: `key-${i}` }));
+    await fixture(async f => {
+      const staged = await f.stage(), account = state.contacts[0];
+      let applied = false, holds = 0;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try { await f.store.transaction(s => eraseAccount(s, account.accountId, f.clock())); applied = true; break; }
+        catch (error) {
+          expect((error as Error).message).toContain('cleanup is pending'); holds++;
+          expect((await f.store.read()).contacts).toHaveLength(1);
+          const control = (await f.db.doc(PLG_STORAGE_AUTHORITY).get()).data()!;
+          if (control.staging) { expect(control.cleanupRequired).toBe(true); expect(control.staging.discarding).toBe(true); }
+        }
+      }
+      expect(applied).toBe(true); expect(holds).toBeGreaterThan(1);
+      expect((await f.store.read()).contacts).toHaveLength(0);
+      expect((await f.store.read()).deliveries).toHaveLength(0);
+      expect((await f.db.collection(`one_plg_generations/${staged.generation}/one_plg_records`).get()).empty).toBe(true);
+      expect((await f.db.doc(`one_plg_generations/${staged.generation}`).get()).exists).toBe(false);
+    }, state);
+  }, 60_000);
+  it('keeps the canonical erasure projection unacknowledged until retained-copy cleanup and its retry succeed', async () => {
+    const state = fixtureState(); state.pendingRevocations = [];
+    await fixture(async f => {
+      await f.stage();
+      const ack = vi.fn(async () => undefined);
+      const source = { pull: async () => [{ accountHash: `sha256:${accountHash(state.contacts[0].accountId)}`,
+        revision: 8, checkedAt: new Date(f.clock()).toISOString(), erased: true, enabled: false, eligible: false }],
+        ack, revoke: async () => undefined } as unknown as OneSubscriptions;
+      await expect(syncSubscriptions(f.store, source, f.clock)).rejects.toThrow('cleanup is pending');
+      expect(ack).not.toHaveBeenCalled(); expect((await f.store.read()).contacts).toHaveLength(1);
+      await syncSubscriptions(f.store, source, f.clock);
+      expect(ack).toHaveBeenCalledTimes(1); expect((await f.store.read()).contacts).toHaveLength(0);
+    }, state);
+  }, 60_000);
 });
