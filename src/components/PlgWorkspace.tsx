@@ -261,7 +261,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
         <p role="status" className="text-sm text-muted">
           Customer totals withhold {workspace.reporting.pending} accounts awaiting verification and {workspace.reporting.excluded} confirmed internal or test accounts.
         </p>}
-      {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} admin={admin} busy={busy}
+      {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} deliveryEnabled={workspace.deliveryEnabled} admin={admin} busy={busy}
         refresh={() => void reload()}
         toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
       {tab === 'automation' && workspace.mailOwner && <PlgGoogleMailPanel templates={state.templates} />}

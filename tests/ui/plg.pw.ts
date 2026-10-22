@@ -11,14 +11,16 @@ import {
   registerPlgCatalog,
 } from '../../src/server/plg/engine';
 import { automationStatus } from '../../src/server/plg/automation';
-import type { PlgAudienceFilters, PlgAudiencePage } from '../../src/lib/plg';
+import type { PlgAudienceFilters, PlgAudiencePage, PlgAutomationStatus } from '../../src/lib/plg';
+import type { PlgRuntime } from '../../src/server/plg/service';
 
 const automationRuntime = { enabled: true, deliveryEnabled: false, origin: 'https://metrics.example.invalid',
   admins: new Set<string>(), operators: new Set<string>(), signingSecret: 'test-only-key-over-32-characters-long',
-  webhookSecret: '', apiKey: '', from: 'Rachel Morgan <rachel@example.invalid>', replyTo: 'rachel@example.invalid' };
+  webhookSecret: '', apiKey: '', from: 'Neelesh Meena <i-neelesh@hushh.ai>', replyTo: 'i-neelesh@hushh.ai' };
 
 async function mockPlg(page: Page, denied = false, withAgents = false,
-  audience?: (input: PlgAudienceFilters, result: PlgAudiencePage) => PlgAudiencePage, mailOwner = false) {
+  audience?: (input: PlgAudienceFilters, result: PlgAudiencePage) => PlgAudiencePage, mailOwner = false,
+  automation?: { runtime?: Partial<PlgRuntime>; feedback?: PlgAutomationStatus['emailFeedback']; blockers?: string[] }) {
   const state = initialPlgState();
   if (withAgents) registerPlgCatalog(state, { revision: 'a'.repeat(64),
     agents: [{ id: 'agent_calendar', label: 'Calendar', public: true, available: true,
@@ -31,14 +33,17 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
     const request = route.request(),
       pathname = new URL(request.url()).pathname;
     const input = request.method() === 'GET' ? {} : request.postDataJSON();
+    const runtime = { ...automationRuntime, ...automation?.runtime };
     let result: unknown = {};
     if (pathname.endsWith('/workspace'))
       result = {
         role: 'admin',
         configured: true,
-        deliveryEnabled: false,
+        deliveryEnabled: runtime.deliveryEnabled,
         mailOwner,
-        automation: automationStatus(state, automationRuntime, Date.now()),
+        automation: { ...automationStatus(state, runtime, Date.now()),
+          ...(automation?.feedback ? { emailFeedback: automation.feedback } : {}),
+          ...(automation?.blockers ? { blockers: automation.blockers } : {}) },
         state,
         queue: state.contacts.map((c) => candidate(state, c, Date.now())),
         metrics: metrics(state, Date.now()),
@@ -127,15 +132,77 @@ test('shows automation blockers and changes future cycle controls without sendin
   await page.goto('/plg');
   await page.getByRole('tab', { name: 'Automation', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Automatic follow-up operations' });
-  await expect(panel).toContainText('Rachel Morgan');
+  await expect(panel).toContainText('Neelesh Meena');
   await expect(panel).toContainText('Email provider authentication is missing');
   await expect(panel).toContainText('Scheduled worker has not been observed');
   await page.getByRole('button', { name: 'Enable automatic follow-ups', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Pause automatic follow-ups', exact: true })).toBeVisible();
   expect(state.automation?.enabled).toBe(true);
   await expect(panel).toContainText('Live email delivery is disabled');
+  await expect(panel.getByText('Customer email delivery', { exact: true }).locator('..')).toHaveText('Customer email deliveryOff');
+  await expect(panel).toContainText('Waiting for the first account with recorded email permission');
+  await expect(panel.getByRole('listitem').filter({ hasText: 'No permission-backed accounts are enrolled' })).toHaveCount(0);
+  await panel.getByText('Delivery and activity details', { exact: true }).click();
+  await expect(panel).toContainText('Email connection details are unavailable. Check the configured email connection before sending.');
   expect(state.deliveries).toHaveLength(0);
   expect(mutations).toEqual(['/api/plg/automation']);
+});
+
+test('separates Google permission and sending state from an enabled scheduler and empty cohort', async ({ page }) => {
+  const options = { runtime: { emailProvider: 'google_workspace' as const, deliveryEnabled: false,
+    googleMailCampaignsEnabled: true, subscriptions: { enabled: true, url: '', secret: '' } },
+    feedback: { provider: 'google_workspace' as const, authorized: false, checkedAt: null as number | null, backlog: false },
+    blockers: ['Live email delivery is disabled', 'Google feedback authorization or current complete checkpoint is missing', 'No permission-backed accounts are enrolled'] };
+  const state = await mockPlg(page, false, false, undefined, false, options);
+  state.paused = false;
+  state.automation = { enabled: true, lastCycle: { id: 'synthetic-cycle', startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(), status: 'blocked', accounts: 0, sent: 0, uncertain: 0,
+    reason: 'Signed delivery callbacks are not configured' } };
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => {
+    if (message.type() === 'error') errors.push(message.text());
+    if (message.type() === 'warning') warnings.push(message.text());
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Automation', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Automatic follow-up operations' });
+  await expect(page).toHaveTitle(/hussh/i);
+  await expect(panel.getByText('Scheduled checks', { exact: true }).locator('..')).toHaveText('Scheduled checksOn');
+  await expect(panel.getByText('Customer email delivery', { exact: true }).locator('..')).toHaveText('Customer email deliveryOff');
+  await expect(panel).toContainText('Google feedback authorization or current complete checkpoint is missing');
+  await expect(panel.getByRole('listitem').filter({ hasText: /Signed delivery callbacks are not configured|No permission-backed accounts are enrolled/ })).toHaveCount(0);
+  await expect(panel.getByText('Recorded reason for that cycle:', { exact: false })).not.toBeVisible();
+  await page.screenshot({ path: test.info().outputPath('google-sending-held-desktop.png'), fullPage: true });
+  await panel.getByText('Delivery and activity details', { exact: true }).click();
+  await expect(panel).toContainText('Google bounce checks: Read permission required');
+  await expect(panel).toContainText('Gmail polling reads structured failure reports');
+  await expect(panel).not.toContainText('Email connection details are unavailable');
+  await expect(panel).not.toContainText('Domain verification');
+  await expect(panel).toContainText('Recorded reason for that cycle: Signed delivery callbacks are not configured');
+
+  options.runtime.deliveryEnabled = true;
+  options.feedback.authorized = true;
+  options.feedback.checkedAt = Date.now();
+  options.blockers = ['No permission-backed accounts are enrolled'];
+  // A fresh API refresh can enable sending without inventing an enrollment.
+  await panel.getByRole('button', { name: 'Refresh status', exact: true }).click();
+  await expect(panel.getByText('Customer email delivery', { exact: true }).locator('..')).toContainText('Enabled; eligibility checks apply');
+  await expect(panel.getByRole('heading', { name: 'Needs attention before sending' })).toHaveCount(0);
+  await expect(panel).toContainText('Waiting for the first account with recorded email permission');
+  await expect(panel).toContainText('Google bounce checks: Read permission granted');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel.getByRole('button', { name: 'Pause automatic follow-ups' })).toBeVisible();
+  await expect(page.locator('vite-error-overlay')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath('google-empty-cohort-mobile.png'), fullPage: true });
+  expect(state.contacts).toHaveLength(0);
+  expect(state.deliveries).toHaveLength(0);
+  expect(errors).toEqual([]);
+  // The suite deliberately enables reduced motion; Motion explains that setting in development.
+  expect(warnings.filter(message => !message.startsWith('You have Reduced Motion enabled on your device.'))).toEqual([]);
 });
 
 test('enrolls an account and operates the shared follow-up queue without sending', async ({ page }) => {
