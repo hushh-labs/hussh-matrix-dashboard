@@ -4,6 +4,7 @@ import type { PlgDelivery } from '../../lib/plg';
 import { PlgError } from './engine';
 import { MAIL_OWNER, type MailControlStore, type MailCredentials } from './google-mail-store';
 import { GmailReadError, type GmailRead } from './google-mail-reconcile';
+import { googleMessageMetadata } from './google-mail-metadata';
 
 export const MAIL_SCOPES = ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.metadata'];
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -12,16 +13,8 @@ export interface PreparedGoogleMail { token: string; version: string; generation
 export interface OwnInboxReceipt { id: string; messageId: string }
 
 function ownMessageHeaders(value: any) {
-  const headers = value.payload?.headers;
-  const get = (name: string): string | null => {
-    if (!Array.isArray(headers)) return null;
-    const matches = headers.filter((h) => typeof h?.name === 'string' && h.name.toLowerCase() === name.toLowerCase());
-    return matches.length === 1 && typeof matches[0].value === 'string' ? matches[0].value.trim() : null;
-  };
-  const messageId = get('Message-ID');
-  if (!messageId || !/^<[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]{1,200}@[a-zA-Z0-9.-]{1,200}>$/.test(messageId) ||
-    get('From') !== `Neelesh Meena <${MAIL_OWNER}>` || get('To')?.toLowerCase() !== MAIL_OWNER) return null;
-  return messageId;
+  const headers = googleMessageMetadata(value);
+  return headers?.from === `Neelesh Meena <${MAIL_OWNER}>` && headers.to === MAIL_OWNER ? headers.messageId : null;
 }
 export class GoogleMailUnattempted extends PlgError {
   constructor(status = 409) { super(status, 'Mail was not submitted. Repair the connection before retrying.'); }

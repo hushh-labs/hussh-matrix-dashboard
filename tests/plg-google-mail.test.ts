@@ -207,11 +207,12 @@ describe('Private fixed-recipient test API', () => {
 
 describe('Correlated Google feedback boundaries', () => {
   const recipient = 'synthetic@example.invalid';
+  const assignedId = '<google-assigned=opaque@mail.gmail.com>';
   const recipientHash = createHash('sha256').update(recipient).digest('hex');
   function campaign() {
     const state = initialPlgState();
     state.contacts.push({ id: 'synthetic-contact', email: recipient, suppressed: null, timeline: [] } as any);
-    state.deliveries.push({ id, contactId: 'synthetic-contact', provider: 'google_workspace', providerId: null,
+    state.deliveries.push({ id, contactId: 'synthetic-contact', provider: 'google_workspace', providerId: 'gmailSent123', rfcMessageId: assignedId,
       recipientHash, status: 'uncertain', step: 'welcome' } as any);
     return state;
   }
@@ -220,12 +221,12 @@ describe('Correlated Google feedback boundaries', () => {
       { name: 'Content-Type', value: 'multipart/report; boundary="sample"; report-type=delivery-status' },
     ], parts: [
       { mimeType: 'message/delivery-status', body: { data: Buffer.from(`Reporting-MTA: dns; mx.example.invalid\r\n\r\nFinal-Recipient: rfc822; ${to}\r\nAction: ${action}\r\nStatus: ${status}\r\n`).toString('base64url') } },
-      { mimeType: 'text/rfc822-headers', body: { data: Buffer.from(`Message-ID: ${mailMessageId(id)}\r\nTo: ${recipient}\r\n`).toString('base64url') } },
+      { mimeType: 'text/rfc822-headers', body: { data: Buffer.from(`Message-ID: ${assignedId}\r\nTo: ${recipient}\r\n`).toString('base64url') } },
     ] } };
   }
   it('stops only the exact Google reservation/recipient pair on a structured hard failure', () => {
     const state = campaign(), parsed = reportedHardBounces(report());
-    expect(parsed).toEqual([{ deliveryId: id, recipientHash }]);
+    expect(parsed).toEqual([{ messageId: assignedId, recipientHash }]);
     expect(applyGoogleHardBounce(state, { ...parsed[0], recipientHash: '0'.repeat(64) }, Date.now())).toBe(false);
     expect(state.contacts[0].suppressed).toBeNull();
     expect(applyGoogleHardBounce(state, parsed[0], Date.now())).toBe(true);
@@ -246,13 +247,18 @@ describe('Correlated Google feedback boundaries', () => {
     ambiguous.payload.parts.push({ mimeType: 'text/rfc822-headers', body: { data: Buffer.from(`Message-ID: <plg-1c945b22-f529-4aba-9397-93acb3919ee1@metrics.hussh.ai>`).toString('base64url') } });
     expect(reportedHardBounces(ambiguous)).toEqual([]);
   });
-  it('repairs lost submission responses from correlated SENT metadata without delivery inference or resurrection', () => {
+  it('binds only a durable acceptance ID; unknown sends and erased contacts remain held', () => {
     const state = campaign();
     const sent = { id: 'gmailSent123', labelIds: ['SENT'], payload: { headers: [
-      { name: 'Message-ID', value: mailMessageId(id) }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: recipient },
+      { name: 'Message-ID', value: assignedId }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: recipient },
     ] } };
+    state.deliveries[0].providerId = null;
+    delete state.deliveries[0].rfcMessageId;
+    expect(applyGoogleSubmission(state, sent)).toBe(false);
+    expect(state.deliveries[0]).toMatchObject({ status: 'uncertain', providerId: null });
+    state.deliveries[0].providerId = 'gmailSent123';
     expect(applyGoogleSubmission(state, sent)).toBe(true);
-    expect(state.deliveries[0]).toMatchObject({ status: 'sent', providerId: 'gmailSent123' });
+    expect(state.deliveries[0]).toMatchObject({ status: 'sent', providerId: 'gmailSent123', rfcMessageId: assignedId });
     state.deliveries[0].status = 'bounced';
     expect(applyGoogleSubmission(state, sent)).toBe(true);
     expect(state.deliveries[0].status).toBe('bounced');
@@ -385,8 +391,13 @@ describe('Canonical permission to Google transport integration', () => {
     expect(order).toEqual(outcome === 'allowed' ? ['prepare', 'permission', 'send'] : outcome === 'revoked' ? ['prepare', 'permission'] : ['prepare']);
     if (outcome === 'allowed') {
       expect((await campaigns.read()).deliveries[0]).toMatchObject({ provider: 'google_workspace', providerId: 'googleAccepted', status: 'sent' });
+      transport.mockImplementation(async (url) => Response.json(String(url).includes('/messages/googleAccepted?')
+        ? { id: 'googleAccepted', labelIds: ['SENT'], payload: { headers: [
+          { name: 'Message-ID', value: '<accepted=canonical@mail.gmail.com>' },
+          { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: 'synthetic@example.invalid' },
+        ] } } : { historyId: '101', history: [] }));
       await service.run('Synthetic replay');
-      expect(transport).toHaveBeenCalledOnce();
+      expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
     } else {
       expect(transport).not.toHaveBeenCalled();
       expect((await campaigns.read()).deliveries).toHaveLength(0);

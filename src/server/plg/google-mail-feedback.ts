@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import type { PlgState } from '../../lib/plg';
 import { applyAcceptedDelivery } from './delivery-events';
 import { timeline } from './engine';
+import { googleMessageMetadata, validRfcMessageId } from './google-mail-metadata';
+import { MAIL_OWNER } from './google-mail-store';
 
 interface Header { name: string; value: string }
 export interface GmailPart { mimeType?: string; headers?: Header[]; body?: { data?: string; attachmentId?: string }; parts?: GmailPart[] }
 export interface GmailMessage { id?: string; labelIds?: string[]; payload?: GmailPart }
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
-const messageId = /^<plg-([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})@metrics\.hussh\.ai>$/;
 const address = /^[^\s<>@,;\r\n]+@[^\s<>@,;\r\n]+\.[^\s<>@,;\r\n]+$/;
 function field(headers: Header[] | undefined, name: string) {
   const found = headers?.filter((h) => h.name?.toLowerCase() === name.toLowerCase());
@@ -33,7 +34,7 @@ function parts(root: GmailPart): GmailPart[] {
   return queue.length ? [] : output;
 }
 /** RFC3464 negative reports only. Content is discarded; no positive delivery inference. */
-export function reportedHardBounces(message: GmailMessage): { deliveryId: string; recipientHash: string }[] {
+export function reportedHardBounces(message: GmailMessage): { messageId: string; recipientHash: string }[] {
   const root = message.payload;
   const contentType = field(root?.headers, 'Content-Type');
   if (!root || root.mimeType?.toLowerCase() !== 'multipart/report' ||
@@ -43,23 +44,26 @@ export function reportedHardBounces(message: GmailMessage): { deliveryId: string
   const ids = new Set(originals.flatMap((part) => {
     const headers = [...(part.headers ?? []), ...fields(body(part).split(/\r?\n\r?\n/)[0] ?? ''),
       ...(part.parts?.flatMap((p) => p.headers ?? []) ?? [])];
-    const id = field(headers, 'Message-ID')?.match(messageId)?.[1];
-    return id ? [id] : [];
+    const id = field(headers, 'Message-ID');
+    return validRfcMessageId(id) ? [id] : [];
   }));
   if (ids.size !== 1) return [];
-  const deliveryId = [...ids][0];
+  const messageId = [...ids][0];
   return tree.filter((p) => p.mimeType?.toLowerCase() === 'message/delivery-status').flatMap((part) =>
     body(part).split(/\r?\n\r?\n/).flatMap((block) => {
       const values = fields(block);
       const final = field(values, 'Final-Recipient')?.match(/^rfc822\s*;\s*(.+)$/i)?.[1]?.trim().toLowerCase();
       if (field(values, 'Action')?.toLowerCase() !== 'failed' || !/^5\.\d{1,3}\.\d{1,3}$/.test(field(values, 'Status') ?? '') || !final || !address.test(final)) return [];
-      return [{ deliveryId, recipientHash: sha(final) }];
+      return [{ messageId, recipientHash: sha(final) }];
     }));
 }
-/** A report may stop only its exact unpredictable reservation/address pair. */
-export function applyGoogleHardBounce(state: PlgState, report: { deliveryId: string; recipientHash: string }, now: number) {
-  const delivery = state.deliveries.find((d) => d.id === report.deliveryId && d.provider === 'google_workspace');
-  if (!delivery || !delivery.recipientHash || delivery.recipientHash !== report.recipientHash || delivery.status === 'manual') return false;
+/** Correlate the actual Gmail-assigned header and immutable recipient proof. */
+export function applyGoogleHardBounce(state: PlgState, report: { messageId: string; recipientHash: string }, now: number) {
+  if (!validRfcMessageId(report.messageId)) return false;
+  const matches = state.deliveries.filter((d) => d.rfcMessageId === report.messageId && d.provider === 'google_workspace' && d.recipientHash === report.recipientHash);
+  if (matches.length !== 1) return false;
+  const delivery = matches[0];
+  if (!delivery.providerId || delivery.status === 'manual') return false;
   const contact = state.contacts.find((c) => c.id === delivery.contactId);
   if (!contact) return false;
   if (delivery.status !== 'complained') delivery.status = 'bounced';
@@ -69,17 +73,17 @@ export function applyGoogleHardBounce(state: PlgState, report: { deliveryId: str
   }
   return true;
 }
-/** Gmail SENT proves submission, not delivery, and can repair a lost API response. */
+/** Bind metadata only to a durable accepted provider ID. Unknown sends stay held. */
 export function applyGoogleSubmission(state: PlgState, message: GmailMessage) {
-  if (!message.id || !/^[a-zA-Z0-9_-]{1,160}$/.test(message.id) || !message.labelIds?.includes('SENT')) return false;
-  const id = field(message.payload?.headers, 'Message-ID')?.match(messageId)?.[1];
-  const recipient = field(message.payload?.headers, 'To')?.toLowerCase();
-  const from = field(message.payload?.headers, 'From');
-  if (!id || !recipient || !address.test(recipient) || from !== 'Neelesh Meena <i-neelesh@hushh.ai>') return false;
-  const delivery = state.deliveries.find((d) => d.id === id && d.provider === 'google_workspace' && d.recipientHash === sha(recipient));
-  if (!delivery || !state.contacts.some((c) => c.id === delivery.contactId)) return false;
-  if (delivery.providerId && delivery.providerId !== message.id) return false;
-  delivery.providerId = message.id;
+  if (!message.id || !/^[a-zA-Z0-9_-]{1,160}$/.test(message.id) || !Array.isArray(message.labelIds) || !message.labelIds.includes('SENT')) return false;
+  const headers = googleMessageMetadata(message);
+  if (!headers || headers.from !== `Neelesh Meena <${MAIL_OWNER}>`) return false;
+  const matches = state.deliveries.filter((d) => d.providerId === message.id && d.provider === 'google_workspace');
+  if (matches.length !== 1) return false;
+  const delivery = matches[0];
+  if (delivery.recipientHash !== sha(headers.to) || delivery.status === 'manual' || !state.contacts.some((c) => c.id === delivery.contactId) ||
+    (delivery.rfcMessageId && delivery.rfcMessageId !== headers.messageId)) return false;
+  delivery.rfcMessageId = headers.messageId;
   if (delivery.status === 'sending' || delivery.status === 'uncertain') delivery.status = 'sent';
   applyAcceptedDelivery(state, delivery);
   return true;

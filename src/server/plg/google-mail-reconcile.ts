@@ -3,6 +3,7 @@ import type { PlgStore } from './store';
 import type { MailControlStore } from './google-mail-store';
 import { applyGoogleHardBounce, applyGoogleSubmission, reportedHardBounces, type GmailMessage, type GmailPart } from './google-mail-feedback';
 import { PlgError } from './engine';
+import { bindGoogleAcceptedMetadata, unboundGoogleDeliveries } from './google-mail-bindings';
 
 export type GmailRead = (path: string, signal: AbortSignal) => Promise<any>;
 /** Status only: provider response bodies never enter logs or the UI. */
@@ -31,6 +32,13 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
   const signal = AbortSignal.timeout(Math.max(1, Math.min(45_000, remaining)));
   try {
     if (remaining < 5000) throw new PlgError(503, 'Google feedback deadline is too close.');
+    // Never advance past a report while its accepted message still lacks the
+    // actual RFC header. Binding by provider ID does not depend on history order.
+    if (unboundGoogleDeliveries(await campaigns.read()).length) {
+      await update((s) => { if (s.feedback) s.feedback.checkedAt = null; });
+      if (!await bindGoogleAcceptedMetadata(campaigns, api, signal, () => update(() => undefined)))
+        return { complete: false, inspected: 0 };
+    }
     let state = await control.read();
     const recover = async () => {
       const deliveries = (await campaigns.read()).deliveries.filter((d) => d.provider === 'google_workspace');
@@ -130,12 +138,22 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
     if (outcomes.some((result) => result.status === 'rejected')) throw new PlgError(503, 'Google feedback read is incomplete; sending remains held.');
     signal.throwIfAborted();
     await update(() => undefined); // authority check before committing facts
-    await campaigns.transaction((s) => {
+    const applied = await campaigns.transaction((s) => {
+      // A send can gain its durable acceptance while history is in flight.
+      // Keep this page replayable until every current accepted ID is bound;
+      // an active send without its response cannot yet rule out this report.
+      if (unboundGoogleDeliveries(s).length || s.deliveries.some((d) => d.provider === 'google_workspace' &&
+        d.status === 'sending' && !d.providerId && s.contacts.some((c) => c.id === d.contactId))) return false;
       for (const message of messages) {
         applyGoogleSubmission(s, message);
         for (const report of reportedHardBounces(message)) applyGoogleHardBounce(s, report, now());
       }
+      return true;
     });
+    if (!applied) {
+      await update((s) => { s.feedback!.checkedAt = null; });
+      return { complete: false, inspected: 0 };
+    }
     return await update((s) => {
       const feedback = s.feedback!, pending = feedback.pending!;
       pending.ids = pending.ids.slice(batch.length);

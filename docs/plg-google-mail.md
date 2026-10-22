@@ -50,9 +50,11 @@ Deployment flags do not grant mailbox access or enroll existing accounts.
    Repeat for each of the seven steps. No destination override exists. Each step
    has at most one submitted test per rolling day, including ambiguous outcomes.
 7. Check receipts: `accepted` means only API acceptance; `inbox_confirmed` requires
-   an INBOX copy in the accepted message's exact thread with the same opaque
-   Message-ID and exact sender/recipient. Its received provider ID is stored
-   separately; Gmail's SENT copy is never assumed to have an INBOX label.
+   an INBOX copy in the accepted message's exact thread with the same actual
+   RFC Message-ID and exact sender/recipient. Gmail may rewrite the requested
+   header; the durable accepted Gmail ID establishes the authoritative metadata.
+   The received provider ID and actual RFC header are stored separately;
+   Gmail's SENT copy is never assumed to have an INBOX label.
    Missing or failing receipt checks retain the previous known status.
 
 Definite pre-submit failures are `failed` and can be repaired/retried manually.
@@ -77,6 +79,14 @@ message bodies are not persisted. Structured report attachments and responses
 have byte limits. Partial pages, read failures, changed connections or expired
 leases cannot advance the checkpoint or authorize a send.
 
+Before processing history, the worker binds retained accepted Gmail IDs to
+their actual RFC Message-ID using metadata reads with the exact configured
+sender, SENT label and immutable recipient hash. It backfills at most 20
+bindings per cycle, independently of history order: a failure report may appear
+before its SENT record or after an older checkpoint. Missing, ambiguous or
+unreadable bindings hold the checkpoint and customer sending. No subject, time,
+thread similarity or mailbox search is used to guess a missing acceptance ID.
+
 An expired history cursor (HTTP404) starts a paginated scan of retained mail,
 including Spam and Trash, from one day before the oldest retained Google
 reservation. A history checkpoint taken before that scan catches later arrivals
@@ -87,11 +97,14 @@ cycle: the system cannot reconstruct deleted reports or claim complete evidence.
 
 The reconciler accepts only these facts:
 
-- A SENT message with the exact opaque reservation Message-ID, configured
-  sender and immutable recipient hash repairs a lost submission response.
-  It proves submission only and never resends an uncertain reservation.
+- A SENT message fetched through an already durable accepted Gmail ID binds
+  that submission's actual RFC header. If the send response was lost before
+  its acceptance ID became durable, the reservation remains uncertain and
+  blocks further automated mail for that contact. It is never auto-reconstructed
+  or resent. Submission evidence never establishes delivery.
 - A structured RFC3464 hard-failure report must match the exact unpredictable
-  reservation and recipient hash. A matching failure suppresses that contact.
+  actual RFC Message-ID and recipient hash of one uniquely retained Google
+  submission. A matching failure suppresses that contact.
   Temporary delays, positive reports and arbitrary text do not become bounces.
 - Replays are idempotent. Erased contacts and deliveries are never recreated,
   and terminal complaint/bounce states are not reversed by later SENT evidence.
@@ -125,8 +138,10 @@ Verification: `npm run lint`, `npm test`, `npm run build`, then hosted responsiv
 UI checks and the existing zero-traffic production candidate probes. Use
 `tests/plg-google-mail.test.ts` for owner/origin, OAuth replay, UTF-8 MIME,
 ambiguous-send, receipt-correlation and analytics-isolation regressions.
-The same suite covers canonical permission-to-provider order, correlated
-suppression, partial page fencing and expired-history recovery. Synthetic
+The same suite and `tests/plg-google-bindings.test.ts` cover canonical
+permission-to-provider order, rewritten headers, reports before SENT pages,
+historical acceptance backfill, unknown-send holds, correlated suppression,
+partial page fencing and expired-history recovery. Synthetic
 mailboxes and provider mocks are local only; production acceptance uses the
 explicitly authorized fixed work mailbox without customer analytics changes.
 

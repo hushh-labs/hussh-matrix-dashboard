@@ -9,6 +9,7 @@ import { configuredGoogleMail } from './google-mail-runtime';
 import type { GoogleMail } from './google-mail';
 import { GoogleMailUnattempted } from './google-mail';
 import { reconcileGoogleFeedback } from './google-mail-reconcile';
+import { unboundGoogleDeliveries } from './google-mail-bindings';
 
 export interface PlgRuntime {
   emailProvider?: 'resend' | 'google_workspace';
@@ -172,7 +173,8 @@ export class PlgService {
     if (this.runtime.emailProvider !== 'google_workspace' || !this.runtime.googleMailCampaignsEnabled) return;
     if (!this.googleMail) throw new PlgError(503, 'Google customer mail is not configured.');
     const state = await this.googleMail.store.read(), age = this.now() - (state.feedback?.checkedAt ?? 0);
-    if (state.connection?.feedbackAllowed && state.feedback?.checkedAt && age >= 0 && age < 60_000 && !state.feedback.pending && !state.feedback.pageToken && !state.feedback.recovery) return;
+    if (state.connection?.feedbackAllowed && state.feedback?.checkedAt && age >= 0 && age < 60_000 && !state.feedback.pending && !state.feedback.pageToken && !state.feedback.recovery &&
+      !unboundGoogleDeliveries(await this.store.read()).length) return;
     const result = await reconcileGoogleFeedback(this.googleMail.store, this.store,
       await this.googleMail.feedbackReader(deadline), deadline, this.now);
     if (!result.complete) throw new PlgError(409, 'Google mail feedback is catching up; no customer messages sent.');
@@ -274,8 +276,8 @@ export class PlgService {
       });
       if (!reserved) continue;
       // No external side effect occurs inside a retried Firestore transaction.
-      // Reservations are permanent. Correlated Gmail SENT evidence can repair a
-      // lost response; an unresolved reservation is never blindly resubmitted.
+      // Reservations are permanent. Without a durable acceptance ID a lost
+      // response stays uncertain; an unresolved send is never resubmitted.
       let attempted = false;
       try {
         // Prepare provider credentials before One's fresh permission check. A

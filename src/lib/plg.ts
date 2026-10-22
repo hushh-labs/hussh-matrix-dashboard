@@ -190,6 +190,8 @@ export interface PlgDelivery {
   provider?: 'google_workspace' | 'resend';
   /** Immutable address proof for callbacks after an identity change. */
   recipientHash?: string;
+  /** Actual RFC header read through the exact durable Gmail acceptance ID. */
+  rfcMessageId?: string;
 }
 export interface PlgState {
   version: 1;
