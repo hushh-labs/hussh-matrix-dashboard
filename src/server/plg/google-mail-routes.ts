@@ -61,7 +61,8 @@ export function registerGoogleMailRoutes(app: express.Express, config: PlgRuntim
         if (receipt) await google.store.transaction((s) => {
           const current = s.tests.find((t) => t.id === test.id);
           if (current?.status === 'accepted' && current.providerId === test.providerId) {
-            current.status = 'inbox_confirmed'; current.confirmedAt = Date.now(); current.receiptId = receipt;
+            current.status = 'inbox_confirmed'; current.confirmedAt = Date.now(); current.receiptId = receipt.id;
+            current.receiptMessageId = receipt.messageId;
           }
         });
       } catch { /* Keep acceptance visible; missing receipt never becomes delivery proof. */ }

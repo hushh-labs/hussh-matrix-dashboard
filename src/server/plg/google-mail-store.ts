@@ -8,6 +8,7 @@ export interface MailTest {
   status: 'sending' | 'accepted' | 'inbox_confirmed' | 'failed' | 'unknown';
   providerId: string | null; confirmedAt: number | null;
   receiptId?: string;
+  receiptMessageId?: string;
 }
 export interface MailControl {
   generation: number;
