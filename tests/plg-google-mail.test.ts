@@ -86,25 +86,36 @@ describe('Google mailbox authority and uncertain sends', () => {
     await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toThrow('not submitted');
     expect(transport).toHaveBeenCalledOnce();
   });
-  it('does not treat API acceptance or a different message as inbox receipt', async () => {
+  it('binds rewritten Message-ID to the accepted Gmail ID and still requires Inbox', async () => {
+    const assigned = '<google-assigned=opaque@mail.gmail.com>';
     const receipt = { id: 'accepted123', labelIds: ['SENT'], payload: { headers: [
-      { name: 'Message-ID', value: mailMessageId(id) }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: MAIL_OWNER },
+      { name: 'Message-ID', value: assigned }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: MAIL_OWNER },
     ] } };
     transport.mockImplementation(async () => Response.json(receipt));
     expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
     receipt.labelIds.push('INBOX');
-    expect(await mail.confirmOwnInbox('accepted123', id)).toBe('accepted123');
-    receipt.payload.headers[0].value = '<different@example.invalid>';
+    expect(await mail.confirmOwnInbox('accepted123', id)).toEqual({ id: 'accepted123', messageId: assigned });
+    receipt.id = 'different456';
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
+    receipt.id = 'accepted123';
+    receipt.payload.headers[2].value = 'other@example.invalid';
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
+    receipt.payload.headers[2].value = MAIL_OWNER;
+    receipt.payload.headers.push({ name: 'Message-ID', value: '<ambiguous@example.invalid>' });
     expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
     expect(String(transport.mock.calls[0][0])).toContain('format=metadata');
   });
   it('correlates a separate received copy without assuming the SENT copy has INBOX', async () => {
-    const headers = [{ name: 'Message-ID', value: mailMessageId(id) }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: MAIL_OWNER }];
+    const assigned = '<google-thread-copy=opaque@mail.gmail.com>';
+    const headers = [{ name: 'Message-ID', value: assigned }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: MAIL_OWNER }];
     const sent = { id: 'accepted123', threadId: 'thread123', labelIds: ['SENT'], payload: { headers } };
     const received = { ...sent, id: 'received456', labelIds: ['INBOX'] };
     transport.mockImplementation(async (url) => Response.json(String(url).includes('/threads/')
       ? { id: 'thread123', messages: [sent, received] } : sent));
-    expect(await mail.confirmOwnInbox('accepted123', id)).toBe('received456');
+    expect(await mail.confirmOwnInbox('accepted123', id)).toEqual({ id: 'received456', messageId: assigned });
+    received.threadId = 'unrelatedThread';
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
+    received.threadId = sent.threadId;
     received.payload = { headers: headers.map((h) => h.name === 'Message-ID' ? { ...h, value: '<different@example.invalid>' } : h) };
     expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
     received.payload = { headers }; received.labelIds = ['SENT'];
@@ -153,6 +164,16 @@ describe('Private fixed-recipient test API', () => {
     const raw = Buffer.from(sent.raw, 'base64url').toString();
     expect(raw).toContain(`To: ${MAIL_OWNER}\r\n`);
     expect(control.state.tests[0].status).toBe('accepted');
+    const accepted = control.state.tests[0];
+    const assigned = '<api-assigned=opaque@mail.gmail.com>';
+    transport.mockImplementation(async () => Response.json({ id: accepted.providerId, labelIds: ['INBOX'], payload: { headers: [
+      { name: 'Message-ID', value: assigned }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: MAIL_OWNER },
+    ] } }));
+    const checked = await request(server).get('/api/plg/mail-tests').set('Test-User', MAIL_OWNER);
+    expect(checked.status).toBe(200);
+    expect(checked.body.tests[0]).toMatchObject({ id: accepted.id, providerId: accepted.providerId,
+      status: 'inbox_confirmed', receiptId: accepted.providerId, receiptMessageId: assigned });
+    expect(transport.mock.calls.slice(1).every((call) => call[1].method === 'GET' && String(call[0]).includes('format=metadata'))).toBe(true);
     expect(await campaigns.read()).toEqual(before);
   });
   it('allows definitely unsent retries without failed churn evicting accepted reservations', async () => {

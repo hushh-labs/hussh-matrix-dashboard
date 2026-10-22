@@ -7,6 +7,20 @@ import { MAIL_OWNER, type MailControlStore, type MailCredentials } from './googl
 export const MAIL_SCOPES = ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.metadata'];
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export interface GoogleMailConfig { clientId: string; clientSecret: string; redirectUri: string }
+export interface OwnInboxReceipt { id: string; messageId: string }
+
+function ownMessageHeaders(value: any) {
+  const headers = value.payload?.headers;
+  const get = (name: string): string | null => {
+    if (!Array.isArray(headers)) return null;
+    const matches = headers.filter((h) => typeof h?.name === 'string' && h.name.toLowerCase() === name.toLowerCase());
+    return matches.length === 1 && typeof matches[0].value === 'string' ? matches[0].value.trim() : null;
+  };
+  const messageId = get('Message-ID');
+  if (!messageId || !/^<[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]{1,200}@[a-zA-Z0-9.-]{1,200}>$/.test(messageId) ||
+    get('From') !== `Neelesh Meena <${MAIL_OWNER}>` || get('To')?.toLowerCase() !== MAIL_OWNER) return null;
+  return messageId;
+}
 export class GoogleMailUnattempted extends PlgError {
   constructor() { super(409, 'Mail was not submitted. Repair the connection and retry this preview.'); }
 }
@@ -170,6 +184,7 @@ export class GoogleMail {
   }
   async confirmOwnInbox(providerId: string, reservationId: string) {
     if (!/^[a-zA-Z0-9_-]{1,160}$/.test(providerId)) throw new Error('Invalid mail receipt.');
+    mailMessageId(reservationId); // Validate the reservation; Gmail may replace its RFC Message-ID.
     const signal = AbortSignal.timeout(15_000);
     const connection = (await this.store.read()).connection;
     if (!connection) return null;
@@ -179,14 +194,15 @@ export class GoogleMail {
     // for a separate received copy; acceptance or SENT alone is never a receipt.
     // No inbox search, mark-as-read, label changes or message bodies.
     const result = await this.api(`messages/${providerId}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=From&metadataHeaders=To`, token, signal);
-    const matches = (value: any): string | null => {
-      const headers = value.payload?.headers as { name: string; value: string }[] | undefined;
-      const get = (name: string) => headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value?.trim();
-      return typeof value.id === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(value.id) && value.labelIds?.includes('INBOX') === true &&
-        get('Message-ID') === mailMessageId(reservationId) &&
-        get('From') === `Neelesh Meena <${MAIL_OWNER}>` && get('To')?.toLowerCase() === MAIL_OWNER ? value.id : null;
-    };
     if (result.id !== providerId) return null;
+    // The authenticated accepted Gmail ID binds this submission. Its actual
+    // RFC Message-ID, rather than our requested one, binds any received copy.
+    const messageId = ownMessageHeaders(result);
+    if (!messageId) return null;
+    const matches = (value: any): OwnInboxReceipt | null => {
+      return typeof value.id === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(value.id) && Array.isArray(value.labelIds) && value.labelIds.includes('INBOX') &&
+        ownMessageHeaders(value) === messageId ? { id: value.id, messageId } : null;
+    };
     const direct = matches(result);
     if (direct) return direct;
     if (typeof result.threadId !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(result.threadId)) return null;
