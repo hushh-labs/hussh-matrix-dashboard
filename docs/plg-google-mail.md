@@ -108,6 +108,10 @@ eligibility recheck. The transport checks the same saved connection generation
 and a complete feedback checkpoint no older than 20 minutes. Missing canonical
 permission, feedback authorization, a backlog or an outage holds sending.
 Preference links keep their signed, generation-bound unsubscribe/revocation path.
+New draft task links use the canonical `https://one.hussh.ai/` origin. Existing
+`https://one.hushh.ai/` links remain accepted; exact host validation rejects
+lookalike domains, embedded credentials and custom ports. Existing saved
+templates are not silently rewritten or published.
 
 Only after owner previews, feedback/cursor recovery, canonical enrollment,
 production-only source checks and campaign content/readiness pass may the normal
