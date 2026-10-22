@@ -56,7 +56,7 @@ export function PlgAutomationPanel({ status, deliveryEnabled, admin, busy, toggl
         ].map(([label, value]) => <div key={label}><dt className="text-xs">{label}</dt><dd className="mt-1 text-ink">{value}</dd></div>)}
       </dl>
       {googleFeedback ? <p className="mt-3">Google bounce checks: {googleFeedback.authorized ? 'Read permission granted' : 'Read permission required'} · Last complete check: {time(googleFeedback.checkedAt)} · {googleFeedback.backlog ? 'Catching up; customer sending held' : 'No pending page recorded'}. Gmail polling reads structured failure reports; signed webhooks are not required.</p>
-        : <p className="mt-3">Provider authentication, domain verification and signed delivery callbacks are required for this email provider.</p>}
+        : <p className="mt-3">Email connection details are unavailable. Check the configured email connection before sending.</p>}
       <p className="mt-3">Replies go to the Reply-To mailbox. Provider acceptance and verified inbox receipts are separate checks; external delivery and opens are not inferred.</p>
       <p className="mt-3">A heartbeat or catalog refresh does not confirm account evidence or email delivery. Pausing scheduled checks stops future automatic sends; evidence sync continues.</p>
       {status.lastCycle && <div className="mt-3">

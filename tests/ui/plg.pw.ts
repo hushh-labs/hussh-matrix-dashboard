@@ -143,7 +143,7 @@ test('shows automation blockers and changes future cycle controls without sendin
   await expect(panel).toContainText('Waiting for the first account with recorded email permission');
   await expect(panel.getByRole('listitem').filter({ hasText: 'No permission-backed accounts are enrolled' })).toHaveCount(0);
   await panel.getByText('Delivery and activity details', { exact: true }).click();
-  await expect(panel).toContainText('signed delivery callbacks are required for this email provider');
+  await expect(panel).toContainText('Email connection details are unavailable. Check the configured email connection before sending.');
   expect(state.deliveries).toHaveLength(0);
   expect(mutations).toEqual(['/api/plg/automation']);
 });
@@ -179,6 +179,7 @@ test('separates Google permission and sending state from an enabled scheduler an
   await panel.getByText('Delivery and activity details', { exact: true }).click();
   await expect(panel).toContainText('Google bounce checks: Read permission required');
   await expect(panel).toContainText('Gmail polling reads structured failure reports');
+  await expect(panel).not.toContainText('Email connection details are unavailable');
   await expect(panel).not.toContainText('Domain verification');
   await expect(panel).toContainText('Recorded reason for that cycle: Signed delivery callbacks are not configured');
 
