@@ -28,6 +28,8 @@ import { readOneAudience } from './one-audience';
 import { runAutomationCycle, setAutomationEnabled } from './automation';
 import { applyDeliveryEvent } from './delivery-events';
 import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
+import { registerGoogleMailRoutes } from './google-mail-routes';
+import { MAIL_OWNER } from './google-mail-store';
 
 export function registerPlgRoutes(
   app: express.Express,
@@ -56,6 +58,7 @@ export function registerPlgRoutes(
     }
     return service;
   };
+  registerGoogleMailRoutes(app, config, async () => (await getService().store.read()).templates);
   const synchronize = async (deadline = Date.now() + PLG_SYNC_BUDGET_MS) => {
     const service = getService();
     if (config.subscriptions?.enabled) {
@@ -132,7 +135,7 @@ export function registerPlgRoutes(
     '/api/plg/workspace',
     handle(async (req, res) => {
       const user = role(req);
-      return res.json(await getService().workspace(user.role));
+      return res.json({ ...await getService().workspace(user.role), mailOwner: user.role === 'admin' && user.email === MAIL_OWNER && process.env.PLG_GOOGLE_MAIL_ENABLED === 'true' });
     }),
   );
   app.post(

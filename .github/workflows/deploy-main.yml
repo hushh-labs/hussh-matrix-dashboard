@@ -33,6 +33,7 @@ env:
   ONE_PLG_SENDER_CONFIGURED: ${{ vars.ONE_PLG_SENDER_CONFIGURED }}
   ONE_PLG_DELIVERY_CONFIGURED: ${{ vars.ONE_PLG_DELIVERY_CONFIGURED }}
   ONE_PLG_SUBSCRIPTIONS_CONFIGURED: ${{ vars.ONE_PLG_SUBSCRIPTIONS_CONFIGURED }}
+  ONE_PLG_GOOGLE_MAIL_CONFIGURED: ${{ vars.ONE_PLG_GOOGLE_MAIL_CONFIGURED }}
 
 jobs:
   deploy:
@@ -161,6 +162,18 @@ jobs:
           PLG_ENV_SUFFIX="|PLG_ENABLED=false|PLG_DELIVERY_ENABLED=false|PLG_ONE_SOURCE_URL="
           PLG_SECRET_SUFFIX=""
           PLG_DELIVERY_ENABLED=false
+          GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=false|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET="
+          if [[ "${ONE_PLG_GOOGLE_MAIL_CONFIGURED}" == "true" ]]; then
+            [[ "${ONE_PLG_CONFIGURED}" == "true" && "${ONE_PLG_SENDER_CONFIGURED}" == "true" ]] || exit 1
+            # This first Google-mail release enables owner connection and isolated
+            # previews only. Customer delivery requires the feedback release gate.
+            if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" ]]; then
+              echo "Google customer sending is held until feedback reconciliation is verified."
+              exit 1
+            fi
+            gcloud secrets describe metrics-one-plg-google-mail --project="${PROJECT_ID}" --format='value(name)' > /dev/null
+            GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=true|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET=projects/${PROJECT_ID}/secrets/metrics-one-plg-google-mail"
+          fi
           if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" ]]; then
             if [[ "${ONE_PLG_CONFIGURED}" != "true" || "${ONE_PLG_SENDER_CONFIGURED}" != "true" ]]; then
               echo "Live delivery requires the configured workspace and verified sender release."
@@ -216,6 +229,7 @@ jobs:
           else
             PLG_ENV_SUFFIX+="|PLG_ONE_SUBSCRIPTION_ENABLED=false|PLG_ONE_SUBSCRIPTION_URL="
           fi
+          PLG_ENV_SUFFIX+="${GOOGLE_MAIL_ENV}"
           gcloud run deploy "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
@@ -292,6 +306,7 @@ jobs:
             'PLG_ENABLED', 'PLG_STORAGE', 'PLG_FIRESTORE_PROJECT', 'PLG_FIRESTORE_DATABASE',
             'PLG_PUBLIC_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_ONE_AUDIENCE_URL', 'PLG_DELIVERY_ENABLED',
             'PLG_ONE_SUBSCRIPTION_ENABLED', 'PLG_ONE_SUBSCRIPTION_URL',
+            'PLG_GOOGLE_MAIL_ENABLED', 'PLG_GOOGLE_MAIL_CREDENTIAL_SECRET',
           ]);
           const plain = env.filter((entry) => entry.value && !allowedPlain.has(entry.name)).map((entry) => entry.name);
           if (plain.length > 0) {
@@ -304,6 +319,13 @@ jobs:
             SESSION_SECRET: 'metrics-dashboard-session-secret',
             ALLOWED_EMAILS: 'metrics-dashboard-allowed-emails',
           };
+          const googleMailEnabled = process.env.ONE_PLG_GOOGLE_MAIL_CONFIGURED === 'true';
+          if (byName.get('PLG_GOOGLE_MAIL_ENABLED')?.value !== String(googleMailEnabled) ||
+              (byName.get('PLG_GOOGLE_MAIL_CREDENTIAL_SECRET')?.value || '') !==
+                (googleMailEnabled ? `projects/${process.env.PROJECT_ID}/secrets/metrics-one-plg-google-mail` : ''))
+            throw new Error('Google mailbox release setting mismatch');
+          if (googleMailEnabled && process.env.ONE_PLG_DELIVERY_CONFIGURED === 'true')
+            throw new Error('Customer sending awaits the Google feedback release');
           if (process.env.ONE_PLG_CONFIGURED === 'true') {
             Object.assign(requiredSecrets, {
               PLG_SIGNING_SECRET: 'metrics-one-plg-signing-secret',

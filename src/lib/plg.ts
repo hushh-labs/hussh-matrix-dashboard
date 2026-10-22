@@ -255,6 +255,7 @@ export interface PlgWorkspace {
   role: 'admin' | 'operator';
   configured: boolean;
   deliveryEnabled: boolean;
+  mailOwner?: boolean;
   reporting?: { pending: number; excluded: number };
   automation?: PlgAutomationStatus;
   state: PlgState;
