@@ -5772,7 +5772,8 @@ ${capabilitySql.isDeliberate}
 // API routes
 // ---------------------------------------------------------------------------
 
-function needsCustomerScope(pathname: string) {
+function needsCustomerScope(pathname: string, environment?: unknown) {
+  if (pathname === '/api/analytics/one/app' && environment === 'uat') return false;
   return /^\/api\/analytics\/(?:all|founder|growth(?:\/|$)|(?:one|kai)(?:\/|$))/.test(pathname)
     && !/\/(?:uat|ga4|android)$/.test(pathname);
 }
@@ -5801,7 +5802,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const refresh = req.get('X-Metrics-Refresh') === '1';
           // Aggregate handlers need only query parameters; do not retain a session or cookie in cached loaders.
           const sourceRequest = { query: req.query } as express.Request;
-          const needsCustomers = needsCustomerScope(req.path);
+          const needsCustomers = needsCustomerScope(req.path, req.query.environment);
           const cohort = needsCustomers ? await readCustomerCohort() : null;
           const key = `${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(req.originalUrl)}`;
           const result = await snapshots.read(key, () => capture(handler, sourceRequest, refresh), refresh);
@@ -5869,7 +5870,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
         if (!handler) continue;
         const req = { query: Object.fromEntries(parsed.searchParams) } as unknown as express.Request;
         try {
-          const cohort = needsCustomerScope(parsed.pathname) ? await readCustomerCohort() : null;
+          const cohort = needsCustomerScope(parsed.pathname, req.query.environment) ? await readCustomerCohort() : null;
           await snapshots.warm(`${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(url)}`, () => capture(handler, req));
         } catch { /* Source state stays explicit. */ }
       }
