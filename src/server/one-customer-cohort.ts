@@ -70,7 +70,10 @@ export async function loadCustomerCohort(options: { url: string; secret: string;
     if (cursor) cursors.add(cursor);
   } while (cursor);
   const expiresAt = Math.min(expiry, clock() + 300_000);
-  const cacheKey = createHash('sha256').update(JSON.stringify([revision, asOf, rows])).digest('hex');
+  // Freshness is checked separately on every response. A renewed proof for the
+  // same policy and members must not invalidate all aggregate/query snapshots.
+  rows.sort((left, right) => left.analyticsUserId.localeCompare(right.analyticsUserId));
+  const cacheKey = createHash('sha256').update(JSON.stringify([revision, rows])).digest('hex');
   return requireFreshCohort(Object.freeze({ policyRevision: revision, asOf, expiresAt, cacheKey,
     rows: Object.freeze(rows.map(row => Object.freeze(row))) }), clock());
 }
