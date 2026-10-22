@@ -42,6 +42,10 @@ it('emits explicit disabled PLG runtime flags and binds sender independently fro
   expect(subscribed).toContain('PLG_ONE_SUBSCRIPTION_ENABLED=true');
   expect(subscribed).toContain('PLG_ONE_SUBSCRIPTION_SECRET=metrics-one-plg-subscription-secret:latest');
   expect(subscribed).toContain('PLG_DELIVERY_ENABLED=false');
+  const connected = invoke(true, true, false, false, true);
+  expect(connected).toContain('PLG_GOOGLE_MAIL_ENABLED=true');
+  expect(connected).toContain('PLG_DELIVERY_ENABLED=false');
+  expect(() => invoke(true, true, true, false, true)).toThrow();
   expect(() => invoke(true, true, true, true, true, false)).toThrow();
   expect(() => invoke(true, true, false, false, true, true)).toThrow();
   const google = invoke(true, true, true, true, true, true);
