@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { oneProductionEndpoint } from './one-scope.mjs';
 
 /** Private only. Never include this membership directory in a public payload. */
@@ -80,12 +81,30 @@ export async function loadCustomerCohort(options: { url: string; secret: string;
 
 let cached: CustomerCohort | undefined;
 let pending: Promise<CustomerCohort> | undefined;
-export async function readCustomerCohort(): Promise<CustomerCohort> {
+const queryCohort = new AsyncLocalStorage<CustomerCohort>();
+async function readCurrentCustomerCohort(): Promise<CustomerCohort> {
   if (cached && cached.expiresAt > Date.now()) return cached;
   // Never fall back to stale membership on source failure.
   pending ??= loadCustomerCohort({ url: process.env.PLG_ONE_AUDIENCE_URL ?? '', secret: process.env.PLG_ONE_AUDIENCE_SECRET ?? '' })
     .then(value => { cached = value; return value; }).finally(() => { pending = undefined; });
   return pending;
+}
+
+export async function readCustomerCohort(): Promise<CustomerCohort> {
+  const pinned = queryCohort.getStore();
+  return pinned ? requireFreshCohort(pinned) : readCurrentCustomerCohort();
+}
+
+/** A retained cache loader may run after its membership namespace changes. */
+export async function withCustomerCohort<T>(expectedKey: string, load: () => Promise<T>): Promise<T> {
+  const current = await readCurrentCustomerCohort();
+  if (current.cacheKey !== expectedKey) throw unavailable();
+  return queryCohort.run(current, async () => {
+    const result = await load();
+    requireFreshCohort(current);
+    if ((await readCurrentCustomerCohort()).cacheKey !== expectedKey) throw unavailable();
+    return result;
+  });
 }
 
 export function customerAccountCounts(cohort: CustomerCohort, range: { startDate: string; endDate: string }) {
