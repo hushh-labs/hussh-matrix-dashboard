@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { oneSurfaceSql } from '../src/server/one-scope.mjs';
+import { oneReportingSurfaceSql } from './one-reporting-scope.mjs';
 /**
  * Read-only reconciliation probe for One adoption metrics.
  *
@@ -265,13 +266,14 @@ async function main() {
   // can receive another event between the API request and the oracle query,
   // producing a false mismatch even when both are correct.
   if (!options.skipDashboard && latestDay) {
+    const customerSurface = await oneReportingSurfaceSql(options.webHost);
     const stableEnd = latestSuffix;
     const stableStart = addSuffixDays(stableEnd, -(options.days - 1));
     const stableActiveStart = addSuffixDays(stableEnd, -33);
     const stableDateFilter = `_TABLE_SUFFIX BETWEEN '${stableStart}' AND '${stableEnd}'`;
     const stableActiveDateFilter = `_TABLE_SUFFIX BETWEEN '${stableActiveStart}' AND '${stableEnd}'`;
-    const stableOneFilter = `${stableDateFilter} AND ${surfaceFilter(options.webHost)}`;
-    const stableActiveOneFilter = `${stableActiveDateFilter} AND ${surfaceFilter(options.webHost)}`;
+    const stableOneFilter = `${stableDateFilter} AND ${customerSurface}`;
+    const stableActiveOneFilter = `${stableActiveDateFilter} AND ${customerSurface}`;
 
     const [stableTotals, stableActive, stablePlatforms, stableIdentifiedRange] = await Promise.all([
       run(`
@@ -346,7 +348,7 @@ async function main() {
           FROM ${table}
           WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^[0-9]{8}$')
             AND _TABLE_SUFFIX <= '${stableEnd}'
-            AND ${surfaceFilter(options.webHost)}
+            AND ${customerSurface}
             AND event_name NOT IN (${excluded})
             AND NULLIF(user_id, '') IS NOT NULL
           GROUP BY accountId
@@ -489,6 +491,7 @@ async function main() {
   } else {
     console.log(`One metrics reconciliation — ${options.project}.${options.dataset}`);
     console.log(`Window: ${window.start} → ${window.end} UTC (${options.days} complete days)\n`);
+    console.log('Source diagnostics cover the full capture. Dashboard comparisons use only verified production customer membership.\n');
     for (const check of checks) {
       const mark = check.ok ? 'PASS' : check.known_gap ? 'GAP ' : 'FAIL';
       console.log(`  [${mark}] ${check.name}\n         ${check.detail}`);

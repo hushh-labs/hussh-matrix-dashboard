@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
+import { tsImport } from 'tsx/esm/api';
 import { loadCustomerCohort, customerAccountCounts, customerEventSql, requireFreshCohort } from '../src/server/one-customer-cohort';
+import { oneReportingSurfaceSql, finalizedReportingEnd } from '../scripts/one-reporting-scope.mjs';
+
+vi.mock('tsx/esm/api', () => ({ tsImport: vi.fn() }));
 
 const now = Date.now(), id = 'a'.repeat(32), secret = 'synthetic-read-only-secret-32-characters';
 const fixture = () => ({ version: 1, environment: 'production', scope: 'production_registered_contacts',
@@ -10,6 +14,31 @@ const fixture = () => ({ version: 1, environment: 'production', scope: 'producti
 const options = (fetcher: typeof fetch) => ({ url: 'https://api.hushh.ai/api/one/plg/audience', secret, fetch: fetcher, now: () => now });
 
 describe('private production customer aggregate boundary', () => {
+  it('anchors release comparisons to a finalized export and rejects missing day evidence', async () => {
+    const reader = { query: vi.fn<(_options: { query: string }) => Promise<[{ latest: string | null }[]]>>(async () => [[{ latest: '20261020' }]]) };
+    expect(await finalizedReportingEnd(reader, 'hushh-pda', 'analytics_526603671')).toBe('2026-10-20');
+    expect(reader.query.mock.calls[0][0].query).toContain("r'^events_[0-9]{8}$'");
+    reader.query.mockResolvedValue([[{ latest: null }]]);
+    await expect(finalizedReportingEnd(reader, 'hushh-pda', 'analytics_526603671')).rejects.toThrow('could not be verified');
+  });
+
+  it('keeps release oracle queries in the customer population and leaves UAT independent', async () => {
+    const cohort = await loadCustomerCohort(options(async () => Response.json(fixture())));
+    const importer = vi.mocked(tsImport);
+    importer.mockResolvedValue({ readCustomerCohort: async () => cohort, customerEventSql });
+    const production = await oneReportingSurfaceSql('one.hushh.ai');
+    expect(production).toContain(`user_id IN ('${id}')`);
+    expect(production).toContain('one.hushh.ai');
+    expect(production).not.toContain('user_pseudo_id');
+    importer.mockResolvedValue({ readCustomerCohort: async () => ({ ...cohort, rows: [] }), customerEventSql });
+    expect(await oneReportingSurfaceSql('one.hushh.ai')).toContain('AND (FALSE)');
+    importer.mockRejectedValue(new Error('Membership authority unavailable'));
+    await expect(oneReportingSurfaceSql('one.hushh.ai')).rejects.toThrow('Membership authority unavailable');
+    importer.mockClear();
+    expect(await oneReportingSurfaceSql('uat.one.hushh.ai', 'uat')).toContain('uat.one.hushh.ai');
+    expect(importer).not.toHaveBeenCalled();
+  });
+
   it('uses distinct signed read authority and only identified eligible events before aggregation', async () => {
     const fetcher = vi.fn(async (url, init) => {
       expect(String(url)).toBe('https://api.hushh.ai/api/one/plg/customer-cohort');
