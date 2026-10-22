@@ -68,12 +68,12 @@ test('website selector isolates reports and keeps all products reachable', async
   await assertFits(page);
 });
 
-test('shared registration cards survive environment switches and follow the selected dates', async ({ page }) => {
+test('shared registry totals never replace the selected environment customer counts', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   await mockDashboard(page);
   const unavailable = { ...one.registeredAccounts!, available: false, registryScope: 'legacy_shared',
     totalAccounts: null, newAccounts: null, accountsCreatedByRangeEnd: null, disabledAccounts: null, daily: [] };
-  const production = { ...one, registeredAccounts: unavailable };
+  const production = { ...one, registeredAccounts: { ...one.registeredAccounts!, registryScope: 'production_contacts', sharedAcrossEnvironments: true, totalAccounts: 375, newAccounts: 20 } };
   const uat = { ...one, reportingEnvironment: 'uat', registeredAccounts: { ...unavailable, environment: 'uat', registryScope: 'unconfigured' },
     identifiedUsers: { ...one.identifiedUsers!, selectedRange: { ...one.identifiedUsers!.selectedRange, totalUsers: 33, newUsers: 11, returningUsers: 22 } } };
   await page.route('**/api/analytics/all?*', route => {
@@ -81,7 +81,7 @@ test('shared registration cards survive environment switches and follow the sele
     const startDate = query.get('one_start_date')!, endDate = query.get('one_end_date')!;
     const shortRange = (Date.parse(endDate) - Date.parse(startDate)) / 86400000 < 7;
     return route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: {
-      production, uat, registrations: { ...allAnalytics.one!.data!.registrations!, startDate, endDate, newAccounts: shortRange ? 77 : 412,
+      production: { ...production, registeredAccounts: { ...production.registeredAccounts, newAccounts: shortRange ? 4 : 20 } }, uat, registrations: { ...allAnalytics.one!.data!.registrations!, startDate, endDate, newAccounts: shortRange ? 77 : 412,
         daily: [{date:startDate,newAccounts:shortRange ? 77 : 412}] },
     } } } });
   });
@@ -89,17 +89,24 @@ test('shared registration cards survive environment switches and follow the sele
   const total = page.getByRole('group', { name: 'Total registered accounts', exact: true });
   const fresh = page.getByRole('group', { name: 'New registered accounts', exact: true });
   const active = page.getByRole('group', { name: 'Active signed-in accounts', exact: true });
-  await expect(total).toContainText('8,420');
-  await expect(total).toContainText('All One accounts · Main + Test');
-  await expect(fresh).toContainText('412');
+  await expect(total).toContainText('375');
+  await expect(total).toContainText('Verified production customer contacts');
+  await expect(fresh).toContainText('20');
   await expect(active).toContainText('1,284');
+  await page.getByText('Daily, weekly & monthly counts', { exact: true }).click();
+  await expect(page.getByText('All-One registered accounts', { exact: true }).locator('..').locator('..')).toContainText('8,420');
+  await expect(page.getByText('This shared authentication registry includes Main, Test and staff accounts;', { exact: false })).toBeVisible();
   await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
-  await expect(total).toContainText('8,420');
-  await expect(fresh).toContainText('412');
+  await expect(total).toContainText('Not available');
+  await expect(fresh).toContainText('Not available');
   await expect(active).toContainText('33');
   await page.getByRole('button', { name: '7 days', exact: true }).click();
-  await expect(fresh).toContainText('77');
-  await expect(total).toContainText('8,420');
+  await expect(fresh).toContainText('Not available');
+  await expect(total).toContainText('Not available');
+  await page.getByRole('tab', { name: 'Main analytics', exact: true }).click();
+  await expect(fresh).toContainText('4');
+  await expect(total).toContainText('375');
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
   await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics, one: { platform: 'One', data: {
     production, uat, registrations: { ...allAnalytics.one!.data!.registrations!, available: false, totalAccounts: null, newAccounts: null,
       accountsCreatedByRangeEnd: null, disabledAccounts: null, daily: [] },

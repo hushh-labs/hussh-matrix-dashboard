@@ -11,12 +11,14 @@ import {
   registerPlgCatalog,
 } from '../../src/server/plg/engine';
 import { automationStatus } from '../../src/server/plg/automation';
+import type { PlgAudienceFilters, PlgAudiencePage } from '../../src/lib/plg';
 
 const automationRuntime = { enabled: true, deliveryEnabled: false, origin: 'https://metrics.example.invalid',
   admins: new Set<string>(), operators: new Set<string>(), signingSecret: 'test-only-key-over-32-characters-long',
   webhookSecret: '', apiKey: '', from: 'Rachel Morgan <rachel@example.invalid>', replyTo: 'rachel@example.invalid' };
 
-async function mockPlg(page: Page, denied = false, withAgents = false) {
+async function mockPlg(page: Page, denied = false, withAgents = false,
+  audience?: (input: PlgAudienceFilters, result: PlgAudiencePage) => PlgAudiencePage) {
   const state = initialPlgState();
   if (withAgents) registerPlgCatalog(state, { revision: 'a'.repeat(64),
     agents: [{ id: 'agent_calendar', label: 'Calendar', public: true, available: true,
@@ -59,7 +61,7 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
     else if (pathname.endsWith('/activity')) result = { catalog: state.catalog, deleted: false,
       activity: { enabled: true, epoch: 'b'.repeat(64), mode: 'best_effort', limited: true, startedAt: new Date().toISOString(), rollups: [] } };
     else if (pathname.endsWith('/audience')) result = {
-      version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live',
+      version: 1, environment: 'production', customerReporting: { scope: 'production_registered_contacts', policyRevision: 'd'.repeat(64) }, source: 'firebase_registered_accounts', traversal: 'live',
       catalog: { revision: 'a'.repeat(64), agents: [
         { id: 'agent_one', label: 'One', public: true, available: true,
           outcome: { status: 'supported', proof: 'one.distinct_domain_effects.v1', label: 'Distinct verified task outcomes', reason: 'Shared domain effects count once.' } },
@@ -74,6 +76,7 @@ async function mockPlg(page: Page, denied = false, withAgents = false) {
           collectionStartedAt: null, firstAttemptAt: new Date(Date.now() - 7200000).toISOString(), lastObservedAt: new Date(Date.now() - 7200000).toISOString(), lastReturnedAt: null, lastFailureAt: null, lastActionId: 'agent:agent_one' },
         verified: { supported: input.agentId === 'agent_one', ...(input.agentId === 'agent_one' ? { proof: 'one.distinct_domain_effects.v1' } : {}), count: 0, lastAt: null, limited: false } }],
     };
+    if (pathname.endsWith('/audience') && audience) result = audience(input, result as PlgAudiencePage);
     return route.fulfill({ json: result });
   });
   return state;
@@ -108,8 +111,8 @@ test('enrolls an account and operates the shared follow-up queue without sending
   });
   await page.goto('/plg');
   await page.getByRole('button', { name: 'Campaign follow-up queue', exact: true }).click();
-  await expect(page.getByText('Your first cohort starts here')).toBeVisible();
-  await expect(page.getByText('Live sending disabled')).toBeVisible();
+  await expect(page.getByText('No accounts enrolled in follow-ups yet')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run campaign', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Enroll account', exact: true }).click();
   await page.getByLabel('Firebase account UID').fill('synthetic-ui-account');
   await page.getByLabel('Email address', { exact: true }).fill('pilot@example.invalid');
@@ -127,13 +130,15 @@ test('enrolls an account and operates the shared follow-up queue without sending
   await expect(page.locator('tbody').getByText('PLG team', { exact: true })).toBeVisible();
   expect(state.contacts[0].supportOpen).toBe(true);
   await page.getByRole('button', { name: 'Close account details' }).click();
-  await mkdir('.codex/artifacts/plg', { recursive: true });
+
   await page.evaluate(() => {
     document.documentElement.style.scrollBehavior = 'auto';
     (document.activeElement as HTMLElement)?.blur();
     window.scrollTo(0, 0);
   });
-  await page.screenshot({ path: '.codex/artifacts/plg/queue-1440.png', fullPage: true });
+  await page.screenshot({ path: test.info().outputPath('queue-1440.png'), fullPage: true });
+  await page.getByRole('tab', { name: 'Messages', exact: true }).click();
+  await expect(page.getByText('Live sending disabled', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Preview next messages' }).click();
   await expect(page.getByRole('region', { name: 'Campaign preview' })).toContainText('0 eligible messages');
   expect(requests.some((url) => url.includes('/run') || url.includes('resend.com'))).toBe(false);
@@ -152,6 +157,7 @@ test('reads agent people with phone-only identity, filters and live pagination w
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   await expect(page.getByText('+919876543210', { exact: true })).toBeVisible();
   await expect(page.getByText('Not enrolled in campaigns', { exact: true })).toBeVisible();
+  await page.getByText('How to read activity and completions', { exact: true }).click();
   await expect(page.getByText('Distinct verified task outcomes.', { exact: false })).toBeVisible();
   await expect(page.getByText('No verified value observed', { exact: true })).toBeVisible();
   await page.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('agent_calendar');
@@ -163,12 +169,89 @@ test('reads agent people with phone-only identity, filters and live pagination w
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   expect(bodies.at(-1)).toMatchObject({ agentId: 'agent_calendar', segment: 'possible_incomplete', query: '+9198', graceMinutes: 240, cursor: null });
   await page.getByRole('button', { name: 'Next source page' }).click();
-  await expect(page.getByText('0 matches on source page 2')).toBeVisible();
+  await expect(page.getByText('0 accounts in this result')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Next source page' })).toBeDisabled();
   await page.getByRole('button', { name: 'Previous source page' }).click();
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   expect(state.contacts).toHaveLength(0); expect(state.deliveries).toHaveLength(0);
   expect(mutations).toEqual([]);
+});
+
+test('starts with people and searches beyond empty filtered source pages without stale results', async ({ page }) => {
+  const cursors: (string | null | undefined)[] = [];
+  await mockPlg(page, false, false, (input, result) => {
+    if (input.segment !== 'failed') return result;
+    cursors.push(input.cursor);
+    const index = input.cursor ? Number(input.cursor.slice(5)) : 0;
+    return { ...result, scanned: 25, nextCursor: index < 2 ? `scan-${index + 1}` : null,
+      rows: index < 2 ? [] : ['Later match', 'Another match'].map((name, i) => ({ ...result.rows[0], accountId: `later-match-${i}`, agentId: input.agentId,
+        identity: { name, email: null, emailVerified: false, phoneNumber: null,
+          phoneVerified: false, source: 'canonical', updatedAt: null },
+        activity: { coverage: 'observed', mode: 'best_effort', counts: { started: 1, returned: 0, failed: 1, cancelled: 0, blocked: 0, possibleIncomplete: 0, inProgress: 0, uncorrelated: 0, otherObservations: 0 },
+          collectionStartedAt: null, firstAttemptAt: null, lastObservedAt: null, lastReturnedAt: null, lastFailureAt: null, lastActionId: null },
+        verified: { supported: false, count: 0, lastAt: null, limited: false } })) };
+  });
+  await page.goto('/plg');
+  await expect(page.getByRole('tab', { name: 'Users & drop-offs', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Enrolled campaign accounts only')).toHaveCount(0);
+  await page.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('agent_calendar');
+  await page.getByLabel('Task status').selectOption('failed');
+  await expect(page.getByText('Registered person', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Filters changed. Apply filters to update the results.')).toBeVisible();
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect(page.getByText('Later match', { exact: true })).toBeVisible();
+  expect(cursors).toEqual([null, 'scan-1', 'scan-2']);
+  await expect(page.getByText('Checked 75 source accounts', { exact: false })).toBeVisible();
+  await expect(page.getByText('Another match', { exact: true })).toBeVisible();
+  await expect(page.getByText('This connection does not provide verified completion tracking for Calendar.', { exact: false })).toHaveCount(1);
+  await expect(page.getByText('Starts 1', { exact: false })).toHaveCount(2);
+  await expect(page.getByText('No verified value observed', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Business completion is not measured for this agent', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('Completion definition', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Next source page' })).toBeDisabled();
+});
+
+test('keeps missing collection baselines distinct from measured zero usage', async ({ page }) => {
+  await mockPlg(page, false, false, (_input, result) => ({ ...result,
+    rows: result.rows.map((person) => ({ ...person, activity: { ...person.activity,
+      coverage: 'not_started', firstAttemptAt: null, lastObservedAt: null, lastActionId: null,
+      counts: { started: 0, returned: 0, failed: 0, cancelled: 0, blocked: 0, possibleIncomplete: 0, inProgress: 0, uncorrelated: 0, otherObservations: 0 },
+    } })) }));
+  await page.goto('/plg');
+  await expect(page.getByText('This result cannot establish zero usage.', { exact: false })).toBeVisible();
+  await expect(page.getByText('No collection baseline', { exact: true })).toBeVisible();
+  await expect(page.getByText('Starts 0', { exact: false })).toHaveCount(0);
+});
+
+test('retains the partial-count warning when execution collection is limited', async ({ page }) => {
+  await mockPlg(page, false, false, (_input, result) => ({ ...result,
+    rows: result.rows.map((person) => ({ ...person, activity: { ...person.activity, coverage: 'limited' } })) }));
+  await page.goto('/plg');
+  await expect(page.getByText('Activity collection limit reached; these counts are partial.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Starts 1', { exact: false })).toBeVisible();
+});
+
+test('keeps a bounded empty search resumable instead of claiming a global zero', async ({ page }) => {
+  const cursors: (string | null | undefined)[] = [];
+  await mockPlg(page, false, false, (input, result) => {
+    if (!input.query) return result;
+    cursors.push(input.cursor);
+    const index = input.cursor ? Number(input.cursor.slice(5)) : 0;
+    return { ...result, scanned: 25, rows: [], nextCursor: `scan-${index + 1}` };
+  });
+  await page.goto('/plg');
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  await page.getByLabel('Search name, email or phone').fill('Synthetic filter');
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect(page.getByText('No matches in the accounts checked so far.', { exact: false })).toBeVisible();
+  expect(cursors).toEqual([null, 'scan-1', 'scan-2', 'scan-3', 'scan-4', 'scan-5']);
+  await expect(page.getByText('Checked 150 source accounts', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next source page' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Next source page' }).click();
+  await expect(page.getByText('No matches in the accounts checked so far.', { exact: false })).toBeVisible();
+  expect(cursors.at(6)).toBe('scan-6');
+  await expect(page.getByRole('button', { name: 'Previous source page' })).toBeEnabled();
 });
 
 test('edits content, verifies journeys and leaves immature cohorts unavailable', async ({ page }) => {
@@ -190,6 +273,20 @@ test('edits content, verifies journeys and leaves immature cohorts unavailable',
   await page.getByRole('tab', { name: 'Results', exact: true }).click();
   await expect(page.getByText('Waiting for mature cohorts')).toHaveCount(2);
   await expect(page.getByText('Twenty percent of accounts', { exact: false })).toBeVisible();
+});
+
+test('filters the message library and closes a draft from the previous journey', async ({ page }) => {
+  await mockPlg(page);
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Messages', exact: true }).click();
+  await expect(page.getByRole('button', { name: /Show all .* message templates/ })).toBeVisible();
+  await page.getByRole('button', { name: /^memory · demo/ }).click();
+  await expect(page.getByRole('button', { name: 'Save message' })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Message journey', exact: true }).selectOption('mail');
+  await expect(page.getByRole('button', { name: 'Save message' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^memory ·/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^mail ·/ })).toHaveCount(7);
+  await expect(page.getByText('7 templates · 0 published. Drafts are not sent.')).toBeVisible();
 });
 
 test('does not expose contacts to an unauthorized dashboard viewer', async ({ page }) => {
@@ -269,12 +366,12 @@ for (const width of [320, 768, 1440])
       if (label === 'Users & drop-offs') {
         await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
         await page.getByRole('button', { name: 'Campaign follow-up queue', exact: true }).click();
-        await expect(page.getByText('Your first cohort starts here')).toBeVisible();
+        await expect(page.getByText('No accounts enrolled in follow-ups yet')).toBeVisible();
         await page.getByRole('button', { name: 'Back to users', exact: true }).click();
       }
       if (label === 'Results') {
         await page.getByRole('button', { name: 'View tracking coverage', exact: true }).click();
-        await expect(page.getByRole('heading', { name: 'Agents and actions', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Tracking details', exact: true })).toBeVisible();
         await page.getByRole('button', { name: 'Back to results', exact: true }).click();
       }
       expect(
@@ -283,13 +380,13 @@ for (const width of [320, 768, 1440])
         ),
       ).toBe(true);
     }
-    await mkdir('.codex/artifacts/plg', { recursive: true });
+
     await page.evaluate(() => {
       document.documentElement.style.scrollBehavior = 'auto';
       (document.activeElement as HTMLElement)?.blur();
       window.scrollTo(0, 0);
     });
-    await page.screenshot({ path: `.codex/artifacts/plg/workspace-${width}.png`, fullPage: true });
+    await page.screenshot({ path: test.info().outputPath(`workspace-${width}.png`), fullPage: true });
     expect(errors).toEqual([]);
   });
 

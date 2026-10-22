@@ -233,12 +233,12 @@ function RegisteredUsers({ accounts }: { accounts: OneRegistrationTotals | null 
   });
   const tiles = [
     {
-      label: 'Total registered users',
+      label: 'All-One registered accounts',
       value: accounts.totalAccounts,
       detail: `Current unique account records · ${exactAccountCount(disabled)} disabled · ${snapshotAt}`,
     },
     {
-      label: 'New registered users',
+      label: 'New All-One accounts',
       value: accounts.newAccounts,
       detail: `${accounts.startDate} to ${accounts.endDate}`,
     },
@@ -267,7 +267,7 @@ function RegisteredUsers({ accounts }: { accounts: OneRegistrationTotals | null 
       <div className="flex items-start gap-3 rounded-2xl border border-[#b8e6c2] bg-[#f2fff5] p-4 text-[#1f6d32]">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <p className="text-sm font-semibold leading-5">
-          System of record: {accounts.sourceLabel}. All One accounts across Main and Test are counted together.
+          System of record: {accounts.sourceLabel}. This shared authentication registry includes Main, Test and staff accounts; it is not a production customer count.
           Each immutable Firebase account ID is counted once, so repeat sign-ins, sessions, events and devices cannot inflate these values.
           New means the account creation timestamp falls inside the selected range. Separately created accounts cannot be proven to belong to different humans, and deleted accounts are not present in the current registry snapshot.
         </p>
@@ -314,18 +314,21 @@ function IosIdentifiedUsers({ one }: { one: OneAppSummary }) {
 }
 
 function OneAtAGlance({ one, registrations }: { one: OneAppSummary | null; registrations: OneRegistrationTotals | null }) {
-  const registered = registrations;
-  const available = registered?.available && registered.scope === 'all_one_accounts';
+  // Shared authentication totals stay in their separate registry view; never
+  // substitute them for the selected environment's customer population.
+  const registered = one?.registeredAccounts;
+  const available = registered?.available && (registered.registryScope === 'production_contacts' ||
+    (registered.registryScope === 'isolated' && !registered.sharedAcrossEnvironments));
   const tiles = [
     {
       group: 'Users', label: 'Total registered accounts',
       value: available ? registered.totalAccounts : null,
-      detail: 'All One accounts · Main + Test',
+      detail: one?.reportingEnvironment === 'production' ? 'Verified production customer contacts · staff/test excluded' : 'Verified UAT account registry',
     },
     {
       group: 'Users', label: 'New registered accounts',
       value: available ? registered.newAccounts : null,
-      detail: 'All One accounts · selected dates',
+      detail: 'Selected environment · original account creation dates',
     },
     {
       group: 'Users', label: 'Active signed-in accounts',
@@ -1298,7 +1301,7 @@ export function OneAppPanel({
     return (
       <main className="space-y-10">
         <section>{filterHeader}
-        {!loading && registrations && <OneAtAGlance one={null} registrations={registrations} />}
+        {!loading && registrations && <RegisteredUsers accounts={registrations} />}
         {loading ? <MetricsSkeleton /> : <div className={cn(dashboardPanel, 'p-8 text-center')}>
           <p className="text-base font-semibold text-ink">
             One app data is unavailable for this selection.

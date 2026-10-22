@@ -375,6 +375,17 @@ export function contactStage(c: PlgContact, now: number): PlgStage {
   if (!c.telemetryAt) return 'unknown';
   return c.setupAt ? 'setup' : 'new';
 }
+export function customerReportingCurrent(state: Pick<PlgState, 'customerReporting'>, c: PlgContact, now: number) {
+  const proof = c.customerReporting, policy = state.customerReporting;
+  if (!proof || !policy || proof.policyRevision !== policy.policyRevision) return false;
+  const checked = Date.parse(proof.checkedAt), current = Date.parse(policy.checkedAt);
+  return Number.isFinite(checked) && Number.isFinite(current) &&
+    checked <= now + 60_000 && current <= now + 60_000 &&
+    now - checked <= DAY && now - current <= DAY;
+}
+export function customerReportingEligible(state: Pick<PlgState, 'customerReporting'>, c: PlgContact, now: number) {
+  return c.customerReporting?.eligible === true && customerReportingCurrent(state, c, now);
+}
 export function candidate(
   state: PlgState,
   c: PlgContact,
@@ -412,7 +423,7 @@ export function deliveryPolicy(c: PlgContact, deliveries: readonly PlgDelivery[]
 }
 
 export function candidateFromPolicy(
-  state: Pick<PlgState, 'paused' | 'catalog' | 'ready' | 'templates'>,
+  state: Pick<PlgState, 'paused' | 'catalog' | 'ready' | 'templates' | 'customerReporting'>,
   c: PlgContact,
   policy: PlgDeliveryPolicy,
   now: number,
@@ -432,6 +443,8 @@ export function candidateFromPolicy(
   if (c.suppressed) return stop(`Suppressed: ${c.suppressed}`);
   if (c.permission && (!c.permission.enabled || !c.permission.eligible))
     return stop('Current One email permission is unavailable or turned off');
+  if (!customerReportingEligible(state, c, now))
+    return stop('Production customer reporting verification is pending or excluded');
   if (!c.consentAt) return stop('Messaging permission not recorded');
   if (c.group === 'control') return stop('Comparison group; requested support remains available');
   if (state.paused && !ignorePause) return stop('Campaigns paused');
@@ -540,6 +553,7 @@ export function updateTemplate(
   return t;
 }
 export function metrics(state: PlgState, now: number) {
+  state = { ...state, contacts: state.contacts.filter((c) => customerReportingEligible(state, c, now)) };
   const eligible = state.contacts.filter((c) => age(c.enrolledAt, now) >= 7 * DAY);
   const retention = state.contacts.filter(
     (c) => c.firstValueAt && Date.parse(c.firstValueAt.slice(0, 10)) + 15 * DAY <= now,

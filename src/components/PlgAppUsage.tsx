@@ -26,8 +26,8 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
   const production = resource.data?.environment === 'production' && resource.data?.data?.uat === null
     && one?.reportingEnvironment === 'production' ? one : null;
   const registry = production?.registeredAccounts;
-  const registryValid = registry?.available && registry.registryScope === 'isolated' &&
-    !registry.sharedAcrossEnvironments && registry.environment === 'production';
+  const registryValid = registry?.available && registry.environment === 'production' &&
+    (registry.registryScope === 'production_contacts' || (registry.registryScope === 'isolated' && !registry.sharedAcrossEnvironments));
   const device = production?.activeUsers;
   const accounts = production?.identifiedUsers;
   const deviceValid = device?.available === true;
@@ -47,7 +47,7 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-ink">App-wide One usage</h3>
-          <p className="mt-1 max-w-2xl text-sm text-muted">Production only: account and device aggregates, including people outside email campaigns. UAT is never queried or used as a fallback. These are separate from the enrolled campaign results below.</p>
+          <p className="mt-1 max-w-2xl text-sm text-muted">Verified production customer accounts and their identified activity, including accounts outside email campaigns. Confirmed staff/test identities are excluded. UAT is never queried or used as a fallback.</p>
         </div>
         <label className="text-sm font-semibold text-muted">Reporting period
           <select className="ml-2 rounded-lg border border-stroke bg-surface p-2 text-ink" value={days} onChange={(event) => setDays(Number(event.target.value))}>
@@ -74,7 +74,7 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
           </table>
         </div>
         <p className="text-xs leading-5 text-muted">Requested dates: {startDate} to {endDate}. Read at {timestamp(resource.updatedAt || resource.data?.fetchedAt)}. Registry snapshot: {timestamp(registry?.generatedAt)}.</p>
-        <p className="text-xs leading-5 text-muted">Registered accounts come from the current verified environment registry, including disabled accounts; deleted accounts are absent. Active signed-in accounts count stable account IDs across devices where tagging exists; untagged activity is excluded. Device IDs count separately and cannot be added to accounts. DAU is measured activity, not a sign-in count or verified task completion. These sources do not establish signup-to-activation conversion or email attribution.</p>
+        <p className="text-xs leading-5 text-muted">Registrations count current eligible production contacts; disabled, deleted and confirmed staff/test accounts are excluded. Active accounts count stable account IDs across devices where tagging exists; anonymous activity is excluded. Device IDs shown belong to these identified events and cannot be added to accounts. DAU is measured activity, not a sign-in count or verified task completion. One person can hold multiple accounts.</p>
       </>}
     </section>
   );

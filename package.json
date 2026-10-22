@@ -47,7 +47,7 @@
     "test:api:app-store-connect": "node scripts/check-app-store-connect.mjs",
     "test:api:public-contract": "node scripts/check-public-analytics-contract.mjs",
     "test:ui": "playwright test",
-    "test:plg": "vitest run tests/plg.test.ts tests/plg-routes.test.ts",
+    "test:plg": "vitest run tests/plg.test.ts tests/plg-routes.test.ts tests/plg-audience-search.test.ts",
     "plg:worker": "node scripts/plg-worker.mjs"
   },
   "dependencies": {

@@ -787,7 +787,7 @@ export interface OneRegisteredAccounts {
   identityAuthorityId?: string;
   sharedAcrossEnvironments: boolean;
   environment?: 'production' | 'uat';
-  registryScope?: 'isolated' | 'legacy_shared' | 'unverified' | 'unconfigured';
+  registryScope?: 'isolated' | 'production_contacts' | 'legacy_shared' | 'unverified' | 'unconfigured';
   countingUnit: 'account';
   deduplication: string;
   /** Current unique account records in Firebase Authentication. */
