@@ -34,6 +34,25 @@ Repository release variables have separate meanings:
 - `ONE_PLG_DELIVERY_CONFIGURED=true`: enable transport and mount provider secrets.
   Set this only after authorized account/domain setup and a controlled delivery,
   callback and unsubscribe test. It requires workspace and sender configuration.
+- `ONE_PLG_TESTING_CONFIGURED=true`: mount the sending key and callback secret
+  without enabling customer delivery. Keep `ONE_PLG_DELIVERY_CONFIGURED=false`
+  while operating this isolated testing setup. This is not a sender-domain or
+  campaign-launch attestation.
+
+For requested operator-only delivery previews, store the one approved mailbox in
+`metrics-one-plg-test-recipient` (no runtime accessor is needed). Run
+`npm run plg:self-test -- --preview --run-id=<stable-id>` first, then `--send`
+with the same ID. The default is the welcome preview; `--step=all` adds the other
+six steps. Retries within the provider's 24-hour deduplication window must retain
+the run ID. After an uncertain request, inspect the provider before any retry.
+The command reads its fixed secret names with Application Default Credentials,
+refuses arbitrary recipient arguments, checks that deployed customer delivery is
+disabled, uses Resend's onboarding sender, and never enrolls an operator as a
+customer. These draft previews do not create real preference links, customer
+activation evidence or campaign results. Verify receipt in the approved inbox and
+HTTP success for the real signed delivery callbacks separately; provider API
+acceptance alone is insufficient. Production sender verification, permission-backed
+enrollment, content/task review and unsubscribe acceptance remain launch gates.
 
 The candidate workflow validates enabled version metadata and exact secret
 bindings. Disabling the workspace explicitly clears workspace/delivery flags and

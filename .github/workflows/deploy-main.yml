@@ -32,6 +32,7 @@ env:
   ONE_PLG_AUDIENCE_CONFIGURED: ${{ vars.ONE_PLG_AUDIENCE_CONFIGURED }}
   ONE_PLG_SENDER_CONFIGURED: ${{ vars.ONE_PLG_SENDER_CONFIGURED }}
   ONE_PLG_DELIVERY_CONFIGURED: ${{ vars.ONE_PLG_DELIVERY_CONFIGURED }}
+  ONE_PLG_TESTING_CONFIGURED: ${{ vars.ONE_PLG_TESTING_CONFIGURED }}
   ONE_PLG_SUBSCRIPTIONS_CONFIGURED: ${{ vars.ONE_PLG_SUBSCRIPTIONS_CONFIGURED }}
 
 jobs:
@@ -161,6 +162,10 @@ jobs:
           PLG_ENV_SUFFIX="|PLG_ENABLED=false|PLG_DELIVERY_ENABLED=false|PLG_ONE_SOURCE_URL="
           PLG_SECRET_SUFFIX=""
           PLG_DELIVERY_ENABLED=false
+          if [[ "${ONE_PLG_TESTING_CONFIGURED}" == "true" && ( "${ONE_PLG_CONFIGURED}" != "true" || "${ONE_PLG_SENDER_CONFIGURED}" != "true" ) ]]; then
+            echo "Email testing requires the configured workspace and sender identity."
+            exit 1
+          fi
           if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" ]]; then
             if [[ "${ONE_PLG_CONFIGURED}" != "true" || "${ONE_PLG_SENDER_CONFIGURED}" != "true" ]]; then
               echo "Live delivery requires the configured workspace and verified sender release."
@@ -187,7 +192,7 @@ jobs:
             done
             PLG_SECRET_SUFFIX+=",PLG_EMAIL_FROM=metrics-one-plg-email-from:latest,PLG_REPLY_TO=metrics-one-plg-reply-to:latest"
           fi
-          if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" ]]; then
+          if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" || "${ONE_PLG_TESTING_CONFIGURED}" == "true" ]]; then
             for secret in metrics-one-plg-resend-api-key metrics-one-plg-resend-webhook-secret; do
               [[ "$(gcloud secrets versions describe latest --secret="$secret" --project="${PROJECT_ID}" --format='value(state)')" == "ENABLED" ]] || exit 1
             done
@@ -328,7 +333,7 @@ jobs:
             if (process.env.ONE_PLG_CONFIGURED !== 'true') throw new Error('Sender requires PLG workspace');
             Object.assign(requiredSecrets, { PLG_EMAIL_FROM: 'metrics-one-plg-email-from', PLG_REPLY_TO: 'metrics-one-plg-reply-to' });
           }
-          if (process.env.ONE_PLG_DELIVERY_CONFIGURED === 'true') {
+          if (process.env.ONE_PLG_DELIVERY_CONFIGURED === 'true' || process.env.ONE_PLG_TESTING_CONFIGURED === 'true') {
             if (process.env.ONE_PLG_SENDER_CONFIGURED !== 'true') throw new Error('Delivery requires sender configuration');
             Object.assign(requiredSecrets, { PLG_RESEND_API_KEY: 'metrics-one-plg-resend-api-key', PLG_RESEND_WEBHOOK_SECRET: 'metrics-one-plg-resend-webhook-secret' });
           }
