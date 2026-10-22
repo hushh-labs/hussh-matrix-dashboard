@@ -91,12 +91,24 @@ describe('Google mailbox authority and uncertain sends', () => {
       { name: 'Message-ID', value: mailMessageId(id) }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: MAIL_OWNER },
     ] } };
     transport.mockImplementation(async () => Response.json(receipt));
-    expect(await mail.confirmOwnInbox('accepted123', id)).toBe(false);
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
     receipt.labelIds.push('INBOX');
-    expect(await mail.confirmOwnInbox('accepted123', id)).toBe(true);
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBe('accepted123');
     receipt.payload.headers[0].value = '<different@example.invalid>';
-    expect(await mail.confirmOwnInbox('accepted123', id)).toBe(false);
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
     expect(String(transport.mock.calls[0][0])).toContain('format=metadata');
+  });
+  it('correlates a separate received copy without assuming the SENT copy has INBOX', async () => {
+    const headers = [{ name: 'Message-ID', value: mailMessageId(id) }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: MAIL_OWNER }];
+    const sent = { id: 'accepted123', threadId: 'thread123', labelIds: ['SENT'], payload: { headers } };
+    const received = { ...sent, id: 'received456', labelIds: ['INBOX'] };
+    transport.mockImplementation(async (url) => Response.json(String(url).includes('/threads/')
+      ? { id: 'thread123', messages: [sent, received] } : sent));
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBe('received456');
+    received.payload = { headers: headers.map((h) => h.name === 'Message-ID' ? { ...h, value: '<different@example.invalid>' } : h) };
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
+    received.payload = { headers }; received.labelIds = ['SENT'];
+    expect(await mail.confirmOwnInbox('accepted123', id)).toBeNull();
   });
   it('rejects header injection and preserves UTF-8 text as MIME content', () => {
     expect(() => googleMailMime('x@example.invalid\r\nBcc: victim@example.invalid', delivery, message)).toThrow();

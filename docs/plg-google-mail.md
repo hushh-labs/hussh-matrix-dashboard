@@ -25,8 +25,9 @@ feedback-reconciliation release is verified.
 2. Open PLG → Automation → Connect Google mailbox. Read the Google permissions:
    `gmail.send` sends messages and `gmail.metadata` permits headers and labels,
    without message bodies. The receipt check fetches only the
-   exact accepted self-test message's headers and labels, with no mailbox search,
-   bodies, read-state changes or arbitrary email endpoint.
+   accepted self-test message's metadata and, when needed, its exact thread for
+   a separate received copy. No mailbox search, message bodies, read-state changes
+   or arbitrary email endpoint is used.
 3. Grant the requested Google access. Google Workspace may require administrator
    approval or OAuth verification; GCP IAM alone does not authorize the mailbox.
    Ordinary dashboard login keeps its identity-only scopes and callback behavior.
@@ -39,7 +40,9 @@ feedback-reconciliation release is verified.
    Repeat for each of the seven steps. No destination override exists. Each step
    has at most one submitted test per rolling day, including ambiguous outcomes.
 7. Check receipts: `accepted` means only API acceptance; `inbox_confirmed` requires
-   the same provider ID, opaque Message-ID, exact sender/recipient and INBOX label.
+   an INBOX copy in the accepted message's exact thread with the same opaque
+   Message-ID and exact sender/recipient. Its received provider ID is stored
+   separately; Gmail's SENT copy is never assumed to have an INBOX label.
    Missing or failing receipt checks retain the previous known status.
 
 Definite pre-submit failures are `failed` and can be repaired/retried manually.

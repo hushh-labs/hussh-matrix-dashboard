@@ -172,16 +172,31 @@ export class GoogleMail {
     if (!/^[a-zA-Z0-9_-]{1,160}$/.test(providerId)) throw new Error('Invalid mail receipt.');
     const signal = AbortSignal.timeout(15_000);
     const connection = (await this.store.read()).connection;
-    if (!connection) return false;
+    if (!connection) return null;
     const token = await this.oauth.access(await this.credentials.read(connection.version));
     signal.throwIfAborted();
-    // Read only the exact API-accepted self-test message. No inbox search,
-    // arbitrary email retrieval, mark-as-read, label changes or message bodies.
+    // Gmail's accepted ID can be only the SENT copy. Inspect its exact thread
+    // for a separate received copy; acceptance or SENT alone is never a receipt.
+    // No inbox search, mark-as-read, label changes or message bodies.
     const result = await this.api(`messages/${providerId}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=From&metadataHeaders=To`, token, signal);
-    const headers = result.payload?.headers as { name: string; value: string }[] | undefined;
-    const get = (name: string) => headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value?.trim();
-    return result.id === providerId && result.labelIds?.includes('INBOX') === true &&
-      get('Message-ID') === mailMessageId(reservationId) &&
-      get('From') === `Neelesh Meena <${MAIL_OWNER}>` && get('To')?.toLowerCase() === MAIL_OWNER;
+    const matches = (value: any): string | null => {
+      const headers = value.payload?.headers as { name: string; value: string }[] | undefined;
+      const get = (name: string) => headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value?.trim();
+      return typeof value.id === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(value.id) && value.labelIds?.includes('INBOX') === true &&
+        get('Message-ID') === mailMessageId(reservationId) &&
+        get('From') === `Neelesh Meena <${MAIL_OWNER}>` && get('To')?.toLowerCase() === MAIL_OWNER ? value.id : null;
+    };
+    if (result.id !== providerId) return null;
+    const direct = matches(result);
+    if (direct) return direct;
+    if (typeof result.threadId !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(result.threadId)) return null;
+    const thread = await this.api(`threads/${result.threadId}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=From&metadataHeaders=To`, token, signal);
+    if (thread.id !== result.threadId || !Array.isArray(thread.messages) || thread.messages.length > 100) return null;
+    for (const received of thread.messages) {
+      if (received.threadId !== result.threadId) continue;
+      const receipt = matches(received);
+      if (receipt) return receipt;
+    }
+    return null;
   }
 }

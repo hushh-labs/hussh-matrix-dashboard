@@ -66,10 +66,11 @@ export function registerGoogleMailRoutes(app: express.Express, config: PlgRuntim
     // Seven per day, max 50 retained. Read exact accepted message metadata only.
     await Promise.all(before.tests.filter((t) => t.status === 'accepted' && Date.now() - t.createdAt < 86_400_000).slice(-7).map(async (test) => {
       try {
-        if (test.providerId && await google.confirmOwnInbox(test.providerId, test.id)) await google.store.transaction((s) => {
+        const receipt = test.providerId ? await google.confirmOwnInbox(test.providerId, test.id) : null;
+        if (receipt) await google.store.transaction((s) => {
           const current = s.tests.find((t) => t.id === test.id);
           if (current?.status === 'accepted' && current.providerId === test.providerId) {
-            current.status = 'inbox_confirmed'; current.confirmedAt = Date.now();
+            current.status = 'inbox_confirmed'; current.confirmedAt = Date.now(); current.receiptId = receipt;
           }
         });
       } catch { /* Keep acceptance visible; missing receipt never becomes delivery proof. */ }

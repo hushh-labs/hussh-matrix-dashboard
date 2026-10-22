@@ -7,6 +7,7 @@ export interface MailTest {
   id: string; templateId: string; step: string; subject: string; createdAt: number;
   status: 'sending' | 'accepted' | 'inbox_confirmed' | 'failed' | 'unknown';
   providerId: string | null; confirmedAt: number | null;
+  receiptId?: string;
 }
 export interface MailControl {
   generation: number;
