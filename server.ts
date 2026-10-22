@@ -7962,17 +7962,17 @@ async function getMetricsSnapshot(rangeDays: number): Promise<MetricsSnapshot> {
   const now = Date.now();
   if (metricsSnapshotCache?.key === key && metricsSnapshotCache.expiresAt > now) {
     const result = await metricsSnapshotCache.promise;
-    requireFreshCohort(cohort);
+    await requireCurrentCustomerCohort(cohort.cacheKey);
     return result;
   }
-  const promise = buildMetricsSnapshot(clampChatRangeDays(rangeDays), 'calendar_days');
+  const promise = withCustomerCohort(cohort.cacheKey, () => buildMetricsSnapshot(clampChatRangeDays(rangeDays), 'calendar_days'));
   metricsSnapshotCache = {
     key,
     expiresAt: Math.min(cohort.expiresAt, now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000),
     promise,
   };
   const result = await promise;
-  requireFreshCohort(cohort);
+  await requireCurrentCustomerCohort(cohort.cacheKey);
   return result;
 }
 
@@ -7982,17 +7982,17 @@ async function getLast24MetricsSnapshot(): Promise<MetricsSnapshot> {
   const now = Date.now();
   if (metricsSnapshotCache?.key === key && metricsSnapshotCache.expiresAt > now) {
     const result = await metricsSnapshotCache.promise;
-    requireFreshCohort(cohort);
+    await requireCurrentCustomerCohort(cohort.cacheKey);
     return result;
   }
-  const promise = buildMetricsSnapshot(last24HourUtcRange(), 'last_24_hours');
+  const promise = withCustomerCohort(cohort.cacheKey, () => buildMetricsSnapshot(last24HourUtcRange(), 'last_24_hours'));
   metricsSnapshotCache = {
     key,
     expiresAt: Math.min(cohort.expiresAt, now + METRICS_CHAT_CONTEXT_CACHE_SECONDS * 1000),
     promise,
   };
   const result = await promise;
-  requireFreshCohort(cohort);
+  await requireCurrentCustomerCohort(cohort.cacheKey);
   return result;
 }
 
