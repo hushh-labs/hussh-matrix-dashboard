@@ -1,21 +1,22 @@
 #!/usr/bin/env node
 /** Read-only, aggregate-only reconciliation of the iOS app-instance/screen KPIs. */
 import { BigQuery } from '@google-cloud/bigquery';
-import { oneSurfaceSql } from '../src/server/one-scope.mjs';
+import { oneReportingSurfaceSql, finalizedReportingEnd } from './one-reporting-scope.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
   const index = args.indexOf(name);
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 };
-const endDate = option('--end', new Date(Date.now() - 86_400_000).toISOString().slice(0, 10));
+const project = option('--project', process.env.ONE_APP_GA4_PROJECT || 'hushh-pda');
+const dataset = option('--dataset', process.env.ONE_APP_GA4_DATASET || 'analytics_526603671');
+const jobProject = option('--job-project', process.env.BQ_JOB_PROJECT || 'hushh-ai-prod');
+const bigquery = new BigQuery({ projectId: jobProject });
+const endDate = option('--end', '') || await finalizedReportingEnd(bigquery, project, dataset);
 const startDate = option('--start', new Date(Date.parse(`${endDate}T00:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10));
 if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
   throw new Error('Use valid --start and --end dates in YYYY-MM-DD format.');
 }
-const project = option('--project', process.env.ONE_APP_GA4_PROJECT || 'hushh-pda');
-const dataset = option('--dataset', process.env.ONE_APP_GA4_DATASET || 'analytics_526603671');
-const jobProject = option('--job-project', process.env.BQ_JOB_PROJECT || 'hushh-ai-prod');
 const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai');
 const startSuffix = startDate.replaceAll('-', '');
 const endSuffix = endDate.replaceAll('-', '');
@@ -43,7 +44,7 @@ const query = `
       AND (NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
         OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (SELECT suffix FROM finalized_dates))
       AND platform = 'IOS' AND app_info.id = 'com.hushh.app'
-      AND ${oneSurfaceSql('one.hushh.ai', 'production')}
+      AND ${await oneReportingSurfaceSql('one.hushh.ai')}
   )
   SELECT COUNT(*) AS scoped_events,
     COUNT(DISTINCT IF(event_name NOT IN (${ignored}), user_pseudo_id, NULL)) AS active_install_ids,
@@ -63,7 +64,6 @@ const query = `
 `;
 
 try {
-  const bigquery = new BigQuery({ projectId: jobProject });
   const [rows] = await bigquery.query({ query, useLegacySql: false, maximumBytesBilled: '5000000000' });
   const expected = rows[0];
   const url = new URL('/api/analytics/one/app', dashboardUrl);

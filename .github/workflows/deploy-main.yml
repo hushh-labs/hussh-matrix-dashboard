@@ -387,6 +387,8 @@ jobs:
           export SESSION_SECRET="$(gcloud secrets versions access latest --secret=metrics-dashboard-session-secret --project="${PROJECT_ID}")"
           export METRICS_AUTH_COOKIE="$(node scripts/create-release-session.mjs)"
           unset SESSION_SECRET
+          export PLG_ONE_AUDIENCE_URL=https://api.hushh.ai/api/one/plg/audience
+          export PLG_ONE_AUDIENCE_SECRET="$(gcloud secrets versions access latest --secret=metrics-one-plg-audience-secret --project="${PROJECT_ID}")"
           export NODE_OPTIONS="--import=$(pwd)/scripts/release-auth-fetch.mjs"
           node scripts/check-metrics-flow.mjs --dashboard-url "${CANDIDATE_URL}" --timeout-ms 120000
           node scripts/check-hushh-ai-production.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
@@ -398,16 +400,13 @@ jobs:
           node scripts/check-one-platform-kpis.mjs --dashboard-url "${CANDIDATE_URL}"
           # Compare the customer subset with its signed backend authority,
           # while independently checking the separate all-One registry totals.
-          export PLG_ONE_AUDIENCE_URL=https://api.hushh.ai/api/one/plg/audience
-          export PLG_ONE_AUDIENCE_SECRET="$(gcloud secrets versions access latest --secret=metrics-one-plg-audience-secret --project="${PROJECT_ID}")"
           node scripts/check-one-registered-accounts-reconciliation.mjs --dashboard-url "${CANDIDATE_URL}" --days 30 --require-global
-          unset PLG_ONE_AUDIENCE_SECRET
           node scripts/check-dashboard-kpi-invariants.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
           node scripts/check-public-analytics-contract.mjs --base-url "${CANDIDATE_URL}" --days 7 --timeout-ms 120000
           node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
           node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000 --start-date 2026-08-01 --end-date 2026-08-31
           node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000 --start-date 2026-06-24 --end-date 2026-09-21
-          unset METRICS_AUTH_COOKIE NODE_OPTIONS
+          unset METRICS_AUTH_COOKIE NODE_OPTIONS PLG_ONE_AUDIENCE_SECRET
 
       - name: Reconcile One source data without dashboard access
         env:

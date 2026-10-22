@@ -94,6 +94,15 @@ anonymous auth-boundary and signed-session product/KPI checks against the
 tagged candidate. A signed QA session proves the dashboard API contract, not
 the Google authorization-code callback.
 
+Production KPI reconciliation also requires the private signed customer-cohort
+authority (`PLG_ONE_AUDIENCE_URL` and `PLG_ONE_AUDIENCE_SECRET`). Its membership
+filters expected GA4 events before aggregation, including iOS history and
+platform comparisons. Missing or incomplete membership fails verification;
+UAT keeps its separate surface. iOS and platform probes default to the latest
+finalized daily export so cached dashboard counts are compared with a stable
+source; an explicit `--end` remains available. The `--skip-dashboard` source audit still
+describes full capture diagnostics and does not assert customer adoption.
+
 Before deploying, it snapshots the complete Cloud Run serving traffic split.
 If deployment or any post-deploy check fails, rollback restores those exact
 revision percentages, including a pre-existing canary split; it does not

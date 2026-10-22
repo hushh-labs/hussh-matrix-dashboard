@@ -1,24 +1,25 @@
 #!/usr/bin/env node
 /** Independently reconcile selected-range One web/iOS/Android aggregate cards. */
 import { BigQuery } from '@google-cloud/bigquery';
-import { oneSurfaceSql } from '../src/server/one-scope.mjs';
+import { oneReportingSurfaceSql, finalizedReportingEnd } from './one-reporting-scope.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
   const index = args.indexOf(name);
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 };
-const endDate = option('--end', new Date(Date.now() - 86_400_000).toISOString().slice(0, 10));
-const startDate = option('--start', new Date(Date.parse(`${endDate}T00:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10));
-if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
-  throw new Error('Use valid --start and --end dates in YYYY-MM-DD format.');
-}
 const environment = option('--environment', 'production');
 if (!['production', 'uat'].includes(environment)) throw new Error('Use production or uat for --environment.');
 const project = option('--project', environment === 'uat' ? 'hushh-pda-uat' : (process.env.ONE_APP_GA4_PROJECT || 'hushh-pda'));
 const dataset = option('--dataset', environment === 'uat' ? 'analytics_533362555' : (process.env.ONE_APP_GA4_DATASET || 'analytics_526603671'));
 const webHost = environment === 'uat' ? 'uat.one.hushh.ai' : 'one.hushh.ai';
 const jobProject = option('--job-project', process.env.BQ_JOB_PROJECT || 'hushh-ai-prod');
+const bigquery = new BigQuery({ projectId: jobProject });
+const endDate = option('--end', '') || await finalizedReportingEnd(bigquery, project, dataset);
+const startDate = option('--start', new Date(Date.parse(`${endDate}T00:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10));
+if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+  throw new Error('Use valid --start and --end dates in YYYY-MM-DD format.');
+}
 const dashboardUrl = option('--dashboard-url', process.env.METRICS_DASHBOARD_URL || 'https://metrics.hussh.ai');
 const excluded = [
   'api_request_completed', 'warmup_completed', 'startup_readiness_warmup_completed',
@@ -42,7 +43,7 @@ const query = `
     WHERE REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') BETWEEN '${startSuffix}' AND '${endSuffix}'
       AND (NOT STARTS_WITH(_TABLE_SUFFIX, 'intraday_')
         OR REGEXP_REPLACE(_TABLE_SUFFIX, r'^intraday_', '') NOT IN (SELECT suffix FROM finalized_dates))
-      AND ${oneSurfaceSql(webHost, environment)}
+      AND ${await oneReportingSurfaceSql(webHost, environment)}
   ), valid_routes AS (
     SELECT platform, route_id FROM scoped
     WHERE event_name = 'page_view' AND REGEXP_CONTAINS(route_id, r'^[a-z][a-z0-9_]{0,60}$')
@@ -67,7 +68,6 @@ const query = `
 `;
 
 try {
-  const bigquery = new BigQuery({ projectId: jobProject });
   const [rows] = await bigquery.query({ query, useLegacySql: false, maximumBytesBilled: '5000000000' });
   const endpoint = new URL('/api/analytics/one/app', dashboardUrl);
   endpoint.searchParams.set('one_start_date', startDate);
@@ -90,7 +90,7 @@ try {
       ['namedRouteVisits', 'named_route_visits'],
     ]) {
       if (Number(found[key]) !== Number(expected[source])) {
-        throw new Error(`${expected.platform}.${key} differs from GA4 export.`);
+        throw new Error(`${expected.platform}.${key} differs: dashboard ${Number(found[key])}, GA4 export ${Number(expected[source])}.`);
       }
     }
     const distinctScreens = Number(expected.named_route_visits) > 0 ? Number(expected.distinct_screens) : null;
