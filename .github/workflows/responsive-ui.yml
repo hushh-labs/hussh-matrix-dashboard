@@ -23,6 +23,79 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verify-plg-storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FIRESTORE_EMULATOR_HOST: 127.0.0.1:8189
+      PLG_STORAGE_EMULATOR_TESTS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - name: Download checksum-pinned official Firestore emulator
+        timeout-minutes: 3
+        run: |
+          # Version and SHA256 from firebase/firebase-tools/src/emulator/downloadableEmulatorInfo.json.
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 120 \
+            https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar \
+            --output "${RUNNER_TEMP}/plg-firestore.jar"
+          echo '9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c  '"${RUNNER_TEMP}/plg-firestore.jar" | sha256sum --check --strict
+      - name: Verify real Firestore storage, migration and concurrency
+        timeout-minutes: 4
+        run: |
+          node -e 'if (process.env.PLG_STORAGE_EMULATOR_TESTS !== "true" || process.env.FIRESTORE_EMULATOR_HOST !== "127.0.0.1:8189") process.exit(1)'
+          java -jar "${RUNNER_TEMP}/plg-firestore.jar" --host 127.0.0.1 --port 8189 \
+            --project_id demo-plg-storage --single_project_mode=true > "${RUNNER_TEMP}/plg-firestore.log" 2>&1 &
+          emulator_pid=$!
+          cleanup() {
+            if kill -0 "${emulator_pid}" 2>/dev/null; then
+              kill -TERM "${emulator_pid}" 2>/dev/null || true
+              for attempt in {1..10}; do
+                kill -0 "${emulator_pid}" 2>/dev/null || break
+                sleep 1
+              done
+              kill -KILL "${emulator_pid}" 2>/dev/null || true
+              wait "${emulator_pid}" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          node --input-type=module <<'NODE'
+          import net from 'node:net';
+          const deadline = Date.now() + 30_000;
+          while (true) {
+            const ready = await new Promise(resolve => {
+              const socket = net.connect(8189, '127.0.0.1');
+              socket.setTimeout(1000);
+              socket.once('connect', () => { socket.destroy(); resolve(true); });
+              socket.once('error', () => resolve(false));
+              socket.once('timeout', () => { socket.destroy(); resolve(false); });
+            });
+            if (ready) break;
+            if (Date.now() >= deadline) throw new Error('Local emulator startup exceeded its budget.');
+            await new Promise(resolve => setTimeout(resolve, 250));
+          }
+          NODE
+          npx vitest run tests/plg.test.ts -t 'normalized Firestore storage' \
+            --reporter=json --outputFile="${RUNNER_TEMP}/plg-storage-results.json"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/plg-storage-results.json`, 'utf8'));
+          const cases = report.testResults.flatMap(file => file.assertionResults)
+            .filter(test => test.fullName.includes('normalized Firestore storage'));
+          assert(cases.length >= 17 && cases.every(test => test.status === 'passed'), 'Every real storage case must run and pass; skipped emulator coverage fails this job.');
+          console.log(`${cases.length} native Firestore storage cases passed on isolated demo projects.`);
+          NODE
   verify-plg-infrastructure:
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -128,10 +128,124 @@ data directory to the developer account.
 
 Use `PLG_STORAGE=firestore` and `PLG_FIRESTORE_PROJECT` for the approved project.
 Provision a Firestore database and grant the runtime service account the
-necessary Firestore access. The pilot stores one transactional state document
-at `one_plg_pilot/state`; it supports at most 100 enrolled accounts and refuses
-writes above 750 KB. It does not trim deduplication or delivery history. Move to
-per-account/event/delivery documents before expanding beyond this bounded pilot.
+necessary Firestore access. The compatibility release keeps the legacy state at
+`one_plg_pilot/state` authoritative until an explicit operator migration. The
+bridge consults `one_plg_storage/control` in each consistent read/write transaction.
+Existing enrollment and 750 KB materialization limits remain; history is never
+trimmed to make a write succeed. This release is a normalized persistence
+foundation, not an unrestricted enrollment or throughput rollout.
+
+### Staged normalized storage
+
+`PlgStorageMigration` in `src/server/plg/firestore-storage.ts` is an operator
+library with no HTTP route or automatic cutover. Deploying the bridge does not
+start migration. The existing `PlgStore.read/transaction` facade stays compatible.
+New generations use `one_plg_generations/<generation>/one_plg_records/<opaque-id>`
+for individual contacts, deliveries, event/dedup keys, erasure tombstones,
+generation-bound revocations and subscription revision fences. Settings, catalog
+and the optional-field shape remain in the separate generation metadata document.
+Documents represent entities; they are not chunks of the previous payload.
+Array order, duplicate legacy values and optional-field presence round-trip exactly.
+
+Prepare and capture bridge-compatible **serving and rollback** revisions before
+copying private data. Pause campaigns and the automatic worker and quiesce its scheduler/job;
+pausing email alone does not stop evidence writes. Keep customer sending off.
+Allow at least five minutes for existing writers to drain. Resolve any active
+lease or `sending` reservation first; preserve accepted and uncertain records.
+The operator must verify the actual revision images/source and record the
+protocol-1 serving/rollback attestation. The library validates that explicit
+attestation's shape and freshness; it does not independently inspect Cloud Run.
+
+Run `begin(attestation)`, then `step(stage, batchSize)` until every record is copied.
+Batches contain at most 100 entity writes and advance their cursor atomically.
+The generation is bound to both the exact legacy document `updateTime` and a
+canonical complete-state hash. A failed/interrupted batch resumes from its last
+committed cursor. Legacy remains authoritative throughout copying. Any legacy
+writer, including a rollback binary, can invalidate that snapshot; it cannot
+silently update or activate it. Explicitly call `cleanup()` in bounded batches
+to discard a stale stage before beginning another one. Interrupted cleanup
+keeps the generation fenced from activation.
+
+`verify(stage)` reconstructs the complete state and checks exact canonical parity.
+`activate(stage, attestation)` repeats source-version, parity, quiescence and
+writer-drain checks inside its authority-changing transaction. It then changes
+the control authority and replaces the v1 payload with a version-2 fence without
+private state. An old v1 writer fails validation or retries against that fence;
+it cannot commit a stale snapshot. **Revision 313 and other pre-bridge binaries
+cannot be a traffic rollback after normalized cutover.** Replace the captured
+rollback before staging; legacy data remains valid for old binaries, but their
+unguarded writes are not safe for a private staged copy.
+
+Normalized operations read one consistent generation and atomically update only
+changed/deleted entity records plus metadata/control. This facade still
+materializes the bounded cohort and serializes mutations through a control
+document. Per-request materialization and enrollment policy require separate
+qualification before capacity grows. Ordinary changes exceeding 400 document
+writes or the conservative 2 MB encoded budget fail before any authoritative
+write. An over-budget account erasure instead atomically publishes its complete
+redacted state in the fenced legacy layout and tracks the old normalized
+generation for bounded cleanup. It returns pending and withholds the canonical
+acknowledgement until that entire retained copy is gone and a source retry succeeds.
+Only erasure effects commit during this fallback; unrelated changes in the same
+caller callback wait for its successful retry, avoiding duplicate template/audit
+or other mutations after a committed pending response.
+Migration is also capped at 20,000 records, without changing legacy read/write
+compatibility. Missing/corrupt/extra records fail parity rather than becoming
+empty data. Firestore's own transaction/index limits remain additional gates;
+see [Firestore transactions](https://docs.cloud.google.com/firestore/native/docs/manage-data/transactions)
+and [request/index limits](https://docs.cloud.google.com/firestore/quotas).
+Review index exemptions for the entity `json` field on the owned
+`one_plg_records` collection group during cloud qualification; queries use the
+collection/document identity rather than private payload fields.
+
+A traffic rollback uses a qualified bridge binary and keeps the current authority.
+For a deliberate data-format rollback, quiesce writers again and call
+`rollback(attestation, expectedGeneration)`. It atomically exports the **latest**
+normalized facts to the legacy layout inside a version-2 carrier; it never
+restores the pre-migration backup. The carrier and authority keep old version-1
+writers fenced after both rollback and erasure recovery. Finish bounded `cleanup()` of its
+tracked retired generation before unpausing or beginning another migration.
+Active generations cannot be cleaned up. Retired/stale private copies must not
+be silently orphaned. Actual cloud migration, cleanup, index configuration,
+cutover and traffic changes remain explicit release-owner operations.
+
+If an activation or rollback commits but its response is lost, retrying the same
+recorded transition returns read-only `alreadyActive` or `alreadyRolledBack`
+receipts. These require the intended generation (and original source identity
+for activation), recompute the current state hash and do not rewrite control.
+An untouched legacy store or an erasure recovery cannot report a completed
+rollback. A different generation fails rather than pretending that retry succeeded.
+
+Account erasure is also fenced against inactive private copies. A bridge-store
+erasure encountering staged/retired data first deletes at most 100 inactive
+records and commits its cleanup cursor. If more remain, control records a durable
+`cleanupRequired` intent and fences the stage from activation. The authoritative
+erasure is held and returns an explicit pending error, even when that batch
+removes the final inactive record. Subsequent store/source retries continue the
+same cleanup; only a later retry after every inactive record and metadata copy
+is gone applies the erasure. The canonical source projection stays unacknowledged
+while held, so an interrupted process cannot turn cleanup into a completed
+erasure. The operator helper can drain the same intent. Never acknowledge that
+pending error as success or re-enable a pre-bridge writer during staging.
+
+While cleanup remains pending, store retries advance at most one bounded cleanup
+batch before evaluating the caller. Ordinary mutations and new reservations
+are rejected without applying them. The sole mutation exception is a strictly
+recognized positive receipt for an existing durable delivery, including the real
+acceptance pause and sent-timeline effects. Its result is returned as success;
+unrelated template, consent, suppression or other state changes remain blocked.
+This preserves an in-flight provider response without treating arbitrary caller
+callbacks as safe to replay after a committed error.
+
+The dedicated `verify-plg-storage` CI job runs native Firestore transactions on
+the loopback-only `demo-plg-storage` project and isolated `demo-` databases. It downloads
+official emulator 1.22.0 with the SHA256 recorded by
+[Firebase's emulator metadata](https://github.com/firebase/firebase-tools/blob/master/src/emulator/downloadableEmulatorInfo.json).
+Missing emulator mode, unsafe host, skipped cases, parity failures or races fail
+the job. No GCP credentials or production fixtures are used. For the same local
+suite, set `FIRESTORE_EMULATOR_HOST=127.0.0.1:8189` and
+`PLG_STORAGE_EMULATOR_TESTS=true`, then run
+`npx vitest run tests/plg.test.ts -t 'normalized Firestore storage'`.
 
 Wire all runtime configuration through Google Secret Manager, following
 `.codex/skills/gcp-secret-manager/SKILL.md`. Preserve existing Cloud Run bindings.
@@ -346,11 +460,13 @@ This view is not a complete app-wide DAU measure or historical backfill.
 Account switches and same-owner resets fence delayed callbacks before transport;
 reset/deletion also fence and erase the backend metadata.
 
-The approved sender is Rachel Morgan, `rachel@hushh.ai`, with the same Reply-To.
-Its values use Secret Manager bindings. Provider account authentication, domain
-verification and controlled callback/unsubscribe testing remain launch requirements.
-A business address alone does not authenticate automated sending. See
-`infra/one-plg/README.md` for separate sender/delivery release gates.
+The approved Google Workspace From is `Neelesh Meena <i-neelesh@hushh.ai>`,
+with Reply-To `i-neelesh@hushh.ai`. Sender values use Secret Manager bindings;
+mailbox authority comes from the owner's separate Google OAuth consent. GCP IAM
+permits access to the stored grant and does not grant mailbox consent itself.
+Customer delivery still requires feedback authorization, canonical One permission
+sync and controlled delivery/unsubscribe acceptance. See `docs/plg-google-mail.md`
+and `infra/one-plg/README.md` for the separate connection and delivery gates.
 
 ### Automatic operation from Matrix
 

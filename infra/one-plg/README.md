@@ -13,11 +13,13 @@ The source, private audience, sync, cycle and preference signing keys are indepe
 Bind `metrics-one-plg-cycle-secret` to `PLG_CYCLE_SECRET`. The scheduled worker
 receives this dedicated key, not the preference/enrollment signing key.
 
-The approved sender is **Rachel Morgan**, From **rachel@hushh.ai**, Reply-To
-**rachel@hushh.ai**. Bind these through `metrics-one-plg-email-from` and
-`metrics-one-plg-reply-to`. An address establishes identity and reply routing;
-it does not establish provider authentication, domain verification or inbox
-monitoring. The existing One OTP sender remains restricted to OTP messages.
+The approved Google Workspace From is **Neelesh Meena <i-neelesh@hushh.ai>**,
+Reply-To **i-neelesh@hushh.ai**. Bind these through `metrics-one-plg-email-from`
+and `metrics-one-plg-reply-to`. The mailbox owner's separate Google OAuth consent
+grants mail access; GCP IAM only permits use of the stored grant. Customer
+delivery additionally requires the feedback grant and canonical permission
+release described in `docs/plg-google-mail.md`. The existing One OTP sender
+remains restricted to OTP messages.
 
 The current adapter uses Resend. Its runtime secrets are
 `metrics-one-plg-resend-api-key` and `metrics-one-plg-resend-webhook-secret`.

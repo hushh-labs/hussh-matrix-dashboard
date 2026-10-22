@@ -3,22 +3,24 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PlgState } from '../../lib/plg';
 import { initialPlgState, PlgError } from './engine';
+import { PlgFirestoreStorage } from './firestore-storage';
 
 export interface PlgStore {
   read(): Promise<PlgState>;
   transaction<T>(fn: (state: PlgState) => T): Promise<T>;
 }
-function validate(state: PlgState) {
+export function validatePlgState(state: PlgState) {
   if (state.version !== 1 || !Array.isArray(state.contacts) || !Array.isArray(state.deliveries))
     throw new Error('Invalid PLG state');
-  // This intentionally bounded pilot uses a single transactional document.
-  // Refuse writes before Firestore's 1 MiB limit rather than silently trim history.
+  // Keep the compatibility budget through the staged normalized-storage release.
+  // Raising enrollment or materialization limits needs a separately qualified policy.
   if (Buffer.byteLength(JSON.stringify(state)) > 750_000)
     throw new PlgError(
       409,
       'Pilot storage capacity reached. Archive or migrate before continuing.',
     );
 }
+const validate = validatePlgState;
 export class MemoryPlgStore implements PlgStore {
   private state = initialPlgState();
   private pending = Promise.resolve();
@@ -102,31 +104,18 @@ export class FirestorePlgStore implements PlgStore {
   constructor(
     private projectId: string,
     private databaseId = '(default)',
+    private injected?: import('@google-cloud/firestore').Firestore,
   ) {}
   private db() {
+    if (this.injected) return Promise.resolve(this.injected);
     return (this.database ??= import('@google-cloud/firestore').then(
       ({ Firestore }) => new Firestore({ projectId: this.projectId, databaseId: this.databaseId }),
     ));
   }
   async read() {
-    const db = await this.db();
-    const doc = await db.doc('one_plg_pilot/state').get();
-    if (!doc.exists) return initialPlgState();
-    const state = JSON.parse(doc.get('payload')) as PlgState;
-    validate(state);
-    return state;
+    return new PlgFirestoreStorage(await this.db(), validate).read();
   }
   async transaction<T>(fn: (state: PlgState) => T): Promise<T> {
-    const db = await this.db();
-    const ref = db.doc('one_plg_pilot/state');
-    return db.runTransaction(async (tx) => {
-      const doc = await tx.get(ref);
-      const state = doc.exists ? (JSON.parse(doc.get('payload')) as PlgState) : initialPlgState();
-      validate(state);
-      const result = fn(state);
-      validate(state);
-      tx.set(ref, { payload: JSON.stringify(state), updatedAt: new Date().toISOString() });
-      return result;
-    });
+    return new PlgFirestoreStorage(await this.db(), validate).transaction(fn);
   }
 }
