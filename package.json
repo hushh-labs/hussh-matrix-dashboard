@@ -48,8 +48,7 @@
     "test:api:public-contract": "node scripts/check-public-analytics-contract.mjs",
     "test:ui": "playwright test",
     "test:plg": "vitest run tests/plg.test.ts tests/plg-routes.test.ts tests/plg-audience-search.test.ts",
-    "plg:worker": "node scripts/plg-worker.mjs",
-    "plg:self-test": "tsx scripts/send-plg-self-test.ts"
+    "plg:worker": "node scripts/plg-worker.mjs"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.1",
