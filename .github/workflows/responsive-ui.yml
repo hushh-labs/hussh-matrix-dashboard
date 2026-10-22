@@ -93,7 +93,7 @@ jobs:
           const report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/plg-storage-results.json`, 'utf8'));
           const cases = report.testResults.flatMap(file => file.assertionResults)
             .filter(test => test.fullName.includes('normalized Firestore storage'));
-          assert(cases.length >= 14 && cases.every(test => test.status === 'passed'), 'Every real storage case must run and pass; skipped emulator coverage fails this job.');
+          assert(cases.length >= 17 && cases.every(test => test.status === 'passed'), 'Every real storage case must run and pass; skipped emulator coverage fails this job.');
           console.log(`${cases.length} native Firestore storage cases passed on isolated demo projects.`);
           NODE
   verify-plg-infrastructure:

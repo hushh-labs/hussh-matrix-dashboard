@@ -1446,8 +1446,8 @@ describe.skipIf(!storageEmulator)('normalized Firestore storage', () => {
       expect(latest.deliveries).toEqual(before.deliveries);
       expect(latest.pendingRevocations).toEqual(before.pendingRevocations);
       expect(latest.erasedAccountHashes).toEqual(before.erasedAccountHashes);
-      await expect(f.migration.rollback(f.attest())).rejects.toThrow('five minutes');
-      f.advance(); await f.migration.rollback(f.attest());
+      await expect(f.migration.rollback(f.attest(), staged.generation)).rejects.toThrow('five minutes');
+      f.advance(); await f.migration.rollback(f.attest(), staged.generation);
       expect(await facade.read()).toEqual(latest);
       while (!(await f.migration.cleanup(2)).complete) { /* bounded, resumable inactive-copy cleanup */ }
       await facade.transaction(s => { s.ready.memory = true; });
@@ -1555,14 +1555,45 @@ describe.skipIf(!storageEmulator)('normalized Firestore storage', () => {
       expect(await f.store.read()).toEqual(before);
     });
   }, 60_000);
-  it('fails large erasures before any contact, accepted fact or tombstone is partially changed', async () => {
+  it('recovers an over-budget active erasure and acknowledges its canonical retry only after every retired copy is gone', async () => {
     const state = fixtureState(), sample = state.deliveries[0];
     state.deliveries = Array.from({ length: 401 }, (_, i) => ({ ...sample, id: `retained-${i}`, key: `key-${i}` }));
+    state.pendingRevocations = [];
     await fixture(async f => {
-      await f.activate(); const before = await f.store.read();
-      await expect(f.store.transaction(s => eraseAccount(s, s.contacts[0].accountId, f.clock()))).rejects.toThrow('safe budget');
-      expect(await f.store.read()).toEqual(before);
-      expect((await f.store.read()).deliveries).toHaveLength(401);
+      const staged = await f.activate(), ack = vi.fn(async () => undefined);
+      const source = { pull: async () => [{ accountHash: `sha256:${accountHash(state.contacts[0].accountId)}`,
+        revision: 8, checkedAt: new Date(f.clock()).toISOString(), erased: true, enabled: false, eligible: false }],
+        ack, revoke: async () => undefined } as unknown as OneSubscriptions;
+      await expect(syncSubscriptions(f.store, source, f.clock)).rejects.toThrow('cleanup is pending');
+      expect(ack).not.toHaveBeenCalled(); expect((await f.store.read()).contacts).toHaveLength(0);
+      const recovery = (await f.db.doc(PLG_STORAGE_AUTHORITY).get()).data()!;
+      expect(recovery).toMatchObject({ mode: 'legacy', retired: staged.generation, cleanupRequired: true, fencedLegacy: true });
+      expect(JSON.parse((await f.db.doc(PLG_LEGACY_PATH).get()).get('payload')).version).toBe(2);
+      await expect(f.migration.rollback(f.attest(), staged.generation)).rejects.toThrow('No matching');
+      let applied = false;
+      for (let retry = 0; retry < 10; retry++) {
+        try { await syncSubscriptions(f.store, source, f.clock); applied = true; break; }
+        catch (error) { expect((error as Error).message).toContain('cleanup is pending'); expect(ack).not.toHaveBeenCalled(); }
+      }
+      expect(applied).toBe(true); expect(ack).toHaveBeenCalledTimes(1);
+      expect((await f.db.collection(`one_plg_generations/${staged.generation}/one_plg_records`).get()).empty).toBe(true);
+      expect((await f.db.doc(`one_plg_generations/${staged.generation}`).get()).exists).toBe(false);
+      expect((await f.store.read()).erasedAccountHashes).toContain(accountHash(state.contacts[0].accountId));
+    }, state);
+    await fixture(async f => {
+      await f.activate(); const version = state.templates[0].version;
+      const mixed = (s: PlgState) => { eraseAccount(s, state.contacts[0].accountId, f.clock()); s.templates[0].version++; };
+      await expect(f.store.transaction(mixed)).rejects.toThrow('cleanup is pending');
+      expect((await f.store.read()).templates[0].version).toBe(version);
+      let applied = false;
+      for (let retry = 0; retry < 10; retry++) {
+        try { await f.store.transaction(mixed); applied = true; break; }
+        catch (error) {
+          expect((error as Error).message).toContain('cleanup is pending');
+          expect((await f.store.read()).templates[0].version).toBe(version);
+        }
+      }
+      expect(applied).toBe(true); expect((await f.store.read()).templates[0].version).toBe(version + 1);
     }, state);
   }, 60_000);
   it('preserves legacy compatibility when a valid v1 history exceeds the normalized record budget', async () => {
@@ -1598,7 +1629,7 @@ describe.skipIf(!storageEmulator)('normalized Firestore storage', () => {
       const original = await f.store.read(), account = original.contacts[0];
       let generation: string;
       if (mode === 'staging') generation = (await f.stage()).generation;
-      else { generation = (await f.activate()).generation; f.advance(); await f.migration.rollback(f.attest()); }
+      else { generation = (await f.activate()).generation; f.advance(); await f.migration.rollback(f.attest(), generation); }
       await expect(f.store.transaction(s => eraseAccount(s, account.accountId, f.clock()))).rejects.toThrow('cleanup is pending');
       expect(await f.store.read()).toEqual(original);
       expect((await f.db.collection(`one_plg_generations/${generation}/one_plg_records`).get()).empty).toBe(true);
@@ -1646,5 +1677,99 @@ describe.skipIf(!storageEmulator)('normalized Firestore storage', () => {
       await syncSubscriptions(f.store, source, f.clock);
       expect(ack).toHaveBeenCalledTimes(1); expect((await f.store.read()).contacts).toHaveLength(0);
     }, state);
+  }, 60_000);
+  it('keeps ordinary over-budget mutations atomic without invoking erasure recovery', async () => {
+    const state = fixtureState(); state.eventIds = Array.from({ length: 401 }, (_, i) => `event-${i}`);
+    await fixture(async f => {
+      await f.activate(); const before = await f.store.read();
+      await expect(f.store.transaction(s => s.eventIds.reverse())).rejects.toThrow('safe budget');
+      expect(await f.store.read()).toEqual(before);
+      expect((await f.db.doc(PLG_STORAGE_AUTHORITY).get()).get('mode')).toBe('normalized');
+    }, state);
+  }, 60_000);
+  it('persists the real in-flight campaign receipt during cleanup while rejecting unrelated mutations and new reservations', async () => {
+    const state = fixtureState(), sample = state.deliveries[0];
+    state.deliveries = Array.from({ length: 801 }, (_, i) => ({ ...sample, id: `old-private-${i}`, key: `key-${i}` }));
+    state.pendingRevocations = [];
+    const other = contact(state, NOW, 'other');
+    await fixture(async f => {
+      await f.activate();
+      await f.store.transaction(s => {
+        ready(s);
+        const c = s.contacts.find(c => c.id === other.id)!;
+        c.firstValueAt = c.lastValueAt = new Date(f.clock() - 20 * DAY).toISOString();
+        c.observationAt = new Date(f.clock()).toISOString();
+        s.customerReporting!.checkedAt = c.customerReporting!.checkedAt = new Date(f.clock()).toISOString();
+        s.deliveries.push({ ...sample, id: 'prior-return', contactId: c.id, step: 'return', key: 'prior-return',
+          createdAt: new Date(f.clock() - 8 * DAY).toISOString() });
+      });
+      let submitted!: () => void, resolve!: (id: string) => void;
+      const started = new Promise<void>(done => { submitted = done; });
+      const response = new Promise<string>(done => { resolve = done; });
+      const service = new PlgService(f.store, runtime, f.clock, async () => { submitted(); return response; });
+      const sending = service.run('fixture sender');
+      await started;
+      await f.store.transaction(s => { s.contacts.find(c => c.id === other.id)!.suppressed = 'unsubscribed'; });
+      await expect(f.store.transaction(s => eraseAccount(s, state.contacts[0].accountId, f.clock()))).rejects.toThrow('cleanup is pending');
+      const reserved = (await f.store.read()).deliveries.find(d => d.step === 'feedback')!;
+      expect(reserved.status).toBe('sending');
+      await expect(f.store.transaction(s => { s.deliveries.push({ ...reserved, id: 'never-attempted' }); }))
+        .rejects.toThrow('cleanup is pending');
+      expect((await f.store.read()).deliveries.some(d => d.id === 'never-attempted')).toBe(false);
+      resolve('receipt-provider-id');
+      expect(await sending).toEqual({ sent: 1, uncertain: 0 });
+      const accepted = await f.store.read(), receipt = accepted.deliveries.find(d => d.id === reserved.id)!;
+      const recipient = accepted.contacts.find(c => c.id === other.id)!;
+      expect(receipt).toMatchObject({ status: 'sent', providerId: 'receipt-provider-id' });
+      expect(recipient.pauseUntil).toBe(new Date(Date.parse(reserved.createdAt) + 30 * DAY).toISOString());
+      expect(recipient.timeline[0].action).toBe('Sent feedback email.');
+      expect(recipient.suppressed).toBe('unsubscribed');
+      const version = accepted.templates[0].version;
+      await expect(f.store.transaction(s => {
+        s.templates[0].version++;
+        s.deliveries.find(d => d.id === reserved.id)!.rfcMessageId = '<forbidden-mixed-update@example.invalid>';
+      })).rejects.toThrow('cleanup is pending');
+      expect((await f.store.read()).templates[0].version).toBe(version);
+      expect((await f.store.read()).deliveries.find(d => d.id === reserved.id)!.rfcMessageId).toBeUndefined();
+      await expect(f.store.transaction(s => {
+        s.contacts.find(c => c.id === other.id)!.suppressed = null;
+        s.deliveries.find(d => d.id === reserved.id)!.rfcMessageId = '<forbidden-unsuppression@example.invalid>';
+      })).rejects.toThrow('cleanup is pending');
+      expect((await f.store.read()).contacts.find(c => c.id === other.id)!.suppressed).toBe('unsubscribed');
+    }, state);
+  }, 60_000);
+  it('returns read-only generation-bound receipts after committed transitions whose responses were lost', async () => {
+    await fixture(async f => {
+      await expect(f.migration.rollback(f.attest(), 'd'.repeat(64))).rejects.toThrow('No matching');
+      const staged = await f.stage(); f.advance();
+      let originalHash = '';
+      const loseActivationResponse = async () => {
+        const receipt = await f.migration.activate(staged, f.attest()); originalHash = receipt.stateHash;
+        throw new Error('Synthetic committed activation response lost');
+      };
+      await expect(loseActivationResponse()).rejects.toThrow('response lost');
+      await f.store.transaction(s => { s.ready.mail = true; });
+      const before = await f.db.doc(PLG_STORAGE_AUTHORITY).get();
+      const active = await f.migration.activate(staged, { ...f.attest(), checkedAt: f.clock() - drain - 1 });
+      expect(active.alreadyActive).toBe(true); expect(active.stateHash).not.toBe(originalHash);
+      expect(active.stateHash).toBe((await f.db.doc(`one_plg_generations/${staged.generation}`).get()).get('stateHash'));
+      expect((await f.db.doc(PLG_STORAGE_AUTHORITY).get()).updateTime!.isEqual(before.updateTime!)).toBe(true);
+      await expect(f.migration.activate({ ...staged, generation: 'd'.repeat(64) }, f.attest())).rejects.toThrow('recorded transition');
+      f.advance(); let rollbackHash = '';
+      const loseRollbackResponse = async () => {
+        const receipt = await f.migration.rollback(f.attest(), staged.generation); rollbackHash = receipt.stateHash;
+        throw new Error('Synthetic committed rollback response lost');
+      };
+      await expect(loseRollbackResponse()).rejects.toThrow('response lost');
+      await f.store.transaction(s => { s.ready.memory = true; });
+      const rolledBefore = await f.db.doc(PLG_STORAGE_AUTHORITY).get();
+      const rolled = await f.migration.rollback({ ...f.attest(), checkedAt: f.clock() - drain - 1 }, staged.generation);
+      expect(rolled.alreadyRolledBack).toBe(true); expect(rolled.stateHash).not.toBe(rollbackHash);
+      expect((await f.db.doc(PLG_STORAGE_AUTHORITY).get()).updateTime!.isEqual(rolledBefore.updateTime!)).toBe(true);
+      await expect(f.migration.rollback(f.attest(), 'e'.repeat(64))).rejects.toThrow('No matching');
+      const raw = JSON.parse((await f.db.doc(PLG_LEGACY_PATH).get()).get('payload'));
+      expect(raw.version).toBe(2); expect(() => validatePlgState(raw)).toThrow('Invalid PLG state');
+      expect((await f.store.read()).version).toBe(1);
+    });
   }, 60_000);
 });

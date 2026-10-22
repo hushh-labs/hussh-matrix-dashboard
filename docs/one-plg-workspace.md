@@ -180,9 +180,15 @@ Normalized operations read one consistent generation and atomically update only
 changed/deleted entity records plus metadata/control. This facade still
 materializes the bounded cohort and serializes mutations through a control
 document. Per-request materialization and enrollment policy require separate
-qualification before capacity grows. A change, including a large erasure,
-exceeding 400 document writes or the conservative 2 MB encoded budget fails
-before any authoritative write; it must not be acknowledged as applied.
+qualification before capacity grows. Ordinary changes exceeding 400 document
+writes or the conservative 2 MB encoded budget fail before any authoritative
+write. An over-budget account erasure instead atomically publishes its complete
+redacted state in the fenced legacy layout and tracks the old normalized
+generation for bounded cleanup. It returns pending and withholds the canonical
+acknowledgement until that entire retained copy is gone and a source retry succeeds.
+Only erasure effects commit during this fallback; unrelated changes in the same
+caller callback wait for its successful retry, avoiding duplicate template/audit
+or other mutations after a committed pending response.
 Migration is also capped at 20,000 records, without changing legacy read/write
 compatibility. Missing/corrupt/extra records fail parity rather than becoming
 empty data. Firestore's own transaction/index limits remain additional gates;
@@ -194,12 +200,21 @@ collection/document identity rather than private payload fields.
 
 A traffic rollback uses a qualified bridge binary and keeps the current authority.
 For a deliberate data-format rollback, quiesce writers again and call
-`rollback(attestation)`. It atomically exports the **latest** normalized facts to
-v1; it never restores the pre-migration backup. Finish bounded `cleanup()` of its
+`rollback(attestation, expectedGeneration)`. It atomically exports the **latest**
+normalized facts to the legacy layout inside a version-2 carrier; it never
+restores the pre-migration backup. The carrier and authority keep old version-1
+writers fenced after both rollback and erasure recovery. Finish bounded `cleanup()` of its
 tracked retired generation before unpausing or beginning another migration.
 Active generations cannot be cleaned up. Retired/stale private copies must not
 be silently orphaned. Actual cloud migration, cleanup, index configuration,
 cutover and traffic changes remain explicit release-owner operations.
+
+If an activation or rollback commits but its response is lost, retrying the same
+recorded transition returns read-only `alreadyActive` or `alreadyRolledBack`
+receipts. These require the intended generation (and original source identity
+for activation), recompute the current state hash and do not rewrite control.
+An untouched legacy store or an erasure recovery cannot report a completed
+rollback. A different generation fails rather than pretending that retry succeeded.
 
 Account erasure is also fenced against inactive private copies. A bridge-store
 erasure encountering staged/retired data first deletes at most 100 inactive
@@ -212,6 +227,15 @@ is gone applies the erasure. The canonical source projection stays unacknowledge
 while held, so an interrupted process cannot turn cleanup into a completed
 erasure. The operator helper can drain the same intent. Never acknowledge that
 pending error as success or re-enable a pre-bridge writer during staging.
+
+While cleanup remains pending, store retries advance at most one bounded cleanup
+batch before evaluating the caller. Ordinary mutations and new reservations
+are rejected without applying them. The sole mutation exception is a strictly
+recognized positive receipt for an existing durable delivery, including the real
+acceptance pause and sent-timeline effects. Its result is returned as success;
+unrelated template, consent, suppression or other state changes remain blocked.
+This preserves an in-flight provider response without treating arbitrary caller
+callbacks as safe to replay after a committed error.
 
 The dedicated `verify-plg-storage` CI job runs native Firestore transactions on
 the loopback-only `demo-plg-storage` project and isolated `demo-` databases. It downloads
