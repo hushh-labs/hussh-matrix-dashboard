@@ -103,6 +103,13 @@ finalized daily export so cached dashboard counts are compared with a stable
 source; an explicit `--end` remains available. The `--skip-dashboard` source audit still
 describes full capture diagnostics and does not assert customer adoption.
 
+Verification refreshes the same GitHub OIDC cloud identity before core APIs,
+customer KPI comparisons, aggregate/historical contracts and the source audit.
+Build/deploy time must not consume a verification phase's short-lived assertion.
+`scripts/run-release-api-phase.sh` retains every protected check and creates a
+fresh in-memory QA session per group. No credential lifetime or IAM grant is
+expanded; QA cookies and audience secrets are not persisted between shell phases.
+
 Before deploying, it snapshots the complete Cloud Run serving traffic split.
 The zero-traffic workflow never writes a serving allocation, including after a
 failed check. A changed split may be an operator rollback or an intentional

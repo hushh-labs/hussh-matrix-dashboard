@@ -50,6 +50,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - run: npm run test:deploy:traffic-snapshot
+      - run: bash -n scripts/run-release-api-phase.sh
       - run: npm run test:ui:one-platforms
       - run: npm run test:ui:agent-feature-render
       - run: npm run build
