@@ -82,27 +82,40 @@ export async function loadCustomerCohort(options: { url: string; secret: string;
 let cached: CustomerCohort | undefined;
 let pending: Promise<CustomerCohort> | undefined;
 const queryCohort = new AsyncLocalStorage<CustomerCohort>();
-async function readCurrentCustomerCohort(): Promise<CustomerCohort> {
-  if (cached && cached.expiresAt > Date.now()) return cached;
+async function readCurrentCustomerCohort(minimumValidityMs = 0): Promise<CustomerCohort> {
+  if (!Number.isFinite(minimumValidityMs) || minimumValidityMs < 0 || minimumValidityMs > 300_000) throw unavailable();
+  if (cached && cached.expiresAt - Date.now() > minimumValidityMs) return cached;
   // Never fall back to stale membership on source failure.
   pending ??= loadCustomerCohort({ url: process.env.PLG_ONE_AUDIENCE_URL ?? '', secret: process.env.PLG_ONE_AUDIENCE_SECRET ?? '' })
     .then(value => { cached = value; return value; }).finally(() => { pending = undefined; });
   return pending;
 }
 
-export async function readCustomerCohort(): Promise<CustomerCohort> {
+export async function readCustomerCohort(minimumValidityMs = 0): Promise<CustomerCohort> {
   const pinned = queryCohort.getStore();
-  return pinned ? requireFreshCohort(pinned) : readCurrentCustomerCohort();
+  if (!pinned) return readCurrentCustomerCohort(minimumValidityMs);
+  requireFreshCohort(pinned);
+  if (pinned.expiresAt - Date.now() <= minimumValidityMs) throw unavailable();
+  return pinned;
+}
+
+/** Revalidate cached numbers with the current proof for the exact same set. */
+export async function requireCurrentCustomerCohort(expectedKey: string): Promise<CustomerCohort> {
+  const current = requireFreshCohort(await readCurrentCustomerCohort());
+  if (current.cacheKey !== expectedKey) throw unavailable();
+  return current;
 }
 
 /** A retained cache loader may run after its membership namespace changes. */
 export async function withCustomerCohort<T>(expectedKey: string, load: () => Promise<T>): Promise<T> {
-  const current = await readCurrentCustomerCohort();
+  // Match the existing 120s API verification budget. Renew before warehouse
+  // work starts rather than letting a nearly expired proof reject good work.
+  const current = await readCurrentCustomerCohort(120_000);
   if (current.cacheKey !== expectedKey) throw unavailable();
   return queryCohort.run(current, async () => {
     const result = await load();
     requireFreshCohort(current);
-    if ((await readCurrentCustomerCohort()).cacheKey !== expectedKey) throw unavailable();
+    await requireCurrentCustomerCohort(expectedKey);
     return result;
   });
 }

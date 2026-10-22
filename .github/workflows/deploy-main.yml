@@ -413,38 +413,40 @@ jobs:
           METRICS_DASHBOARD_URL: ${{ env.CANDIDATE_URL }}
         run: npm run test:prod:auth
 
-      - name: Verify authenticated product APIs and KPI reconciliations
-        env:
-          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-          METRICS_DASHBOARD_URL: ${{ env.CANDIDATE_URL }}
-          HUSHH_AI_PRODUCTION_URL: ${{ env.CANDIDATE_URL }}
-        run: |
-          # This synthetic, short-lived session checks protected APIs and KPI
-          # correctness. It does NOT prove that Google's interactive callback
-          # works; therefore this workflow never promotes production traffic.
-          export SESSION_SECRET="$(gcloud secrets versions access latest --secret=metrics-dashboard-session-secret --project="${PROJECT_ID}")"
-          export METRICS_AUTH_COOKIE="$(node scripts/create-release-session.mjs)"
-          unset SESSION_SECRET
-          export PLG_ONE_AUDIENCE_URL=https://api.hushh.ai/api/one/plg/audience
-          export PLG_ONE_AUDIENCE_SECRET="$(gcloud secrets versions access latest --secret=metrics-one-plg-audience-secret --project="${PROJECT_ID}")"
-          export NODE_OPTIONS="--import=$(pwd)/scripts/release-auth-fetch.mjs"
-          node scripts/check-metrics-flow.mjs --dashboard-url "${CANDIDATE_URL}" --timeout-ms 120000
-          node scripts/check-hushh-ai-production.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
-          node scripts/check-one-production.mjs --dashboard-url "${CANDIDATE_URL}" --timeout-ms 120000
-          node scripts/check-one-location-analytics-contract.mjs --base-url "${CANDIDATE_URL}" --days 7
-          node scripts/check-one-metrics-reconciliation.mjs --dashboard-url "${CANDIDATE_URL}"
-          node scripts/check-one-ios-account-kpis.mjs --dashboard-url "${CANDIDATE_URL}"
-          node scripts/check-one-ios-usage-kpis.mjs --dashboard-url "${CANDIDATE_URL}"
-          node scripts/check-one-platform-kpis.mjs --dashboard-url "${CANDIDATE_URL}"
-          # Compare the customer subset with its signed backend authority,
-          # while independently checking the separate all-One registry totals.
-          node scripts/check-one-registered-accounts-reconciliation.mjs --dashboard-url "${CANDIDATE_URL}" --days 30 --require-global
-          node scripts/check-dashboard-kpi-invariants.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
-          node scripts/check-public-analytics-contract.mjs --base-url "${CANDIDATE_URL}" --days 7 --timeout-ms 120000
-          node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000
-          node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000 --start-date 2026-08-01 --end-date 2026-08-31
-          node scripts/check-founder-briefing-contract.mjs --base-url "${CANDIDATE_URL}" --timeout-ms 120000 --start-date 2026-06-24 --end-date 2026-09-21
-          unset METRICS_AUTH_COOKIE NODE_OPTIONS PLG_ONE_AUDIENCE_SECRET
+      # Build/deploy and verification can outlive the GitHub OIDC assertion.
+      # Renew the same identity at each phase; never extend credential lifetime.
+      - name: Refresh cloud authentication for core API checks
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Verify authenticated product APIs
+        run: bash scripts/run-release-api-phase.sh core
+
+      - name: Refresh cloud authentication for customer KPI checks
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Verify customer KPI reconciliations
+        run: bash scripts/run-release-api-phase.sh customers
+
+      - name: Refresh cloud authentication for aggregate contracts
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Verify aggregate and historical contracts
+        run: bash scripts/run-release-api-phase.sh contracts
+
+      - name: Refresh cloud authentication for source audit
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Reconcile One source data without dashboard access
         env:
