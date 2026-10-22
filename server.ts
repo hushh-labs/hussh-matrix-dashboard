@@ -33,7 +33,7 @@ import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
-import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort, withCustomerCohort } from './src/server/one-customer-cohort';
+import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort, withCustomerCohort, requireCurrentCustomerCohort } from './src/server/one-customer-cohort';
 import { oneAppScope, readOneAppEnvironments } from './src/server/one-app-scope';
 import { onePlatformCaptureQueries, readPlatformCapture, unpackPlatformCapture } from './src/server/one-platform-capture';
 import { registrationTotals } from './src/server/one-registration-totals.mjs';
@@ -5807,7 +5807,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const key = `${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(req.originalUrl)}`;
           const load = () => capture(handler, sourceRequest, refresh);
           const result = await snapshots.read(key, cohort ? () => withCustomerCohort(cohort.cacheKey, load) : load, refresh);
-          if (cohort) requireFreshCohort(cohort);
+          if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
           res.set('X-Metrics-Cache', result.state);
           res.set('X-Metrics-Updated-At', new Date(result.at).toISOString());
           res.set('X-Metrics-Refreshing', result.refreshing ? '1' : '0');

@@ -40,19 +40,19 @@ describe('production route cohort fencing', () => {
     expect(first.body.data.production.registeredAccounts.totalAccounts).toBe(1);
     const a = await readCustomerCohort();
 
-    // Keep the A loader active just before its proof expires.
-    vi.setSystemTime(start + 290_000);
+    // Keep A's retained loader active before another reader renews membership.
+    vi.setSystemTime(start + 100_000);
     expect((await read()).status).toBe(200);
     await new Promise(resolve => setImmediate(resolve));
     // The background refresh now sees B, but must not write B into key A.
-    vi.setSystemTime(start + 351_000); ids = ['b'.repeat(32), 'd'.repeat(32)];
-    const b = await readCustomerCohort();
+    vi.setSystemTime(start + 190_000); ids = ['b'.repeat(32), 'd'.repeat(32)];
+    const b = await readCustomerCohort(120_000);
     expect(b.cacheKey).not.toBe(a.cacheKey);
     await expect(withCustomerCohort(a.cacheKey, async () => 'wrong population')).rejects.toThrow('could not be verified');
     await snapshots.refreshActive();
 
     // Return to A while its old aggregate is still within the ten-minute bound.
-    vi.setSystemTime(start + 652_000); ids = ['a'.repeat(32)];
+    vi.setSystemTime(start + 491_000); ids = ['a'.repeat(32)];
     const again = await read();
     expect(again.status).toBe(200);
     expect(again.body.data.production.registeredAccounts.totalAccounts).toBe(1);
@@ -61,12 +61,21 @@ describe('production route cohort fencing', () => {
     expect(renewed.asOf).not.toBe(a.asOf);
     expect(await withCustomerCohort(a.cacheKey, async () => (await readCustomerCohort()).asOf)).toBe(renewed.asOf);
 
+    // A cold query starts with nine seconds left on the old proof. It takes
+    // twenty seconds, so both its pin and response check need a renewed proof.
+    vi.setSystemTime(start + 782_000);
+    state.query.mockImplementationOnce(async () => { vi.setSystemTime(start + 802_000); return [[]]; });
+    const nearExpiry = await request(app).get('/api/analytics/one/app?environment=production&one_window_days=14').set('Cookie', cookie);
+    expect(nearExpiry.status).toBe(200);
+    expect(nearExpiry.body.data.production.registeredAccounts.totalAccounts).toBe(1);
+    expect((await readCustomerCohort()).asOf).toBe(new Date(start + 782_000).toISOString());
+
     // Nested work cannot switch to B after the pinned proof expires mid-query.
     await expect(withCustomerCohort(a.cacheKey, async () => {
-      vi.setSystemTime(start + 953_000); ids = ['b'.repeat(32)];
+      vi.setSystemTime(start + 1_083_000); ids = ['b'.repeat(32)];
       await expect(readCustomerCohort()).rejects.toThrow('could not be verified');
       return 'finished work must not be cached after proof expiry';
     })).rejects.toThrow('could not be verified');
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher).toHaveBeenCalledTimes(4);
   });
 });
