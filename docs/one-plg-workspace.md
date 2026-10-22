@@ -436,11 +436,13 @@ This view is not a complete app-wide DAU measure or historical backfill.
 Account switches and same-owner resets fence delayed callbacks before transport;
 reset/deletion also fence and erase the backend metadata.
 
-The approved sender is Rachel Morgan, `rachel@hushh.ai`, with the same Reply-To.
-Its values use Secret Manager bindings. Provider account authentication, domain
-verification and controlled callback/unsubscribe testing remain launch requirements.
-A business address alone does not authenticate automated sending. See
-`infra/one-plg/README.md` for separate sender/delivery release gates.
+The approved Google Workspace From is `Neelesh Meena <i-neelesh@hushh.ai>`,
+with Reply-To `i-neelesh@hushh.ai`. Sender values use Secret Manager bindings;
+mailbox authority comes from the owner's separate Google OAuth consent. GCP IAM
+permits access to the stored grant and does not grant mailbox consent itself.
+Customer delivery still requires feedback authorization, canonical One permission
+sync and controlled delivery/unsubscribe acceptance. See `docs/plg-google-mail.md`
+and `infra/one-plg/README.md` for the separate connection and delivery gates.
 
 ### Automatic operation from Matrix
 
