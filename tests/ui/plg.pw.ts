@@ -87,9 +87,11 @@ test('keeps work-mail previews separate and distinguishes acceptance from inbox 
   const state = await mockPlg(page, false, false, undefined, true);
   const before = JSON.stringify(state);
   let receipt: string | null = null;
+  let reportsRequested = false;
   const submissions: unknown[] = [];
   await page.route('**/api/plg/google-mail/status', (route) => route.fulfill({ json: {
     email: 'i-neelesh@hushh.ai', connected: true, connectedAt: Date.now(), pending: false,
+    reportReadingRequested: reportsRequested, feedbackAuthorized: false, feedbackCheckedAt: null, feedbackBacklog: false,
   } }));
   await page.route('**/api/plg/mail-tests', (route) => {
     if (route.request().method() === 'POST') {
@@ -107,8 +109,12 @@ test('keeps work-mail previews separate and distinguishes acceptance from inbox 
   await expect(panel).toContainText('welcome · accepted');
   expect(submissions).toEqual([{ templateId: state.templates[0].id }]);
   receipt = 'inbox_confirmed';
+  reportsRequested = true;
   await panel.getByRole('button', { name: 'Check connection and receipts' }).click();
   await expect(panel).toContainText('welcome · inbox confirmed');
+  await expect(panel).toContainText('read-only mail access');
+  await expect(panel).toContainText('requires Google consent');
+  await expect(panel).toContainText('Reconnect required');
   expect(JSON.stringify(state)).toBe(before);
 });
 test('shows automation blockers and changes future cycle controls without sending', async ({ page }) => {

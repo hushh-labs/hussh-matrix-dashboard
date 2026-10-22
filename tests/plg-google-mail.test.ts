@@ -6,8 +6,12 @@ import { GoogleMail, GoogleMailOAuth, MAIL_SCOPES, googleMailMime, mailMessageId
 import { emptyMailControl, MAIL_OWNER, type MailControl, type MailControlStore } from '../src/server/plg/google-mail-store';
 import { registerGoogleMailRoutes } from '../src/server/plg/google-mail-routes';
 import { MemoryPlgStore } from '../src/server/plg/store';
-import { initialPlgState } from '../src/server/plg/engine';
-import type { PlgRuntime } from '../src/server/plg/service';
+import { accountHash, initialPlgState, registerPlgCatalog } from '../src/server/plg/engine';
+import { applyGoogleHardBounce, applyGoogleSubmission, reportedHardBounces } from '../src/server/plg/google-mail-feedback';
+import { createHash } from 'node:crypto';
+import { GmailReadError, reconcileGoogleFeedback, type GmailRead } from '../src/server/plg/google-mail-reconcile';
+import { PlgService, type PlgRuntime } from '../src/server/plg/service';
+import { applySubscription, OneSubscriptions } from '../src/server/plg/one-subscriptions';
 
 class Control implements MailControlStore {
   state = emptyMailControl();
@@ -60,6 +64,11 @@ describe('Google mailbox authority and uncertain sends', () => {
     await expect(google.exchange('code', 'verifier', 'nonce')).rejects.toThrow();
     tokens.scope = MAIL_SCOPES.join(' '); tokens.refresh_token = '';
     await expect(google.exchange('code', 'verifier', 'nonce')).rejects.toThrow();
+    tokens.refresh_token = 'synthetic-refresh';
+    const reports = new GoogleMailOAuth({ clientId: 'synthetic-client', clientSecret: 'synthetic-client-secret', redirectUri: `${origin}/auth/callback` }, true);
+    await expect(reports.exchange('code', 'verifier', 'nonce')).rejects.toThrow();
+    tokens.scope = MAIL_SCOPES.map((s) => s.replace('gmail.metadata', 'gmail.readonly')).join(' ');
+    expect(await reports.exchange('code', 'verifier', 'nonce')).toBe('synthetic-refresh');
   });
   it('consumes purpose-separated PKCE once and rejects wrong cookies, expiry and replaced connections', async () => {
     const first = await mail.begin();
@@ -172,5 +181,206 @@ describe('Private fixed-recipient test API', () => {
     (oauth.access as any).mockResolvedValue('test-only-access');
     expect((await send(templates[1].id)).body.test.status).toBe('accepted');
     expect(transport).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Correlated Google feedback boundaries', () => {
+  const recipient = 'synthetic@example.invalid';
+  const recipientHash = createHash('sha256').update(recipient).digest('hex');
+  function campaign() {
+    const state = initialPlgState();
+    state.contacts.push({ id: 'synthetic-contact', email: recipient, suppressed: null, timeline: [] } as any);
+    state.deliveries.push({ id, contactId: 'synthetic-contact', provider: 'google_workspace', providerId: null,
+      recipientHash, status: 'uncertain', step: 'welcome' } as any);
+    return state;
+  }
+  function report(status = '5.1.1', action = 'failed', to = recipient) {
+    return { id: 'report123', payload: { mimeType: 'multipart/report', headers: [
+      { name: 'Content-Type', value: 'multipart/report; boundary="sample"; report-type=delivery-status' },
+    ], parts: [
+      { mimeType: 'message/delivery-status', body: { data: Buffer.from(`Reporting-MTA: dns; mx.example.invalid\r\n\r\nFinal-Recipient: rfc822; ${to}\r\nAction: ${action}\r\nStatus: ${status}\r\n`).toString('base64url') } },
+      { mimeType: 'text/rfc822-headers', body: { data: Buffer.from(`Message-ID: ${mailMessageId(id)}\r\nTo: ${recipient}\r\n`).toString('base64url') } },
+    ] } };
+  }
+  it('stops only the exact Google reservation/recipient pair on a structured hard failure', () => {
+    const state = campaign(), parsed = reportedHardBounces(report());
+    expect(parsed).toEqual([{ deliveryId: id, recipientHash }]);
+    expect(applyGoogleHardBounce(state, { ...parsed[0], recipientHash: '0'.repeat(64) }, Date.now())).toBe(false);
+    expect(state.contacts[0].suppressed).toBeNull();
+    expect(applyGoogleHardBounce(state, parsed[0], Date.now())).toBe(true);
+    expect(state.contacts[0].suppressed).toBe('bounced');
+    expect(state.deliveries[0].status).toBe('bounced');
+    const before = structuredClone(state);
+    expect(applyGoogleHardBounce(state, parsed[0], Date.now())).toBe(true);
+    expect(state).toEqual(before);
+    state.deliveries[0].provider = 'resend';
+    expect(applyGoogleHardBounce(state, parsed[0], Date.now())).toBe(false);
+  });
+  it('does not turn temporary/positive reports or arbitrary text into a hard bounce', () => {
+    expect(reportedHardBounces(report('4.2.0', 'delayed'))).toEqual([]);
+    expect(reportedHardBounces(report('2.0.0', 'delivered'))).toEqual([]);
+    const arbitrary = report(); arbitrary.payload.mimeType = 'text/plain';
+    expect(reportedHardBounces(arbitrary)).toEqual([]);
+    const ambiguous = report();
+    ambiguous.payload.parts.push({ mimeType: 'text/rfc822-headers', body: { data: Buffer.from(`Message-ID: <plg-1c945b22-f529-4aba-9397-93acb3919ee1@metrics.hussh.ai>`).toString('base64url') } });
+    expect(reportedHardBounces(ambiguous)).toEqual([]);
+  });
+  it('repairs lost submission responses from correlated SENT metadata without delivery inference or resurrection', () => {
+    const state = campaign();
+    const sent = { id: 'gmailSent123', labelIds: ['SENT'], payload: { headers: [
+      { name: 'Message-ID', value: mailMessageId(id) }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` }, { name: 'To', value: recipient },
+    ] } };
+    expect(applyGoogleSubmission(state, sent)).toBe(true);
+    expect(state.deliveries[0]).toMatchObject({ status: 'sent', providerId: 'gmailSent123' });
+    state.deliveries[0].status = 'bounced';
+    expect(applyGoogleSubmission(state, sent)).toBe(true);
+    expect(state.deliveries[0].status).toBe('bounced');
+    state.contacts = [];
+    expect(applyGoogleSubmission(state, sent)).toBe(false);
+    expect(state.contacts).toHaveLength(0);
+  });
+});
+
+describe('Bounded Gmail feedback checkpoint', () => {
+  it('establishes its cursor before any Google campaign send and never resets missing prior coverage', async () => {
+    control.state.connection!.feedbackAllowed = true;
+    const campaigns = new MemoryPlgStore();
+    const api = vi.fn(async () => ({ historyId: '100' }));
+    expect(await reconcileGoogleFeedback(control, campaigns, api)).toEqual({ complete: true, inspected: 0 });
+    expect(control.state.feedback?.cursor).toBe('100');
+    expect(api.mock.calls).toHaveLength(1);
+    delete control.state.feedback;
+    await campaigns.transaction((s) => { s.deliveries.push({ provider: 'google_workspace' } as any); });
+    await expect(reconcileGoogleFeedback(control, campaigns, api)).rejects.toThrow('missing');
+    expect(control.state.feedback).toBeUndefined();
+    expect(control.state.feedbackLease).toBeUndefined();
+  });
+  it('holds sending across partial batches/pages and commits only the first page watermark', async () => {
+    control.state.connection!.feedbackAllowed = true;
+    control.state.feedback = { cursor: '100', checkedAt: 1 };
+    const campaigns = new MemoryPlgStore();
+    const api = vi.fn<GmailRead>(async (path: string) => {
+      if (path.startsWith('history?') && !path.includes('pageToken')) return { historyId: '200', nextPageToken: 'next', history: [
+        { messagesAdded: Array.from({ length: 25 }, (_, i) => ({ message: { id: `message${i}` } })) },
+      ] };
+      if (path.startsWith('history?')) return { historyId: '300', history: [] };
+      return { id: path.match(/^messages\/([^?]+)/)![1], labelIds: [], payload: { headers: [] } };
+    });
+    expect(await reconcileGoogleFeedback(control, campaigns, api)).toEqual({ complete: false, inspected: 20 });
+    expect(control.state.feedback).toMatchObject({ cursor: '100', checkedAt: 1, pending: { ids: ['message20','message21','message22','message23','message24'] } });
+    expect(await reconcileGoogleFeedback(control, campaigns, api)).toEqual({ complete: false, inspected: 5 });
+    expect(control.state.feedback).toMatchObject({ cursor: '100', checkedAt: 1, pageToken: 'next', upper: '200' });
+    expect(await reconcileGoogleFeedback(control, campaigns, api)).toEqual({ complete: true, inspected: 0 });
+    expect(control.state.feedback?.cursor).toBe('200');
+    expect(control.state.feedback?.pending).toBeUndefined();
+    expect(control.state.feedback?.checkedAt).toBeGreaterThan(1);
+    expect(api.mock.calls.filter(([path]) => path.startsWith('history?'))).toHaveLength(2);
+  });
+  it('never advances or applies partial facts after failed reads or a disconnected grant', async () => {
+    control.state.connection!.feedbackAllowed = true;
+    control.state.feedback = { cursor: '100', checkedAt: 1 };
+    const campaigns = new MemoryPlgStore(), before = await campaigns.read();
+    const api = vi.fn<GmailRead>(async (path: string) => {
+      if (path.startsWith('history?')) return { historyId: '200', history: [{ messagesAdded: [{ message: { id: 'missing123' } }] }] };
+      throw new Error('Synthetic history record is unavailable');
+    });
+    await expect(reconcileGoogleFeedback(control, campaigns, api)).rejects.toThrow('incomplete');
+    expect(control.state.feedback?.cursor).toBe('100');
+    expect(control.state.feedback?.checkedAt).toBe(1);
+    expect(await campaigns.read()).toEqual(before);
+    api.mockImplementation(async () => { delete control.state.connection; return { id: 'missing123', payload: { headers: [] } }; });
+    await expect(reconcileGoogleFeedback(control, campaigns, api)).rejects.toThrow('ownership');
+    expect(control.state.feedback?.cursor).toBe('100');
+    expect(await campaigns.read()).toEqual(before);
+    expect(control.state.feedbackLease).toBeUndefined();
+  });
+  it('recovers an expired cursor in bounded retained-mail pages, then catches up before allowing sends', async () => {
+    control.state.connection!.feedbackAllowed = true;
+    control.state.feedback = { cursor: '100', checkedAt: 1 };
+    const campaigns = new MemoryPlgStore(), at = Date.now() - 86_400_000;
+    await campaigns.transaction((s) => { s.deliveries.push({ provider: 'google_workspace', createdAt: new Date(at).toISOString() } as any); });
+    const api = vi.fn<GmailRead>(async (path) => {
+      if (path.startsWith('history?') && path.includes('startHistoryId=100')) throw new GmailReadError(404);
+      if (path === 'profile') return { historyId: '200' };
+      if (path.startsWith('messages?')) {
+        const q = new URLSearchParams(path.split('?')[1]);
+        expect(q.get('includeSpamTrash')).toBe('true');
+        expect(q.get('q')).toBe(`after:${Math.floor((at - 86_400_000) / 1000)}`);
+        return q.has('pageToken') ? { messages: [] } : { messages: [{ id: 'retainedReport' }], nextPageToken: 'second' };
+      }
+      if (path.startsWith('messages/')) return { id: 'retainedReport', payload: { headers: [] } };
+      expect(path).toContain('startHistoryId=200');
+      return { historyId: '250', history: [] };
+    });
+    expect(await reconcileGoogleFeedback(control, campaigns, api)).toEqual({ complete: false, inspected: 1 });
+    expect(control.state.feedback).toMatchObject({ cursor: '100', checkedAt: null, recovery: { upper: '200' }, pageToken: 'second' });
+    expect(await reconcileGoogleFeedback(control, campaigns, api)).toEqual({ complete: false, inspected: 0 });
+    expect(control.state.feedback).toEqual({ cursor: '200', checkedAt: null });
+    expect(await reconcileGoogleFeedback(control, campaigns, api)).toEqual({ complete: true, inspected: 0 });
+    expect(control.state.feedback?.cursor).toBe('250');
+    expect(control.state.feedback?.checkedAt).toBeGreaterThan(1);
+    // An outage is never misclassified as an expired cursor or silently reset.
+    api.mockRejectedValueOnce(new GmailReadError(403));
+    await expect(reconcileGoogleFeedback(control, campaigns, api)).rejects.toThrow();
+    expect(control.state.feedback?.cursor).toBe('250');
+  });
+});
+
+describe('Canonical permission to Google transport integration', () => {
+  const options = { enabled: true, url: 'https://api.hushh.ai/api/one/plg/subscriptions', secret: 'synthetic-only-canonical-secret-over-32-characters' };
+  const runtime: PlgRuntime = { ...config, enabled: true, deliveryEnabled: true, emailProvider: 'google_workspace', googleMailCampaignsEnabled: true,
+    operators: new Set(), signingSecret: 'synthetic-preference-signature-over-32-characters', apiKey: '', webhookSecret: '',
+    from: `Neelesh Meena <${MAIL_OWNER}>`, replyTo: MAIL_OWNER, subscriptions: options };
+  async function fixture() {
+    const campaigns = new MemoryPlgStore(), at = Date.now(), stamp = new Date(at).toISOString();
+    await campaigns.transaction((s) => {
+      registerPlgCatalog(s, { revision: 'a'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }], actions: [] });
+      applySubscription(s, { accountHash: `sha256:${accountHash('synthetic-owner')}`, revision: 1, checkedAt: stamp,
+        enabled: true, eligible: true, erased: false, generation: id, frequency: 'daily', consentAt: stamp, chosenAt: stamp,
+        accountId: 'synthetic-owner', email: 'synthetic@example.invalid', name: 'Synthetic', cohort: 'new' }, at);
+      s.customerReporting = { policyRevision: 'b'.repeat(64), checkedAt: stamp };
+      s.contacts[0].customerReporting = { ...s.customerReporting, eligible: true };
+      s.contacts[0].group = 'treatment'; s.paused = false; s.ready.agent_one = true;
+      s.templates.find((t) => t.journey === 'agent_one' && t.step === 'welcome')!.published = true;
+    });
+    control.state.connection!.feedbackAllowed = true;
+    control.state.feedback = { cursor: '100', checkedAt: at };
+    return campaigns;
+  }
+  it.each(['allowed', 'revoked', 'changed_during_prepare'] as const)('%s: prepares credentials before the final One decision, then sends at most once', async (outcome) => {
+    const campaigns = await fixture(), order: string[] = [];
+    (oauth.access as Mock).mockImplementation(async () => {
+      order.push('prepare');
+      if (outcome === 'changed_during_prepare') await campaigns.transaction((s) => { s.contacts[0].permission!.enabled = false; });
+      return 'synthetic-access';
+    });
+    transport.mockImplementation(async () => { order.push('send'); return Response.json({ id: 'googleAccepted' }); });
+    const source = new OneSubscriptions(options, (async () => {
+      order.push('permission'); return Response.json({ allowed: outcome === 'allowed', erased: false });
+    }) as typeof fetch);
+    const service = new PlgService(campaigns, runtime, Date.now, undefined, source, mail);
+    const result = await service.run('Synthetic local verification');
+    expect(result.sent).toBe(outcome === 'allowed' ? 1 : 0);
+    expect(order).toEqual(outcome === 'allowed' ? ['prepare', 'permission', 'send'] : outcome === 'revoked' ? ['prepare', 'permission'] : ['prepare']);
+    if (outcome === 'allowed') {
+      expect((await campaigns.read()).deliveries[0]).toMatchObject({ provider: 'google_workspace', providerId: 'googleAccepted', status: 'sent' });
+      await service.run('Synthetic replay');
+      expect(transport).toHaveBeenCalledOnce();
+    } else {
+      expect(transport).not.toHaveBeenCalled();
+      expect((await campaigns.read()).deliveries).toHaveLength(0);
+    }
+  });
+  it('shows stale feedback as blocked and never sends while recovery still has pending mail', async () => {
+    const campaigns = await fixture();
+    control.state.feedback!.checkedAt = Date.now() - 21 * 60_000;
+    const service = new PlgService(campaigns, runtime, Date.now, undefined, undefined, mail);
+    expect((await service.workspace('admin')).automation!.blockers.join(' ')).toContain('current complete checkpoint');
+    control.state.feedback!.checkedAt = Date.now();
+    control.state.feedback!.recovery = { after: 1, upper: '200' };
+    const prepared = await mail.prepareCampaign();
+    await expect(mail.send('synthetic@example.invalid', delivery, message, 'campaign', prepared)).rejects.toThrow('not submitted');
+    expect(transport).not.toHaveBeenCalled();
+    expect(control.state.attempts).toHaveLength(0);
   });
 });

@@ -187,6 +187,7 @@ export interface PlgDelivery {
   ctaUrl: string;
   resourceUrl?: string;
   providerId: string | null;
+  provider?: 'google_workspace' | 'resend';
   /** Immutable address proof for callbacks after an identity change. */
   recipientHash?: string;
 }
@@ -231,6 +232,7 @@ export interface PlgAutomationStatus {
   enabled: boolean;
   worker: 'never_observed' | 'recent' | 'stale';
   sender: { from: string | null; replyTo: string | null; configured: boolean };
+  emailFeedback?: { provider: 'google_workspace'; authorized: boolean; checkedAt: number | null; backlog: boolean };
   blockers: string[];
   lastCycle: PlgCycle | null;
   lastSyncAt: string | null;

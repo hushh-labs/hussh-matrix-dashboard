@@ -3,26 +3,38 @@ import { OAuth2Client } from 'google-auth-library';
 import type { PlgDelivery } from '../../lib/plg';
 import { PlgError } from './engine';
 import { MAIL_OWNER, type MailControlStore, type MailCredentials } from './google-mail-store';
+import { GmailReadError, type GmailRead } from './google-mail-reconcile';
 
 export const MAIL_SCOPES = ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.metadata'];
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export interface GoogleMailConfig { clientId: string; clientSecret: string; redirectUri: string }
+export interface PreparedGoogleMail { token: string; version: string; generation: number; preparedAt: number }
 export class GoogleMailUnattempted extends PlgError {
-  constructor() { super(409, 'Mail was not submitted. Repair the connection and retry this preview.'); }
+  constructor(status = 409) { super(status, 'Mail was not submitted. Repair the connection before retrying.'); }
+}
+async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new Error('Google mail preparation deadline expired.'));
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
 }
 export interface MailOAuth {
+  readReports?: boolean;
   url(input: { state: string; nonce: string; verifier: string }): string;
   exchange(code: string, verifier: string, nonce: string): Promise<string>;
   access(refreshToken: string): Promise<string>;
 }
 export class GoogleMailOAuth implements MailOAuth {
-  constructor(private config: GoogleMailConfig) {}
+  constructor(private config: GoogleMailConfig, public readonly readReports = false) {}
+  private scopes() { return this.readReports ? MAIL_SCOPES.map((s) => s.endsWith('/gmail.metadata') ? 'https://www.googleapis.com/auth/gmail.readonly' : s) : MAIL_SCOPES; }
   private client() {
     return new OAuth2Client({ clientId: this.config.clientId, clientSecret: this.config.clientSecret,
       redirectUri: this.config.redirectUri, transporterOptions: { timeout: 10_000, retry: false } });
   }
   url(input: { state: string; nonce: string; verifier: string }) {
-    return this.client().generateAuthUrl({ scope: MAIL_SCOPES, state: input.state, nonce: input.nonce,
+    return this.client().generateAuthUrl({ scope: this.scopes(), state: input.state, nonce: input.nonce,
       access_type: 'offline', prompt: 'consent select_account', login_hint: MAIL_OWNER,
       code_challenge: createHash('sha256').update(input.verifier).digest('base64url'), code_challenge_method: 'S256' as any,
       include_granted_scopes: false });
@@ -36,7 +48,7 @@ export class GoogleMailOAuth implements MailOAuth {
     if (user?.nonce !== nonce || user?.email_verified !== true || user?.email?.toLowerCase() !== MAIL_OWNER)
       throw new PlgError(403, 'Connect the configured work mailbox.');
     const scopes = new Set((tokens.scope ?? '').split(' '));
-    if (!MAIL_SCOPES.filter((s) => s.includes('/gmail.')).every((s) => scopes.has(s)))
+    if (!this.scopes().filter((s) => s.includes('/gmail.')).every((s) => scopes.has(s)))
       throw new PlgError(409, 'Both sending and mail receipt verification permissions are required.');
     return tokens.refresh_token;
   }
@@ -112,7 +124,7 @@ export class GoogleMail {
     const version = await this.credentials.save(token);
     await this.store.transaction((s) => {
       if (s.generation !== pending.generation) throw new PlgError(409, 'A newer mailbox connection replaced this attempt.');
-      s.connection = { version, generation: pending.generation, connectedAt: this.now() };
+      s.connection = { version, generation: pending.generation, connectedAt: this.now(), feedbackAllowed: this.oauth.readReports === true };
     });
   }
   async disconnect() {
@@ -124,7 +136,33 @@ export class GoogleMail {
     const state = await this.store.read();
     return { provider: 'google_workspace', email: MAIL_OWNER, connected: Boolean(state.connection),
       connectedAt: state.connection?.connectedAt ?? null, pending: Boolean(state.pending && state.pending.expiresAt > this.now()),
+      reportReadingRequested: this.oauth.readReports === true, feedbackAuthorized: state.connection?.feedbackAllowed === true,
+      feedbackCheckedAt: state.feedback?.checkedAt ?? null, feedbackBacklog: Boolean(state.feedback?.pending || state.feedback?.pageToken || state.feedback?.recovery),
       deliveryObservation: 'API acceptance; inbox receipt for own tests. External delivery and opens are not inferred.' };
+  }
+  async feedbackReader(deadline: number): Promise<GmailRead> {
+    const before = (await this.store.read()).connection;
+    if (!before?.feedbackAllowed) throw new PlgError(409, 'Reconnect Google mail with report-reading permission before customer sending.');
+    const signal = AbortSignal.timeout(Math.max(1, Math.min(15_000, deadline - this.now())));
+    const token = await abortable(this.oauth.access(await abortable(this.credentials.read(before.version), signal)), signal);
+    if (this.now() >= deadline) throw new PlgError(503, 'Google feedback authorization deadline expired.');
+    return async (path, signal) => {
+      const current = (await this.store.read()).connection;
+      if (current?.version !== before.version || current.generation !== before.generation)
+        throw new PlgError(409, 'Google mail connection changed during feedback verification.');
+      return this.api(path, token, signal);
+    };
+  }
+  async prepareCampaign(): Promise<PreparedGoogleMail> {
+    try {
+      const before = (await this.store.read()).connection;
+      if (!before?.feedbackAllowed) throw new PlgError(409, 'Google feedback permission is missing.');
+      const signal = AbortSignal.timeout(15_000);
+      const token = await abortable(this.oauth.access(await abortable(this.credentials.read(before.version), signal)), signal);
+      return { token, version: before.version, generation: before.generation, preparedAt: this.now() };
+    } catch (error) {
+      throw new GoogleMailUnattempted(error instanceof PlgError ? error.status : 503);
+    }
   }
   private async api(path: string, token: string, signal: AbortSignal, body?: unknown) {
     const response = await this.transport(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, {
@@ -132,23 +170,42 @@ export class GoogleMail {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    if (!response.ok) throw new Error('Google mail request did not confirm success.');
-    return response.json();
+    if (!response.ok) { await response.body?.cancel(); throw new GmailReadError(response.status); }
+    if (!response.body) throw new Error('Google mail request did not confirm success.');
+    const reader = response.body.getReader(), chunks: Uint8Array[] = [];
+    let bytes = 0;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > 512_000) { await reader.cancel(); throw new Error('Google mail response exceeds its bound.'); }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   }
   async send(to: string, delivery: Pick<PlgDelivery, 'id' | 'subject'>,
-    message: { text: string; html: string; headers: Record<string, string> }) {
+    message: { text: string; html: string; headers: Record<string, string> }, purpose: 'test' | 'campaign' = 'test', prepared?: PreparedGoogleMail) {
     let submitted = false, reserved = false;
     try {
     const raw = googleMailMime(to, delivery, message);
     const signal = AbortSignal.timeout(15_000);
     const before = (await this.store.read()).connection;
     if (!before) throw new PlgError(409, 'Connect the work mailbox first.');
-    const token = await this.oauth.access(await this.credentials.read(before.version));
+    if (purpose === 'campaign' && (!prepared || prepared.version !== before.version || prepared.generation !== before.generation ||
+      this.now() - prepared.preparedAt < 0 || this.now() - prepared.preparedAt > 60_000))
+      throw new PlgError(409, 'Prepare the Google transport before the canonical recipient check.');
+    const token = purpose === 'campaign' ? prepared!.token :
+      await abortable(this.oauth.access(await abortable(this.credentials.read(before.version), signal)), signal);
     // Refresh/Secret Manager requests consume the same overall send deadline.
     signal.throwIfAborted();
     await this.store.transaction((s) => {
       if (s.connection?.version !== before.version || s.connection?.generation !== before.generation)
         throw new PlgError(409, 'Mailbox connection changed before send.');
+      const feedbackAge = this.now() - (s.feedback?.checkedAt ?? 0);
+      if (purpose === 'campaign' && (!s.connection.feedbackAllowed || !s.feedback?.checkedAt || feedbackAge < 0 || feedbackAge > 20 * 60_000 || s.feedback.pending || s.feedback.pageToken || s.feedback.recovery))
+        throw new PlgError(409, 'Google feedback is not current; customer sending is held.');
       s.attempts = s.attempts.filter((a) => this.now() - a.at < 86_400_000);
       if (s.attempts.some((a) => a.id === delivery.id)) throw new PlgError(409, 'This mail reservation was already attempted.');
       if (s.attempts.length >= 100) throw new PlgError(409, 'Application mail limit reached for this rolling day.');
@@ -165,7 +222,7 @@ export class GoogleMail {
     } catch (error) {
       if (submitted) throw error;
       if (reserved) await this.store.transaction((s) => { s.attempts = s.attempts.filter((a) => a.id !== delivery.id); });
-      throw new GoogleMailUnattempted();
+      throw new GoogleMailUnattempted(error instanceof PlgError ? error.status : 503);
     }
   }
   async confirmOwnInbox(providerId: string, reservationId: string) {

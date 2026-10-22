@@ -5,8 +5,14 @@ import type { PlgStore } from './store';
 import { automationStatus, deliveryBlockers } from './automation';
 import { applyAcceptedDelivery } from './delivery-events';
 import { OneSubscriptions } from './one-subscriptions';
+import { configuredGoogleMail } from './google-mail-runtime';
+import type { GoogleMail } from './google-mail';
+import { GoogleMailUnattempted } from './google-mail';
+import { reconcileGoogleFeedback } from './google-mail-reconcile';
 
 export interface PlgRuntime {
+  emailProvider?: 'resend' | 'google_workspace';
+  googleMailCampaignsEnabled?: boolean;
   enabled: boolean;
   deliveryEnabled: boolean;
   origin: string;
@@ -44,6 +50,8 @@ export function plgRuntime(): PlgRuntime {
     /* unavailable until configured */
   }
   return {
+    emailProvider: process.env.PLG_EMAIL_PROVIDER === 'google_workspace' ? 'google_workspace' : 'resend',
+    googleMailCampaignsEnabled: process.env.PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED === 'true',
     enabled: process.env.PLG_ENABLED === 'true',
     deliveryEnabled: process.env.PLG_DELIVERY_ENABLED === 'true',
     origin,
@@ -110,11 +118,11 @@ export function deliveryMessage(d: PlgDelivery, contactId: string, config: PlgRu
     },
   };
 }
-export type PlgTransport = (input: {
+export type PlgTransport = ((input: {
   to: string;
   delivery: PlgDelivery;
   message: ReturnType<typeof deliveryMessage>;
-}) => Promise<string>;
+}) => Promise<string>) & { prepare?: () => Promise<PlgTransport> };
 export function resendTransport(config: PlgRuntime): PlgTransport {
   return async ({ to, delivery, message }) => {
     const response = await fetch('https://api.resend.com/emails', {
@@ -141,26 +149,56 @@ export function resendTransport(config: PlgRuntime): PlgTransport {
   };
 }
 export class PlgService {
+  private transport: PlgTransport;
   constructor(
     public store: PlgStore,
     public runtime: PlgRuntime,
     private now = Date.now,
-    private transport: PlgTransport = resendTransport(runtime),
+    transport?: PlgTransport,
     private permissionSource = runtime.subscriptions ? new OneSubscriptions(runtime.subscriptions, fetch, now) : undefined,
-  ) {}
+    private googleMail: GoogleMail | undefined = runtime.emailProvider === 'google_workspace' ? configuredGoogleMail() : undefined,
+  ) {
+    if (transport) this.transport = transport;
+    else if (runtime.emailProvider === 'google_workspace') {
+      this.transport = async () => { throw new GoogleMailUnattempted(); };
+      this.transport.prepare = async () => {
+        if (!this.googleMail) throw new GoogleMailUnattempted(503);
+        const prepared = await this.googleMail.prepareCampaign();
+        return async (input) => this.googleMail!.send(input.to, input.delivery, input.message, 'campaign', prepared);
+      };
+    } else this.transport = resendTransport(runtime);
+  }
+  async reconcileMail(deadline = this.now() + 45_000) {
+    if (this.runtime.emailProvider !== 'google_workspace' || !this.runtime.googleMailCampaignsEnabled) return;
+    if (!this.googleMail) throw new PlgError(503, 'Google customer mail is not configured.');
+    const state = await this.googleMail.store.read(), age = this.now() - (state.feedback?.checkedAt ?? 0);
+    if (state.connection?.feedbackAllowed && state.feedback?.checkedAt && age >= 0 && age < 60_000 && !state.feedback.pending && !state.feedback.pageToken && !state.feedback.recovery) return;
+    const result = await reconcileGoogleFeedback(this.googleMail.store, this.store,
+      await this.googleMail.feedbackReader(deadline), deadline, this.now);
+    if (!result.complete) throw new PlgError(409, 'Google mail feedback is catching up; no customer messages sent.');
+  }
   async workspace(role: 'admin' | 'operator'): Promise<PlgWorkspace> {
     const stored = await this.store.read();
     const now = this.now();
     const contacts = stored.contacts.filter((c) => customerReportingEligible(stored, c, now));
     const ids = new Set(contacts.map((c) => c.id));
     const state = { ...stored, contacts, deliveries: stored.deliveries.filter((d) => ids.has(d.contactId)) };
+    const mail = this.googleMail ? await this.googleMail.status() : null;
+    const automation = automationStatus(stored, this.runtime, now);
+    if (mail) {
+      automation.emailFeedback = { provider: 'google_workspace', authorized: mail.feedbackAuthorized,
+        checkedAt: mail.feedbackCheckedAt, backlog: mail.feedbackBacklog };
+      const feedbackAge = now - (mail.feedbackCheckedAt ?? 0);
+      if (this.runtime.googleMailCampaignsEnabled && (!mail.feedbackAuthorized || !mail.feedbackCheckedAt || feedbackAge < 0 || feedbackAge > 20 * 60_000 || mail.feedbackBacklog))
+        automation.blockers.push('Google feedback authorization or current complete checkpoint is missing');
+    }
     return {
       role,
       configured: true,
       deliveryEnabled: this.runtime.deliveryEnabled,
       reporting: { pending: stored.contacts.filter((c) => !customerReportingCurrent(stored, c, now)).length,
         excluded: stored.contacts.filter((c) => c.customerReporting?.eligible === false && customerReportingCurrent(stored, c, now)).length },
-      automation: automationStatus(stored, this.runtime, now),
+      automation,
       state,
       queue: state.contacts.map((c) => candidate(state, c, now)),
       metrics: metrics(state, now),
@@ -194,6 +232,7 @@ export class PlgService {
   async run(actor: string, options?: { deadline: number; leaseId: string }) {
     if (deliveryBlockers(this.runtime).length)
       throw new PlgError(409, 'Live delivery is disabled or incomplete. Use campaign preview.');
+    await this.reconcileMail(Math.min(options?.deadline ?? Infinity, this.now() + 45_000));
     const snapshot = await this.store.read();
     if (snapshot.paused) throw new PlgError(409, 'Campaigns are paused.');
     let sent = 0,
@@ -203,7 +242,7 @@ export class PlgService {
       .slice(0, 10);
     for (const item of due) {
       // Leave enough time for the bounded provider request and receipt commit.
-      if (options && this.now() + (this.runtime.subscriptions?.enabled ? 55_000 : 20_000) >= options.deadline) break;
+      if (options && this.now() + (this.runtime.emailProvider === 'google_workspace' ? 70_000 : this.runtime.subscriptions?.enabled ? 55_000 : 20_000) >= options.deadline) break;
       const now = this.now();
       const reserved = await this.store.transaction((state) => {
         if (options && (!state.automation?.enabled || state.automation.lease?.id !== options.leaseId || Date.parse(state.automation.lease.until) <= now)) return null;
@@ -226,6 +265,7 @@ export class PlgService {
           ctaUrl: t.ctaUrl,
           resourceUrl: t.resourceUrl || '',
           providerId: null,
+          provider: this.runtime.emailProvider ?? 'resend',
           recipientHash: createHash('sha256').update(c.email).digest('hex'),
         };
         state.deliveries.push(d);
@@ -234,10 +274,13 @@ export class PlgService {
       });
       if (!reserved) continue;
       // No external side effect occurs inside a retried Firestore transaction.
-      // Reservations are permanent. Ambiguous network failures require review;
-      // never retry blindly after the provider's 24-hour idempotency window.
+      // Reservations are permanent. Correlated Gmail SENT evidence can repair a
+      // lost response; an unresolved reservation is never blindly resubmitted.
       let attempted = false;
       try {
+        // Prepare provider credentials before One's fresh permission check. A
+        // Gmail refresh must not introduce a new 15s gap after that decision.
+        const sender = this.transport.prepare ? await this.transport.prepare() : this.transport;
         const currentContact = async () => {
           const current = await this.store.read();
           const c = current.contacts.find((c) => c.id === item.id);
@@ -256,7 +299,7 @@ export class PlgService {
           return c;
         };
         let c = await currentContact();
-        if (c.permission || this.runtime.subscriptions?.enabled) {
+        if (c.permission || this.runtime.subscriptions?.enabled || this.runtime.emailProvider === 'google_workspace') {
           if (!this.permissionSource || !c.permission)
             throw new PlgError(503, 'Canonical One email permission is not available.');
           const beforeCheck = { email: c.email, revision: c.permission.revision, generation: c.permission.generation };
@@ -279,7 +322,7 @@ export class PlgService {
             throw new Error('Permission changed before send.');
         }
         attempted = true;
-        const providerId = await this.transport({
+        const providerId = await sender({
           to: c.email,
           delivery: reserved.delivery,
           message: deliveryMessage(reserved.delivery, c.id, this.runtime, c.permission?.generation),
@@ -297,6 +340,7 @@ export class PlgService {
         });
         sent++;
       } catch (error) {
+        if (error instanceof GoogleMailUnattempted) attempted = false;
         if (!attempted) {
           // No provider request was attempted. Releasing this reservation lets
           // an unpause or restored eligibility be evaluated on the next cycle.
