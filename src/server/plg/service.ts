@@ -10,6 +10,8 @@ import type { GoogleMail } from './google-mail';
 import { GoogleMailUnattempted } from './google-mail';
 import { reconcileGoogleFeedback } from './google-mail-reconcile';
 import { unboundGoogleDeliveries } from './google-mail-bindings';
+import { renderPlgEmailHtml } from './email-layout';
+export { escapeHtml } from './email-layout';
 
 export interface PlgRuntime {
   emailProvider?: 'resend' | 'google_workspace';
@@ -17,6 +19,7 @@ export interface PlgRuntime {
   enabled: boolean;
   deliveryEnabled: boolean;
   origin: string;
+  preferenceOrigin?: string;
   admins: Set<string>;
   operators: Set<string>;
   signingSecret: string;
@@ -35,6 +38,18 @@ const emails = (value: string | undefined) =>
       .map((v) => v.trim().toLowerCase())
       .filter(Boolean),
   );
+export const ONE_EMAIL_PREFERENCE_ORIGIN = 'https://one.hussh.ai';
+/** Customer links move independently of the workspace/worker/OAuth origin. */
+function preferenceOrigin(value?: string) {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.origin === ONE_EMAIL_PREFERENCE_ORIGIN && url.pathname === '/' &&
+      !url.username && !url.password && !url.search && !url.hash)
+      return url.origin;
+  } catch { /* Reject an explicitly invalid destination instead of silently falling back. */ }
+  throw new PlgError(503, 'One email preferences are not configured.');
+}
 export function plgRuntime(): PlgRuntime {
   const rawOrigin = process.env.PLG_PUBLIC_ORIGIN || 'http://localhost:3001';
   let origin = '';
@@ -56,6 +71,7 @@ export function plgRuntime(): PlgRuntime {
     enabled: process.env.PLG_ENABLED === 'true',
     deliveryEnabled: process.env.PLG_DELIVERY_ENABLED === 'true',
     origin,
+    preferenceOrigin: preferenceOrigin(process.env.PLG_PREFERENCE_ORIGIN),
     admins: emails(process.env.PLG_ADMIN_EMAILS),
     operators: emails(process.env.PLG_OPERATOR_EMAILS),
     signingSecret: process.env.PLG_SIGNING_SECRET || '',
@@ -100,19 +116,17 @@ export function tokenPreference(token: string, secret: string) {
   return { id, generation };
 }
 export function tokenContact(token: string, secret: string) { return tokenPreference(token, secret).id; }
-export function escapeHtml(value: string) {
-  return value.replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
-  );
-}
 export function deliveryMessage(d: PlgDelivery, contactId: string, config: PlgRuntime, generation?: string) {
-  const preferences = `${config.origin}/integrations/plg/preferences/${preferenceToken(contactId, config.signingSecret, generation)}`;
-  const unsubscribe = `${config.origin}/integrations/plg/unsubscribe/${preferenceToken(contactId, config.signingSecret, generation)}`;
+  const token = preferenceToken(contactId, config.signingSecret, generation);
+  const oneOrigin = preferenceOrigin(config.preferenceOrigin);
+  const preferences = oneOrigin ? `${oneOrigin}/one/profile/account#email-updates`
+    : `${config.origin}/integrations/plg/preferences/${token}`;
+  const unsubscribe = oneOrigin ? `${oneOrigin}/email/unsubscribe/${token}`
+    : `${config.origin}/integrations/plg/unsubscribe/${token}`;
   const plain = `${d.body}${d.resourceUrl ? `\n\nDemo or guide: ${d.resourceUrl}` : ''}\n\n${d.ctaLabel}: ${d.ctaUrl}\n\nPreferences: ${preferences}\nUnsubscribe: ${unsubscribe}`;
   return {
     text: plain,
-    html: `<div style="font:16px/1.6 Arial,sans-serif;max-width:600px;margin:auto"><p>${escapeHtml(d.body).replaceAll('\n', '<br>')}</p>${d.resourceUrl ? `<p><a href="${escapeHtml(d.resourceUrl)}">View the demo or guide</a></p>` : ''}<p><a href="${escapeHtml(d.ctaUrl)}">${escapeHtml(d.ctaLabel)}</a></p><p style="font-size:12px"><a href="${escapeHtml(preferences)}">Email preferences</a> &middot; <a href="${escapeHtml(unsubscribe)}">Unsubscribe</a></p></div>`,
+    html: renderPlgEmailHtml({ ...d, preferences: { manage: preferences, unsubscribe } }),
     headers: {
       'List-Unsubscribe': `<${unsubscribe}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',

@@ -255,7 +255,8 @@ New configuration names are:
 | --- | --- |
 | `PLG_ENABLED` | Enable the module; default false |
 | `PLG_STORAGE`, `PLG_FIRESTORE_PROJECT` | Durable production storage |
-| `PLG_PUBLIC_ORIGIN` | Canonical HTTPS origin, CSRF check and preference links |
+| `PLG_PUBLIC_ORIGIN` | Workspace/worker/OAuth origin, CSRF check and legacy preference links |
+| `PLG_PREFERENCE_ORIGIN` | Optional `https://one.hussh.ai` customer-link destination; empty by default until paired One release is verified |
 | `PLG_ADMIN_EMAILS`, `PLG_OPERATOR_EMAILS` | Explicit, comma-separated team allowlists |
 | `PLG_SIGNING_SECRET` | At least 32 characters; service requests and opaque preference links |
 | `PLG_DELIVERY_ENABLED` | Explicit sending switch; default false |
@@ -358,6 +359,50 @@ Preference and unsubscribe links are opaque and signed. GET opens a form and
 never unsubscribes; explicit POST supports confirmation and one-click removal.
 Preferences cannot clear a suppression, and no resubscribe bypass is exposed.
 Preserve signing-key continuity so links in delivered emails remain valid.
+
+### Customer links on One
+
+Keep the repository variable `PLG_PREFERENCE_ORIGIN` unset until One PROD's
+public `/email/unsubscribe/:token` handler is deployed and verified, including
+its request-log handling. The deployment workflow validates and persists this
+optional destination independently of `PLG_PUBLIC_ORIGIN`; clearing it restores
+legacy link generation without breaking either endpoint. It does not change
+enrollment, templates, consent, delivery keys or previously sent messages.
+
+When enabled, new emails link preferences directly to the authenticated
+`https://one.hussh.ai/one/profile/account#email-updates` setting. The separate
+public One unsubscribe page uses the existing signed, generation-bound token
+and proxies to Matrix's `/integrations/plg/email-unsubscribe/:token` capability
+API. GET only validates the capability and returns `{version:1,canUnsubscribe:true}`.
+Explicit JSON `{action:"unsubscribe"}` or the exact RFC8058 form
+`List-Unsubscribe=One-Click` returns `{version:1,unsubscribed:true}` after the
+same transactional local suppression and durable canonical revocation intent
+as legacy links. This receipt does not expose account data or claim synchronous
+canonical state. Stale generations keep the existing behavior: queue the old
+generation's revocation without suppressing a newer opt-in; canonical contacts
+require a generation. No grant, re-subscribe or frequency-write API is exposed.
+
+One validates browser Origin against its canonical environment origin before
+proxying; it must not forward incoming cookies, authorization or Origin headers.
+Matrix admits absent Origin for server/RFC8058 requests, and only exact
+`https://one.hussh.ai` for browser-direct requests, without CORS grants. UAT must
+use its explicitly configured isolated authority and must never default to PROD.
+Legacy metrics GET/POST preference and unsubscribe links remain operational.
+
+### Isolated email renderer release gate
+
+The normal main deployment requires the pre-provisioned, private Cloud Run job
+`matrix-plg-email-uat` in `hushh-ai-prod/us-central1`, with dedicated runtime
+`matrix-plg-email-uat@hushh-ai-prod.iam.gserviceaccount.com`. Its reviewed policy
+has no data/provider credentials, database/VPC/volume attachment, or enabled PLG
+flags. The workflow cannot create it or widen IAM: it validates the fixed job,
+updates only the immutable built image, executes once with zero retries, and
+binds the successful execution name/UID and job UID to that same image before
+deploying a production candidate. `npm run test:uat:plg-email` uses only synthetic
+input with network and send fences. This qualifies the email renderer/MIME
+scope; it does not qualify the full Matrix/One stack, real delivery, or the One
+unsubscribe route. The seed job stays inert until the workflow supplies the
+new image. Customer-link activation remains a separate paired-release hold.
 
 Reservations are atomic across workers. Email payloads are immutable once
 reserved; a Resend idempotency key is attached. Failed or ambiguous requests

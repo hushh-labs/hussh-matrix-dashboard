@@ -24,11 +24,13 @@ import { FilePlgStore, MemoryPlgStore, FirestorePlgStore, validatePlgState } fro
 import { PlgFirestoreStorage, PlgStorageMigration, PLG_LEGACY_PATH, PLG_STORAGE_AUTHORITY } from '../src/server/plg/firestore-storage';
 import {
   PlgService,
+  deliveryMessage,
+  plgRuntime,
   preferenceToken,
   tokenContact,
   type PlgRuntime,
 } from '../src/server/plg/service';
-import type { PlgContact, PlgState, PlgCatalog } from '../src/lib/plg';
+import type { PlgContact, PlgState, PlgCatalog, PlgDelivery } from '../src/lib/plg';
 import { syncOneEvidence } from '../src/server/plg/one-source';
 import { signValue } from '../src/server/plg/service';
 import { readOneAudience } from '../src/server/plg/one-audience';
@@ -1354,6 +1356,30 @@ describe('PLG persistence and delivery safety', () => {
     const s = await store.read();
     expect(candidate(s, s.contacts[0], NOW).reason).toContain('Three');
   });
+  it('renders escaped campaign content while preserving plaintext and generation-bound unsubscribe', () => {
+    const id = 'ecf9b4ac-3018-443c-907c-a13cf55c4882';
+    const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const d: PlgDelivery = { id: 'existing-delivery', contactId: id, templateId: 'memory-welcome',
+      step: 'welcome', key: `${id}:welcome:activation`, status: 'sent', createdAt: new Date(NOW).toISOString(),
+      subject: 'One <img src=x onerror=alert(1)> & you', body: 'Review <script>unsafe()</script>\nThen save.\n\nFind it again.',
+      ctaLabel: 'Open <Memory>', ctaUrl: 'https://one.hussh.ai/one/pkm?from=email&step=1',
+      resourceUrl: 'https://one.hussh.ai/one?guide=1&source=email', providerId: 'existing-acceptance' };
+    const message = deliveryMessage(d, id, runtime, generation);
+    const token = preferenceToken(id, runtime.signingSecret, generation);
+    const preferences = `${runtime.origin}/integrations/plg/preferences/${token}`;
+    const unsubscribe = `${runtime.origin}/integrations/plg/unsubscribe/${token}`;
+    expect(message.text).toBe(`${d.body}\n\nDemo or guide: ${d.resourceUrl}\n\n${d.ctaLabel}: ${d.ctaUrl}\n\nPreferences: ${preferences}\nUnsubscribe: ${unsubscribe}`);
+    expect(message.headers).toEqual({ 'List-Unsubscribe': `<${unsubscribe}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
+    expect(message.html).toContain('&lt;img src=x onerror=alert(1)&gt; &amp; you');
+    expect(message.html).toContain('&lt;script&gt;unsafe()&lt;/script&gt;');
+    expect(message.html).toContain('Open &lt;Memory&gt;');
+    expect(message.html).toContain('href="https://one.hussh.ai/one/pkm?from=email&amp;step=1"');
+    expect(message.html).toContain(`href="${preferences}"`);
+    expect(message.html).toContain(`href="${unsubscribe}"`);
+    expect(message.html).not.toMatch(/<script|<iframe|<form/i);
+    expect(message.html.match(/<img\b/g)).toHaveLength(1);
+    expect(message.html).toContain('src="https://metrics.hussh.ai/assets/hussh-mark.png"');
+  });
   it('signs opaque preference links and rejects tampered links', () => {
     const id = 'ecf9b4ac-3018-443c-907c-a13cf55c4882';
     const token = preferenceToken(id, runtime.signingSecret);
@@ -1361,6 +1387,49 @@ describe('PLG persistence and delivery safety', () => {
     expect(() => tokenContact(token.replace('ecf9', 'abcd'), runtime.signingSecret)).toThrow(
       'invalid',
     );
+  });
+  it('moves new customer links to One only when explicitly configured and preserves the token and delivery', () => {
+    const id = 'ecf9b4ac-3018-443c-907c-a13cf55c4882', generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const delivery: PlgDelivery = { id: 'existing-delivery', contactId: id, templateId: 'memory-welcome',
+      step: 'welcome', key: `${id}:welcome:activation`, status: 'sent', createdAt: new Date(NOW).toISOString(),
+      subject: 'Your next task in One', body: 'Save a note and find it again.', ctaLabel: 'Open Memory',
+      ctaUrl: 'https://one.hussh.ai/one/pkm', providerId: 'existing-acceptance' };
+    const snapshot = structuredClone(delivery);
+    const token = preferenceToken(id, runtime.signingSecret, generation);
+    const legacy = deliveryMessage(delivery, id, runtime, generation);
+    expect(legacy.headers['List-Unsubscribe']).toBe(`<${runtime.origin}/integrations/plg/unsubscribe/${token}>`);
+    for (const preferenceOrigin of ['https://one.hussh.ai', 'https://one.hussh.ai/']) {
+      const config = { ...runtime, preferenceOrigin };
+      const message = deliveryMessage(delivery, id, config, generation);
+      const manage = 'https://one.hussh.ai/one/profile/account#email-updates';
+      const unsubscribe = `https://one.hussh.ai/email/unsubscribe/${token}`;
+      expect(message.headers).toEqual({ 'List-Unsubscribe': `<${unsubscribe}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
+      expect(message.text).toContain(`Preferences: ${manage}\nUnsubscribe: ${unsubscribe}`);
+      expect(message.html).toContain(`href="${manage}"`);
+      expect(message.html).toContain(`href="${unsubscribe}"`);
+      expect(message.html).not.toContain('/integrations/plg/preferences/');
+      expect(message.html).not.toContain('/integrations/plg/unsubscribe/');
+      expect(config.origin).toBe(runtime.origin);
+    }
+    expect(delivery).toEqual(snapshot);
+    expect(deliveryMessage(delivery, id, runtime, generation)).toEqual(legacy);
+  });
+  it.each(['http://one.hussh.ai', 'https://one.hussh.ai.evil.invalid', 'https://evil.invalid',
+    'https://one.hussh.ai/one', 'https://one.hussh.ai?redirect=evil', 'https://one.hussh.ai#email',
+    'https://user@one.hussh.ai', 'https://one.hussh.ai:8443', 'https://uat-one.hussh.ai'])
+  ('rejects a noncanonical customer preference origin: %s', (preferenceOrigin) => {
+    vi.stubEnv('PLG_PREFERENCE_ORIGIN', preferenceOrigin);
+    try { expect(() => plgRuntime()).toThrow('One email preferences are not configured.'); }
+    finally { vi.unstubAllEnvs(); }
+  });
+  it('keeps the optional One link switch off by default without replacing workspace origin', () => {
+    vi.stubEnv('PLG_PREFERENCE_ORIGIN', '');
+    vi.stubEnv('PLG_PUBLIC_ORIGIN', runtime.origin);
+    try {
+      expect(plgRuntime()).toMatchObject({ origin: runtime.origin, preferenceOrigin: undefined });
+      vi.stubEnv('PLG_PREFERENCE_ORIGIN', 'https://one.hussh.ai');
+      expect(plgRuntime()).toMatchObject({ origin: runtime.origin, preferenceOrigin: 'https://one.hussh.ai' });
+    } finally { vi.unstubAllEnvs(); }
   });
 });
 

@@ -1,6 +1,7 @@
 import type express from 'express';
 import { Webhook } from 'svix';
 import { plgJourneyOptions } from '../../lib/plg';
+import type { PlgContact, PlgState } from '../../lib/plg';
 import { PLG_SYNC_BUDGET_MS } from '../../lib/plg-budgets.mjs';
 import {
   audit,
@@ -18,6 +19,7 @@ import { FilePlgStore, FirestorePlgStore, type PlgStore } from './store';
 import {
   equalSignature,
   escapeHtml,
+  ONE_EMAIL_PREFERENCE_ORIGIN,
   plgRuntime,
   PlgService,
   signValue,
@@ -30,6 +32,17 @@ import { applyDeliveryEvent } from './delivery-events';
 import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
 import { registerGoogleMailRoutes } from './google-mail-routes';
 import { MAIL_OWNER } from './google-mail-store';
+
+/** The same generation fence applies to new One links and already-sent legacy links. */
+function unsubscribeContact(state: PlgState, contact: PlgContact, generation?: string) {
+  if (contact.permission && !generation)
+    throw new PlgError(409, 'Use the latest email link or manage preferences in your One account.');
+  if (!contact.permission || contact.permission.generation === generation) {
+    if (!contact.suppressed || contact.suppressed === 'unsubscribed') contact.suppressed = 'unsubscribed';
+    timeline(contact, 'Subscriber', 'Unsubscribed from promotional email.', Date.now());
+  }
+  queueSubscriptionRevocation(state, contact, generation);
+}
 
 export function registerPlgRoutes(
   app: express.Express,
@@ -297,6 +310,44 @@ export function registerPlgRoutes(
       return res.json({ received: true });
     }),
   );
+  // This capability API is only a revocation bridge. Account settings remain
+  // the authenticated authority for frequency and explicit re-enrollment.
+  const emailUnsubscribe = handle(async (req, res) => {
+    const origin = req.get('Origin');
+    if (origin !== undefined && origin !== ONE_EMAIL_PREFERENCE_ORIGIN)
+      throw new PlgError(403, 'Invalid request origin.');
+    if (config.signingSecret.length < 32)
+      throw new PlgError(503, 'Preferences are not configured.');
+    const { id, generation } = tokenPreference(req.params.token as string, config.signingSecret);
+    const store = getService().store;
+    res.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      if (!(await store.read()).contacts.some((c) => c.id === id))
+        throw new PlgError(404, 'Subscriber not found.');
+      return res.json({ version: 1, canUnsubscribe: true });
+    }
+    const body = req.body;
+    const raw = (req as express.Request & { plgRawBody?: string }).plgRawBody;
+    const keys = body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body) : [];
+    const valid = keys.length === 1 && (
+      (req.is('application/json') && keys[0] === 'action' && body.action === 'unsubscribe') ||
+      (req.is('application/x-www-form-urlencoded') && keys[0] === 'List-Unsubscribe' && body['List-Unsubscribe'] === 'One-Click')
+    );
+    if (!valid || Buffer.byteLength(JSON.stringify(body)) > 1024 ||
+      (raw !== undefined && Buffer.byteLength(raw) > 1024) || Number(req.get('Content-Length') ?? 0) > 1024)
+      throw new PlgError(400, 'Supply an unsubscribe confirmation.');
+    await store.transaction((state) => {
+      const contact = state.contacts.find((c) => c.id === id);
+      if (!contact) throw new PlgError(404, 'Subscriber not found.');
+      unsubscribeContact(state, contact, generation);
+    });
+    // Local suppression is immediate. Canonical revocation retains its durable
+    // retry queue; this receipt does not expose or claim canonical preference state.
+    return res.json({ version: 1, unsubscribed: true });
+  });
+  app.get('/integrations/plg/email-unsubscribe/:token', emailUnsubscribe);
+  app.post('/integrations/plg/email-unsubscribe/:token', emailUnsubscribe);
+
   const preferences = (unsubscribe: boolean) =>
     handle(async (req, res) => {
       if (config.signingSecret.length < 32)
@@ -315,11 +366,7 @@ export function registerPlgRoutes(
           if (c.permission && !generation)
             throw new PlgError(409, 'Use the latest email link or manage preferences in your One account.');
           if (unsubscribe || req.body.unsubscribe === 'yes') {
-            if (!c.permission || c.permission.generation === generation) {
-              if (!c.suppressed || c.suppressed === 'unsubscribed') c.suppressed = 'unsubscribed';
-              timeline(c, 'Subscriber', 'Unsubscribed from promotional email.', Date.now());
-            }
-            queueSubscriptionRevocation(state, c, generation);
+            unsubscribeContact(state, c, generation);
           } else {
             if (c.permission) throw new PlgError(409, 'Manage the email frequency in your One account.');
             c.frequency = choose(req.body.frequency, ['daily', 'weekly', 'updates']);
@@ -331,6 +378,14 @@ export function registerPlgRoutes(
           .send(
             '<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preferences updated</title><main><h1>Your email preferences are saved</h1><p>You can close this page.</p></main></html>',
           );
+      }
+      if (config.preferenceOrigin === ONE_EMAIL_PREFERENCE_ORIGIN) {
+        // Already-delivered links keep their signatures; only the read-only
+        // browser destination moves after the paired One release is enabled.
+        const destination = unsubscribe
+          ? `${ONE_EMAIL_PREFERENCE_ORIGIN}/email/unsubscribe/${encodeURIComponent(req.params.token as string)}`
+          : `${ONE_EMAIL_PREFERENCE_ORIGIN}/one/profile/account#email-updates`;
+        return res.redirect(303, destination);
       }
       const action = escapeHtml(req.originalUrl);
       return res

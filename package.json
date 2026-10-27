@@ -47,7 +47,8 @@
     "test:api:app-store-connect": "node scripts/check-app-store-connect.mjs",
     "test:api:public-contract": "node scripts/check-public-analytics-contract.mjs",
     "test:ui": "playwright test",
-    "test:plg": "vitest run tests/plg.test.ts tests/plg-routes.test.ts tests/plg-audience-search.test.ts",
+    "test:plg": "vitest run tests/plg.test.ts tests/plg-routes.test.ts tests/plg-audience-search.test.ts tests/plg-email-uat-job.test.ts",
+    "test:uat:plg-email": "tsx scripts/check-plg-email-uat.ts",
     "plg:worker": "node scripts/plg-worker.mjs"
   },
   "dependencies": {

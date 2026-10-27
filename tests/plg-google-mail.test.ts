@@ -12,6 +12,8 @@ import { createHash } from 'node:crypto';
 import { GmailReadError, reconcileGoogleFeedback, type GmailRead } from '../src/server/plg/google-mail-reconcile';
 import { PlgService, type PlgRuntime } from '../src/server/plg/service';
 import { applySubscription, OneSubscriptions } from '../src/server/plg/one-subscriptions';
+import { renderPlgEmailHtml } from '../src/server/plg/email-layout';
+import { renderPlgTestPreview } from '../src/server/plg/test-preview';
 
 class Control implements MailControlStore {
   state = emptyMailControl();
@@ -172,6 +174,13 @@ describe('Private fixed-recipient test API', () => {
     const sent = JSON.parse(String(transport.mock.calls[0][1].body));
     const raw = Buffer.from(sent.raw, 'base64url').toString();
     expect(raw).toContain(`To: ${MAIL_OWNER}\r\n`);
+    const htmlPart = raw.match(/Content-Type: text\/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)\r\n--plg_/);
+    expect(htmlPart).not.toBeNull();
+    const html = Buffer.from(htmlPart![1].replaceAll('\r\n', ''), 'base64').toString();
+    expect(html).toBe(renderPlgEmailHtml({ ...renderPlgTestPreview(template), preview: true }));
+    expect(html).toContain('PLG TEST PREVIEW');
+    expect(html).not.toContain('/integrations/plg/preferences/');
+    expect(html).not.toContain('/integrations/plg/unsubscribe/');
     expect(control.state.tests[0].status).toBe('accepted');
     const accepted = control.state.tests[0];
     const assigned = '<api-assigned=opaque@mail.gmail.com>';
