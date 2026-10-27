@@ -35,6 +35,8 @@ env:
   ONE_PLG_SUBSCRIPTIONS_CONFIGURED: ${{ vars.ONE_PLG_SUBSCRIPTIONS_CONFIGURED }}
   ONE_PLG_GOOGLE_MAIL_CONFIGURED: ${{ vars.ONE_PLG_GOOGLE_MAIL_CONFIGURED }}
   ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED: ${{ vars.ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED }}
+  # Keep unset until the paired One production unsubscribe route is verified.
+  PLG_PREFERENCE_ORIGIN: ${{ vars.PLG_PREFERENCE_ORIGIN || '' }}
 
 jobs:
   deploy:
@@ -220,6 +222,13 @@ jobs:
           PLG_ENV_SUFFIX="|PLG_ENABLED=false|PLG_DELIVERY_ENABLED=false|PLG_ONE_SOURCE_URL="
           PLG_SECRET_SUFFIX=""
           PLG_DELIVERY_ENABLED=false
+          case "${PLG_PREFERENCE_ORIGIN}" in
+            ""|"https://one.hussh.ai") ;;
+            *) echo "Invalid One email preference origin."; exit 1 ;;
+          esac
+          if [[ -n "${PLG_PREFERENCE_ORIGIN}" ]]; then
+            [[ "${ONE_PLG_CONFIGURED}" == "true" && "${ONE_PLG_SUBSCRIPTIONS_CONFIGURED}" == "true" ]] || exit 1
+          fi
           GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=false|PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED=false|PLG_EMAIL_PROVIDER=resend|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET="
           REMOVE_PROVIDER_SECRETS=()
           if [[ "${ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED}" == "true" ]]; then
@@ -292,7 +301,8 @@ jobs:
           else
             PLG_ENV_SUFFIX+="|PLG_ONE_SUBSCRIPTION_ENABLED=false|PLG_ONE_SUBSCRIPTION_URL="
           fi
-          PLG_ENV_SUFFIX+="${GOOGLE_MAIL_ENV}"
+          # Explicit empty value turns off new-link generation on rollback.
+          PLG_ENV_SUFFIX+="|PLG_PREFERENCE_ORIGIN=${PLG_PREFERENCE_ORIGIN}${GOOGLE_MAIL_ENV}"
           gcloud run deploy "${SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
@@ -368,7 +378,7 @@ jobs:
             'INSTAGRAM_CREDENTIAL_SECRET',
             'INSTAGRAM_ANALYTICS_ADMIN_EMAILS',
             'PLG_ENABLED', 'PLG_STORAGE', 'PLG_FIRESTORE_PROJECT', 'PLG_FIRESTORE_DATABASE',
-            'PLG_PUBLIC_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_ONE_AUDIENCE_URL', 'PLG_DELIVERY_ENABLED',
+            'PLG_PUBLIC_ORIGIN', 'PLG_PREFERENCE_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_ONE_AUDIENCE_URL', 'PLG_DELIVERY_ENABLED',
             'PLG_ONE_SUBSCRIPTION_ENABLED', 'PLG_ONE_SUBSCRIPTION_URL',
             'PLG_GOOGLE_MAIL_ENABLED', 'PLG_GOOGLE_MAIL_CREDENTIAL_SECRET',
             'PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED', 'PLG_EMAIL_PROVIDER',
@@ -384,6 +394,8 @@ jobs:
             SESSION_SECRET: 'metrics-dashboard-session-secret',
             ALLOWED_EMAILS: 'metrics-dashboard-allowed-emails',
           };
+          if ((byName.get('PLG_PREFERENCE_ORIGIN')?.value || '') !== (process.env.PLG_PREFERENCE_ORIGIN || ''))
+            throw new Error('One email preference origin release setting mismatch');
           const googleMailEnabled = process.env.ONE_PLG_GOOGLE_MAIL_CONFIGURED === 'true';
           if (byName.get('PLG_GOOGLE_MAIL_ENABLED')?.value !== String(googleMailEnabled) ||
               (byName.get('PLG_GOOGLE_MAIL_CREDENTIAL_SECRET')?.value || '') !==

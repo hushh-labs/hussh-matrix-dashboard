@@ -311,6 +311,149 @@ describe('Private PLG API boundaries', () => {
     expect(state.pendingRevocations).toHaveLength(2);
     expect((await request(server).post(`/integrations/plg/unsubscribe/${preferenceToken(c.id, secret)}`).type('form').send({})).status).toBe(409);
   });
+  it('exposes only a minimal read-only capability receipt for the One unsubscribe page', async () => {
+    const c = await store.transaction((s) => enroll(s, input, 'admin', Date.now()));
+    const snapshot = await store.read(), server = app();
+    const path = `/integrations/plg/email-unsubscribe/${preferenceToken(c.id, secret)}`;
+    for (const origin of [undefined, 'https://one.hussh.ai']) {
+      const req = request(server).get(path);
+      if (origin) req.set('Origin', origin);
+      const response = await req;
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ version: 1, canUnsubscribe: true });
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.headers['referrer-policy']).toBe('no-referrer');
+      expect(response.headers['x-robots-tag']).toBe('noindex, nofollow, noarchive');
+      expect(response.headers['access-control-allow-origin']).toBeUndefined();
+    }
+    expect((await request(server).head(path)).status).toBe(200);
+    expect(await store.read()).toEqual(snapshot);
+    expect((await request(server).get(path + 'tampered')).status).toBe(400);
+    expect((await request(server).get(`/integrations/plg/email-unsubscribe/${preferenceToken('00000000-0000-4000-8000-000000000009', secret)}`)).status).toBe(404);
+    expect((await request(app({ ...config, enabled: false })).get(path)).status).toBe(503);
+    expect((await request(app({ ...config, signingSecret: '' })).get(path)).status).toBe(503);
+  });
+  it('moves valid already-sent legacy GET links to One only after activation and keeps legacy POST working', async () => {
+    const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', renewed = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const c = await store.transaction((s) => {
+      const contact = enroll(s, input, 'admin', Date.now());
+      contact.permission = { revision: 2, generation: renewed, enabled: true, eligible: true, checkedAt: new Date().toISOString() };
+      return contact;
+    });
+    const oldToken = preferenceToken(c.id, secret, generation), snapshot = await store.read();
+    const server = app({ ...config, preferenceOrigin: 'https://one.hussh.ai' });
+    for (const name of ['preferences', 'unsubscribe']) {
+      const path = `/integrations/plg/${name}/${oldToken}`;
+      const response = await request(server).get(path);
+      expect(response.status).toBe(303);
+      expect(response.headers.location).toBe(name === 'preferences' ? 'https://one.hussh.ai/one/profile/account#email-updates'
+        : `https://one.hussh.ai/email/unsubscribe/${oldToken}`);
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.headers['referrer-policy']).toBe('no-referrer');
+      expect(await store.read()).toEqual(snapshot);
+      const invalid = await request(server).get(path + 'tampered');
+      expect(invalid.status).toBe(400);
+      expect(invalid.headers.location).toBeUndefined();
+      const legacy = await request(app()).get(path);
+      expect(legacy.status).toBe(200);
+      expect(legacy.headers.location).toBeUndefined();
+      expect(legacy.text).toContain('<form method="post"');
+    }
+    const stale = await request(server).post(`/integrations/plg/unsubscribe/${oldToken}`).type('form').send({ 'List-Unsubscribe': 'One-Click' });
+    expect(stale.status).toBe(200);
+    expect(stale.headers.location).toBeUndefined();
+    expect((await store.read()).contacts[0].suppressed).toBeNull();
+    expect((await store.read()).pendingRevocations).toEqual([{ accountHash: `sha256:${accountHash(input.accountId)}`, generation }]);
+    const current = await request(server).post(`/integrations/plg/preferences/${preferenceToken(c.id, secret, renewed)}`)
+      .type('form').send({ unsubscribe: 'yes' });
+    expect(current.status).toBe(200);
+    expect(current.headers.location).toBeUndefined();
+    expect((await store.read()).contacts[0].suppressed).toBe('unsubscribed');
+  });
+  it.each(['https://foreign.example.invalid', 'null', 'https://one.hussh.ai.evil.invalid', 'https://uat-one.hussh.ai', config.origin])
+  ('rejects an unapproved browser origin on the capability API: %s', async (origin) => {
+    const c = await store.transaction((s) => enroll(s, input, 'admin', Date.now()));
+    const snapshot = await store.read(), server = app();
+    const path = `/integrations/plg/email-unsubscribe/${preferenceToken(c.id, secret)}`;
+    expect((await request(server).get(path).set('Origin', origin)).status).toBe(403);
+    expect((await request(server).post(path).set('Origin', origin).send({ action: 'unsubscribe' })).status).toBe(403);
+    expect(await store.read()).toEqual(snapshot);
+  });
+  it.each([
+    ['json', {}], ['json', { action: 'subscribe' }], ['json', { action: 'unsubscribe', frequency: 'daily' }],
+    ['json', { unsubscribe: true }], ['json', ['unsubscribe']], ['json', { action: ['unsubscribe'] }],
+    ['form', {}], ['form', { unsubscribe: 'yes' }], ['form', { 'List-Unsubscribe': 'One-Click', extra: 'yes' }],
+    ['form', { 'List-Unsubscribe': ['One-Click', 'One-Click'] }], ['text', '{"action":"unsubscribe"}'],
+  ])('rejects unsupported unsubscribe payloads without changing consent (%s, %j)', async (type, body) => {
+    const c = await store.transaction((s) => enroll(s, input, 'admin', Date.now()));
+    const snapshot = await store.read();
+    const response = await request(app()).post(`/integrations/plg/email-unsubscribe/${preferenceToken(c.id, secret)}`)
+      .type(type as string).send(body);
+    expect(response.status).toBe(400);
+    expect(await store.read()).toEqual(snapshot);
+  });
+  it('rejects an oversized JSON confirmation before any transaction', async () => {
+    const c = await store.transaction((s) => enroll(s, input, 'admin', Date.now()));
+    const snapshot = await store.read();
+    const response = await request(app()).post(`/integrations/plg/email-unsubscribe/${preferenceToken(c.id, secret)}`)
+      .type('json').send(' '.repeat(1100) + '{"action":"unsubscribe"}');
+    expect(response.status).toBe(400);
+    expect(await store.read()).toEqual(snapshot);
+  });
+  it('confirms One JSON unsubscribe without login, queues canonical revocation once and never sends', async () => {
+    const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const c = await store.transaction((s) => {
+      const contact = enroll(s, input, 'admin', Date.now());
+      contact.permission = { revision: 1, generation, enabled: true, eligible: true, checkedAt: new Date().toISOString() };
+      return contact;
+    });
+    const server = app(), path = `/integrations/plg/email-unsubscribe/${preferenceToken(c.id, secret, generation)}`;
+    const send = vi.spyOn(PlgService.prototype, 'run');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await request(server).post(path).set('Origin', 'https://one.hussh.ai').send({ action: 'unsubscribe' });
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ version: 1, unsubscribed: true });
+    }
+    const state = await store.read();
+    expect(state.contacts[0].suppressed).toBe('unsubscribed');
+    expect(state.contacts[0].permission).toEqual(c.permission); // Canonical state awaits its durable revocation queue.
+    expect(state.pendingRevocations).toEqual([{ accountHash: `sha256:${accountHash(input.accountId)}`, generation }]);
+    expect(state.deliveries).toEqual([]);
+    expect(send).not.toHaveBeenCalled();
+  });
+  it.each(['bounced', 'complained', 'provider_suppressed'] as const)
+  ('supports exact RFC8058 POST without weakening existing %s suppression', async (suppressed) => {
+    const c = await store.transaction((s) => {
+      const contact = enroll(s, input, 'admin', Date.now());
+      contact.suppressed = suppressed;
+      return contact;
+    });
+    const response = await request(app()).post(`/integrations/plg/email-unsubscribe/${preferenceToken(c.id, secret)}`)
+      .type('form').send({ 'List-Unsubscribe': 'One-Click' });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ version: 1, unsubscribed: true });
+    expect((await store.read()).contacts[0].suppressed).toBe(suppressed);
+  });
+  it('preserves stale-generation 200 semantics and missing-generation 409 on the One bridge', async () => {
+    const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', renewed = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const c = await store.transaction((s) => {
+      const contact = enroll(s, input, 'admin', Date.now());
+      contact.permission = { revision: 2, generation: renewed, enabled: true, eligible: true, checkedAt: new Date().toISOString() };
+      return contact;
+    });
+    const server = app(), path = `/integrations/plg/email-unsubscribe/${preferenceToken(c.id, secret, generation)}`;
+    const missing = await request(server).post(`/integrations/plg/email-unsubscribe/${preferenceToken(c.id, secret)}`).send({ action: 'unsubscribe' });
+    expect(missing.status).toBe(409);
+    expect((await store.read()).pendingRevocations ?? []).toEqual([]);
+    const response = await request(server).post(path).send({ action: 'unsubscribe' });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ version: 1, unsubscribed: true });
+    const state = await store.read();
+    expect(state.contacts[0].suppressed).toBeNull();
+    expect(state.contacts[0].permission).toEqual(c.permission);
+    expect(state.pendingRevocations).toEqual([{ accountHash: `sha256:${accountHash(input.accountId)}`, generation }]);
+    expect((await request(server).get(path)).body).toEqual({ version: 1, canUnsubscribe: true });
+  });
   it('validates delivery signatures and immediately suppresses signed complaints', async () => {
     await store.transaction((s) => enroll(s, input, 'admin', Date.now()));
     let transactionFailure: unknown;
