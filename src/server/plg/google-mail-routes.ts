@@ -5,7 +5,8 @@ import { PlgError } from './engine';
 import { GoogleMail, GoogleMailUnattempted } from './google-mail';
 import { MAIL_OWNER } from './google-mail-store';
 import { configuredGoogleMail } from './google-mail-runtime';
-import { escapeHtml, type PlgRuntime } from './service';
+import type { PlgRuntime } from './service';
+import { renderPlgEmailHtml } from './email-layout';
 import { renderPlgTestPreview } from './test-preview';
 
 export function registerGoogleMailRoutes(app: express.Express, config: PlgRuntime,
@@ -93,7 +94,7 @@ export function registerGoogleMailRoutes(app: express.Express, config: PlgRuntim
     });
     const text = `${preview.body}${preview.resourceUrl ? `\n\nDemo or guide: ${preview.resourceUrl}` : ''}\n\n${preview.ctaLabel}: ${preview.ctaUrl}`;
     try {
-      const id = await google.send(MAIL_OWNER, reservation, { text, html: `<pre style="white-space:pre-wrap">${escapeHtml(text)}</pre>`, headers: {} });
+      const id = await google.send(MAIL_OWNER, reservation, { text, html: renderPlgEmailHtml({ ...preview, preview: true }), headers: {} });
       await google.store.transaction((s) => {
         const test = s.tests.find((t) => t.id === reservation.id)!;
         test.providerId = id; test.status = 'accepted';

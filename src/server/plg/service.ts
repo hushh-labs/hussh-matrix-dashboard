@@ -10,6 +10,8 @@ import type { GoogleMail } from './google-mail';
 import { GoogleMailUnattempted } from './google-mail';
 import { reconcileGoogleFeedback } from './google-mail-reconcile';
 import { unboundGoogleDeliveries } from './google-mail-bindings';
+import { renderPlgEmailHtml } from './email-layout';
+export { escapeHtml } from './email-layout';
 
 export interface PlgRuntime {
   emailProvider?: 'resend' | 'google_workspace';
@@ -100,19 +102,13 @@ export function tokenPreference(token: string, secret: string) {
   return { id, generation };
 }
 export function tokenContact(token: string, secret: string) { return tokenPreference(token, secret).id; }
-export function escapeHtml(value: string) {
-  return value.replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
-  );
-}
 export function deliveryMessage(d: PlgDelivery, contactId: string, config: PlgRuntime, generation?: string) {
   const preferences = `${config.origin}/integrations/plg/preferences/${preferenceToken(contactId, config.signingSecret, generation)}`;
   const unsubscribe = `${config.origin}/integrations/plg/unsubscribe/${preferenceToken(contactId, config.signingSecret, generation)}`;
   const plain = `${d.body}${d.resourceUrl ? `\n\nDemo or guide: ${d.resourceUrl}` : ''}\n\n${d.ctaLabel}: ${d.ctaUrl}\n\nPreferences: ${preferences}\nUnsubscribe: ${unsubscribe}`;
   return {
     text: plain,
-    html: `<div style="font:16px/1.6 Arial,sans-serif;max-width:600px;margin:auto"><p>${escapeHtml(d.body).replaceAll('\n', '<br>')}</p>${d.resourceUrl ? `<p><a href="${escapeHtml(d.resourceUrl)}">View the demo or guide</a></p>` : ''}<p><a href="${escapeHtml(d.ctaUrl)}">${escapeHtml(d.ctaLabel)}</a></p><p style="font-size:12px"><a href="${escapeHtml(preferences)}">Email preferences</a> &middot; <a href="${escapeHtml(unsubscribe)}">Unsubscribe</a></p></div>`,
+    html: renderPlgEmailHtml({ ...d, preferences: { manage: preferences, unsubscribe } }),
     headers: {
       'List-Unsubscribe': `<${unsubscribe}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',

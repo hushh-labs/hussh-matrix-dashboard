@@ -122,8 +122,8 @@ jobs:
 
       - name: Build container image
         run: |
+          set -euo pipefail
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
-          echo "IMAGE=${IMAGE}" >> "${GITHUB_ENV}"
           BUILD_ID="$(gcloud builds submit \
             --project="${PROJECT_ID}" \
             --tag="${IMAGE}" \
@@ -136,6 +136,14 @@ jobs:
             echo "Cloud Build status: ${STATUS}"
             case "${STATUS}" in
               SUCCESS)
+                DIGEST="$(gcloud builds describe "${BUILD_ID}" --project="${PROJECT_ID}" --format=json | node --input-type=module -e '
+                  import { readFileSync } from "node:fs";
+                  const build = JSON.parse(readFileSync(0, "utf8"));
+                  const image = (build.results?.images ?? []).find(i => i.name === process.argv[1]);
+                  if (build.status !== "SUCCESS" || !/^sha256:[a-f0-9]{64}$/.test(image?.digest ?? "")) process.exit(1);
+                  process.stdout.write(image.digest);
+                ' "${IMAGE}")"
+                echo "IMAGE=${IMAGE%:*}@${DIGEST}" >> "${GITHUB_ENV}"
                 exit 0
                 ;;
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
@@ -147,6 +155,55 @@ jobs:
           done
           echo "Cloud Build did not finish within the expected window."
           exit 1
+
+      - name: Refresh cloud authentication for isolated renderer UAT
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Verify isolated email renderer in UAT job
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          # Renderer UAT only: no Matrix/One app, customer rows, provider access or emails.
+          # Root provisions the fixed owned job and zero-data runtime identity separately.
+          UAT_JOB="matrix-plg-email-uat"
+          UAT_DIR="${RUNNER_TEMP}/plg-email-uat"
+          mkdir -p "${UAT_DIR}"
+          gcloud run jobs describe "${UAT_JOB}" --project="${PROJECT_ID}" --region="${REGION}" \
+            --format=json > "${UAT_DIR}/before.json"
+          gcloud run jobs get-iam-policy "${UAT_JOB}" --project="${PROJECT_ID}" --region="${REGION}" \
+            --format=json > "${UAT_DIR}/iam-before.json"
+          node scripts/check-plg-email-uat-job.mjs job "${UAT_DIR}/before.json" "${UAT_DIR}/iam-before.json"
+          gcloud run jobs update "${UAT_JOB}" --project="${PROJECT_ID}" --region="${REGION}" \
+            --image="${IMAGE}" --quiet > /dev/null
+          gcloud run jobs describe "${UAT_JOB}" --project="${PROJECT_ID}" --region="${REGION}" \
+            --format=json > "${UAT_DIR}/job.json"
+          gcloud run jobs get-iam-policy "${UAT_JOB}" --project="${PROJECT_ID}" --region="${REGION}" \
+            --format=json > "${UAT_DIR}/iam.json"
+          node scripts/check-plg-email-uat-job.mjs job "${UAT_DIR}/job.json" "${UAT_DIR}/iam.json" "${IMAGE}"
+          UAT_STARTED="$(node -e 'process.stdout.write(new Date().toISOString())')"
+          gcloud run jobs execute "${UAT_JOB}" --project="${PROJECT_ID}" --region="${REGION}" \
+            --wait --format=json > "${UAT_DIR}/accepted-execution.json"
+          node scripts/check-plg-email-uat-job.mjs execution "${UAT_DIR}/accepted-execution.json" "${UAT_DIR}/job.json" \
+            "${UAT_DIR}/iam.json" "${IMAGE}" "${UAT_STARTED}" "${UAT_DIR}/accepted-execution.json" > "${UAT_DIR}/accepted.json"
+          UAT_EXECUTION="$(node --input-type=module -e 'import {readFileSync} from "node:fs"; process.stdout.write(JSON.parse(readFileSync(process.argv[1], "utf8")).executionName)' "${UAT_DIR}/accepted.json")"
+          [[ "${UAT_EXECUTION}" =~ ^matrix-plg-email-uat-[a-z0-9-]+$ ]] || exit 1
+          gcloud run jobs executions describe "${UAT_EXECUTION}" --project="${PROJECT_ID}" --region="${REGION}" \
+            --format=json > "${UAT_DIR}/execution.json"
+          node scripts/check-plg-email-uat-job.mjs execution "${UAT_DIR}/execution.json" "${UAT_DIR}/job.json" \
+            "${UAT_DIR}/iam.json" "${IMAGE}" "${UAT_STARTED}" "${UAT_DIR}/accepted-execution.json" > "${UAT_DIR}/result.json"
+          cat "${UAT_DIR}/result.json"
+
+      - name: Save isolated renderer UAT result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plg-email-renderer-uat
+          path: ${{ runner.temp }}/plg-email-uat/result.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Capture current production traffic split
         run: |

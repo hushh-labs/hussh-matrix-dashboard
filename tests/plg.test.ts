@@ -24,11 +24,12 @@ import { FilePlgStore, MemoryPlgStore, FirestorePlgStore, validatePlgState } fro
 import { PlgFirestoreStorage, PlgStorageMigration, PLG_LEGACY_PATH, PLG_STORAGE_AUTHORITY } from '../src/server/plg/firestore-storage';
 import {
   PlgService,
+  deliveryMessage,
   preferenceToken,
   tokenContact,
   type PlgRuntime,
 } from '../src/server/plg/service';
-import type { PlgContact, PlgState, PlgCatalog } from '../src/lib/plg';
+import type { PlgContact, PlgState, PlgCatalog, PlgDelivery } from '../src/lib/plg';
 import { syncOneEvidence } from '../src/server/plg/one-source';
 import { signValue } from '../src/server/plg/service';
 import { readOneAudience } from '../src/server/plg/one-audience';
@@ -1353,6 +1354,30 @@ describe('PLG persistence and delivery safety', () => {
     });
     const s = await store.read();
     expect(candidate(s, s.contacts[0], NOW).reason).toContain('Three');
+  });
+  it('renders escaped campaign content while preserving plaintext and generation-bound unsubscribe', () => {
+    const id = 'ecf9b4ac-3018-443c-907c-a13cf55c4882';
+    const generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const d: PlgDelivery = { id: 'existing-delivery', contactId: id, templateId: 'memory-welcome',
+      step: 'welcome', key: `${id}:welcome:activation`, status: 'sent', createdAt: new Date(NOW).toISOString(),
+      subject: 'One <img src=x onerror=alert(1)> & you', body: 'Review <script>unsafe()</script>\nThen save.\n\nFind it again.',
+      ctaLabel: 'Open <Memory>', ctaUrl: 'https://one.hussh.ai/one/pkm?from=email&step=1',
+      resourceUrl: 'https://one.hussh.ai/one?guide=1&source=email', providerId: 'existing-acceptance' };
+    const message = deliveryMessage(d, id, runtime, generation);
+    const token = preferenceToken(id, runtime.signingSecret, generation);
+    const preferences = `${runtime.origin}/integrations/plg/preferences/${token}`;
+    const unsubscribe = `${runtime.origin}/integrations/plg/unsubscribe/${token}`;
+    expect(message.text).toBe(`${d.body}\n\nDemo or guide: ${d.resourceUrl}\n\n${d.ctaLabel}: ${d.ctaUrl}\n\nPreferences: ${preferences}\nUnsubscribe: ${unsubscribe}`);
+    expect(message.headers).toEqual({ 'List-Unsubscribe': `<${unsubscribe}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
+    expect(message.html).toContain('&lt;img src=x onerror=alert(1)&gt; &amp; you');
+    expect(message.html).toContain('&lt;script&gt;unsafe()&lt;/script&gt;');
+    expect(message.html).toContain('Open &lt;Memory&gt;');
+    expect(message.html).toContain('href="https://one.hussh.ai/one/pkm?from=email&amp;step=1"');
+    expect(message.html).toContain(`href="${preferences}"`);
+    expect(message.html).toContain(`href="${unsubscribe}"`);
+    expect(message.html).not.toMatch(/<script|<iframe|<form/i);
+    expect(message.html.match(/<img\b/g)).toHaveLength(1);
+    expect(message.html).toContain('src="https://metrics.hussh.ai/assets/hussh-mark.png"');
   });
   it('signs opaque preference links and rejects tampered links', () => {
     const id = 'ecf9b4ac-3018-443c-907c-a13cf55c4882';
