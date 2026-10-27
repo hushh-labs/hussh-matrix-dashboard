@@ -4,11 +4,12 @@ import { dashboardCard } from '../lib/theme';
 import { cn } from '../lib/utils';
 
 const time = (value: string | number | null) => value ? new Date(value).toLocaleString() : 'Not observed';
-export function PlgAutomationPanel({ status, deliveryEnabled, admin, busy, toggle, refresh }: {
+export function PlgAutomationPanel({ status, deliveryEnabled, admin, busy, checkedAt, toggle, refresh }: {
   status: PlgAutomationStatus;
   deliveryEnabled: boolean;
   admin: boolean;
   busy: boolean;
+  checkedAt?: number | null;
   toggle: (enabled: boolean) => void;
   refresh: () => void;
 }) {
@@ -20,6 +21,7 @@ export function PlgAutomationPanel({ status, deliveryEnabled, admin, busy, toggl
       <div>
         <h3 className="text-lg font-semibold text-ink">Automatic follow-ups</h3>
         <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">Scheduled checks send published messages only when account permission, activity and message limits allow it.</p>
+        {checkedAt != null && <p className="mt-2 text-xs text-muted">Status checked {time(checkedAt)}</p>}
       </div>
       <div className="flex flex-wrap gap-2">
         <button className={button} disabled={busy} onClick={refresh}><RefreshCw size={15} />Refresh status</button>

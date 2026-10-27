@@ -148,6 +148,59 @@ test('shows automation blockers and changes future cycle controls without sendin
   expect(mutations).toEqual(['/api/plg/automation']);
 });
 
+test('refreshes mounted automation from read-only status checks and preserves message drafts', async ({ page }) => {
+  await page.clock.install();
+  const state = await mockPlg(page);
+  let reads = 0;
+  const mutations: string[] = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/plg/workspace' && request.method() === 'GET') reads++;
+    if (path.startsWith('/api/plg/') && request.method() !== 'GET' && path !== '/api/plg/audience') mutations.push(path);
+  });
+  await page.goto('/plg');
+  const automationTab = page.getByRole('tab', { name: 'Automation', exact: true });
+  await expect(automationTab).toBeVisible();
+  const entryRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/plg/workspace' && response.request().method() === 'GET');
+  await automationTab.click();
+  await (await entryRead).finished();
+  const panel = page.getByRole('region', { name: 'Automatic follow-up operations' });
+  await expect(panel.getByRole('button', { name: 'Enable automatic follow-ups', exact: true })).toBeVisible();
+  await expect(panel).toContainText('Status checked');
+  state.automation = { enabled: true };
+  const before = reads;
+  await page.clock.fastForward(31_000);
+  await expect(panel.getByRole('button', { name: 'Pause automatic follow-ups', exact: true })).toBeVisible();
+  expect(reads).toBeGreaterThan(before);
+  expect(mutations).toEqual([]);
+
+  await page.getByRole('tab', { name: 'Messages', exact: true }).click();
+  await page.getByRole('button', { name: /^memory · welcome / }).click();
+  await page.getByLabel('Subject', { exact: true }).fill('Unsaved operator draft');
+  const editingReads = reads;
+  await page.clock.fastForward(90_000);
+  await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('Unsaved operator draft');
+  expect(reads).toBe(editingReads);
+  expect(mutations).toEqual([]);
+});
+
+test('a rejected automatic status read clears private workspace state instead of claiming freshness', async ({ page }) => {
+  await page.clock.install();
+  await mockPlg(page);
+  await page.goto('/plg');
+  const automationTab = page.getByRole('tab', { name: 'Automation', exact: true });
+  await expect(automationTab).toBeVisible();
+  const entryRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/plg/workspace' && response.request().method() === 'GET');
+  await automationTab.click();
+  await (await entryRead).finished();
+  await expect(page.getByRole('region', { name: 'Automatic follow-up operations' })).toContainText('Status checked');
+  await page.route('**/api/plg/workspace', route => route.fulfill({ status: 403, json: { error: 'Workspace authorization ended.' } }));
+  await page.clock.fastForward(31_000);
+  await expect(page.getByRole('heading', { name: 'Private PLG workspace', exact: true })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Workspace authorization ended.' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Automatic follow-up operations' })).toHaveCount(0);
+});
+
 test('separates Google permission and sending state from an enabled scheduler and empty cohort', async ({ page }) => {
   const options = { runtime: { emailProvider: 'google_workspace' as const, deliveryEnabled: false,
     googleMailCampaignsEnabled: true, subscriptions: { enabled: true, url: '', secret: '' } },
