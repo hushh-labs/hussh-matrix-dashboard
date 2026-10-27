@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useRef,
   useState,
   type FormEvent,
   type ReactElement,
@@ -38,6 +39,7 @@ import { PlgAudiencePanel } from './PlgAudiencePanel';
 import { PlgAutomationPanel } from './PlgAutomationPanel';
 import { PlgAppUsage } from './PlgAppUsage';
 import { PlgGoogleMailPanel } from './PlgGoogleMailPanel';
+import { createPlgWorkspaceReader, watchPlgWorkspaceStatus } from '../lib/plg-workspace-refresh';
 
 async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/plg/${path}`, {
@@ -79,6 +81,8 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const working = useRef(false);
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
   const [tab, setTab] = useState<'queue' | 'content' | 'results' | 'agents' | 'people' | 'automation'>('people');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
@@ -98,24 +102,41 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
     }[];
     candidates: { eligible: boolean }[];
   } | null>(null);
-  const reload = useCallback(async () => {
-    try {
-      setWorkspace(await api<Workspace>('workspace'));
-      setError('');
-    } catch (e) {
-      setWorkspace(null);
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [reader] = useState(() => createPlgWorkspaceReader<Workspace>({
+    read: (signal) => api<Workspace>('workspace', 'GET', undefined, signal),
+    accept: (value, at) => {
+      setWorkspace(value); setCheckedAt(at); setError(''); setLoading(false);
+    },
+    reject: (e) => {
+      setWorkspace(null); setCheckedAt(null); setError((e as Error).message); setLoading(false);
+    },
+  }));
+  const reload = useCallback(() => reader.refresh(), [reader]);
+  const setWorking = useCallback((value: boolean) => {
+    working.current = value;
+    if (value) reader.cancel();
+    setBusy(value);
+  }, [reader]);
   const loadAudience = useCallback((filters: PlgAudienceFilters, signal: AbortSignal) =>
     api<PlgAudiencePage>('audience', 'POST', filters, signal), []);
   useEffect(() => {
+    reader.activate();
+    return () => reader.deactivate();
+  }, [reader]);
+  useEffect(() => {
     void reload();
   }, [reload, refreshKey]);
+  const hasWorkspace = workspace !== null;
+  useEffect(() => {
+    if (tab !== 'automation' || busy || !hasWorkspace) return;
+    return watchPlgWorkspaceStatus({
+      refresh: () => reader.refresh(true), cancel: () => reader.cancelBackground(),
+      visible: () => document.visibilityState !== 'hidden', idle: () => !working.current,
+      documentTarget: document, windowTarget: window,
+    });
+  }, [tab, busy, hasWorkspace, reader]);
   async function mutate(path: string, method: string, body: unknown) {
-    setBusy(true);
+    setWorking(true);
     setError('');
     try {
       await api(path, method, body);
@@ -125,7 +146,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       setError((e as Error).message);
       return false;
     } finally {
-      setBusy(false);
+      setWorking(false);
     }
   }
   if (loading)
@@ -212,13 +233,13 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               className={buttonStyle}
               disabled={busy}
               onClick={async () => {
-                setBusy(true);
+                setWorking(true);
                 try {
                   setPreview(await api('preview', 'POST', {}));
                 } catch (e) {
                   setError((e as Error).message);
                 } finally {
-                  setBusy(false);
+                  setWorking(false);
                 }
               }}
             >
@@ -261,7 +282,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
         <p role="status" className="text-sm text-muted">
           Customer totals withhold {workspace.reporting.pending} accounts awaiting verification and {workspace.reporting.excluded} confirmed internal or test accounts.
         </p>}
-      {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} deliveryEnabled={workspace.deliveryEnabled} admin={admin} busy={busy}
+      {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} deliveryEnabled={workspace.deliveryEnabled} admin={admin} busy={busy} checkedAt={checkedAt}
         refresh={() => void reload()}
         toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
       {tab === 'automation' && workspace.mailOwner && <PlgGoogleMailPanel templates={state.templates} />}
