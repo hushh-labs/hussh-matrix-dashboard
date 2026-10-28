@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { journeyOutcomeCoverage } from '../../lib/plg-outcomes';
 import {
   plgSteps,
   plgJourneyOptions,
@@ -495,6 +496,10 @@ export function candidateFromPolicy(
     if (!lastReturn) step = 'return';
     else if (age(lastReturn, now) >= 7 * DAY && !has('feedback')) step = 'feedback';
   } else if (age(c.firstValueAt, now) >= 2 * DAY && !has('repeat')) step = 'repeat';
+  // An unsupported behavioral choice must not hide an eligible neutral newsletter.
+  const outcomeHeld = Boolean(step && !['welcome', 'newsletter'].includes(step) &&
+    !journeyOutcomeCoverage(state.catalog, c.journey).supported);
+  if (outcomeHeld) step = null;
   if (!step) {
     const newsletter = state.templates.find(
       (t) => t.journey === c.journey && t.step === 'newsletter' && t.published,
@@ -509,7 +514,9 @@ export function candidateFromPolicy(
   }
   if (!step)
     return stop(
-      freshObservation
+      outcomeHeld
+        ? 'Verified journey outcome unavailable; behavioral follow-up held'
+        : freshObservation
         ? 'No relevant message due'
         : 'Activity unknown or stale; review before behavioral follow-up',
     );

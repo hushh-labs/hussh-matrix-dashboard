@@ -518,6 +518,46 @@ function observe(
 }
 
 describe('PLG eligibility and measurement', () => {
+  it('allows a due neutral newsletter when an agent behavioral outcome is unmeasured', () => {
+    const s = initialPlgState(); ready(s);
+    const c = contact(s, NOW - 2 * DAY);
+    registerPlgCatalog(s, { revision: 'a'.repeat(64), agents: [
+      { id: 'agent_calendar', label: 'Calendar', public: true, available: true },
+    ], actions: [] });
+    c.journey = 'agent_calendar'; s.ready.agent_calendar = true;
+    const newsletter = s.templates.find((t) => t.journey === c.journey && t.step === 'newsletter')!;
+    newsletter.published = true;
+    observe(s, c);
+    s.deliveries.push({ id: 'welcome-claim', contactId: c.id, step: 'welcome',
+      templateId: 'agent_calendar-welcome', key: `${c.id}:welcome:activation`,
+      createdAt: new Date(NOW - 2 * DAY).toISOString(), status: 'sent',
+      subject: '', body: '', ctaLabel: '', ctaUrl: '', providerId: null });
+    expect(candidate(s, c, NOW)).toMatchObject({ eligible: true, step: 'newsletter' });
+    newsletter.published = false;
+    expect(candidate(s, c, NOW)).toMatchObject({ eligible: false,
+      reason: 'Verified journey outcome unavailable; behavioral follow-up held' });
+  });
+  it('holds behavioral follow-ups when an agent outcome is missing or mismatched', () => {
+    const s = initialPlgState(); ready(s);
+    const c = contact(s, NOW - 2 * DAY);
+    const catalog: PlgCatalog = { revision: 'a'.repeat(64), agents: [
+      { id: 'agent_calendar', label: 'Calendar', public: true, available: true },
+    ], actions: [] };
+    registerPlgCatalog(s, catalog);
+    c.journey = 'agent_calendar'; s.ready.agent_calendar = true;
+    s.templates.find((t) => t.journey === c.journey && t.step === 'demo')!.published = true;
+    observe(s, c);
+    expect(candidate(s, c, NOW)).toMatchObject({ eligible: false,
+      reason: 'Verified journey outcome unavailable; behavioral follow-up held' });
+    s.catalog!.agents[0].outcome = { status: 'supported', proof: 'mail.provider_send.v1', label: 'Wrong', reason: 'Wrong agent' };
+    expect(candidate(s, c, NOW).eligible).toBe(false);
+    s.catalog!.agents[0].outcome = { status: 'supported', proof: 'calendar.provider_effect.v1', label: 'Calendar change', reason: 'Confirmed provider effect' };
+    expect(candidate(s, c, NOW)).toMatchObject({ eligible: true, step: 'demo' });
+    c.observationAt = new Date(NOW - 2 * DAY).toISOString();
+    expect(candidate(s, c, NOW).eligible).toBe(false);
+    c.observationAt = new Date(NOW).toISOString(); c.consentAt = null;
+    expect(candidate(s, c, NOW).eligible).toBe(false);
+  });
   it('keeps permanent claims and reservation order when frequency history is compacted', () => {
     const s = initialPlgState(); ready(s);
     const c = contact(s, NOW - 40 * DAY); observe(s, c);
