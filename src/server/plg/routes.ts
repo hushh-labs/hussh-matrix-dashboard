@@ -28,7 +28,7 @@ import {
 } from './service';
 import { syncOneEvidence } from './one-source';
 import { readOneAudience } from './one-audience';
-import { runAutomationCycle, setAutomationEnabled } from './automation';
+import { deliveryBlockers, runAutomationCycle, setAutomationEnabled } from './automation';
 import { applyDeliveryEvent } from './delivery-events';
 import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
 import { registerGoogleMailRoutes } from './google-mail-routes';
@@ -97,17 +97,26 @@ export function registerPlgRoutes(
       await syncSubscriptions(service.store, new OneSubscriptions(config.subscriptions, fetch, Date.now, Math.min(deadline, Date.now() + 75_000)));
     }
     if (accounts) {
-      const state = await accounts.readSettings(), key = manual ? 'sourceCursor' : 'accountCursor';
-      const cursor = state.automation?.[key] ?? null, page = await accounts.page(cursor, 25);
-      const result = await syncOneEvidence(service.store, undefined, fetch, Date.now, undefined, deadline, page.accounts);
-      // Manual evidence refresh cannot move the automatic send continuation.
-      // A cycle advances that continuation only after each account is handled.
-      if (manual) await accounts.transaction(draft => {
-        if ((draft.automation?.sourceCursor ?? null) !== cursor)
-          throw new PlgError(409, 'Account traversal changed; retry the sync.');
-        draft.automation ??= { enabled: false };
-        draft.automation.sourceCursor = page.next;
-      });
+      let observed: { page: Awaited<ReturnType<typeof accounts.page>>; result: Awaited<ReturnType<typeof syncOneEvidence>> } | undefined;
+      // Every ordinary cycle advances independent evidence collection, including
+      // while sending is paused or stuck behind provider backpressure.
+      if (manual || !continuation) {
+        const state = await accounts.readSettings(), after = state.automation?.sourceCursor ?? null;
+        const page = await accounts.page(after, 25);
+        const result = await syncOneEvidence(service.store, undefined, fetch, Date.now, undefined, deadline, page.accounts);
+        await accounts.transaction(draft => {
+          if ((draft.automation?.sourceCursor ?? null) !== after)
+            throw new PlgError(409, 'Evidence traversal changed; retry the sync.');
+          draft.automation ??= { enabled: false }; draft.automation.sourceCursor = page.next;
+        });
+        if (manual || state.paused || !state.automation?.enabled || deliveryBlockers(config).length) return result;
+        observed = { page, result };
+      }
+      const state = await accounts.readSettings(), cursor = state.automation?.accountCursor ?? null;
+      const page = await accounts.page(cursor, 25);
+      const same = observed && JSON.stringify(observed.page.accounts) === JSON.stringify(page.accounts);
+      const result = same ? observed!.result :
+        await syncOneEvidence(service.store, undefined, fetch, Date.now, undefined, deadline, page.accounts);
       return { ...result, accountHashes: page.accounts, accountPage: { after: cursor, next: page.next } };
     }
     const state = await service.store.read();

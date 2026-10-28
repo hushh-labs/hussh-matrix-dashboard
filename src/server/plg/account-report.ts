@@ -18,8 +18,12 @@ const PAGE = 25, SCAN = 100, BUDGET = 20_000, MAX_PAGES = 256;
 const fail = (message = 'Campaign reporting did not confirm success.'): never => { throw new PlgError(503, message); };
 const hash = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const id = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(value);
-const policyHash = (base: Context['base']) => stableHash([base.paused, base.ready, base.catalog,
-  base.templates, base.customerReporting, base.automation?.enabled]);
+const policyHash = (base: Context['base'], now: number) => {
+  const proof = base.customerReporting, checked = Date.parse(proof?.checkedAt ?? '');
+  return stableHash([base.paused, base.ready, base.catalog, base.templates,
+    proof ? [proof.policyRevision, Number.isFinite(checked) && checked <= now + 60_000 && now - checked <= 86400_000] : null,
+    base.automation?.enabled]);
+};
 export function validateAccountReportQuery(query: AccountReportQuery) {
   if (!query || typeof query !== 'object' || Array.isArray(query) ||
     Object.keys(query).some(key => !['generation', 'after', 'historyAfter', 'query', 'filter', 'contactId'].includes(key)) ||
@@ -77,16 +81,22 @@ export async function readAccountReport(db: Firestore, generation: string,
       const rows = result.docs.map(doc => {
         const record = doc.data() as AccountRecord, contact = contactOf(record, doc.id, doc.get('projectionHash'));
         const local = localState(base, record), decision = candidate(local, contact, now);
-        return { hash: doc.id, record, contact, local, decision };
+        return { hash: doc.id, record, contact, local, decision, resolve: candidate(local, contact, now, true) };
       });
-      const due = rows.filter(row => row.decision.eligible && row.decision.key);
-      const keys = due.length ? await tx.getAll(...due.map(row => db.doc(`${root}/one_plg_keys/${digest('delivery\n' + row.decision.key)}`)), { fieldMask: ['seen'] }) : [];
-      for (let n = 0; n < due.length; n++) if (keys[n].exists) {
-        if (keys[n].get('seen') !== true) fail('Campaign reservation proof did not confirm success.');
-        due[n].decision = { ...due[n].decision, eligible: false, reason: 'This journey step has already been reserved or sent' };
-        due[n].local.deliveryPolicies![due[n].contact.id].claimedKeys.push(due[n].decision.key!);
+      for (let round = 0; ; round++) {
+        guard(); if (round >= 128) fail('Campaign candidate claims did not converge.');
+        const due = rows.filter(row => row.resolve.eligible && row.resolve.key);
+        const keys = due.length ? await tx.getAll(...due.map(row => db.doc(`${root}/one_plg_keys/${digest('delivery\n' + row.resolve.key)}`)), { fieldMask: ['seen'] }) : [];
+        let claimed = false;
+        for (let n = 0; n < due.length; n++) if (keys[n].exists) {
+          if (keys[n].get('seen') !== true) fail('Campaign reservation proof did not confirm success.');
+          claimed = true;
+          due[n].local.deliveryPolicies![due[n].contact.id].claimedKeys.push(due[n].resolve.key!);
+          due[n].resolve = candidate(due[n].local, due[n].contact, now, true);
+        }
+        if (!claimed) break;
       }
-      return rows;
+      return rows.map(row => ({ ...row, decision: candidate(row.local, row.contact, now) }));
     }, { readOnly: true, readTime });
     guard();
     for (const row of batch) {
@@ -159,7 +169,7 @@ export async function readAccountReport(db: Firestore, generation: string,
   }
   guard();
   const current = await db.runTransaction(context, { readOnly: true });
-  if (policyHash(current.base) !== policyHash(base)) throw new PlgError(409, 'Campaign settings changed; refresh the page.');
+  if (policyHash(current.base, now) !== policyHash(base, now)) throw new PlgError(409, 'Campaign settings changed; refresh the page.');
   state.storage = { mode: 'accounts', generation, totalContacts: total, pendingDeliveries: initial.mailFence.pending, report: summary };
   return state;
 }

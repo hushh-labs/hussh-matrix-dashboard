@@ -6,7 +6,7 @@ import type { PlgStore } from './store';
 import { PLG_STORAGE_AUTHORITY } from './firestore-storage';
 import { accountHash, PlgError } from './engine';
 import { validRfcMessageId } from './google-mail-metadata';
-import { accountFields, digest, hydrateAccount, projectPolicy, sealAccount, settings, stableHash, updatePolicy,
+import { accountFields, digest, hydrateAccount, projectPolicy, RECENT_KEYS, sealAccount, settings, stableHash, updatePolicy,
   accountProjectionHash, type AccountRecord } from './account-state';
 import { readAccountReport, type AccountReportQuery } from './account-report';
 export { accountProjectionHash } from './account-state';
@@ -254,15 +254,18 @@ export class AccountPlgStore implements PlgStore {
       const before = await this.member(tx, base), initial = before.state;
       let draft = structuredClone(initial), result = fn(draft);
       let keys = await this.knownKeys(tx, draft, initial);
-      if (keys.existing.length) {
+      const known = new Map<string, (typeof keys.existing)[number]>();
+      for (let round = 0; keys.existing.length; round++) {
+        if (round >= 128) fail('Duplicate reservations did not converge; no write was applied.');
+        for (const item of keys.existing) known.set(item.kind + '\n' + item.key, item);
         const replay = structuredClone(initial);
-        for (const item of keys.existing) {
+        for (const item of known.values()) {
           if (item.kind === 'event') replay.eventIds.push(item.key);
           else if (replay.contacts[0]) replay.deliveryPolicies![replay.contacts[0].id].claimedKeys.push(item.key);
         }
+        const replayBaseline = structuredClone(replay);
         draft = replay; result = fn(draft);
-        keys = await this.knownKeys(tx, draft, replay);
-        if (keys.existing.length) fail('A duplicate reservation needs reconciliation.');
+        keys = await this.knownKeys(tx, draft, replayBaseline);
       }
       this.assertSettings(initial, draft);
       if (initial.erasedAccountHashes?.includes(this.hash) &&
@@ -312,10 +315,14 @@ export class AccountPlgStore implements PlgStore {
       if (reserved.length &&
         mailFence.lease && mailFence.lease.until > Date.now())
         fail('Mailbox feedback is being reconciled; no new send was reserved.');
-      if (reserved[0]) write.record.preReservationPolicy = {
-        deliveryId: reserved[0].id,
-        policy: before.record?.policy ?? { unresolvedIds: [], latestPromotions: [], latestStepAt: {}, latestReturnAt: null, claimedKeys: [] },
-      };
+      if (reserved[0]) {
+        const policy = structuredClone(before.record?.policy ?? { unresolvedIds: [], latestPromotions: [], latestStepAt: {}, latestReturnAt: null, claimedKeys: [] });
+        // Preflight must preserve the permanent claims that selected a fallback,
+        // while excluding only this new reservation and its frequency effect.
+        policy.claimedKeys = [...new Set([...policy.claimedKeys,
+          ...[...known.values()].filter(item => item.kind === 'delivery').map(item => item.key)])].slice(-RECENT_KEYS);
+        write.record.preReservationPolicy = { deliveryId: reserved[0].id, policy };
+      }
       else if (before.record?.preReservationPolicy && draft.deliveries.some(delivery =>
         delivery.id === before.record!.preReservationPolicy!.deliveryId && ['sending', 'uncertain'].includes(delivery.status)))
         write.record.preReservationPolicy = before.record.preReservationPolicy;

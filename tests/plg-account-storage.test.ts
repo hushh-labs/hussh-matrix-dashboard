@@ -2,15 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { Firestore } from '@google-cloud/firestore';
 import { randomUUID } from 'node:crypto';
 import type { PlgDelivery, PlgState } from '../src/lib/plg';
-import { accountHash, candidate, enroll, eraseAccount, initialPlgState, metrics } from '../src/server/plg/engine';
-import { hydrateAccount, sealAccount, settings } from '../src/server/plg/account-state';
+import { accountHash, candidate, enroll, eraseAccount, initialPlgState, metrics, registerPlgCatalog } from '../src/server/plg/engine';
+import { digest, hydrateAccount, sealAccount, settings } from '../src/server/plg/account-state';
 import { AccountPlgStore } from '../src/server/plg/account-store';
 import { PLG_LEGACY_PATH, PLG_STORAGE_AUTHORITY, PlgFirestoreStorage, PlgStorageMigration } from '../src/server/plg/firestore-storage';
 import { AccountStorageMigration } from '../src/server/plg/account-migration';
 import { FirestorePlgStore, validatePlgState } from '../src/server/plg/store';
-import { PlgService, type PlgRuntime } from '../src/server/plg/service';
+import { PlgService, signValue, type PlgRuntime } from '../src/server/plg/service';
 import { runAutomationCycle } from '../src/server/plg/automation';
 import { GoogleMailUnattempted } from '../src/server/plg/google-mail';
+import express from 'express';
+import request from 'supertest';
+import { registerPlgRoutes } from '../src/server/plg/routes';
+import * as sourceModule from '../src/server/plg/one-source';
 
 const NOW = Date.parse('2026-10-29T00:00:00Z');
 const accountProof = (checkedAt: number) => ({ protocol: 2 as const, checkedAt,
@@ -113,7 +117,10 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     const run = db.runTransaction.bind(db); let inserted = false;
     const hook = vi.spyOn(db, 'runTransaction').mockImplementation((async (fn: any, options: any) => {
       const value = await run(fn, options);
-      if (options?.readTime && !inserted) { inserted = true; await enrollOne(root, 'concurrent-new'); }
+      if (options?.readTime && !inserted) {
+        inserted = true; await enrollOne(root, 'concurrent-new');
+        await root.transaction(state => { state.customerReporting!.checkedAt = new Date(NOW + 1).toISOString(); });
+      }
       return value;
     }) as any);
     try {
@@ -121,6 +128,16 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
       expect(inserted).toBe(true);
     } finally { hook.mockRestore(); }
     expect((await root.readWorkspace({}, NOW)).storage!.report!.metrics.enrolled).toBe(131);
+    let changed = false;
+    const revision = vi.spyOn(db, 'runTransaction').mockImplementation((async (fn: any, options: any) => {
+      const value = await run(fn, options);
+      if (options?.readTime && !changed) {
+        changed = true; await root.transaction(state => { state.customerReporting!.policyRevision = 'f'.repeat(64); });
+      }
+      return value;
+    }) as any);
+    try { await expect(root.readWorkspace({}, NOW)).rejects.toThrow('Campaign settings changed'); }
+    finally { revision.mockRestore(); }
   }), 30_000);
   it('reduces 1001 real independent account records without materializing their private payloads or history', async () => fixture(async root => {
     for (let offset = 0; offset < 1001; offset += 4)
@@ -271,6 +288,79 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     expect(await runAutomationCycle(new PlgService(root, runtime, () => NOW, accepted), sync, () => NOW)).toMatchObject({ sent: 1 });
     expect(accepted).toHaveBeenCalledOnce(); expect((await member.read()).deliveries).toHaveLength(1);
   }));
+  it('continues independent evidence collection across paused cycles without moving the unsent cursor', async () => fixture(async root => {
+    for (let offset = 0; offset < 70; offset += 4)
+      await Promise.all(Array.from({ length: Math.min(4, 70 - offset) }, (_, n) => enrollOne(root, `paused-${offset + n}`)));
+    await root.transaction(state => { state.paused = true; state.automation = { enabled: true, accountCursor: '0'.repeat(64) }; });
+    const seen = new Set<string>(), transport = vi.fn(async () => 'must-not-send');
+    const source = vi.spyOn(sourceModule, 'syncOneEvidence').mockImplementation(async (_store, _options, _fetcher, _clock, _id, _deadline, hashes) => {
+      for (const hash of hashes!) { expect(seen.has(hash)).toBe(false); seen.add(hash); }
+      return { accounts: hashes!.length, imported: 0, erased: 0, retainedOnly: true };
+    });
+    const runtime: PlgRuntime = { enabled: true, deliveryEnabled: true, origin: 'https://metrics.example.invalid',
+      admins: new Set(), operators: new Set(), signingSecret: 'test-only-signing-over-thirty-two-characters',
+      cycleSecret: 'test-only-cycle-key-over-thirty-two-characters', apiKey: 'synthetic', webhookSecret: 'synthetic',
+      from: 'Test <sender@example.invalid>', replyTo: 'reply@example.invalid' };
+    const app = express(); app.use(express.json({ verify(req, _res, buffer) { (req as any).plgRawBody = buffer.toString(); } }));
+    registerPlgRoutes(app, false, new PlgService(root, runtime, Date.now, transport));
+    try {
+      for (let n = 0; n < 3; n++) {
+        const timestamp = String(Date.now()), body = '{}';
+        const response = await request(app).post('/integrations/plg/cycle').set('Content-Type', 'application/json')
+          .set('X-PLG-Timestamp', timestamp).set('X-PLG-Signature', signValue(`cycle\n${timestamp}\n${body}`, runtime.cycleSecret!)).send(body);
+        expect(response.status).toBe(200); expect(response.body).toMatchObject({ status: 'blocked', sent: 0 });
+      }
+      expect(seen.size).toBe(70); expect(source).toHaveBeenCalledTimes(3);
+      expect((await root.readSettings()).automation).toMatchObject({ accountCursor: '0'.repeat(64), sourceCursor: null });
+      expect(transport).not.toHaveBeenCalled();
+    } finally { source.mockRestore(); }
+  }), 30_000);
+  it('resolves archived routing claims before due filters, totals, preview and reservation choose the same alternative', async () => fixture(async (root, db) => {
+    await root.transaction(state => {
+      registerPlgCatalog(state, { revision: 'c'.repeat(64), actions: [], agents: [
+        { id: 'agent_one', label: 'One', public: true, available: true,
+          outcome: { status: 'supported', proof: 'one.distinct_domain_effects.v1', label: 'Positive result', reason: 'Synthetic' } },
+        { id: 'agent_personal_information', label: 'Memory', public: true, available: true,
+          outcome: { status: 'supported', proof: 'memory.confirmed_save.v1', label: 'Saved item', reason: 'Synthetic' } },
+      ] });
+      state.ready.agent_one = true; state.templates.forEach(template => { template.published = true; });
+    });
+    const member = root.account(accountHash('routed'));
+    await member.transaction(state => {
+      const contact = enroll(state, { accountId: 'routed', email: 'routed@example.invalid', journey: 'agent_one', cohort: 'existing',
+        frequency: 'daily', consent: true, consentSource: 'Synthetic', environment: 'production', internal: false }, 'Fixture', NOW - 4 * 86400_000);
+      contact.group = 'treatment'; contact.firstValueAt = contact.lastValueAt = new Date(NOW - 2 * 86400_000).toISOString();
+      contact.customerReporting = { ...state.customerReporting!, eligible: true };
+      contact.permission = { enabled: true, eligible: true, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', revision: 1, checkedAt: new Date(NOW).toISOString() };
+      contact.routingEvidence = { checkedAt: new Date(NOW).toISOString(), generation: contact.permission.generation,
+        agents: [{ agentId: 'agent_personal_information', proof: 'memory.confirmed_save.v1', lastAt: new Date(NOW - 86400_000).toISOString() }] };
+    });
+    const before = await member.read(), original = candidate(before, before.contacts[0], NOW);
+    expect(original).toMatchObject({ eligible: true, journey: 'memory', step: 'newsletter' });
+    await member.transaction(state => { state.deliveries.push({ ...receipt(state, 'archived-memory'), step: 'newsletter',
+      key: original.key!, templateId: original.templateId!, createdAt: new Date(NOW - 3 * 86400_000).toISOString() }); });
+    await member.transaction(state => { state.deliveries.push(...Array.from({ length: 51 }, (_, n) => ({
+      ...receipt(state, `more-recent-${n}`), step: 'manual' as const, createdAt: new Date(NOW - 2 * 86400_000 + n).toISOString(),
+    }))); });
+    const trimmed = await member.read(); expect(trimmed.deliveryPolicies![trimmed.contacts[0].id].claimedKeys).not.toContain(original.key);
+    const due = await root.readWorkspace({ filter: 'due' }, NOW);
+    expect(due.contacts).toHaveLength(1); expect(due.storage!.report!.eligible).toBe(1);
+    expect(candidate(due, due.contacts[0], NOW)).toMatchObject({ eligible: true, templateId: 'agent_one-newsletter' });
+    const runtime: PlgRuntime = { enabled: true, deliveryEnabled: true, origin: 'https://metrics.example.invalid',
+      admins: new Set(), operators: new Set(), signingSecret: 'test-only-signing-over-thirty-two-characters',
+      apiKey: 'synthetic', webhookSecret: 'synthetic', from: 'Test <sender@example.invalid>', replyTo: 'reply@example.invalid' };
+    const transport = vi.fn(async (input: any) => { expect(input.delivery.templateId).toBe('agent_one-newsletter'); return 'accepted-one'; });
+    const service = new PlgService(root, runtime, () => NOW, transport, { check: async () => ({ allowed: true, erased: false }) } as any);
+    expect((await service.workspace('operator', { filter: 'due' })).queue[0].templateId).toBe('agent_one-newsletter');
+    expect((await service.preview({ filter: 'due' })).candidates[0].templateId).toBe('agent_one-newsletter');
+    await root.transaction(state => { state.paused = true; });
+    expect((await service.preview()).candidates[0]).toMatchObject({ eligible: true, templateId: 'agent_one-newsletter' });
+    expect((await root.readWorkspace({}, NOW)).storage!.report!.eligible).toBe(0);
+    await root.transaction(state => { state.paused = false; });
+    expect(await service.withStore(member).run('Fixture')).toMatchObject({ sent: 1 }); expect(transport).toHaveBeenCalledOnce();
+    const accepted = (await member.read()).deliveries.find(delivery => delivery.providerId === 'accepted-one')!;
+    expect((await db.doc(`one_plg_generations/${'a'.repeat(64)}/one_plg_keys/${digest('delivery\n' + accepted.key)}`).get()).get('deliveryId')).toBe(accepted.id);
+  }), 15_000);
   it('erases the account and permanent receipts without permitting delayed re-enrollment', async () => fixture(async root => {
     const one = await enrollOne(root);
     await one.transaction(state => { state.deliveries.push(receipt(state, 'accepted')); });
