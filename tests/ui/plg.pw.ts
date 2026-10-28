@@ -422,7 +422,7 @@ test('finds a filtered account beyond the first 150 source accounts without anot
   });
   await page.goto('/plg');
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
-  await page.getByLabel('Task status', { exact: true }).selectOption('failed');
+  await page.getByLabel('Task status').selectOption('failed');
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expect(page.getByText('Late filtered account', { exact: true })).toBeVisible();
   await expect(page.getByText('Checked 200 source accounts', { exact: false })).toBeVisible();
@@ -443,7 +443,7 @@ test('pauses a filtered search at its confirmed cursor and ignores its late resp
   });
   await page.goto('/plg');
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
-  await page.getByLabel('Task status', { exact: true }).selectOption('failed');
+  await page.getByLabel('Task status').selectOption('failed');
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await waiting;
   await page.getByRole('button', { name: 'Pause search', exact: true }).click(); release();
