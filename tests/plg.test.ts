@@ -1047,6 +1047,159 @@ describe('One retained task evidence bridge', () => {
     }
     change(r);
   });
+  it('routes a permission-backed One account to a verified agent newsletter without changing its identity or inferring inactivity', async () => {
+    const store = await fixture();
+    await store.transaction((s) => {
+      registerPlgCatalog(s, catalog);
+      const c = s.contacts[0]; c.journey = 'agent_one'; c.group = 'treatment';
+      c.permission = { revision: 1, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
+      s.paused = false; s.ready.agent_one = true; s.ready.agent_calendar = true;
+      s.templates.find((t) => t.journey === 'agent_calendar' && t.step === 'newsletter')!.published = true;
+    });
+    const at = new Date(NOW).toISOString();
+    await syncOneEvidence(store, options, supportedSource((r) => {
+      r.accounts[0].verified = [{ agentId: 'agent_calendar', proof: 'calendar.provider_effect.v1',
+        count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)] }];
+    }), NOW);
+    const state = await store.read(), c = state.contacts[0], id = c.id;
+    expect(state.contacts).toHaveLength(1);
+    expect(c.journey).toBe('agent_one');
+    expect(c.observationAt).toBeUndefined();
+    expect(candidate(state, c, NOW)).toMatchObject({ eligible: true, journey: 'agent_calendar', step: 'newsletter', templateId: 'agent_calendar-newsletter' });
+    expect(c.id).toBe(id);
+    c.failedAt = at; expect(candidate(state, c, NOW).eligible).toBe(false); c.failedAt = null;
+    const consentAt = c.consentAt;
+    c.consentAt = new Date(NOW + 1).toISOString(); expect(candidate(state, c, NOW).journey).toBeUndefined(); c.consentAt = consentAt;
+    c.group = 'control'; expect(candidate(state, c, NOW).eligible).toBe(false); c.group = 'treatment';
+    c.frequency = 'updates'; expect(candidate(state, c, NOW).eligible).toBe(false); c.frequency = 'weekly';
+    c.routingEvidence!.agents[0].proof = 'mail.provider_send.v1';
+    expect(candidate(state, c, NOW).journey).toBeUndefined();
+    c.routingEvidence!.agents[0].proof = 'calendar.provider_effect.v1';
+    state.ready.agent_calendar = false; expect(candidate(state, c, NOW).journey).toBeUndefined(); state.ready.agent_calendar = true;
+    state.deliveries.push({ contactId: c.id, status: 'sent', createdAt: at, step: 'welcome', key: 'previous' } as PlgDelivery);
+    expect(candidate(state, c, NOW).eligible).toBe(false);
+    state.deliveries = [];
+    state.deliveries.push({ contactId: c.id, status: 'sent', createdAt: new Date(NOW - 8 * DAY).toISOString(),
+      step: 'newsletter', key: `${c.id}:agent_calendar-newsletter:1` } as PlgDelivery);
+    expect(candidate(state, c, NOW).journey).toBeUndefined();
+    state.deliveries = [];
+    c.permission!.generation = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    expect(candidate(state, c, NOW).journey).toBeUndefined();
+    c.permission!.generation = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816'; c.suppressed = 'unsubscribed';
+    expect(candidate(state, c, NOW).eligible).toBe(false);
+    c.suppressed = null;
+    state.deliveries.push({ contactId: c.id, status: 'uncertain', createdAt: at, step: 'newsletter' } as PlgDelivery);
+    expect(candidate(state, c, NOW).eligible).toBe(false);
+    state.deliveries = [];
+    c.routingEvidence!.checkedAt = new Date(NOW - DAY - 1).toISOString();
+    expect(candidate(state, c, NOW).journey).toBeUndefined();
+  });
+  it('does not route unverified or empty source results as an agent outcome', async () => {
+    const store = await fixture();
+    await store.transaction((s) => {
+      registerPlgCatalog(s, catalog); s.contacts[0].journey = 'agent_one';
+      s.contacts[0].permission = { revision: 1, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
+    });
+    await syncOneEvidence(store, options, supportedSource(), NOW);
+    const state = await store.read();
+    expect(state.contacts[0].routingEvidence?.agents).toEqual([]);
+    expect(state.contacts[0].observationAt).toBeUndefined();
+    expect(candidate(state, state.contacts[0], NOW).journey).toBeUndefined();
+  });
+  it('does not reuse a verified event from before the current consent', async () => {
+    const store = await fixture();
+    await store.transaction((s) => {
+      registerPlgCatalog(s, catalog); const c = s.contacts[0]; c.journey = 'agent_one';
+      c.consentAt = new Date(NOW - 1_000).toISOString();
+      c.permission = { revision: 2, generation: '24dfc8fb-f456-46c2-ae3e-dc51f92a0816', enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
+    });
+    const at = new Date(NOW - 2_000).toISOString();
+    await syncOneEvidence(store, options, supportedSource((r) => {
+      r.accounts[0].verified = [{ agentId: 'agent_calendar', proof: 'calendar.provider_effect.v1',
+        count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)] }];
+    }), NOW);
+    expect((await store.read()).contacts[0].routingEvidence?.agents).toEqual([]);
+  });
+  it('chooses the latest verified agent deterministically while keeping one account', async () => {
+    const store = await fixture();
+    await store.transaction((s) => {
+      registerPlgCatalog(s, catalog); const c = s.contacts[0]; c.journey = 'agent_one';
+      c.permission = { revision: 1, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
+      s.paused = false; s.ready.mail = true; s.ready.agent_calendar = true;
+      s.templates.filter((t) => ['mail', 'agent_calendar'].includes(t.journey) && t.step === 'newsletter').forEach((t) => { t.published = true; });
+    });
+    const at = new Date(NOW).toISOString(), earlier = new Date(NOW - 1000).toISOString();
+    await syncOneEvidence(store, options, supportedSource((r) => {
+      r.accounts[0].verified = [
+        { agentId: 'agent_email', proof: 'mail.provider_send.v1', count: 1, firstAt: earlier, lastAt: earlier, days: [earlier.slice(0, 10)] },
+        { agentId: 'agent_calendar', proof: 'calendar.provider_effect.v1', count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)] },
+      ];
+    }), NOW);
+    const state = await store.read();
+    expect(state.contacts).toHaveLength(1);
+    expect(candidate(state, state.contacts[0], NOW)).toMatchObject({ journey: 'agent_calendar', step: 'newsletter' });
+    state.contacts[0].routingEvidence!.agents.reverse();
+    expect(candidate(state, state.contacts[0], NOW)).toMatchObject({ journey: 'agent_calendar', step: 'newsletter' });
+  });
+  it('does not import routing evidence if consent generation changes during source fetch', async () => {
+    const store = await fixture();
+    await store.transaction((s) => {
+      registerPlgCatalog(s, catalog); s.contacts[0].journey = 'agent_one';
+      s.contacts[0].permission = { revision: 1, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
+    });
+    const at = new Date(NOW).toISOString();
+    const source: typeof fetch = async (url, init) => {
+      const result = await supportedSource((r) => {
+        r.accounts[0].verified = [{ agentId: 'agent_calendar', proof: 'calendar.provider_effect.v1', count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)] }];
+      })(url, init);
+      await store.transaction((s) => { s.contacts[0].permission!.generation = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816'; });
+      return result;
+    };
+    await syncOneEvidence(store, options, source, NOW);
+    expect((await store.read()).contacts[0].routingEvidence).toBeUndefined();
+  });
+  it.each(['allowed', 'permission', 'template', 'evidence', 'failure'] as const)(
+    'rechecks a routed newsletter after reservation and before the provider: %s', async (change) => {
+      const store = await fixture();
+      await store.transaction((s) => {
+        registerPlgCatalog(s, catalog);
+        const c = s.contacts[0]; c.journey = 'agent_one'; c.group = 'treatment';
+        c.permission = { revision: 1, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
+        s.paused = false; s.ready.agent_calendar = true;
+        s.templates.find((t) => t.journey === 'agent_calendar' && t.step === 'newsletter')!.published = true;
+      });
+      const at = new Date(NOW).toISOString();
+      await syncOneEvidence(store, options, supportedSource((r) => {
+        r.accounts[0].verified = [{ agentId: 'agent_calendar', proof: 'calendar.provider_effect.v1',
+          count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)] }];
+      }), NOW);
+      const subscriptions = { enabled: true, url: 'https://api.hushh.ai/api/one/plg/subscriptions', secret: 'test-only-subscription-key-over-32-characters' };
+      const source = new OneSubscriptions(subscriptions, (async () => {
+        await store.transaction((s) => {
+          if (change === 'permission') s.contacts[0].permission!.generation = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+          if (change === 'template') s.templates.find((t) => t.journey === 'agent_calendar' && t.step === 'newsletter')!.published = false;
+          if (change === 'evidence') s.contacts[0].routingEvidence!.agents = [];
+          if (change === 'failure') s.contacts[0].failedAt = at;
+        });
+        return Response.json({ allowed: true, erased: false });
+      }) as typeof fetch, () => NOW);
+      const transport = vi.fn(async (_input: Parameters<import('../src/server/plg/service').PlgTransport>[0]) => 'provider-id');
+      await new PlgService(store, runtime, () => NOW, transport, source).run('operator');
+      if (change === 'allowed') {
+        expect(transport).toHaveBeenCalledTimes(1);
+        const sent = transport.mock.calls[0][0];
+        expect(sent.to).toBe('person-1@example.invalid');
+        expect(sent.delivery.templateId).toBe('agent_calendar-newsletter');
+        expect(sent.message.text).toContain(sent.delivery.body);
+        expect(sent.message.html).toContain('Unsubscribe');
+        expect(sent.message.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+        expect((await store.read()).deliveries[0]).toMatchObject({ templateId: 'agent_calendar-newsletter', status: 'sent' });
+      } else {
+        expect(transport).not.toHaveBeenCalled();
+        expect((await store.read()).deliveries).toHaveLength(0);
+      }
+    },
+  );
   it('activates Calendar from its domain proof while generic completion events stay rejected', async () => {
     const store = await fixture();
     await store.transaction((s) => { registerPlgCatalog(s, catalog); s.contacts[0].journey = 'agent_calendar'; });

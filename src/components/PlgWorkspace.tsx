@@ -483,7 +483,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
                           </p>
                         </td>
                         <td className="px-3 py-4 text-ink">
-                          <p>{plgJourneyLabel(state, c.journey)}</p>
+                          <p>{plgJourneyLabel(state, next.journey ?? c.journey)}</p>
                           <p className="mt-1 text-xs text-muted">{plgStageLabels[next.stage]}</p>
                         </td>
                         <td className="max-w-[260px] px-3 py-4 text-xs leading-5 text-muted">

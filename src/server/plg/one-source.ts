@@ -307,6 +307,18 @@ export async function syncOneEvidence(
       if (!row.reportingEligible) continue;
       if (inspectionId) continue;
       if (row.activity) contact.activity = row.activity;
+      // The snapshot contains positive proof only. Its empty result is not an
+      // observation of inactivity. Keep the routing cache bounded and bind it
+      // to this permission generation so later opt-ins cannot reuse old proof.
+      if (contact.permission && contact.consentAt && row.verified) {
+        contact.routingEvidence = {
+          checkedAt: new Date(sourceAt).toISOString(),
+          generation: contact.permission.generation,
+          agents: row.verified.filter((v) => v.agentId !== 'agent_one' &&
+            Date.parse(v.lastAt) >= Math.max(Date.parse(contact.enrolledAt), Date.parse(contact.consentAt!)))
+            .map(({ agentId, proof, lastAt }) => ({ agentId, ...(proof ? { proof } : {}), lastAt })),
+        };
+      }
       const focus = contact.journey === 'memory' ? 'agent_personal_information' : contact.journey === 'mail' ? 'agent_email' : contact.journey;
       for (const v of row.verified ?? []) {
         const aggregateOne = focus === 'agent_one' && catalog?.agents.some((a) => a.id === 'agent_one' && a.outcome !== undefined);

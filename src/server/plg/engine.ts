@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { journeyOutcomeCoverage } from '../../lib/plg-outcomes';
+import { journeyOutcomeCoverage, outcomeProofMatches } from '../../lib/plg-outcomes';
 import {
   plgSteps,
   plgJourneyOptions,
@@ -394,7 +394,34 @@ export function candidate(
   now: number,
   ignorePause = false,
 ): PlgCandidate {
-  return candidateFromPolicy(state, c, deliveryPolicy(c, state.deliveries), now, ignorePause);
+  const policy = deliveryPolicy(c, state.deliveries);
+  const base = candidateFromPolicy(state, c, policy, now, ignorePause);
+  const proof = c.routingEvidence;
+  // Preserve existing lifecycle decisions and one canonical account. A signed
+  // positive outcome can select a published agent newsletter; it cannot prove
+  // complete observation, abandonment, failure or any behavioral follow-up.
+  if (c.journey !== 'agent_one' || !c.permission || !proof ||
+    proof.generation !== c.permission.generation || !state.catalog ||
+    !c.consentAt || !Number.isFinite(Date.parse(c.consentAt)) || contactStage(c, now) === 'blocked' ||
+    !Number.isFinite(Date.parse(proof.checkedAt)) || age(proof.checkedAt, now) > DAY ||
+    Date.parse(proof.checkedAt) > now + 60_000 ||
+    (base.eligible && base.step !== 'newsletter')) return base;
+  const agents = [...proof.agents].sort((a, b) =>
+    b.lastAt.localeCompare(a.lastAt) || a.agentId.localeCompare(b.agentId));
+  for (const evidence of agents) {
+    const journey: PlgJourney = evidence.agentId === 'agent_personal_information' ? 'memory' :
+      evidence.agentId === 'agent_email' ? 'mail' : evidence.agentId;
+    const last = Date.parse(evidence.lastAt);
+    if (!Number.isFinite(last) || last < Math.max(Date.parse(c.enrolledAt), Date.parse(c.consentAt)) || last < now - 7 * DAY ||
+      last > now + 60_000 || !journeyOutcomeCoverage(state.catalog, journey).supported ||
+      !outcomeProofMatches(state.catalog, evidence.agentId, evidence.proof)) continue;
+    const projected: PlgContact = { ...c, journey, observationAt: null, activity: undefined,
+      telemetryAt: null, setupAt: null, failedAt: null, firstValueAt: evidence.lastAt,
+      lastValueAt: evidence.lastAt, valueDays: [evidence.lastAt.slice(0, 10)] };
+    const next = candidateFromPolicy(state, projected, policy, now, ignorePause);
+    if (next.eligible && next.step === 'newsletter') return { ...next, journey };
+  }
+  return base;
 }
 
 /** Policy inputs for one account; a repository need not reconstruct delivery history. */

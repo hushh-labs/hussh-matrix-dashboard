@@ -143,6 +143,12 @@ export interface PlgContact {
   /** A complete observation is separate from a single successful task. */
   observationAt?: string | null;
   activity?: Omit<PlgActivity, 'rollups'> & { agents: PlgAgentActivity[] };
+  /** Recent positive domain outcomes, bound to the permission generation that was read. */
+  routingEvidence?: {
+    checkedAt: string;
+    generation: string;
+    agents: { agentId: PlgAgentId; proof?: string; lastAt: string }[];
+  };
   setupAt: string | null;
   failedAt: string | null;
   firstValueAt: string | null;
@@ -248,6 +254,7 @@ export interface PlgAutomationStatus {
 }
 export interface PlgCandidate {
   contactId: string;
+  journey?: PlgJourney;
   stage: PlgStage;
   step: PlgStep | null;
   templateId: string | null;
