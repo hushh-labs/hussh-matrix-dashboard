@@ -4,6 +4,7 @@ import type { GmailRead } from './google-mail-reconcile';
 import { applyGoogleSubmission, type GmailMessage } from './google-mail-feedback';
 import { validRfcMessageId } from './google-mail-metadata';
 import { PlgError } from './engine';
+import { bindAccountSubmissions } from './google-mail-account-feedback';
 
 export function unboundGoogleDeliveries(state: PlgState) {
   return state.deliveries.filter((d) => d.provider === 'google_workspace' && d.providerId &&
@@ -12,7 +13,9 @@ export function unboundGoogleDeliveries(state: PlgState) {
 /** Backfill exact acceptance IDs before history: DSNs may precede SENT pages. */
 export async function bindGoogleAcceptedMetadata(campaigns: PlgStore, api: GmailRead, signal: AbortSignal,
   assertAuthority: () => Promise<unknown>) {
-  const batch = unboundGoogleDeliveries(await campaigns.read()).slice(0, 20);
+  const accounts = await campaigns.accountStorage?.();
+  const campaignState = () => accounts ? accounts.mailView() : campaigns.read();
+  const batch = unboundGoogleDeliveries(await campaignState()).slice(0, 20);
   const messages: GmailMessage[] = [];
   let next = 0;
   const outcomes = await Promise.allSettled(Array.from({ length: Math.min(4, batch.length) }, async () => {
@@ -28,6 +31,10 @@ export async function bindGoogleAcceptedMetadata(campaigns: PlgStore, api: Gmail
   if (outcomes.some((r) => r.status === 'rejected')) throw new PlgError(503, 'Google acceptance metadata is incomplete; sending remains held.');
   signal.throwIfAborted();
   await assertAuthority();
+  if (accounts) {
+    await bindAccountSubmissions(accounts, messages);
+    return unboundGoogleDeliveries(await campaignState()).length === 0;
+  }
   await campaigns.transaction((s) => {
     for (const message of messages) {
       // Erasure during I/O removes authority; never recreate the missing row.

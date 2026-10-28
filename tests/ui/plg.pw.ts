@@ -11,8 +11,9 @@ import {
   registerPlgCatalog,
 } from '../../src/server/plg/engine';
 import { automationStatus } from '../../src/server/plg/automation';
-import type { PlgAudienceFilters, PlgAudiencePage, PlgAutomationStatus } from '../../src/lib/plg';
+import type { PlgAudienceFilters, PlgAudiencePage, PlgAutomationStatus, PlgWorkspace, PlgDelivery } from '../../src/lib/plg';
 import type { PlgRuntime } from '../../src/server/plg/service';
+import { decodeWorkspacePage, encodeWorkspacePages } from '../../src/server/plg/workspace-pages';
 
 const automationRuntime = { enabled: true, deliveryEnabled: false, origin: 'https://metrics.example.invalid',
   admins: new Set<string>(), operators: new Set<string>(), signingSecret: 'test-only-key-over-32-characters-long',
@@ -87,6 +88,75 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
   });
   return state;
 }
+
+test('pages the complete campaign queue and independent history while retaining global results', async ({ page }) => {
+  let offPageId = '';
+  const state = await mockPlg(page, false, false, (_input, result) => ({ ...result,
+    rows: result.rows.map(row => ({ ...row, campaignContactId: offPageId })) }));
+  for (let n = 0; n < 33; n++) {
+    const contact = enroll(state, { accountId: `page-${n}`, email: `page-${n}@example.invalid`, name: `Page ${n}`,
+      journey: 'memory', cohort: 'new', frequency: 'daily', consent: true, consentSource: 'Synthetic UI test',
+      environment: 'production', internal: false }, 'Fixture', Date.now());
+    contact.group = 'treatment';
+  }
+  offPageId = state.contacts[32].id;
+  const requests: { path: string; body: any }[] = [], generation = 'a'.repeat(64), secret = automationRuntime.signingSecret;
+  await page.route(/\/api\/plg\/workspace(?:\/query)?$/, async route => {
+    const request = route.request(), path = new URL(request.url()).pathname;
+    const body = request.method() === 'GET' ? {} : request.postDataJSON(); requests.push({ path, body });
+    const query = request.method() === 'GET' ? {} : decodeWorkspacePage(body, 'operator@example.invalid', secret);
+    const matching = state.contacts.filter(contact => !query.contactId || contact.id === query.contactId)
+      .filter(contact => contact.email.includes(query.query ?? ''));
+    const contacts = matching.slice(query.after ? 25 : 0, query.after ? 50 : 25);
+    const history = Array.from({ length: query.historyAfter ? 2 : 25 }, (_, n): PlgDelivery => ({
+      id: `receipt-${n + (query.historyAfter ? 25 : 0)}`, contactId: offPageId, templateId: 'memory-welcome',
+      key: `synthetic-${n}`, step: 'welcome', status: 'sent', createdAt: new Date().toISOString(), providerId: `accepted-${n}`,
+      subject: 'Synthetic', body: 'Synthetic', ctaLabel: 'Open', ctaUrl: 'https://one.hussh.ai/',
+    }));
+    const totals = { enrolled: 1001, observed: 200, activated: 100, repeat: 50,
+      activationEligible: 0, activationConverted: 0, retentionEligible: 0, retained: 0 };
+    const result: PlgWorkspace = { configured: true, deliveryEnabled: false, role: 'operator', metrics: totals,
+      queue: contacts.map(contact => candidate(state, contact, Date.now())), state: { ...state, contacts, deliveries: history,
+        storage: { mode: 'accounts', generation, report: { asOf: new Date().toISOString(), metrics: totals,
+          reporting: { pending: 0, excluded: 0 }, eligible: 0, blockedReasons: [],
+          cohorts: [{ cohort: 'new', group: 'treatment', enrolled: 1001, activated: 100, repeat: 50 }],
+          activity: { connectedAccounts: 0, agents: [] }, contacts: { nextAfter: !query.after && matching.length > 25 ? 'b'.repeat(64) : null,
+            matches: matching.length, checked: 1001 }, history: { nextAfter: query.historyAfter ? null :
+              { createdAt: history[24].createdAt, id: history[24].id }, emails: { [offPageId]: 'page-32@example.invalid' } } } } } };
+    await route.fulfill({ json: encodeWorkspacePages(result, query, 'operator@example.invalid', secret) });
+  });
+  await page.goto('/plg');
+  // Source-directory enrollment resolves independently of the first 25 queue contacts.
+  await page.getByRole('button', { name: 'Open follow-up', exact: true }).click();
+  await expect(page.getByLabel('Follow-up owner')).toBeVisible();
+  expect(requests.at(-1)?.body.contactId).toBe(offPageId);
+  await page.getByRole('button', { name: 'Close account details' }).click();
+  const queuePages = page.getByLabel('Campaign queue pages');
+  await expect(queuePages).toContainText('33 matching accounts');
+  await page.getByRole('button', { name: 'Next queue page', exact: true }).click();
+  await expect(page.locator('tbody').getByText('Page 32', { exact: true })).toBeVisible();
+  await expect(queuePages).toContainText('page 2');
+  await page.getByRole('button', { name: 'Previous queue page', exact: true }).click();
+  await expect(page.locator('tbody').getByText('Page 0', { exact: true })).toBeVisible();
+  await page.getByLabel('Search enrolled accounts').fill('page-32@');
+  await expect(page.locator('tbody').getByText('Page 0', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Apply queue filters', exact: true }).click();
+  await expect(queuePages).toContainText('1 matching account');
+  await expect(page.locator('tbody').getByText('Page 32', { exact: true })).toBeVisible();
+  expect(requests.at(-1)?.body).toMatchObject({ query: 'page-32@', queueCursor: null });
+  await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  await expect(page.getByText('Enrolled accounts', { exact: true }).locator('..')).toContainText('1001');
+  const deliveryTable = page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Provider reference', exact: true }) });
+  await expect(deliveryTable.locator('tbody tr')).toHaveCount(25);
+  await expect(deliveryTable.locator('tbody tr').first()).toContainText('page-32@example.invalid');
+  await page.getByRole('button', { name: 'Next history page', exact: true }).click();
+  await expect(deliveryTable.locator('tbody tr')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Next history page', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Previous history page', exact: true }).click();
+  await expect(deliveryTable.locator('tbody tr')).toHaveCount(25);
+  await expect(page.getByText('Enrolled accounts', { exact: true }).locator('..')).toContainText('1001');
+  expect(requests.every(request => request.path === '/api/plg/workspace' || request.path === '/api/plg/workspace/query')).toBe(true);
+});
 
 test('keeps work-mail previews separate and distinguishes acceptance from inbox confirmation', async ({ page }) => {
   const state = await mockPlg(page, false, false, undefined, true);

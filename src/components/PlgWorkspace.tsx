@@ -88,11 +88,17 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
+  const pageRequest = useRef<{ query: string; filter: string; contactId: string | null; queueCursor: string | null; historyCursor: string | null }>({
+    query: '', filter: 'all', contactId: null, queueCursor: null, historyCursor: null,
+  });
+  const [queuePages, setQueuePages] = useState<(string | null)[]>([null]);
+  const [historyPages, setHistoryPages] = useState<(string | null)[]>([null]);
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<PlgTemplate | null>(null);
   const [contentJourney, setContentJourney] = useState('all');
   const [showAllTemplates, setShowAllTemplates] = useState(false);
   const [preview, setPreview] = useState<{
+    page?: { shown: number; matches: number };
     messages: {
       contactId: string;
       subject: string;
@@ -104,11 +110,18 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
     candidates: { eligible: boolean }[];
   } | null>(null);
   const [reader] = useState(() => createPlgWorkspaceReader<Workspace>({
-    read: (signal) => api<Workspace>('workspace', 'GET', undefined, signal),
+    read: (signal) => {
+      const view = pageRequest.current;
+      return view.query || view.filter !== 'all' || view.contactId || view.queueCursor || view.historyCursor
+        ? api<Workspace>('workspace/query', 'POST', view, signal) : api<Workspace>('workspace', 'GET', undefined, signal);
+    },
     accept: (value, at) => {
       setWorkspace(value); setCheckedAt(at); setError(''); setLoading(false);
     },
     reject: (e) => {
+      // A retry starts a fresh view instead of replaying an expired continuation.
+      pageRequest.current = { query: '', filter: 'all', contactId: null, queueCursor: null, historyCursor: null };
+      setQueuePages([null]); setHistoryPages([null]); setQuery(''); setFilter('all'); setSelected(null);
       setWorkspace(null); setCheckedAt(null); setError((e as Error).message); setLoading(false);
     },
   }));
@@ -150,6 +163,11 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       setWorking(false);
     }
   }
+  async function readPage(patch: Partial<typeof pageRequest.current>) {
+    pageRequest.current = { ...pageRequest.current, ...patch };
+    setWorking(true);
+    try { await reload(); } finally { setWorking(false); }
+  }
   if (loading)
     return (
       <div className={cn(dashboardCard, 'p-10 text-center text-muted')} aria-busy="true">
@@ -178,15 +196,15 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const admin = role === 'admin';
   const person = state.contacts.find((c) => c.id === selected);
   const contentTemplates = state.templates.filter((template) => contentJourney === 'all' || template.journey === contentJourney);
-  const contacts = state.contacts.filter(
+  const contacts = workspace.pages ? state.contacts : state.contacts.filter(
     (c) =>
       `${c.name} ${c.email} ${c.owner}`.toLowerCase().includes(query.toLowerCase()) &&
       (filter === 'all' ||
         (filter === 'assistance'
-          ? c.supportOpen || Boolean(c.failedAt && !c.lastValueAt)
+          ? queue.find((q) => q.contactId === c.id)?.stage === 'blocked'
           : filter === 'due'
             ? queue.find((q) => q.contactId === c.id)?.eligible
-            : !c.telemetryAt)),
+            : queue.find((q) => q.contactId === c.id)?.stage === 'unknown')),
   );
   const updateSettings = async (patch: Partial<typeof state>) => {
     const before = workspace;
@@ -236,7 +254,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               onClick={async () => {
                 setWorking(true);
                 try {
-                  setPreview(await api('preview', 'POST', {}));
+                  setPreview(await api('preview', 'POST', workspace.pages ? pageRequest.current : {}));
                 } catch (e) {
                   setError((e as Error).message);
                 } finally {
@@ -320,6 +338,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
         inspect={(contactId) => api<PlgActivityInspection>('activity', 'POST', { contactId })} />}
       {tab === 'people' && <PlgAudiencePanel state={state} load={loadAudience} openContact={(contactId) => {
         setSelected(contactId); setFilter('all'); setQuery(''); setTab('queue');
+        if (workspace.pages) { setQueuePages([null]); void readPage({ contactId, query: '', filter: 'all', queueCursor: null }); }
       }} />}
       {tab === 'queue' && (
         <section className={cn(dashboardCard, 'p-5 sm:p-6')}>
@@ -429,6 +448,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
                 placeholder="Search name, email or owner"
                 className="w-full min-w-0 bg-transparent py-3 text-sm text-ink outline-none"
                 value={query}
+                disabled={busy}
                 onChange={(e) => setQuery(e.target.value)}
               />
             </label>
@@ -436,6 +456,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               aria-label="Filter queue"
               className={cn(inputStyle, 'sm:w-auto')}
               value={filter}
+              disabled={busy}
               onChange={(e) => setFilter(e.target.value)}
             >
               <option value="all">All accounts</option>
@@ -443,16 +464,33 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               <option value="due">Message ready</option>
               <option value="unknown">Activity unknown</option>
             </select>
+            {workspace.pages && <button className={buttonStyle} disabled={busy} onClick={() => {
+              setSelected(null); setQueuePages([null]);
+              void readPage({ query, filter, contactId: null, queueCursor: null });
+            }}>Apply queue filters</button>}
           </div>
+          {workspace.pages && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted" aria-label="Campaign queue pages">
+            <p>{workspace.pages.contacts.matches} matching {workspace.pages.contacts.matches === 1 ? 'account' : 'accounts'} · page {queuePages.length} · checked {workspace.pages.contacts.checked} enrolled accounts</p>
+            <div className="flex gap-2">
+              <button className={buttonStyle} disabled={busy || queuePages.length === 1} onClick={() => {
+                const previous = queuePages.slice(0, -1); setQueuePages(previous); setSelected(null);
+                void readPage({ queueCursor: previous.at(-1) ?? null });
+              }}>Previous queue page</button>
+              <button className={buttonStyle} disabled={busy || !workspace.pages.contacts.next} onClick={() => {
+                const next = workspace.pages!.contacts.next!; setQueuePages([...queuePages, next]); setSelected(null);
+                void readPage({ queueCursor: next });
+              }}>Next queue page</button>
+            </div>
+          </div>}
           {!contacts.length ? (
             <div className="py-12 text-center">
               <Users className="mx-auto text-muted" size={28} />
               <p className="mt-3 font-semibold text-ink">
-                {state.contacts.length ? 'No accounts match this view' : 'No accounts enrolled in follow-ups yet'}
+                {workspace.pages?.contacts.matches ? 'No accounts remain on this page' : metrics.enrolled || workspace.pages?.contacts.checked ? 'No accounts match this view' : 'No accounts enrolled in follow-ups yet'}
               </p>
               <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted">
-                Enroll verified production accounts with their messaging preferences. Product signals
-                establish progress; missing tracking stays unknown.
+                {workspace.pages?.contacts.matches ? 'Use the previous page or apply the filters again to refresh this live queue.' :
+                  'Enroll verified production accounts with their messaging preferences. Product signals establish progress; missing tracking stays unknown.'}
               </p>
             </div>
           ) : (
@@ -511,7 +549,12 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               <ContactEditor
                 contact={person}
                 busy={busy}
-                close={() => setSelected(null)}
+                close={() => {
+                  setSelected(null);
+                  if (pageRequest.current.contactId) {
+                    setQueuePages([null]); void readPage({ contactId: null, queueCursor: null });
+                  }
+                }}
                 save={(body) => mutate(`contacts/${person.id}`, 'PATCH', body)}
               />
             </div>
@@ -676,7 +719,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               cohort windows use UTC dates.
             </p>
           </div>
-          {!state.contacts.length && <div role="status" className="rounded-xl border border-stroke bg-canvas p-5 text-sm text-ink">
+          {!metrics.enrolled && <div role="status" className="rounded-xl border border-stroke bg-canvas p-5 text-sm text-ink">
             <p className="font-semibold">Campaign measurement has no enrolled cohort yet.</p>
             <p className="mt-2 text-muted">The campaign counts below are zero because no accounts are enrolled. They do not mean the app has no users or activity.</p>
             <button className={cn(buttonStyle, 'mt-3')} onClick={() => setTab('people')}>View registered people and usage</button>
@@ -724,13 +767,14 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
                 {(['existing', 'new'] as const).flatMap((cohort) =>
                   (['treatment', 'control'] as const).map((group) => {
                     const records = state.contacts.filter((c) => c.cohort === cohort && c.group === group);
+                    const totals = state.storage?.report?.cohorts.find((c) => c.cohort === cohort && c.group === group);
                     return (
                       <tr key={cohort + group} className="border-b border-stroke text-ink">
                         <td className="px-3 py-3 capitalize">{cohort} users</td>
                         <td className="px-3 py-3 capitalize">{group}</td>
-                        <td className="px-3 py-3">{records.length}</td>
-                        <td className="px-3 py-3">{records.filter((c) => c.firstValueAt).length}</td>
-                        <td className="px-3 py-3">{records.filter((c) => c.valueDays.length > 1).length}</td>
+                        <td className="px-3 py-3">{state.storage?.report ? totals?.enrolled ?? 0 : records.length}</td>
+                        <td className="px-3 py-3">{state.storage?.report ? totals?.activated ?? 0 : records.filter((c) => c.firstValueAt).length}</td>
+                        <td className="px-3 py-3">{state.storage?.report ? totals?.repeat ?? 0 : records.filter((c) => c.valueDays.length > 1).length}</td>
                       </tr>
                     );
                   }),
@@ -738,7 +782,20 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               </tbody>
             </table>
           </div>
-          <h4 className="font-semibold text-ink">Delivery history</h4>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h4 className="font-semibold text-ink">Delivery history</h4>
+            {workspace.pages && <div className="flex gap-2" aria-label="Delivery history pages">
+              <button className={buttonStyle} disabled={busy || historyPages.length === 1} onClick={() => {
+                const previous = historyPages.slice(0, -1); setHistoryPages(previous);
+                void readPage({ historyCursor: previous.at(-1) ?? null });
+              }}>Previous history page</button>
+              <button className={buttonStyle} disabled={busy || !workspace.pages.history.next} onClick={() => {
+                const next = workspace.pages!.history.next!; setHistoryPages([...historyPages, next]);
+                void readPage({ historyCursor: next });
+              }}>Next history page</button>
+            </div>}
+          </div>
+          {workspace.pages && <p className="text-xs text-muted">Campaign totals as of {new Date(workspace.pages.asOf).toLocaleString()}. History is shown newest first, 25 per page.</p>}
           {state.deliveries.length ? (
             <div className="metrics-table-scroll">
               <table className="w-full min-w-[600px] text-left text-sm">
@@ -752,13 +809,11 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...state.deliveries]
-                    .reverse()
-                    .slice(0, 20)
+                  {(workspace.pages ? state.deliveries : [...state.deliveries].reverse().slice(0, 20))
                     .map((delivery) => (
                       <tr key={delivery.id} className="border-b border-stroke text-ink">
                         <td className="px-3 py-3">
-                          {state.contacts.find((c) => c.id === delivery.contactId)?.email ||
+                          {state.storage?.report?.history.emails[delivery.contactId] || state.contacts.find((c) => c.id === delivery.contactId)?.email ||
                             'Enrolled account'}
                         </td>
                         <td className="px-3 py-3 capitalize">{delivery.step}</td>
@@ -801,6 +856,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           <p className="text-sm text-muted">
             {preview.messages.length} eligible messages. This preview does not send email and can show due
             messages while campaigns are paused.
+            {preview.page && ` Preview covers ${preview.page.shown} accounts on the current queue page, from ${preview.page.matches} matching accounts.`}
           </p>
           {preview.messages.map((m) => (
             <article className="rounded-xl border border-stroke p-5" key={m.contactId}>

@@ -192,7 +192,7 @@ export function enroll(
   actor: string,
   now: number,
 ): PlgContact {
-  if (state.contacts.length >= 100)
+  if (!state.storage && state.contacts.length >= 100)
     throw new PlgError(409, 'This pilot supports 100 enrolled accounts.');
   const accountId = text(input.accountId, 128, true);
   if (state.erasedAccountHashes?.includes(accountHash(accountId)))
@@ -394,7 +394,10 @@ export function candidate(
   now: number,
   ignorePause = false,
 ): PlgCandidate {
-  const policy = deliveryPolicy(c, state.deliveries);
+  const recorded = state.deliveryPolicies?.[c.id];
+  const policy = recorded
+    ? { ...recorded, claimedKeys: new Set(recorded.claimedKeys) }
+    : deliveryPolicy(c, state.deliveries);
   const base = candidateFromPolicy(state, c, policy, now, ignorePause);
   const proof = c.routingEvidence;
   // Preserve existing lifecycle decisions and one canonical account. A signed
@@ -588,6 +591,7 @@ export function updateTemplate(
   return t;
 }
 export function metrics(state: PlgState, now: number) {
+  if (state.storage?.report) return { ...state.storage.report.metrics };
   state = { ...state, contacts: state.contacts.filter((c) => customerReportingEligible(state, c, now)) };
   const eligible = state.contacts.filter((c) => age(c.enrolledAt, now) >= 7 * DAY);
   const retention = state.contacts.filter(

@@ -171,6 +171,29 @@ export function queueSubscriptionRevocation(state: PlgState, contact: PlgContact
 }
 
 export async function syncSubscriptions(store: PlgStore, source: OneSubscriptions, now = Date.now) {
+  const accounts = await store.accountStorage?.();
+  if (accounts && store.scope !== 'account') {
+    const pending = await accounts.revocationAccounts();
+    for (const hash of pending.hashes) {
+      const member = accounts.account(hash);
+      for (const item of (await member.read()).pendingRevocations ?? []) {
+        await source.revoke(item);
+        await member.transaction(state => {
+          state.pendingRevocations = state.pendingRevocations?.filter(row =>
+            row.accountHash !== item.accountHash || row.generation !== item.generation);
+        });
+      }
+    }
+    if (pending.more || (await accounts.revocationAccounts()).hashes.length) throw unavailable();
+    // pull() validates the entire batch before the first account is changed.
+    // Partial application is replayable and cannot acknowledge later revisions.
+    const pulled = await source.pull();
+    for (const change of pulled) await accounts.account(change.accountHash.slice(7)).transaction(state =>
+      applySubscription(state, change, now()));
+    await source.ack(pulled);
+    await accounts.transaction(state => { state.subscriptionSyncAt = new Date(now()).toISOString(); });
+    return { changes: pulled.length };
+  }
   const pending = (await store.read()).pendingRevocations ?? [];
   // Bounded retry; delivery stays blocked if even one opt-out is unconfirmed.
   for (const item of pending.slice(0, 10)) {

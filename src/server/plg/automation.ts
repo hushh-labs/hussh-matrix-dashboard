@@ -48,21 +48,23 @@ export function automationStatus(state: PlgState, config: PlgRuntime, now: numbe
       ...(state.paused ? ['Campaigns are paused'] : []),
       ...deliveryBlockers(config),
       ...(!cycle ? ['Scheduled worker has not been observed'] : now - Date.parse(cycle.startedAt) > 30 * 60_000 ? ['Scheduled worker heartbeat is stale'] : []),
-      ...(!state.contacts.length ? ['No permission-backed accounts are enrolled'] : []),
-      ...(state.contacts.length >= 100 || bytes >= 700_000 ? ['Pilot capacity needs attention before further growth'] : []),
+      ...(!(state.storage?.totalContacts ?? state.contacts.length) ? ['No permission-backed accounts are enrolled'] : []),
+      ...(!state.storage && (state.contacts.length >= 100 || bytes >= 700_000) ? ['Pilot capacity needs attention before further growth'] : []),
     ],
     lastCycle: cycle,
     lastSyncAt: state.automation?.lastSyncAt ?? null,
     lastEvidenceSyncAt: state.automation?.lastEvidenceSyncAt ?? null,
     lastSuccessAt: state.automation?.lastSuccessAt ?? null,
-    eligible: queue.filter((c) => c.eligible).length,
-    blockedReasons: [...reasons].map(([reason, accounts]) => ({ reason, accounts })),
-    needsReconciliation: state.deliveries.filter((d) => ['sending', 'uncertain'].includes(d.status)).length,
-    capacity: { contacts: state.contacts.length, maxContacts: 100, bytes, maxBytes: 750_000 },
+    eligible: state.storage?.report?.eligible ?? queue.filter((c) => c.eligible).length,
+    blockedReasons: state.storage?.report?.blockedReasons ?? [...reasons].map(([reason, accounts]) => ({ reason, accounts })),
+    needsReconciliation: state.storage?.pendingDeliveries ?? state.deliveries.filter((d) => ['sending', 'uncertain'].includes(d.status)).length,
+    capacity: { contacts: state.storage?.totalContacts ?? state.contacts.length,
+      maxContacts: state.storage ? null : 100, bytes, maxBytes: state.storage ? null : 750_000 },
   };
 }
 
-export type PlgSync = (deadline?: number) => Promise<{ accounts: number; imported: number; erased: number }>;
+export type PlgSync = (deadline?: number, continuation?: boolean) => Promise<{ accounts: number; imported: number; erased: number;
+  accountHashes?: string[]; accountPage?: { after: string | null; next: string | null } }>;
 export async function runAutomationCycle(service: PlgService, sync: PlgSync, now = Date.now) {
   const id = randomUUID();
   const started = now();
@@ -87,7 +89,8 @@ export async function runAutomationCycle(service: PlgService, sync: PlgSync, now
   try {
     // Sync is deliberately independent of the campaign pause. Failed or partial
     // source reads never reach sending and never become proof of inactivity.
-    const result = await sync(started + CYCLE_BUDGET_MS - 20_000);
+    const accountStorage = await service.store.accountStorage?.();
+    let result = await sync(started + CYCLE_BUDGET_MS - (accountStorage ? 90_000 : 20_000));
     accounts = result.accounts;
     await service.store.transaction((state) => {
       if (state.automation?.lease?.id !== id || now() >= started + CYCLE_BUDGET_MS)
@@ -99,15 +102,60 @@ export async function runAutomationCycle(service: PlgService, sync: PlgSync, now
     });
     // Stop/suppression evidence is reconciled even while campaigns are paused.
     await service.reconcileMail(Math.min(started + CYCLE_BUDGET_MS - 20_000, now() + 45_000));
-    const state = await service.store.read();
+    const state = await (accountStorage ? accountStorage.readSettings() : service.store.read());
     const blockers = [
       ...(!state.automation?.enabled ? ['Automatic follow-ups are paused'] : []),
       ...(state.paused ? ['Campaigns are paused'] : []),
       ...deliveryBlockers(service.runtime),
     ];
     if (blockers.length) return await finish('blocked', blockers.join('; '), { accounts, sent: 0, uncertain: 0 });
-    const delivered = await service.run('Automatic cycle', { deadline: started + CYCLE_BUDGET_MS, leaseId: id });
-    return await finish(delivered.uncertain ? 'blocked' : 'completed', delivered.uncertain ? 'Delivery confirmation needs reconciliation; no automatic retry' : null, { accounts, ...delivered });
+    const options = { deadline: started + CYCLE_BUDGET_MS, leaseId: id };
+    let delivered = { sent: 0, uncertain: 0 };
+    let deferred: 'budget' | 'provider' | undefined;
+    if (accountStorage) {
+      for (let pageNumber = 0; pageNumber < 64; pageNumber++) {
+        if (!result.accountHashes || result.accountHashes.length > 25 || !result.accountPage ||
+          new Set(result.accountHashes).size !== result.accountHashes.length ||
+          result.accountHashes.some(hash => !/^[a-f0-9]{64}$/.test(hash)) ||
+          [result.accountPage.after, result.accountPage.next].some(cursor => cursor !== null && !/^[a-f0-9]{64}$/.test(cursor)))
+          throw new PlgError(503, 'The synchronized account page is missing.');
+        if (result.accountHashes.some((hash, n) => hash <= (n ? result.accountHashes![n - 1] : result.accountPage!.after ?? '')) ||
+          result.accountPage.next !== null && (result.accountPage.next <= (result.accountPage.after ?? '') ||
+            result.accountPage.next < (result.accountHashes.at(-1) ?? '')))
+          throw new PlgError(503, 'The synchronized account page did not advance.');
+        let cursor = result.accountPage.after;
+        const advance = async (next: string | null) => {
+          await accountStorage.transaction(draft => {
+            if (draft.automation?.lease?.id !== id || Date.parse(draft.automation.lease.until) <= now() ||
+              (draft.automation.accountCursor ?? null) !== cursor)
+              throw new PlgError(409, 'Automatic account traversal ownership changed.');
+            draft.automation.accountCursor = next;
+          });
+          cursor = next;
+        };
+        for (const hash of result.accountHashes) {
+          if (now() + 70_000 >= options.deadline) { deferred = 'budget'; break; }
+          const outcome = await service.withStore(accountStorage.account(hash)).run('Automatic cycle', options);
+          delivered.sent += outcome.sent; delivered.uncertain += outcome.uncertain;
+          if (outcome.deferred) { deferred = outcome.deferred; break; }
+          await advance(hash);
+          if (delivered.uncertain) break;
+        }
+        if (deferred || delivered.uncertain) break;
+        await advance(result.accountPage.next);
+        if (!result.accountPage.next) break;
+        if (pageNumber === 63 || now() + 100_000 >= options.deadline) { deferred = 'budget'; break; }
+        result = await sync(options.deadline - 70_000, true);
+        accounts += result.accounts;
+      }
+    } else {
+      const outcome = await service.run('Automatic cycle', options);
+      delivered = { sent: outcome.sent, uncertain: outcome.uncertain }; deferred = outcome.deferred;
+    }
+    const reason = delivered.uncertain ? 'Delivery confirmation needs reconciliation; no automatic retry' :
+      deferred === 'provider' ? 'Email provider held an unsubmitted message; remaining accounts stay queued' :
+        deferred === 'budget' ? 'Cycle time budget reached; remaining accounts stay queued' : null;
+    return await finish(delivered.uncertain || deferred === 'provider' ? 'blocked' : 'completed', reason, { accounts, ...delivered });
   } catch {
     // A product-source failure must not starve independent mailbox stop reports.
     // Keep the cycle failed and reserve time to commit its truthful status.

@@ -9,6 +9,8 @@ export interface PlgAudienceFilters {
   cursor?: string | null;
 }
 export interface PlgAudiencePerson {
+  /** Resolved by Matrix for this source page, independently of the campaign queue page. */
+  campaignContactId?: string | null;
   accountId: string;
   agentId: PlgAgentId;
   identity: {
@@ -201,6 +203,15 @@ export interface PlgDelivery {
 }
 export interface PlgState {
   version: 1;
+  /** Server-generated projections; never stored in the legacy state document. */
+  storage?: { mode: 'accounts'; generation?: string; totalContacts?: number; pendingDeliveries?: number; report?: PlgAccountReport };
+  deliveryPolicies?: Record<string, {
+    unresolved: boolean;
+    latestPromotions: string[];
+    latestStepAt: Partial<Record<PlgStep, string>>;
+    lastReturnAt: string | null;
+    claimedKeys: string[];
+  }>;
   /** Latest signed source policy; older contact proofs must be rechecked. */
   customerReporting?: { policyRevision: string; checkedAt: string };
   paused: boolean;
@@ -224,6 +235,8 @@ export interface PlgState {
     lastSyncAt?: string;
     lastEvidenceSyncAt?: string;
     lastSuccessAt?: string;
+    accountCursor?: string | null;
+    sourceCursor?: string | null;
   };
 }
 export interface PlgCycle {
@@ -250,7 +263,7 @@ export interface PlgAutomationStatus {
   eligible: number;
   blockedReasons: { reason: string; accounts: number }[];
   needsReconciliation: number;
-  capacity: { contacts: number; maxContacts: number; bytes: number; maxBytes: number };
+  capacity: { contacts: number; maxContacts: number | null; bytes: number; maxBytes: number | null };
 }
 export interface PlgCandidate {
   contactId: string;
@@ -268,6 +281,7 @@ export interface PlgWorkspace {
   deliveryEnabled: boolean;
   mailOwner?: boolean;
   reporting?: { pending: number; excluded: number };
+  pages?: { asOf: string; contacts: { next: string | null; matches: number; checked: number }; history: { next: string | null } };
   automation?: PlgAutomationStatus;
   state: PlgState;
   queue: PlgCandidate[];
@@ -281,4 +295,16 @@ export interface PlgWorkspace {
     retentionEligible: number;
     retained: number;
   };
+}
+/** A bounded page plus totals reduced from one consistent Firestore read time. */
+export interface PlgAccountReport {
+  asOf: string;
+  metrics: PlgWorkspace['metrics'];
+  reporting: { pending: number; excluded: number };
+  eligible: number;
+  blockedReasons: { reason: string; accounts: number }[];
+  cohorts: { cohort: 'existing' | 'new'; group: 'treatment' | 'control'; enrolled: number; activated: number; repeat: number }[];
+  activity: { connectedAccounts: number; agents: { agentId: string; observedAccounts: number; executed: number; reported: number; failed: number }[] };
+  contacts: { nextAfter: string | null; matches: number; checked: number };
+  history: { nextAfter: { createdAt: string; id: string } | null; emails: Record<string, string> };
 }
