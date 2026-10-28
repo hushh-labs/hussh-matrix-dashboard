@@ -67,8 +67,11 @@ export function PlgAutomationPanel({ status, deliveryEnabled, admin, busy, check
       </div>}
     </details>
     <details className="mt-4 text-sm text-muted">
-      <summary className="cursor-pointer font-medium text-ink">Eligibility and pilot capacity</summary>
-      <p className="mt-3">{status.capacity.contacts}/{status.capacity.maxContacts} enrolled accounts · {Math.ceil(status.capacity.bytes / 1000)}/{status.capacity.maxBytes / 1000} KB storage. Registered people are not automatically subscribed; recorded messaging permission is required.</p>
+      <summary className="cursor-pointer font-medium text-ink">Eligibility and enrollment</summary>
+      <p className="mt-3">{status.capacity.maxContacts === null
+        ? `${status.capacity.contacts} enrolled accounts. No pilot enrollment limit.`
+        : `${status.capacity.contacts}/${status.capacity.maxContacts} enrolled accounts · ${Math.ceil(status.capacity.bytes / 1000)}/${(status.capacity.maxBytes ?? 0) / 1000} KB storage.`}
+        {' '}Registered people are not automatically subscribed; recorded messaging permission is required.</p>
       <ul className="mt-3 space-y-1">{status.blockedReasons.map((row) => <li key={row.reason}>{row.accounts} accounts: {row.reason}</li>)}</ul>
       <p className="mt-3">Missing or partial activity stays unknown. Behavioral inactivity reminders require complete fresh observations. Provider acceptance and delivery are separate from verified product value.</p>
     </details>

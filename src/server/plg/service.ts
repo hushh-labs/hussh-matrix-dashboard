@@ -172,6 +172,7 @@ export class PlgService {
     transport?: PlgTransport,
     private permissionSource = runtime.subscriptions ? new OneSubscriptions(runtime.subscriptions, fetch, now) : undefined,
     private googleMail: GoogleMail | undefined = runtime.emailProvider === 'google_workspace' ? configuredGoogleMail() : undefined,
+    private feedbackStore: PlgStore = store,
   ) {
     if (transport) this.transport = transport;
     else if (runtime.emailProvider === 'google_workspace') {
@@ -183,22 +184,30 @@ export class PlgService {
       };
     } else this.transport = resendTransport(runtime);
   }
+  withStore(store: PlgStore) {
+    return new PlgService(store, this.runtime, this.now, this.transport, this.permissionSource, this.googleMail, this.feedbackStore);
+  }
+  private async mailState() {
+    const accounts = await this.feedbackStore.accountStorage?.();
+    return accounts ? accounts.mailView() : this.feedbackStore.read();
+  }
   async reconcileMail(deadline = this.now() + 45_000) {
     if (this.runtime.emailProvider !== 'google_workspace' || !this.runtime.googleMailCampaignsEnabled) return;
     if (!this.googleMail) throw new PlgError(503, 'Google customer mail is not configured.');
     const state = await this.googleMail.store.read(), age = this.now() - (state.feedback?.checkedAt ?? 0);
     if (state.connection?.feedbackAllowed && state.feedback?.checkedAt && age >= 0 && age < 60_000 && !state.feedback.pending && !state.feedback.pageToken && !state.feedback.recovery &&
-      !unboundGoogleDeliveries(await this.store.read()).length) return;
-    const result = await reconcileGoogleFeedback(this.googleMail.store, this.store,
+      !unboundGoogleDeliveries(await this.mailState()).length) return;
+    const result = await reconcileGoogleFeedback(this.googleMail.store, this.feedbackStore,
       await this.googleMail.feedbackReader(deadline), deadline, this.now);
     if (!result.complete) throw new PlgError(409, 'Google mail feedback is catching up; no customer messages sent.');
   }
-  async workspace(role: 'admin' | 'operator'): Promise<PlgWorkspace> {
-    const stored = await this.store.read();
+  async workspace(role: 'admin' | 'operator', query: import('./account-report').AccountReportQuery = {}): Promise<PlgWorkspace> {
     const now = this.now();
+    if (!this.store.readWorkspace && Object.keys(query).length) throw new PlgError(409, 'Campaign pages require active account storage.');
+    const stored = this.store.readWorkspace ? await this.store.readWorkspace(query, now) : await this.store.read();
     const contacts = stored.contacts.filter((c) => customerReportingEligible(stored, c, now));
     const ids = new Set(contacts.map((c) => c.id));
-    const state = { ...stored, contacts, deliveries: stored.deliveries.filter((d) => ids.has(d.contactId)) };
+    const state = { ...stored, contacts, deliveries: stored.storage?.report ? stored.deliveries : stored.deliveries.filter((d) => ids.has(d.contactId)) };
     const mail = this.googleMail ? await this.googleMail.status() : null;
     const automation = automationStatus(stored, this.runtime, now);
     if (mail) {
@@ -212,7 +221,7 @@ export class PlgService {
       role,
       configured: true,
       deliveryEnabled: this.runtime.deliveryEnabled,
-      reporting: { pending: stored.contacts.filter((c) => !customerReportingCurrent(stored, c, now)).length,
+      reporting: stored.storage?.report?.reporting ?? { pending: stored.contacts.filter((c) => !customerReportingCurrent(stored, c, now)).length,
         excluded: stored.contacts.filter((c) => c.customerReporting?.eligible === false && customerReportingCurrent(stored, c, now)).length },
       automation,
       state,
@@ -220,12 +229,14 @@ export class PlgService {
       metrics: metrics(state, now),
     };
   }
-  async preview() {
-    const state = await this.store.read();
+  async preview(query: import('./account-report').AccountReportQuery = {}) {
     const now = this.now();
+    if (!this.store.readWorkspace && Object.keys(query).length) throw new PlgError(409, 'Campaign pages require active account storage.');
+    const state = this.store.readWorkspace ? await this.store.readWorkspace(query, now) : await this.store.read();
     return {
       paused: state.paused,
       deliveryEnabled: this.runtime.deliveryEnabled,
+      ...(state.storage?.report ? { page: { shown: state.contacts.length, matches: state.storage.report.contacts.matches } } : {}),
       candidates: state.contacts.map((c) => candidate(state, c, now, true)),
       messages: state.contacts
         .map((c) => {
@@ -253,12 +264,15 @@ export class PlgService {
     if (snapshot.paused) throw new PlgError(409, 'Campaigns are paused.');
     let sent = 0,
       uncertain = 0;
+    let deferred: 'budget' | 'provider' | undefined;
     const due = snapshot.contacts
       .filter((c) => candidate(snapshot, c, this.now()).eligible)
       .slice(0, 10);
     for (const item of due) {
       // Leave enough time for the bounded provider request and receipt commit.
-      if (options && this.now() + (this.runtime.emailProvider === 'google_workspace' ? 70_000 : this.runtime.subscriptions?.enabled ? 55_000 : 20_000) >= options.deadline) break;
+      if (options && this.now() + (this.runtime.emailProvider === 'google_workspace' ? 70_000 : this.runtime.subscriptions?.enabled ? 55_000 : 20_000) >= options.deadline) {
+        deferred = 'budget'; break;
+      }
       const now = this.now();
       const reserved = await this.store.transaction((state) => {
         if (options && (!state.automation?.enabled || state.automation.lease?.id !== options.leaseId || Date.parse(state.automation.lease.until) <= now)) return null;
@@ -298,7 +312,9 @@ export class PlgService {
         // Gmail refresh must not introduce a new 15s gap after that decision.
         const sender = this.transport.prepare ? await this.transport.prepare() : this.transport;
         const currentContact = async () => {
-          const current = await this.store.read();
+          const current = this.store.readWithoutReservation
+            ? await this.store.readWithoutReservation(reserved.delivery.id)
+            : await this.store.read();
           const c = current.contacts.find((c) => c.id === item.id);
           if (!c || (options && (!current.automation?.enabled || current.automation.lease?.id !== options.leaseId || this.now() + 15_000 >= options.deadline)))
             throw new Error('Cycle paused or eligibility changed before send.');
@@ -365,6 +381,7 @@ export class PlgService {
             audit(state, actor, 'Released an unsent reservation after eligibility changed.', this.now());
           });
           if (error instanceof PlgError && error.status >= 500) throw error;
+          if (error instanceof GoogleMailUnattempted) { deferred = 'provider'; break; }
           continue;
         }
         await this.store.transaction((state) => {
@@ -381,6 +398,6 @@ export class PlgService {
         uncertain++;
       }
     }
-    return { sent, uncertain };
+    return { sent, uncertain, ...(deferred ? { deferred } : {}) };
   }
 }

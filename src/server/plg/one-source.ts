@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { PlgJourney, PlgCatalog, PlgActivity, PlgActivityRollup, PlgAgentActivity, PlgAgentId, PlgCustomerReportingProof } from '../../lib/plg';
-import { DAY, eraseAccount, ingestEvent, PlgError, registerPlgCatalog } from './engine';
+import type { PlgJourney, PlgCatalog, PlgActivity, PlgActivityRollup, PlgAgentActivity, PlgAgentId, PlgCustomerReportingProof, PlgState } from '../../lib/plg';
+import { accountHash, DAY, eraseAccount, ingestEvent, PlgError, registerPlgCatalog } from './engine';
 import { signValue } from './service';
 import type { PlgStore } from './store';
 import { oneProductionEndpoint } from '../one-scope.mjs';
@@ -118,6 +118,7 @@ export async function syncOneEvidence(
   time: number | (() => number) = Date.now,
   inspectionId?: string,
   cycleDeadline = Infinity,
+  accountHashes?: string[],
 ) {
   const clock = typeof time === 'function' ? time : () => time;
   // Stay below the worker's 180s HTTP budget. A slow pilot fails atomically
@@ -126,7 +127,8 @@ export async function syncOneEvidence(
   const endpoint = oneProductionEndpoint(options.url, '/api/one/plg/snapshot');
   if (!endpoint) throw unavailable();
   if (options.secret.length < 32) throw unavailable();
-  const state = await store.read();
+  const accountStorage = await store.accountStorage?.();
+  const state = accountStorage && accountHashes ? await accountStorage.readAccounts(accountHashes) : await store.read();
   const selected = state.contacts.filter((c) => (!inspectionId || c.id === inspectionId) &&
     (!c.permission || (c.permission.enabled && c.permission.eligible && !c.suppressed)));
   if (inspectionId && !selected.length) throw new PlgError(404, 'Account is not enrolled.');
@@ -271,7 +273,7 @@ export async function syncOneEvidence(
     }
   }
   if (inspectionId && !catalog) throw unavailable();
-  return store.transaction((draft) => {
+  const apply = (draft: PlgState, rows = evidence) => {
     const now = clock();
     if (now >= deadline) throw unavailable();
     let imported = 0,
@@ -279,8 +281,12 @@ export async function syncOneEvidence(
     if (Date.parse(draft.customerReporting?.checkedAt ?? '') > sourceAt)
       throw new PlgError(409, 'A newer customer reporting check has already completed.');
     draft.customerReporting = { policyRevision: reporting!.policyRevision, checkedAt: new Date(sourceAt).toISOString() };
-    if (!inspectionId && catalog) registerPlgCatalog(draft, catalog);
-    for (const row of evidence) {
+    if (!inspectionId && catalog) {
+      if (accountStorage) {
+        if (draft.catalog?.revision !== catalog.revision) throw new PlgError(409, 'Agent catalog changed; refresh the workspace before syncing.');
+      } else registerPlgCatalog(draft, catalog);
+    }
+    for (const row of rows) {
       const contact = draft.contacts.find((c) => c.accountId === row.accountId);
       if (inspectionId && (!contact || contact.id !== inspectionId)) throw new PlgError(404, 'Account is not enrolled.');
       if (!contact || contact.journey !== row.journey) continue;
@@ -354,7 +360,23 @@ export async function syncOneEvidence(
         if (!result.duplicate) imported++;
       }
     }
-    return { accounts: evidence.length, imported, erased, retainedOnly: true,
+    return { accounts: rows.length, imported, erased, retainedOnly: true,
       ...(inspectionId ? { inspection: { catalog, activity: inspected ?? null, deleted: erased > 0 } } : {}) };
-  });
+  };
+  if (accountStorage && store.scope !== 'account') {
+    // Validate every source response first. Each owner then commits with its
+    // current permission generation; no external I/O runs in retried callbacks.
+    await accountStorage.transaction(draft => {
+      if (clock() >= deadline || Date.parse(draft.customerReporting?.checkedAt ?? '') > sourceAt) throw unavailable();
+      if (catalog) registerPlgCatalog(draft, catalog);
+      draft.customerReporting = { policyRevision: reporting!.policyRevision, checkedAt: new Date(sourceAt).toISOString() };
+    });
+    let imported = 0, erased = 0;
+    for (const row of evidence) {
+      const result = await accountStorage.account(accountHash(row.accountId)).transaction(draft => apply(draft, [row]));
+      imported += result.imported; erased += result.erased;
+    }
+    return { accounts: evidence.length, imported, erased, retainedOnly: true };
+  }
+  return store.transaction(draft => apply(draft));
 }

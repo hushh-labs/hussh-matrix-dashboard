@@ -5,6 +5,7 @@ import type { PlgContact, PlgState } from '../../lib/plg';
 import { PLG_SYNC_BUDGET_MS } from '../../lib/plg-budgets.mjs';
 import {
   audit,
+  accountHash,
   choose,
   enroll,
   ingestEnrollment,
@@ -32,6 +33,7 @@ import { applyDeliveryEvent } from './delivery-events';
 import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
 import { registerGoogleMailRoutes } from './google-mail-routes';
 import { MAIL_OWNER } from './google-mail-store';
+import { decodeWorkspacePage, encodeWorkspacePages } from './workspace-pages';
 
 /** The same generation fence applies to new One links and already-sent legacy links. */
 function unsubscribeContact(state: PlgState, contact: PlgContact, generation?: string) {
@@ -71,16 +73,42 @@ export function registerPlgRoutes(
     }
     return service;
   };
-  registerGoogleMailRoutes(app, config, async () => (await getService().store.read()).templates);
-  const synchronize = async (deadline = Date.now() + PLG_SYNC_BUDGET_MS) => {
+  const accountStore = async (selector: { accountId?: unknown; contactId?: string }) => {
+    const store = getService().store, accounts = await store.accountStorage?.();
+    if (!accounts) return store;
+    if (selector.contactId) return accounts.contact(selector.contactId);
+    if (typeof selector.accountId !== 'string' || !selector.accountId || selector.accountId.length > 128)
+      throw new PlgError(400, 'Choose an account.');
+    return accounts.account(accountHash(selector.accountId));
+  };
+  registerGoogleMailRoutes(app, config, async () => {
+    const store = getService().store, accounts = await store.accountStorage?.();
+    return (await (accounts ? accounts.readSettings() : store.read())).templates;
+  });
+  const synchronize = async (deadline = Date.now() + PLG_SYNC_BUDGET_MS, continuation = false, manual = false) => {
     const service = getService();
-    if (config.subscriptions?.enabled) {
-      if (!(await service.store.read()).catalog?.agents.some((a) => a.id === 'agent_one' && a.public && a.available)) {
+    const accounts = await service.store.accountStorage?.();
+    if (config.subscriptions?.enabled && !continuation) {
+      if (!(await (accounts ? accounts.readSettings() : service.store.read())).catalog?.agents.some((a) => a.id === 'agent_one' && a.public && a.available)) {
         if (Date.now() + 30_000 >= deadline) throw new PlgError(503, 'Automatic sync budget expired.');
         const page = await readOneAudience({ agentId: 'agent_one', segment: 'all', query: '', graceMinutes: 60 });
         await service.store.transaction((state) => { registerPlgCatalog(state, page.catalog); });
       }
       await syncSubscriptions(service.store, new OneSubscriptions(config.subscriptions, fetch, Date.now, Math.min(deadline, Date.now() + 75_000)));
+    }
+    if (accounts) {
+      const state = await accounts.readSettings(), key = manual ? 'sourceCursor' : 'accountCursor';
+      const cursor = state.automation?.[key] ?? null, page = await accounts.page(cursor, 25);
+      const result = await syncOneEvidence(service.store, undefined, fetch, Date.now, undefined, deadline, page.accounts);
+      // Manual evidence refresh cannot move the automatic send continuation.
+      // A cycle advances that continuation only after each account is handled.
+      if (manual) await accounts.transaction(draft => {
+        if ((draft.automation?.sourceCursor ?? null) !== cursor)
+          throw new PlgError(409, 'Account traversal changed; retry the sync.');
+        draft.automation ??= { enabled: false };
+        draft.automation.sourceCursor = page.next;
+      });
+      return { ...result, accountHashes: page.accounts, accountPage: { after: cursor, next: page.next } };
     }
     const state = await service.store.read();
     if (state.contacts.length) return syncOneEvidence(service.store, undefined, fetch, Date.now, undefined, deadline);
@@ -148,14 +176,20 @@ export function registerPlgRoutes(
     '/api/plg/workspace',
     handle(async (req, res) => {
       const user = role(req);
-      return res.json({ ...await getService().workspace(user.role), mailOwner: user.role === 'admin' && user.email === MAIL_OWNER && process.env.PLG_GOOGLE_MAIL_ENABLED === 'true' });
+      return res.json({ ...encodeWorkspacePages(await getService().workspace(user.role), {}, user.email, config.signingSecret),
+        mailOwner: user.role === 'admin' && user.email === MAIL_OWNER && process.env.PLG_GOOGLE_MAIL_ENABLED === 'true' });
     }),
   );
+  app.post('/api/plg/workspace/query', handle(async (req, res) => {
+    const user = role(req), query = decodeWorkspacePage(req.body, user.email, config.signingSecret);
+    return res.json({ ...encodeWorkspacePages(await getService().workspace(user.role, query), query, user.email, config.signingSecret),
+      mailOwner: user.role === 'admin' && user.email === MAIL_OWNER && process.env.PLG_GOOGLE_MAIL_ENABLED === 'true' });
+  }));
   app.post(
     '/api/plg/contacts',
     handle(async (req, res) => {
       const user = role(req);
-      const data = await getService().store.transaction((state) =>
+      const data = await (await accountStore({ accountId: req.body.accountId })).transaction((state) =>
         enroll(state, req.body, user.email, Date.now()),
       );
       return res.status(201).json({ contact: data });
@@ -165,7 +199,7 @@ export function registerPlgRoutes(
     '/api/plg/contacts/:id',
     handle(async (req, res) => {
       const user = role(req);
-      const data = await getService().store.transaction((state) => {
+      const data = await (await accountStore({ contactId: req.params.id as string })).transaction((state) => {
         const contact = updateContact(state, req.params.id as string, req.body, user.email, Date.now());
         if (req.body.unsubscribe === true) queueSubscriptionRevocation(state, contact);
         return contact;
@@ -215,7 +249,7 @@ export function registerPlgRoutes(
     '/api/plg/sync',
     handle(async (req, res) => {
       role(req);
-      return res.json(await synchronize());
+      return res.json(await synchronize(undefined, false, true));
     }),
   );
   app.patch(
@@ -231,7 +265,11 @@ export function registerPlgRoutes(
     handle(async (req, res) => {
       role(req);
       if (!config.enabled) throw new PlgError(503, 'PLG is not configured.');
-      return res.json(await readOneAudience(req.body));
+      const page = await readOneAudience(req.body), accounts = await getService().store.accountStorage?.();
+      if (!accounts) return res.json(page);
+      const enrolled = await accounts.readAccounts(page.rows.map(row => accountHash(row.accountId)));
+      return res.json({ ...page, rows: page.rows.map(row => ({ ...row,
+        campaignContactId: enrolled.contacts.find(contact => contact.accountId === row.accountId)?.id ?? null })) });
     }),
   );
   app.post(
@@ -239,15 +277,16 @@ export function registerPlgRoutes(
     handle(async (req, res) => {
       role(req);
       if (typeof req.body.contactId !== 'string') throw new PlgError(400, 'Choose an enrolled account.');
-      const result = await syncOneEvidence(getService().store, undefined, fetch, Date.now, req.body.contactId);
+      const result = await syncOneEvidence(await accountStore({ contactId: req.body.contactId }), undefined, fetch, Date.now, req.body.contactId);
       return res.json(result.inspection);
     }),
   );
   app.post(
     '/api/plg/preview',
     handle(async (req, res) => {
-      role(req);
-      return res.json(await getService().preview());
+      const user = role(req);
+      const query = Object.keys(req.body ?? {}).length ? decodeWorkspacePage(req.body, user.email, config.signingSecret) : {};
+      return res.json(await getService().preview(query));
     }),
   );
   // Sending is only available through the signed scheduler endpoint. Browsing,
@@ -256,7 +295,7 @@ export function registerPlgRoutes(
     '/integrations/plg/sync',
     handle(async (req, res) => {
       machine(req, 'sync');
-      return res.json(await synchronize());
+      return res.json(await synchronize(undefined, false, true));
     }),
   );
   app.post(
@@ -264,7 +303,7 @@ export function registerPlgRoutes(
     handle(async (req, res) => {
       machine(req, 'events');
       return res.json(
-        await getService().store.transaction((state) =>
+        await (await accountStore({ accountId: req.body.accountId })).transaction((state) =>
           req.body.kind === 'account_enrolled'
             ? ingestEnrollment(state, req.body, Date.now())
             : ingestEvent(state, req.body, Date.now()),
@@ -306,7 +345,24 @@ export function registerPlgRoutes(
       } catch {
         throw new PlgError(401, 'Invalid delivery signature.');
       }
-      await getService().store.transaction((state) => applyDeliveryEvent(state, event, Date.now()));
+      const store = getService().store, accounts = await store.accountStorage?.();
+      if (!accounts) await store.transaction(state => applyDeliveryEvent(state, event, Date.now()));
+      else {
+        const data = (event as { data?: { email_id?: string; tags?: { plg_delivery_id?: string }; to?: string[] } })?.data;
+        if (data?.email_id || data?.tags?.plg_delivery_id) {
+          try {
+            const receipt = await accounts.receipt(data.email_id ? { providerId: data.email_id } : { id: data.tags!.plg_delivery_id });
+            await receipt.transaction(state => applyDeliveryEvent(state, event, Date.now()));
+          } catch (error) { if (!(error instanceof PlgError && error.status === 404)) throw error; }
+        }
+        if (Array.isArray(data?.to)) {
+          if (data.to.length > 50) throw new PlgError(400, 'Delivery callback exceeds its recipient bound.');
+          for (const address of new Set(data.to)) if (typeof address === 'string' && address.length <= 254) {
+            const recipient = await accounts.email(address.toLowerCase());
+            if (recipient) await recipient.transaction(state => applyDeliveryEvent(state, event, Date.now()));
+          }
+        }
+      }
       return res.json({ received: true });
     }),
   );
@@ -319,7 +375,7 @@ export function registerPlgRoutes(
     if (config.signingSecret.length < 32)
       throw new PlgError(503, 'Preferences are not configured.');
     const { id, generation } = tokenPreference(req.params.token as string, config.signingSecret);
-    const store = getService().store;
+    const store = await accountStore({ contactId: id });
     res.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
     if (req.method === 'GET' || req.method === 'HEAD') {
       if (!(await store.read()).contacts.some((c) => c.id === id))
@@ -353,7 +409,7 @@ export function registerPlgRoutes(
       if (config.signingSecret.length < 32)
         throw new PlgError(503, 'Preferences are not configured.');
       const { id, generation } = tokenPreference(req.params.token as string, config.signingSecret);
-      const store = getService().store;
+      const store = await accountStore({ contactId: id });
       const contact = (await store.read()).contacts.find((c) => c.id === id);
       if (!contact) throw new PlgError(404, 'Subscriber not found.');
       res.set(

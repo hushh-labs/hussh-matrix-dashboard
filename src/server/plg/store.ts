@@ -4,10 +4,17 @@ import { randomUUID } from 'node:crypto';
 import type { PlgState } from '../../lib/plg';
 import { initialPlgState, PlgError } from './engine';
 import { PlgFirestoreStorage } from './firestore-storage';
+import { AccountPlgStore, accountAuthority } from './account-store';
+import { PLG_STORAGE_AUTHORITY } from './firestore-storage';
+import type { AccountReportQuery } from './account-report';
 
 export interface PlgStore {
   read(): Promise<PlgState>;
   transaction<T>(fn: (state: PlgState) => T): Promise<T>;
+  accountStorage?(): Promise<AccountPlgStore | null>;
+  readWithoutReservation?(deliveryId: string): Promise<PlgState>;
+  readWorkspace?(query?: AccountReportQuery, now?: number): Promise<PlgState>;
+  readonly scope?: 'account' | 'workspace';
 }
 export function validatePlgState(state: PlgState) {
   if (state.version !== 1 || !Array.isArray(state.contacts) || !Array.isArray(state.deliveries))
@@ -112,10 +119,32 @@ export class FirestorePlgStore implements PlgStore {
       ({ Firestore }) => new Firestore({ projectId: this.projectId, databaseId: this.databaseId }),
     ));
   }
+  async accountStorage() {
+    const db = await this.db(), control = await db.doc(PLG_STORAGE_AUTHORITY).get();
+    if (control.get('protocol') !== 2) return null;
+    const value = accountAuthority(control);
+    return new AccountPlgStore(db, value.generation);
+  }
   async read() {
+    const db = await this.db(), control = await db.doc(PLG_STORAGE_AUTHORITY).get();
+    if (control.get('protocol') === 2 && control.get('mode') === 'staging_accounts') {
+      const authority = accountAuthority(control);
+      return new PlgFirestoreStorage(db, validate).readFrozen(authority.sourceAuthority, authority.sourceHash);
+    }
+    const accounts = await this.accountStorage();
+    if (accounts) return accounts.read();
     return new PlgFirestoreStorage(await this.db(), validate).read();
   }
   async transaction<T>(fn: (state: PlgState) => T): Promise<T> {
+    const accounts = await this.accountStorage();
+    if (accounts) return accounts.transaction(fn);
     return new PlgFirestoreStorage(await this.db(), validate).transaction(fn);
+  }
+  async readWorkspace(query: AccountReportQuery = {}, now = Date.now()) {
+    const db = await this.db(), control = await db.doc(PLG_STORAGE_AUTHORITY).get();
+    if (control.get('protocol') === 2 && control.get('mode') === 'accounts')
+      return new AccountPlgStore(db, accountAuthority(control).generation).readWorkspace(query, now);
+    if (Object.keys(query).length) throw new PlgError(409, 'Campaign paging requires active account storage; refresh the workspace.');
+    return this.read();
   }
 }

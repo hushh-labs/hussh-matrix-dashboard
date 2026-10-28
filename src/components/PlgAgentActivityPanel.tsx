@@ -38,10 +38,11 @@ export function PlgAgentActivityPanel({ state, busy, refresh, inspect }: {
         <div className="max-w-2xl">
           <h3 className="text-lg font-semibold text-ink">Tracking details</h3>
           <p className="mt-2 text-sm leading-6 text-muted">Review activity across enrolled accounts. App reports and agent/tool returns show observed usage; they do not establish a successful business outcome or app-wide DAU.</p>
+          {state.storage?.report && <p className="mt-2 text-xs text-muted">Totals cover {state.storage.report.metrics.enrolled} verified campaign accounts. Account inspection uses the current follow-up queue page.</p>}
         </div>
         <button className={control} disabled={busy} onClick={refresh}>Refresh agent activity</button>
       </div>
-      {!state.contacts.length && <p role="status" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">No accounts are enrolled in campaign tracking. The table describes tracking coverage; its empty counts are not app-wide usage. Use People and usage to browse registered accounts.</p>}
+      {!(state.storage?.report?.metrics.enrolled ?? state.contacts.length) && <p role="status" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">No accounts are enrolled in campaign tracking. The table describes tracking coverage; its empty counts are not app-wide usage. Use People and usage to browse registered accounts.</p>}
       {!catalog ? <p role="status" className="mt-5 rounded-xl bg-canvas p-4 text-sm text-muted">Connect the One backend and refresh activity to load the registered agents and actions. Collection remains unknown until connected.</p> : <>
         <p className="mt-5 text-sm font-semibold text-ink">{catalog.agents.length} authored agents · {catalog.actions.length} action and execution identifiers</p>
         <label className="mt-3 flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={includeInternal} onChange={(e) => setIncludeInternal(e.target.checked)} />Show internal and unavailable agents</label>
@@ -50,15 +51,16 @@ export function PlgAgentActivityPanel({ state, busy, refresh, inspect }: {
             <thead className="border-b border-stroke text-xs text-muted"><tr><th className="p-3">Agent</th><th className="p-3">Availability</th><th className="p-3">Verified value definition</th><th className="p-3">Observed accounts</th><th className="p-3">Execution returns</th><th className="p-3">App reports</th><th className="p-3">Errors</th></tr></thead>
             <tbody>{catalog.agents.filter((a) => includeInternal || (a.public && a.available)).map((a) => {
               const reports = state.contacts.flatMap((c) => c.activity?.agents.filter((row) => row.agentId === a.id) ?? []);
-              const connected = state.contacts.some((c) => c.activity?.enabled && c.activity.epoch);
+              const total = state.storage?.report?.activity.agents.find(row => row.agentId === a.id);
+              const connected = state.storage?.report ? state.storage.report.activity.connectedAccounts > 0 : state.contacts.some((c) => c.activity?.enabled && c.activity.epoch);
               return <tr key={a.id} className="border-b border-stroke last:border-0">
                 <td className="p-3"><button className="font-semibold text-ink underline-offset-4 hover:underline" onClick={() => setAgent(a.id)}>{a.label}</button></td>
                 <td className="p-3 text-muted">{!a.public ? 'Internal' : a.available ? 'Available' : 'Unavailable'}</td>
                 <td className="min-w-[240px] max-w-sm p-3 text-xs text-muted"><p className="font-medium text-ink">{a.outcome?.label ?? (['agent_personal_information', 'agent_email'].includes(a.id) ? 'Verified task completion' : !a.public ? 'Internal stage' : 'Verified completion tracking not provided by this connection')}</p>{a.outcome && <details className="mt-1 leading-5"><summary className="cursor-pointer">Completion definition</summary>{a.outcome.reason}</details>}</td>
-                <td className="p-3">{connected ? reports.length : 'Not collected'}</td>
-                <td className="p-3">{connected ? reports.reduce((n, row) => n + row.executed, 0) : '—'}</td>
-                <td className="p-3">{connected ? reports.reduce((n, row) => n + row.reported, 0) : '—'}</td>
-                <td className="p-3">{connected ? reports.reduce((n, row) => n + row.failed, 0) : '—'}</td>
+                <td className="p-3">{connected ? state.storage?.report ? total?.observedAccounts ?? 0 : reports.length : 'Not collected'}</td>
+                <td className="p-3">{connected ? state.storage?.report ? total?.executed ?? 0 : reports.reduce((n, row) => n + row.executed, 0) : '—'}</td>
+                <td className="p-3">{connected ? state.storage?.report ? total?.reported ?? 0 : reports.reduce((n, row) => n + row.reported, 0) : '—'}</td>
+                <td className="p-3">{connected ? state.storage?.report ? total?.failed ?? 0 : reports.reduce((n, row) => n + row.failed, 0) : '—'}</td>
               </tr>;
             })}</tbody>
           </table>

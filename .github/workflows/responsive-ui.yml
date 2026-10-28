@@ -85,7 +85,8 @@ jobs:
             await new Promise(resolve => setTimeout(resolve, 250));
           }
           NODE
-          npx vitest run tests/plg.test.ts -t 'normalized Firestore storage' \
+          npx vitest run tests/plg.test.ts tests/plg-account-storage.test.ts \
+            -t 'normalized Firestore storage|account Firestore integration|explicit account storage migration' --maxWorkers=1 \
             --reporter=json --outputFile="${RUNNER_TEMP}/plg-storage-results.json"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -94,7 +95,10 @@ jobs:
           const cases = report.testResults.flatMap(file => file.assertionResults)
             .filter(test => test.fullName.includes('normalized Firestore storage'));
           assert(cases.length >= 17 && cases.every(test => test.status === 'passed'), 'Every real storage case must run and pass; skipped emulator coverage fails this job.');
-          console.log(`${cases.length} native Firestore storage cases passed on isolated demo projects.`);
+          const accounts = report.testResults.flatMap(file => file.assertionResults)
+            .filter(test => /account Firestore integration|explicit account storage migration/.test(test.fullName));
+          assert(accounts.length >= 18 && accounts.every(test => test.status === 'passed'), 'Every account storage, reporting, fair-cycle and migration case must run and pass.');
+          console.log(`${cases.length + accounts.length} native Firestore storage cases passed on isolated demo projects.`);
           NODE
   verify-plg-infrastructure:
     runs-on: ubuntu-latest

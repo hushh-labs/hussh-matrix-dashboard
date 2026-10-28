@@ -201,6 +201,38 @@ export class PlgFirestoreStorage {
       return (await this.readState(tx, control)).state;
     }, { readOnly: true });
   }
+  /** Read the immutable predecessor while its replacement authority fences writes. */
+  async readFrozen(sourceAuthority: unknown, expectedHash: string) {
+    return this.db.runTransaction(async tx => {
+      const current = (await tx.get(this.db.doc(PLG_STORAGE_AUTHORITY))).data();
+      const recorded = current?.mode === 'staging_accounts' ? current.sourceAuthority : current?.retiredLegacy?.sourceAuthority;
+      if (current?.protocol !== 2 || current.sourceHash !== expectedHash ||
+        !recorded || canonical(recorded) !== canonical(sourceAuthority)) fail();
+      const control = authority({ exists: true, data: () => sourceAuthority } as DocumentSnapshot);
+      if (control.staging || control.retired || control.cleanupRequired) fail('Finish the existing storage transition first.');
+      const state = (await this.readState(tx, control)).state;
+      if (sha(JSON.stringify(state)) !== expectedHash) fail('Frozen source parity changed.');
+      return state;
+    }, { readOnly: true });
+  }
+  /** Freeze the exact predecessor read in the authority transaction. */
+  async freezeAccounts(prepare: (state: PlgState, previous: Record<string, any>) => {
+    control: Record<string, any>; metadata: Record<string, unknown>;
+  }) {
+    return this.db.runTransaction(async tx => {
+      const doc = await tx.get(this.db.doc(PLG_STORAGE_AUTHORITY)), control = authority(doc);
+      if (!doc.exists || control.staging || control.retired || control.cleanupRequired)
+        fail('Finish the existing storage transition first.');
+      const state = (await this.readState(tx, control)).state;
+      const next = prepare(state, doc.data()!);
+      if (next.control.protocol !== 2 || next.control.mode !== 'staging_accounts' ||
+        canonical(next.control.sourceAuthority) !== canonical(doc.data()) ||
+        next.control.sourceHash !== sha(JSON.stringify(state))) fail();
+      tx.set(doc.ref, next.control);
+      tx.create(this.db.doc(generationPath(next.control.generation)), next.metadata);
+      return next.control;
+    });
+  }
   async transaction<T>(fn: (state: PlgState) => T): Promise<T> {
     const commit = (prepared: boolean) => this.db.runTransaction(async tx => {
       const control = authority(await tx.get(this.db.doc(PLG_STORAGE_AUTHORITY)));

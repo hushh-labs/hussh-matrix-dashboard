@@ -127,7 +127,8 @@ export function PlgAudiencePanel({ state, load, openContact }: {
           const activity = person.activity, counts = activity.counts;
           const agent = data.catalog.agents.find((a) => a.id === person.agentId);
           const action = data.catalog.actions.find((a) => a.id === activity.lastActionId);
-          const enrolled = state.contacts.find((c) => c.accountId === person.accountId);
+          const enrolledId = Object.hasOwn(person, 'campaignContactId') ? person.campaignContactId :
+            state.contacts.find((c) => c.accountId === person.accountId)?.id;
           return <tr key={person.accountId} className="border-b border-stroke align-top last:border-0">
             <td className="min-w-[180px] max-w-[240px] break-words p-3"><p className="font-semibold text-ink">{person.identity.name || 'Name not provided'}</p>
               <p className="mt-1 break-all text-xs text-muted">{person.identity.email || 'Email not provided'}</p>
@@ -145,7 +146,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
               {person.verified.limited && <p className="mt-1 text-xs text-muted">Outcome evidence is partial; additional results may be outside retained bounds.</p>}
             </td>
             <td className="max-w-[200px] p-3 text-xs"><p>{activity.lastObservedAt ? time(activity.lastObservedAt) : '—'}</p>{action && <p className="mt-1 text-muted">{action.label}</p>}{activity.firstAttemptAt && <p className="mt-2 text-muted">First start: {time(activity.firstAttemptAt)}</p>}</td>
-            <td className="p-3">{enrolled ? <button className={button} onClick={() => openContact(enrolled.id)}>Open follow-up</button> : <span className="text-xs text-muted">Not enrolled in campaigns</span>}</td>
+            <td className="p-3">{enrolledId ? <button className={button} onClick={() => openContact(enrolledId)}>Open follow-up</button> : <span className="text-xs text-muted">Not enrolled in campaigns</span>}</td>
           </tr>;
         })}</tbody></table>
       </div>

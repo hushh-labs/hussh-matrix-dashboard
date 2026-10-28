@@ -58,6 +58,35 @@ function app(runtime = config) {
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('keeps manual source refresh progress separate from the automatic send continuation', async () => {
+    await store.transaction(state => { state.automation = { enabled: true, accountCursor: 'a'.repeat(64) }; });
+    const page = vi.fn(async () => ({ accounts: ['b'.repeat(64)], next: 'b'.repeat(64) }));
+    (store as any).accountStorage = async () => ({ readSettings: () => store.read(), page,
+      transaction: store.transaction.bind(store) });
+    const source = vi.spyOn(evidenceSource, 'syncOneEvidence').mockResolvedValue({ accounts: 1, imported: 0, erased: 0, retainedOnly: true });
+    const result = await request(app()).post('/api/plg/sync').set('Test-User', 'operator@example.invalid')
+      .set('Origin', config.origin).send({});
+    expect(result.status).toBe(200); expect(page).toHaveBeenCalledWith(null, 25);
+    expect(source.mock.calls[0][6]).toEqual(['b'.repeat(64)]);
+    expect((await store.read()).automation).toMatchObject({ accountCursor: 'a'.repeat(64), sourceCursor: 'b'.repeat(64) });
+  });
+  it('keeps campaign searches private, same-origin and read-only', async () => {
+    const read = vi.fn(async () => store.read());
+    (store as MemoryPlgStore & { readWorkspace: typeof read }).readWorkspace = read;
+    const server = app(), body = { query: 'private@example.invalid', filter: 'unknown' };
+    expect((await request(server).post('/api/plg/workspace/query').set('Origin', config.origin).send(body)).status).toBe(401);
+    expect((await request(server).post('/api/plg/workspace/query').set('Test-User', 'operator@example.invalid')
+      .set('Origin', 'https://foreign.example.invalid').send(body)).status).toBe(403);
+    expect(read).not.toHaveBeenCalled();
+    const before = await store.read();
+    const result = await request(server).post('/api/plg/workspace/query').set('Test-User', 'operator@example.invalid')
+      .set('Origin', config.origin).send(body);
+    expect(result.status).toBe(200); expect(result.headers['cache-control']).toBe('no-store');
+    expect(read).toHaveBeenCalledWith({ ...body, contactId: null }, expect.any(Number));
+    expect(await store.read()).toEqual(before);
+    expect((await request(server).post('/api/plg/workspace/query').set('Test-User', 'operator@example.invalid')
+      .set('Origin', config.origin).send({ after: 'a'.repeat(64) })).status).toBe(400);
+  });
   it('finishes the signed sync path before its legacy worker timeout with response margin', async () => {
     const started = Date.now();
     vi.spyOn(Date, 'now').mockReturnValue(started);
@@ -154,6 +183,22 @@ describe('Private PLG API boundaries', () => {
     expect(source).toHaveBeenCalledOnce();
     expect((await store.read()).contacts).toHaveLength(0);
     expect((await store.read()).deliveries).toHaveLength(0);
+  });
+  it('resolves source-page enrollment without depending on the current campaign page', async () => {
+    const contact = await store.transaction(state => enroll(state, input, 'Fixture', Date.now()));
+    const readAccounts = vi.fn(async () => ({ ...(await store.read()), contacts: [contact] }));
+    (store as any).accountStorage = async () => ({ readAccounts });
+    vi.spyOn(audienceSource, 'readOneAudience').mockResolvedValue({ rows: [
+      { accountId: input.accountId, identity: { name: 'Source' } }, { accountId: 'not-enrolled', identity: { name: 'Other' } },
+    ] } as any);
+    const before = await store.read();
+    const result = await request(app()).post('/api/plg/audience').set('Test-User', 'operator@example.invalid')
+      .set('Origin', config.origin).send({ agentId: 'agent_one' });
+    expect(result.status).toBe(200);
+    expect(readAccounts).toHaveBeenCalledWith([accountHash(input.accountId), accountHash('not-enrolled')]);
+    expect(result.body.rows.map((row: any) => row.campaignContactId)).toEqual([contact.id, null]);
+    expect(result.text).not.toContain(input.email);
+    expect(await store.read()).toEqual(before);
   });
   it('does not let a sync credential authorize delivery or enrollment', async () => {
     const timestamp = String(Date.now()),
