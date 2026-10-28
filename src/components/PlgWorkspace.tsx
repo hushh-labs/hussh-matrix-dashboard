@@ -32,6 +32,7 @@ import {
   type PlgTemplate,
   type PlgWorkspace as Workspace,
 } from '../lib/plg';
+import { journeyOutcomeCoverage } from '../lib/plg-outcomes';
 import { cn } from '../lib/utils';
 import { dashboardCard } from '../lib/theme';
 import { PlgAgentActivityPanel, type PlgActivityInspection } from './PlgAgentActivityPanel';
@@ -526,19 +527,25 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               the demonstration, copy and destination.
             </p>
             <div className="mt-4 flex flex-wrap gap-5">
-              {plgJourneyOptions(state).map(({ id: j, label }) => (
-                <label key={j} className="flex items-center gap-2 text-sm capitalize text-ink">
-                  <input
-                    type="checkbox"
-                    checked={state.ready[j] ?? false}
-                    disabled={!admin || busy}
-                    onChange={(e) =>
-                      void updateSettings({ ready: { ...state.ready, [j]: e.target.checked } })
-                    }
-                  />
-                  {label} task verified
-                </label>
-              ))}
+              {plgJourneyOptions(state).map(({ id: j, label }) => {
+                const outcome = journeyOutcomeCoverage(state.catalog, j);
+                return <div key={j} className="max-w-sm">
+                  <label className="flex items-center gap-2 text-sm text-ink">
+                    <input
+                      type="checkbox"
+                      checked={state.ready[j] ?? false}
+                      disabled={!admin || busy}
+                      onChange={(e) =>
+                        void updateSettings({ ready: { ...state.ready, [j]: e.target.checked } })
+                      }
+                    />
+                    {label} task verified
+                  </label>
+                  <p className="mt-1 text-xs text-muted">{outcome.supported
+                    ? `Outcome: ${outcome.label}. Behavioral follow-ups also require a complete, fresh observation.`
+                    : `Behavioral follow-ups held: ${outcome.label}.`}</p>
+                </div>;
+              })}
             </div>
           </div>
           <div className={cn(dashboardCard, 'flex flex-wrap items-end justify-between gap-4 p-5')}>

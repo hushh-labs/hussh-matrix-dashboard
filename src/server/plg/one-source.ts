@@ -4,6 +4,8 @@ import { DAY, eraseAccount, ingestEvent, PlgError, registerPlgCatalog } from './
 import { signValue } from './service';
 import type { PlgStore } from './store';
 import { oneProductionEndpoint } from '../one-scope.mjs';
+import { outcomeProofs, outcomeSupported, outcomeProofMatches } from '../../lib/plg-outcomes';
+export { outcomeSupported, outcomeProofMatches } from '../../lib/plg-outcomes';
 
 interface SourceAccount {
   accountId: string;
@@ -24,29 +26,6 @@ export function readCustomerReporting(value: any): PlgCustomerReportingProof {
   if (!value || value.scope !== 'production_registered_contacts' || typeof value.policyRevision !== 'string' || !/^[a-f0-9]{64}$/.test(value.policyRevision))
     throw unavailable();
   return { scope: value.scope, policyRevision: value.policyRevision };
-}
-
-// These are domain proof contracts, separate from client reports or SDK returns.
-const outcomeProofs: Record<string, string> = {
-  agent_personal_information: 'memory.confirmed_save.v1', agent_email: 'mail.provider_send.v1',
-  agent_calendar: 'calendar.provider_effect.v1', agent_kai: 'kai.confirmed_analysis_save.v1',
-  agent_kyc: 'kyc.provider_reply.v1', agent_nav: 'nav.owner_decision.v1',
-  agent_location: 'location.domain_effect.v1', agent_wallet: 'wallet.confirmed_card_save.v1',
-  agent_career: 'career.confirmed_resume_save.v1', agent_documents: 'documents.approved_share.v1',
-  agent_connected_systems: 'crm.provider_readback.v1', agent_one: 'one.distinct_domain_effects.v1',
-};
-
-export function outcomeSupported(catalog: PlgCatalog, agentId: string): boolean {
-  const agent = catalog.agents.find((a) => a.id === agentId);
-  return agent?.outcome ? agent.outcome.status === 'supported' :
-    Boolean(agent?.public && ['agent_personal_information', 'agent_email'].includes(agentId));
-}
-
-export function outcomeProofMatches(catalog: PlgCatalog, agentId: string, proof: unknown): boolean {
-  if (!outcomeSupported(catalog, agentId)) return proof == null;
-  return proof === outcomeProofs[agentId] ||
-    (proof === undefined && !catalog.agents.find((a) => a.id === agentId)?.outcome &&
-      ['agent_personal_information', 'agent_email'].includes(agentId));
 }
 
 export function readCatalog(value: any): PlgCatalog {
