@@ -15,6 +15,7 @@ import express from 'express';
 import request from 'supertest';
 import { registerPlgRoutes } from '../src/server/plg/routes';
 import * as sourceModule from '../src/server/plg/one-source';
+import { Webhook } from 'svix';
 
 const NOW = Date.parse('2026-10-29T00:00:00Z');
 const accountProof = (checkedAt: number) => ({ protocol: 2 as const, checkedAt,
@@ -392,13 +393,44 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
       historyAfter = result.storage!.report!.history.nextAfter;
     } while (historyAfter);
     expect(history.size).toBe(225);
-    for (let pass = 0; pass < 2; pass++) await expect(one.transaction(state => { eraseAccount(state, 'person', NOW); }))
-      .rejects.toThrow('cleanup');
-    await one.transaction(state => { eraseAccount(state, 'person', NOW); });
+    const source = vi.fn(async (_url: any, init: any) => {
+      const request = JSON.parse(init.body);
+      return Response.json({ version: 2, environment: 'production', retainedOnly: true, asOf: new Date(NOW).toISOString(),
+        customerReporting: { scope: 'production_registered_contacts', policyRevision: 'd'.repeat(64) },
+        catalog: { revision: 'c'.repeat(64), actions: [], agents: [{ id: 'agent_personal_information', label: 'Memory', public: true, available: true }] },
+        accounts: request.accounts.map((row: any) => ({ ...row, deleted: true, reportingEligible: false, tasks: [], activity: null, verified: [] })) });
+    });
+    const options = { url: 'https://api.hushh.ai/api/one/plg/snapshot', secret: 'test-source-key-more-than-thirty-two-characters' };
+    await expect(sourceModule.syncOneEvidence(root, options, source, () => NOW, undefined, NOW + 120_000, [accountHash('person')])).rejects.toThrow('cleanup');
+    expect((await one.read()).contacts).toHaveLength(0);
+    expect((await db.collection(`one_plg_generations/${'a'.repeat(64)}/one_plg_receipts`).get()).size).toBe(125);
+    // The ordinary source retry must drain bodies even though no contact remains
+    // to produce another deletion snapshot or subscription replay.
+    await sourceModule.syncOneEvidence(root, options, source, () => NOW, undefined, NOW + 120_000, [accountHash('person')]);
     for (const collection of ['one_plg_receipts', 'one_plg_keys', 'one_plg_bindings', 'one_plg_emails'])
       expect((await db.collection(`one_plg_generations/${'a'.repeat(64)}/${collection}`).get()).size).toBe(0);
     await expect(enrollOne(root)).rejects.toThrow('erased');
   }), 30_000);
+  it('recovers a lost-provider-response bounce by delivery tag after the enrolled address changes', async () => fixture(async root => {
+    const one = await enrollOne(root);
+    await one.transaction(state => { state.deliveries.push({ ...receipt(state, 'lost-provider-response', 'uncertain'), provider: 'resend' }); });
+    await one.transaction(state => { state.contacts[0].email = 'new-address@example.invalid'; });
+    const runtime: PlgRuntime = { enabled: true, deliveryEnabled: false, origin: 'https://metrics.example.invalid',
+      admins: new Set(), operators: new Set(), signingSecret: 'test-only-signing-over-thirty-two-characters', apiKey: '', from: '', replyTo: '',
+      webhookSecret: 'whsec_' + Buffer.from('test-only-callback-secret').toString('base64') };
+    const app = express(); app.use(express.json({ verify(req, _res, buffer) { (req as any).plgRawBody = buffer.toString(); } }));
+    registerPlgRoutes(app, false, new PlgService(root, runtime));
+    const event = JSON.stringify({ type: 'email.bounced', data: { email_id: 'accepted-after-lost-response',
+      to: ['person@example.invalid'], tags: { plg_delivery_id: 'lost-provider-response' } } });
+    const at = new Date(), id = 'msg_test-lost-response';
+    const result = await request(app).post('/integrations/plg/resend').set('Content-Type', 'application/json')
+      .set('svix-id', id).set('svix-timestamp', String(Math.floor(at.getTime() / 1000)))
+      .set('svix-signature', new Webhook(runtime.webhookSecret).sign(id, at, event)).send(event);
+    expect(result.status).toBe(200);
+    const state = await one.read();
+    expect(state.deliveries[0]).toMatchObject({ status: 'bounced', providerId: 'accepted-after-lost-response' });
+    expect(state.contacts[0]).toMatchObject({ email: 'new-address@example.invalid', suppressed: 'bounced' });
+  }));
 });
 
 describe.skipIf(!emulator)('explicit account storage migration', () => {

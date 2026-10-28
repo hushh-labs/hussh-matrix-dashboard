@@ -128,6 +128,9 @@ export async function syncOneEvidence(
   if (!endpoint) throw unavailable();
   if (options.secret.length < 32) throw unavailable();
   const accountStorage = await store.accountStorage?.();
+  // A committed erasure removes the contact before its bounded receipt cleanup
+  // finishes. Resume that work without requiring another source identity row.
+  if (accountStorage && accountHashes) await accountStorage.resumeCleanup(accountHashes, deadline, clock);
   const state = accountStorage && accountHashes ? await accountStorage.readAccounts(accountHashes) : await store.read();
   const selected = state.contacts.filter((c) => (!inspectionId || c.id === inspectionId) &&
     (!c.permission || (c.permission.enabled && c.permission.eligible && !c.suppressed)));

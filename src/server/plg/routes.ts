@@ -359,10 +359,14 @@ export function registerPlgRoutes(
       else {
         const data = (event as { data?: { email_id?: string; tags?: { plg_delivery_id?: string }; to?: string[] } })?.data;
         if (data?.email_id || data?.tags?.plg_delivery_id) {
-          try {
-            const receipt = await accounts.receipt(data.email_id ? { providerId: data.email_id } : { id: data.tags!.plg_delivery_id });
-            await receipt.transaction(state => applyDeliveryEvent(state, event, Date.now()));
-          } catch (error) { if (!(error instanceof PlgError && error.status === 404)) throw error; }
+          const lookup = async (reference: { id?: string; providerId?: string }) => {
+            try { return await accounts.receipt(reference); }
+            catch (error) { if (error instanceof PlgError && error.status === 404) return null; throw error; }
+          };
+          let receipt = data.email_id ? await lookup({ providerId: data.email_id }) : null;
+          const tag = data.tags?.plg_delivery_id;
+          if (!receipt && typeof tag === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(tag)) receipt = await lookup({ id: tag });
+          if (receipt) await receipt.transaction(state => applyDeliveryEvent(state, event, Date.now()));
         }
         if (Array.isArray(data?.to)) {
           if (data.to.length > 50) throw new PlgError(400, 'Delivery callback exceeds its recipient bound.');

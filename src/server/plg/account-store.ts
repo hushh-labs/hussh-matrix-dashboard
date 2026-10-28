@@ -41,6 +41,7 @@ export function receiptBindingKey(delivery: PlgDelivery) {
   return digest(delivery.rfcMessageId + '\n' + delivery.recipientHash);
 }
 const same = (left: unknown, right: unknown) => stableHash(left) === stableHash(right);
+const CLEANUP_PENDING = 'Account erasure cleanup is pending; acknowledgement is held.';
 interface MailFence { pending: number; lease?: { id: string; until: number } }
 export function needsMailReceipt(delivery: PlgDelivery) {
   return delivery.provider === 'google_workspace' && (['sending', 'uncertain'].includes(delivery.status) ||
@@ -104,6 +105,24 @@ export class AccountPlgStore implements PlgStore {
       }
       return state;
     }, { readOnly: true });
+  }
+  async resumeCleanup(hashes: string[], deadline: number, now = Date.now) {
+    if (this.hash || hashes.length > 25 || new Set(hashes).size !== hashes.length ||
+      hashes.some(hash => !/^[a-f0-9]{64}$/.test(hash))) throw new PlgError(400, 'Invalid cleanup selection.');
+    const pending = await this.db.runTransaction(async tx => {
+      await this.context(tx);
+      const docs = hashes.length ? await tx.getAll(...hashes.map(hash => this.db.doc(`${accountsPath(this.generation)}/${hash}`)),
+        { fieldMask: ['cleanupPending'] }) : [];
+      return docs.filter(doc => doc.get('cleanupPending') === true).map(doc => doc.id);
+    }, { readOnly: true });
+    let batches = 0;
+    for (const hash of pending) for (;;) {
+      if (++batches > 20 || now() + 5_000 >= deadline) throw new PlgError(409, CLEANUP_PENDING);
+      try { await this.account(hash).transaction(() => undefined); break; }
+      catch (error) {
+        if (!(error instanceof PlgError && error.status === 409 && error.message === CLEANUP_PENDING)) throw error;
+      }
+    }
   }
   async revocationAccounts() {
     return this.db.runTransaction(async tx => {
@@ -376,7 +395,7 @@ export class AccountPlgStore implements PlgStore {
         ...(cleanup ? { cleanupPending: true } : {}) });
       return { result, held: cleanup };
     });
-    if (outcome.held) throw new PlgError(409, 'Account erasure cleanup is pending; acknowledgement is held.');
+    if (outcome.held) throw new PlgError(409, CLEANUP_PENDING);
     return outcome.result;
   }
 }
