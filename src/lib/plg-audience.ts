@@ -1,13 +1,19 @@
 import type { PlgAudienceFilters, PlgAudiencePage } from './plg';
 
+export const audienceFilterScan = { maxPages: 160, budgetMs: 90_000 } as const;
+
 /** A filtered source page can be empty even when later pages have matches. */
 export async function findAudiencePage(
   load: (filters: PlgAudienceFilters, signal: AbortSignal) => Promise<PlgAudiencePage>,
   filters: PlgAudienceFilters,
   signal: AbortSignal,
-  progress: (scanned: number) => void = () => {},
+  progress: (scanned: number, page: PlgAudiencePage) => void = () => {},
   clock: () => number = Date.now,
+  options = { maxPages: 6, budgetMs: 20_000 },
 ) {
+  if (!Number.isInteger(options.maxPages) || options.maxPages < 1 || options.maxPages > 160 ||
+    !Number.isFinite(options.budgetMs) || options.budgetMs < 1 || options.budgetMs > 90_000)
+    throw new Error('Invalid people search budget.');
   const started = clock();
   const cursors = new Set<string>();
   let cursor = filters.cursor ?? null;
@@ -19,11 +25,11 @@ export async function findAudiencePage(
     signal.throwIfAborted();
     scanned += page.scanned;
     pages++;
-    progress(scanned);
-    if (page.rows.length || !page.nextCursor || pages >= 6 || clock() - started >= 20_000 ||
-      (filters.segment === 'all' && !filters.query.trim())) return { page, scanned, pages };
-    if (cursors.has(page.nextCursor) || page.nextCursor === cursor)
+    if (page.nextCursor && (cursors.has(page.nextCursor) || page.nextCursor === cursor))
       throw new Error('The people directory did not advance. Refresh and try again.');
+    progress(scanned, page);
+    if (page.rows.length || !page.nextCursor || pages >= options.maxPages || clock() - started >= options.budgetMs ||
+      (filters.segment === 'all' && !filters.query.trim())) return { page, scanned, pages };
     cursors.add(page.nextCursor);
     cursor = page.nextCursor;
   }

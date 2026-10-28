@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { PlgAudienceFilters, PlgAudiencePage, PlgState } from '../lib/plg';
 import { dashboardCard } from '../lib/theme';
 import { cn } from '../lib/utils';
-import { findAudiencePage, outcomeCoverage } from '../lib/plg-audience';
+import { audienceFilterScan, findAudiencePage, outcomeCoverage } from '../lib/plg-audience';
 
 const control = 'w-full rounded-xl border border-stroke bg-surface px-3 py-2.5 text-sm text-ink';
 const button = 'rounded-xl border border-stroke bg-surface px-4 py-2.5 text-sm font-semibold text-ink disabled:opacity-50';
@@ -27,20 +27,34 @@ export function PlgAudiencePanel({ state, load, openContact }: {
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
   const [scanned, setScanned] = useState(0);
+  const [paused, setPaused] = useState(false);
   const [includeTechnicalAgents, setIncludeTechnicalAgents] = useState(false);
   const sequence = useRef(0), controller = useRef<AbortController | null>(null);
+  const confirmed = useRef<{ request: number; page: PlgAudiencePage; scanned: number; start: string | null;
+    direction: 'reset' | 'next' | 'previous'; previous: string | null } | null>(null);
+  function display(record: NonNullable<typeof confirmed.current>) {
+    setData(record.page); setSourceCatalog(record.page.catalog); setCursor(record.start); setScanned(record.scanned); setDirty(false);
+    setHistory(before => record.direction === 'next' ? [...before, record.previous] : record.direction === 'previous' ? before.slice(0, -1) : []);
+  }
+  function pause() {
+    const request = sequence.current++;
+    controller.current?.abort(); setBusy(false); setPaused(true);
+    if (confirmed.current?.request === request) display(confirmed.current);
+  }
   async function read(next: string | null, direction: 'reset' | 'next' | 'previous' = 'reset') {
     const request = ++sequence.current;
     controller.current?.abort();
     const active = new AbortController();
     controller.current = active;
-    setBusy(true); setError(''); setData(null); setScanned(0);
+    confirmed.current = null;
+    setBusy(true); setError(''); setData(null); setScanned(0); setPaused(false);
     try {
       const { page: result, scanned: checked } = await findAudiencePage(load, { ...filters, cursor: next }, active.signal,
-        (count) => { if (request === sequence.current) setScanned(count); });
+        (count, page) => { if (request === sequence.current) {
+          setScanned(count); confirmed.current = { request, page, scanned: count, start: next, direction, previous: cursor };
+        } }, Date.now, audienceFilterScan);
       if (request !== sequence.current) return;
-      setData(result); setSourceCatalog(result.catalog); setCursor(next); setScanned(checked); setDirty(false);
-      setHistory((before) => direction === 'next' ? [...before, cursor] : direction === 'previous' ? before.slice(0, -1) : []);
+      display({ request, page: result, scanned: checked, start: next, direction, previous: cursor });
     } catch (e) {
       if (request === sequence.current && !active.signal.aborted) setError((e as Error).message);
     } finally { if (request === sequence.current) setBusy(false); }
@@ -50,7 +64,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
     return () => { sequence.current++; controller.current?.abort(); };
   }, [load]);
   function change(patch: Partial<PlgAudienceFilters>) {
-    sequence.current++; controller.current?.abort(); setBusy(false); setDirty(true); setError('');
+    sequence.current++; controller.current?.abort(); confirmed.current = null; setBusy(false); setDirty(true); setError(''); setPaused(false);
     setHistory([]); setCursor(null); setFilters((before) => ({ ...before, ...patch }));
   }
   function submit(event: FormEvent) { event.preventDefault(); void read(null); }
@@ -80,6 +94,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
           <option value={15}>15 minutes</option><option value={60}>1 hour</option><option value={240}>4 hours</option><option value={1440}>24 hours</option>
         </select></label>}
         <button className={cn(button, 'sm:col-span-2 lg:col-span-1')} disabled={busy} type="submit">{busy ? 'Loading people…' : 'Apply filters'}</button>
+        {busy && <button className={button} type="button" onClick={pause}>Pause search</button>}
         <button className={button} type="button" disabled={busy} onClick={() => change(defaults)}>Reset filters</button>
       </form>
       <label className="mt-4 flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={includeTechnicalAgents} onChange={(e) => setIncludeTechnicalAgents(e.target.checked)} />Include internal and unavailable agents</label>
@@ -93,6 +108,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
       </details>
       {error && <p role="alert" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">{error}</p>}
       {busy && <p role="status" className="mt-4 text-sm text-muted">{scanned ? `Searching more accounts… ${scanned} checked so far.` : 'Loading registered accounts…'}</p>}
+      {paused && <p role="status" className="mt-4 text-sm text-muted">Search paused. {data?.nextCursor ? 'Continue with the next source page below.' : 'Apply filters to start again.'}</p>}
     </div>
     {data && !dirty && <div className={cn(dashboardCard, 'min-w-0 p-5 sm:p-6')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
