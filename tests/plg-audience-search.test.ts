@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { findAudiencePage, outcomeCoverage } from '../src/lib/plg-audience';
+import { audienceFilterScan, findAudiencePage, outcomeCoverage } from '../src/lib/plg-audience';
 import type { PlgAudienceFilters, PlgAudiencePage } from '../src/lib/plg';
 
 const filters: PlgAudienceFilters = { agentId: 'agent_one', segment: 'failed', query: '', graceMinutes: 60 };
@@ -24,6 +24,12 @@ describe('Private people directory search', () => {
     expect(load).toHaveBeenCalledTimes(6);
     expect(result.page.nextCursor).toBe('6');
     expect(result.scanned).toBe(150);
+  });
+  it('continues a workspace filter beyond the first 150 unrelated accounts', async () => {
+    let calls = 0;
+    const load = vi.fn(async () => page(`page-${++calls}`, calls === 8));
+    const result = await findAudiencePage(load, filters, new AbortController().signal, undefined, Date.now, audienceFilterScan);
+    expect(result.pages).toBe(8); expect(result.scanned).toBe(200); expect(result.page.rows).toHaveLength(1);
   });
 
   it('returns an exhausted search only after the source actually ends', async () => {

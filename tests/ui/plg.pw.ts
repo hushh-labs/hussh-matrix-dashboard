@@ -19,7 +19,7 @@ const automationRuntime = { enabled: true, deliveryEnabled: false, origin: 'http
   webhookSecret: '', apiKey: '', from: 'Neelesh Meena <i-neelesh@hushh.ai>', replyTo: 'i-neelesh@hushh.ai' };
 
 async function mockPlg(page: Page, denied = false, withAgents = false,
-  audience?: (input: PlgAudienceFilters, result: PlgAudiencePage) => PlgAudiencePage, mailOwner = false,
+  audience?: (input: PlgAudienceFilters, result: PlgAudiencePage) => PlgAudiencePage | Promise<PlgAudiencePage>, mailOwner = false,
   automation?: { runtime?: Partial<PlgRuntime>; feedback?: PlgAutomationStatus['emailFeedback']; blockers?: string[] }) {
   const state = initialPlgState();
   if (withAgents) registerPlgCatalog(state, { revision: 'a'.repeat(64),
@@ -82,7 +82,7 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
           collectionStartedAt: null, firstAttemptAt: new Date(Date.now() - 7200000).toISOString(), lastObservedAt: new Date(Date.now() - 7200000).toISOString(), lastReturnedAt: null, lastFailureAt: null, lastActionId: 'agent:agent_one' },
         verified: { supported: input.agentId === 'agent_one', ...(input.agentId === 'agent_one' ? { proof: 'one.distinct_domain_effects.v1' } : {}), count: 0, lastAt: null, limited: false } }],
     };
-    if (pathname.endsWith('/audience') && audience) result = audience(input, result as PlgAudiencePage);
+    if (pathname.endsWith('/audience') && audience) result = await audience(input, result as PlgAudiencePage);
     return route.fulfill({ json: result });
   });
   return state;
@@ -401,13 +401,57 @@ test('keeps a bounded empty search resumable instead of claiming a global zero',
   await page.getByLabel('Search name, email or phone').fill('Synthetic filter');
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expect(page.getByText('No matches in the accounts checked so far.', { exact: false })).toBeVisible();
-  expect(cursors).toEqual([null, 'scan-1', 'scan-2', 'scan-3', 'scan-4', 'scan-5']);
-  await expect(page.getByText('Checked 150 source accounts', { exact: false })).toBeVisible();
+  expect(cursors).toHaveLength(160); expect(cursors[0]).toBeNull(); expect(cursors.at(-1)).toBe('scan-159');
+  await expect(page.getByText('Checked 4000 source accounts', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Next source page' })).toBeEnabled();
   await page.getByRole('button', { name: 'Next source page' }).click();
   await expect(page.getByText('No matches in the accounts checked so far.', { exact: false })).toBeVisible();
-  expect(cursors.at(6)).toBe('scan-6');
+  expect(cursors.at(160)).toBe('scan-160');
   await expect(page.getByRole('button', { name: 'Previous source page' })).toBeEnabled();
+});
+
+test('finds a filtered account beyond the first 150 source accounts without another click', async ({ page }) => {
+  let match: PlgAudiencePage['rows'][number];
+  await mockPlg(page, false, false, (input, result) => {
+    if (input.segment !== 'failed') { match = result.rows[0]; return result; }
+    const index = input.cursor ? Number(input.cursor.slice(5)) : 0;
+    return { ...result, scanned: 25, nextCursor: index < 7 ? `late-${index + 1}` : null,
+      rows: index === 7 ? [{ ...match, accountId: 'synthetic-late-match',
+        identity: { ...match.identity, name: 'Late filtered account' },
+        activity: { ...match.activity, counts: { ...match.activity.counts, failed: 1 } } }] : [] };
+  });
+  await page.goto('/plg');
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  await page.getByLabel('Task status').selectOption('failed');
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect(page.getByText('Late filtered account', { exact: true })).toBeVisible();
+  await expect(page.getByText('Checked 200 source accounts', { exact: false })).toBeVisible();
+  await mkdir('.codex/artifacts/ui', { recursive: true });
+  await page.screenshot({ path: '.codex/artifacts/ui/plg-deep-filter-search.png', fullPage: false });
+});
+
+test('pauses a filtered search at its confirmed cursor and ignores its late response', async ({ page }) => {
+  let release: () => void = () => {}, ready: () => void = () => {};
+  const waiting = new Promise<void>(resolve => { ready = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let first = true;
+  await mockPlg(page, false, false, async (input, result) => {
+    if (input.segment !== 'failed') return result;
+    const index = input.cursor ? Number(input.cursor.slice(5)) : 0;
+    if (index === 2 && first) { first = false; ready(); await held; }
+    return { ...result, scanned: 25, rows: [], nextCursor: index < 3 ? `part-${index + 1}` : null };
+  });
+  await page.goto('/plg');
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  await page.getByLabel('Task status').selectOption('failed');
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await waiting;
+  await page.getByRole('button', { name: 'Pause search', exact: true }).click(); release();
+  await expect(page.getByText('Search paused.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Checked 50 source accounts', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Next source page', exact: true }).click();
+  await expect(page.getByText('Reached the end of this directory traversal.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next source page' })).toBeDisabled();
 });
 
 test('edits content, verifies journeys and leaves immature cohorts unavailable', async ({ page }) => {
