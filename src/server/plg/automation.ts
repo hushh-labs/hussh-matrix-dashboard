@@ -109,6 +109,12 @@ export async function runAutomationCycle(service: PlgService, sync: PlgSync, now
     const delivered = await service.run('Automatic cycle', { deadline: started + CYCLE_BUDGET_MS, leaseId: id });
     return await finish(delivered.uncertain ? 'blocked' : 'completed', delivered.uncertain ? 'Delivery confirmation needs reconciliation; no automatic retry' : null, { accounts, ...delivered });
   } catch {
+    // A product-source failure must not starve independent mailbox stop reports.
+    // Keep the cycle failed and reserve time to commit its truthful status.
+    const feedbackDeadline = Math.min(started + CYCLE_BUDGET_MS - 20_000, now() + 45_000);
+    if (feedbackDeadline - now() >= 5_000) {
+      try { await service.reconcileMail(feedbackDeadline); } catch { /* Status remains failed; sending stays blocked. */ }
+    }
     // A later store failure can follow an earlier provider acceptance. Unknown
     // cycle totals must never overwrite the private delivery ledger with zeros.
     await finish('failed', 'Source sync or cycle processing did not confirm success; inspect delivery history for accepted messages', { accounts, sent: null, uncertain: null });

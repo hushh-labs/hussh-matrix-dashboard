@@ -371,8 +371,10 @@ describe('Server-owned automatic follow-up cycle', () => {
     const store = await fixture();
     const transport = vi.fn(async () => 'provider-id');
     const service = new PlgService(store, runtime, () => NOW, transport);
+    const feedback = vi.spyOn(service, 'reconcileMail').mockResolvedValue(undefined);
     await expect(runAutomationCycle(service, async () => { throw new Error('PRIVATE provider detail'); }, () => NOW)).rejects.toThrow('did not confirm');
     expect(transport).not.toHaveBeenCalled();
+    expect(feedback).toHaveBeenCalledOnce();
     const state = await store.read();
     expect(state.deliveries).toHaveLength(0);
     expect(state.automation?.lastCycle?.status).toBe('failed');
