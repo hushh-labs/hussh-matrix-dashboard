@@ -109,12 +109,14 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
       contact.firstValueAt = new Date(NOW + 1000).toISOString();
       contact.lastValueAt = new Date(NOW + DAY).toISOString();
       contact.valueDays = [contact.firstValueAt.slice(0, 10), contact.lastValueAt.slice(0, 10)];
+      contact.activity = { enabled: true, mode: 'best_effort', limited: false,
+        epoch: 'e'.repeat(64), startedAt: new Date(NOW).toISOString(), agents: [] };
       const welcome = { ...receipt(state, 'canonical-welcome'), templateId: 'agent_one-welcome',
         key: `${contact.id}:agent_one-welcome:1` };
       state.deliveries.push(welcome);
       ingestEvent(state, { eventId: 'canonical-complete', accountId: id, journey: 'agent_one', environment: 'production',
         internal: false, kind: 'observation_completed', verified: true, permissionGeneration: firstGrant,
-        occurredAt: new Date(now).toISOString() }, now);
+        activityEpoch: 'e'.repeat(64), occurredAt: new Date(now).toISOString() }, now);
     });
     const before = await member.read(), oldContact = before.contacts[0];
     expect(oldContact).toMatchObject({ journey: 'agent_one', observationPermissionGeneration: firstGrant });
@@ -122,12 +124,17 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     await member.transaction(state => applySubscription(state, { ...change, revision: 2 }, now));
     const sameGrant = await member.read();
     expect(candidate(sameGrant, sameGrant.contacts[0], now)).toMatchObject({ eligible: true, step: 'repeat' });
+    await member.transaction(state => { state.contacts[0].activity!.epoch = 'f'.repeat(64); });
+    const nextEpoch = await member.read();
+    expect(nextEpoch.contacts[0].observationEpoch).toBe('e'.repeat(64));
+    expect(candidate(nextEpoch, nextEpoch.contacts[0], now)).toMatchObject({ eligible: true, step: 'newsletter' });
     await member.transaction(state => applySubscription(state, { ...change, revision: 3, generation: nextGrant,
       consentAt: new Date(now).toISOString(), chosenAt: new Date(now).toISOString() }, now));
     const after = await member.read(), contact = after.contacts[0];
     expect(contact.firstValueAt).toBe(oldContact.firstValueAt);
     expect(contact.observationAt).toBeUndefined();
     expect(contact.observationPermissionGeneration).toBeUndefined();
+    expect(contact.observationEpoch).toBeUndefined();
     expect(after.deliveries).toEqual(before.deliveries);
     expect(candidate(after, contact, now)).toMatchObject({ eligible: true, step: 'newsletter' });
     const claim = db.doc(`one_plg_generations/${'a'.repeat(64)}/one_plg_keys/${digest('delivery\n' + before.deliveries[0].key)}`);

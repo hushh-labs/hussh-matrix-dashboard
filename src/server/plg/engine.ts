@@ -329,14 +329,23 @@ export function ingestEvent(state: PlgState, input: Record<string, unknown>, now
       !Number.isFinite(Date.parse(c.consentAt)) || at < Date.parse(c.consentAt) ||
       input.permissionGeneration !== c.permission.generation))
     throw new PlgError(400, 'A complete observation must match the current One email permission.');
+  if (kind === 'observation_completed' && c.permission &&
+    (typeof input.activityEpoch !== 'string' || !/^[a-f0-9]{64}$/.test(input.activityEpoch) ||
+      !c.activity?.enabled || input.activityEpoch !== c.activity.epoch ||
+      !Number.isFinite(Date.parse(c.activity.startedAt ?? '')) || at < Date.parse(c.activity.startedAt!)))
+    throw new PlgError(400, 'A complete observation must match the current One capture epoch.');
   if (kind === 'task_completed' && !['memory', 'mail'].includes(c.journey))
     throw new PlgError(400, 'This agent has no verified outcome adapter.');
   c.telemetryAt = iso(Math.max(at, Date.parse(c.telemetryAt ?? '1970-01-01')));
   if (kind === 'observation_completed') {
-    const previous = !c.permission || c.observationPermissionGeneration === c.permission.generation
+    const previous = !c.permission || (c.observationPermissionGeneration === c.permission.generation &&
+      c.observationEpoch === c.activity?.epoch)
       ? Date.parse(c.observationAt ?? '1970-01-01') : 0;
     c.observationAt = iso(Math.max(at, previous));
-    if (c.permission) c.observationPermissionGeneration = c.permission.generation;
+    if (c.permission) {
+      c.observationPermissionGeneration = c.permission.generation;
+      c.observationEpoch = c.activity!.epoch!;
+    }
   }
   if (kind === 'setup_started') c.setupAt = iso(at);
   if (kind === 'task_failed') c.failedAt = iso(at);
@@ -498,7 +507,11 @@ export function candidateFromPolicy(
   // per-account observation before inferring the absence of a completed task.
   const freshObservation = age(c.observationAt, now) <= DAY &&
     (!c.permission || (c.observationPermissionGeneration === c.permission.generation &&
-      Boolean(c.consentAt) && Date.parse(c.observationAt!) >= Date.parse(c.consentAt!)));
+      Boolean(c.consentAt) && Date.parse(c.observationAt!) >= Date.parse(c.consentAt!) &&
+      c.activity?.enabled === true && typeof c.observationEpoch === 'string' &&
+      /^[a-f0-9]{64}$/.test(c.observationEpoch) && c.observationEpoch === c.activity.epoch &&
+      Number.isFinite(Date.parse(c.activity.startedAt ?? '')) &&
+      Date.parse(c.observationAt!) >= Date.parse(c.activity.startedAt!)));
   if (policy.unresolved)
     return stop('Delivery confirmation pending; automatic follow-up blocked');
   if (policy.latestPromotions.some((at) => age(at, now) < DAY))

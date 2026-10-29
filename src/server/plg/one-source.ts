@@ -315,7 +315,14 @@ export async function syncOneEvidence(
       }
       if (!row.reportingEligible) continue;
       if (inspectionId) continue;
-      if (row.activity) contact.activity = row.activity;
+      if (row.activity) {
+        if (contact.permission && contact.observationEpoch !== row.activity.epoch) {
+          delete contact.observationAt;
+          delete contact.observationPermissionGeneration;
+          delete contact.observationEpoch;
+        }
+        contact.activity = row.activity;
+      }
       // The snapshot contains positive proof only. Its empty result is not an
       // observation of inactivity. Keep the routing cache bounded and bind it
       // to this permission generation so later opt-ins cannot reuse old proof.

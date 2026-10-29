@@ -159,6 +159,7 @@ export function applySubscription(state: PlgState, change: SubscriptionChange, n
     // Keep historical domain outcomes, suppressions and permanent delivery claims.
     delete contact.observationAt;
     delete contact.observationPermissionGeneration;
+    delete contact.observationEpoch;
     delete contact.routingEvidence;
   }
   contact.frequency = change.frequency!;
