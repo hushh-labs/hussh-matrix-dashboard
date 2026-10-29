@@ -144,6 +144,8 @@ export interface PlgContact {
   telemetryAt: string | null;
   /** A complete observation is separate from a single successful task. */
   observationAt?: string | null;
+  /** Canonical subscribers require a complete check under this exact email grant. */
+  observationPermissionGeneration?: string;
   activity?: Omit<PlgActivity, 'rollups'> & { agents: PlgAgentActivity[] };
   /** Recent positive domain outcomes, bound to the permission generation that was read. */
   routingEvidence?: {

@@ -154,6 +154,13 @@ export function applySubscription(state: PlgState, change: SubscriptionChange, n
     contact.email = change.email!;
     contact.name = change.name!;
   }
+  if (contact.permission?.generation !== change.generation) {
+    // A new opt-in cannot inherit a previous grant's completeness attestation.
+    // Keep historical domain outcomes, suppressions and permanent delivery claims.
+    delete contact.observationAt;
+    delete contact.observationPermissionGeneration;
+    delete contact.routingEvidence;
+  }
   contact.frequency = change.frequency!;
   contact.consentAt = change.enabled ? change.consentAt! : null;
   contact.consentSource = 'One email updates preference v1';

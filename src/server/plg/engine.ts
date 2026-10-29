@@ -324,11 +324,20 @@ export function ingestEvent(state: PlgState, input: Record<string, unknown>, now
   ]);
   if (kind === 'observation_completed' && input.verified !== true)
     throw new PlgError(400, 'An observation requires a verified complete product check.');
+  if (kind === 'observation_completed' && c.permission &&
+    (!c.permission.enabled || !c.permission.eligible || !c.consentAt ||
+      !Number.isFinite(Date.parse(c.consentAt)) || at < Date.parse(c.consentAt) ||
+      input.permissionGeneration !== c.permission.generation))
+    throw new PlgError(400, 'A complete observation must match the current One email permission.');
   if (kind === 'task_completed' && !['memory', 'mail'].includes(c.journey))
     throw new PlgError(400, 'This agent has no verified outcome adapter.');
   c.telemetryAt = iso(Math.max(at, Date.parse(c.telemetryAt ?? '1970-01-01')));
-  if (kind === 'observation_completed')
-    c.observationAt = iso(Math.max(at, Date.parse(c.observationAt ?? '1970-01-01')));
+  if (kind === 'observation_completed') {
+    const previous = !c.permission || c.observationPermissionGeneration === c.permission.generation
+      ? Date.parse(c.observationAt ?? '1970-01-01') : 0;
+    c.observationAt = iso(Math.max(at, previous));
+    if (c.permission) c.observationPermissionGeneration = c.permission.generation;
+  }
   if (kind === 'setup_started') c.setupAt = iso(at);
   if (kind === 'task_failed') c.failedAt = iso(at);
   if (kind === 'help_requested') c.supportOpen = true;
@@ -487,7 +496,9 @@ export function candidateFromPolicy(
   if (c.frequency === 'updates') return stop('Product updates only; lifecycle messages disabled');
   // An observed activity is not an ongoing feed-health guarantee. Require a fresh
   // per-account observation before inferring the absence of a completed task.
-  const freshObservation = age(c.observationAt, now) <= DAY;
+  const freshObservation = age(c.observationAt, now) <= DAY &&
+    (!c.permission || (c.observationPermissionGeneration === c.permission.generation &&
+      Boolean(c.consentAt) && Date.parse(c.observationAt!) >= Date.parse(c.consentAt!)));
   if (policy.unresolved)
     return stop('Delivery confirmation pending; automatic follow-up blocked');
   if (policy.latestPromotions.some((at) => age(at, now) < DAY))
