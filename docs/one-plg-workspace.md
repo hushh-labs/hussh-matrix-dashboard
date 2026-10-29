@@ -309,6 +309,16 @@ Neutral welcome messages and explicitly subscribed newsletters can run while
 activity is unknown; they must not claim the user was inactive. Behavioral
 reminders remain blocked until the product observation is complete and fresh.
 
+For a canonical One subscriber, a complete-observation event must also include
+`permissionGeneration` matching the current email grant and occur on or after
+its consent timestamp. Missing, revoked or previous grants are rejected before
+any event is persisted. Explicit re-opt-in invalidates the old completeness
+attestation and contextual routing cache; frequency-only revisions keep them.
+Historical domain outcomes, suppressions and permanent delivery claims remain.
+Legacy observations without a grant binding cannot authorize behavioral reminders
+for canonical subscribers. The retained snapshot remains positive-only and does
+not itself issue these complete-observation events.
+
 For event requests, set `X-PLG-Timestamp` to Unix milliseconds and
 `X-PLG-Signature` to the hexadecimal HMAC-SHA256 of:
 

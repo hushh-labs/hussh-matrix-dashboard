@@ -97,7 +97,7 @@ jobs:
           assert(cases.length >= 17 && cases.every(test => test.status === 'passed'), 'Every real storage case must run and pass; skipped emulator coverage fails this job.');
           const accounts = report.testResults.flatMap(file => file.assertionResults)
             .filter(test => /account Firestore integration|explicit account storage migration/.test(test.fullName));
-          assert(accounts.length >= 23 && accounts.every(test => test.status === 'passed'), 'Every account storage, reporting, fair-cycle and migration case must run and pass.');
+          assert(accounts.length >= 24 && accounts.every(test => test.status === 'passed'), 'Every account storage, reporting, fair-cycle, permission fence and migration case must run and pass.');
           console.log(`${cases.length + accounts.length} native Firestore storage cases passed on isolated demo projects.`);
           NODE
   verify-plg-infrastructure:

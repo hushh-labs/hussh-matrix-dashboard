@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Firestore } from '@google-cloud/firestore';
 import { randomUUID } from 'node:crypto';
 import type { PlgDelivery, PlgState } from '../src/lib/plg';
-import { accountHash, candidate, enroll, eraseAccount, initialPlgState, metrics, registerPlgCatalog } from '../src/server/plg/engine';
+import { accountHash, candidate, DAY, enroll, eraseAccount, ingestEvent, initialPlgState, metrics, registerPlgCatalog } from '../src/server/plg/engine';
 import { digest, hydrateAccount, sealAccount, settings } from '../src/server/plg/account-state';
 import { AccountPlgStore } from '../src/server/plg/account-store';
 import { PLG_LEGACY_PATH, PLG_STORAGE_AUTHORITY, PlgFirestoreStorage, PlgStorageMigration } from '../src/server/plg/firestore-storage';
@@ -12,7 +12,7 @@ import { PlgService, signValue, type PlgRuntime } from '../src/server/plg/servic
 import { runAutomationCycle } from '../src/server/plg/automation';
 import { GoogleMail, GoogleMailUnattempted } from '../src/server/plg/google-mail';
 import { FirestoreMailControl, MAIL_OWNER } from '../src/server/plg/google-mail-store';
-import { OneSubscriptions } from '../src/server/plg/one-subscriptions';
+import { applySubscription, OneSubscriptions } from '../src/server/plg/one-subscriptions';
 import express from 'express';
 import request from 'supertest';
 import { registerPlgRoutes } from '../src/server/plg/routes';
@@ -87,6 +87,57 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     await store.transaction(state => Object.assign(state, stateFor(id)));
     return store;
   };
+  it('persists canonical observation grant fences through account reload and renewal without losing a delivery claim', async () => fixture(async (root, db) => {
+    const id = 'canonical-behavior-1', firstGrant = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816';
+    const nextGrant = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816', now = NOW + 3 * DAY;
+    await root.transaction(state => {
+      registerPlgCatalog(state, { revision: 'c'.repeat(64), actions: [], agents: [{ id: 'agent_one', label: 'One', public: true, available: true,
+        outcome: { status: 'supported', proof: 'one.distinct_domain_effects.v1', label: 'Confirmed effect', reason: 'Positive domain receipts only.' } }] });
+      state.ready.agent_one = true;
+      state.templates.filter(template => template.journey === 'agent_one').forEach(template => { template.published = true; });
+      state.customerReporting!.checkedAt = new Date(now).toISOString();
+    });
+    const member = root.account(accountHash(id));
+    const change = { accountHash: `sha256:${accountHash(id)}`, revision: 1, checkedAt: new Date(now).toISOString(),
+      erased: false, enabled: true, eligible: true, generation: firstGrant, frequency: 'weekly' as const,
+      consentAt: new Date(NOW).toISOString(), chosenAt: new Date(NOW).toISOString(), accountId: id,
+      email: 'canonical@example.invalid', name: 'Synthetic', cohort: 'existing' as const };
+    await member.transaction(state => {
+      applySubscription(state, change, NOW);
+      const contact = state.contacts[0];
+      contact.customerReporting = { ...state.customerReporting!, eligible: true };
+      contact.firstValueAt = new Date(NOW + 1000).toISOString();
+      contact.lastValueAt = new Date(NOW + DAY).toISOString();
+      contact.valueDays = [contact.firstValueAt.slice(0, 10), contact.lastValueAt.slice(0, 10)];
+      const welcome = { ...receipt(state, 'canonical-welcome'), templateId: 'agent_one-welcome',
+        key: `${contact.id}:agent_one-welcome:1` };
+      state.deliveries.push(welcome);
+      ingestEvent(state, { eventId: 'canonical-complete', accountId: id, journey: 'agent_one', environment: 'production',
+        internal: false, kind: 'observation_completed', verified: true, permissionGeneration: firstGrant,
+        occurredAt: new Date(now).toISOString() }, now);
+    });
+    const before = await member.read(), oldContact = before.contacts[0];
+    expect(oldContact).toMatchObject({ journey: 'agent_one', observationPermissionGeneration: firstGrant });
+    expect(candidate(before, oldContact, now)).toMatchObject({ eligible: true, step: 'repeat' });
+    await member.transaction(state => applySubscription(state, { ...change, revision: 2 }, now));
+    const sameGrant = await member.read();
+    expect(candidate(sameGrant, sameGrant.contacts[0], now)).toMatchObject({ eligible: true, step: 'repeat' });
+    await member.transaction(state => applySubscription(state, { ...change, revision: 3, generation: nextGrant,
+      consentAt: new Date(now).toISOString(), chosenAt: new Date(now).toISOString() }, now));
+    const after = await member.read(), contact = after.contacts[0];
+    expect(contact.firstValueAt).toBe(oldContact.firstValueAt);
+    expect(contact.observationAt).toBeUndefined();
+    expect(contact.observationPermissionGeneration).toBeUndefined();
+    expect(after.deliveries).toEqual(before.deliveries);
+    expect(candidate(after, contact, now)).toMatchObject({ eligible: true, step: 'newsletter' });
+    const claim = db.doc(`one_plg_generations/${'a'.repeat(64)}/one_plg_keys/${digest('delivery\n' + before.deliveries[0].key)}`);
+    expect((await claim.get()).get('deliveryId')).toBe('canonical-welcome');
+    await expect(member.transaction(state => ingestEvent(state, { eventId: 'delayed-old-complete', accountId: id,
+      journey: 'agent_one', environment: 'production', internal: false, kind: 'observation_completed', verified: true,
+      permissionGeneration: firstGrant, occurredAt: new Date(now).toISOString() }, now)))
+      .rejects.toThrow('current One email permission');
+    expect((await member.read()).eventIds).toEqual(after.eventIds);
+  }), 15_000);
   it('isolates accounts, enforces a unique email and rejects cross-account erasure', async () => fixture(async root => {
     const one = await enrollOne(root), two = await enrollOne(root, 'second');
     await expect(two.transaction(state => { state.contacts[0].email = 'person@example.invalid'; })).rejects.toThrow('already enrolled');
