@@ -21,6 +21,8 @@ export interface MailControl {
     recovery?: { after: number; upper: string };
   };
   feedbackLease?: { id: string; until: number };
+  /** Mailbox-wide definite rejection; never a customer delivery receipt. */
+  sendBackoff?: { version: string; generation: number; status: 401 | 403 | 429; until: number; failures: number };
   tests: MailTest[];
   attempts: { id: string; at: number }[];
 }
@@ -32,7 +34,7 @@ export interface MailControlStore {
 /** Deliberately separate from one_plg_pilot/state: previews cannot enroll or measure anyone. */
 export class FirestoreMailControl implements MailControlStore {
   private db: Firestore;
-  constructor(projectId: string, databaseId: string) { this.db = new Firestore({ projectId, databaseId }); }
+  constructor(projectId: string, databaseId: string, db?: Firestore) { this.db = db ?? new Firestore({ projectId, databaseId }); }
   async read() {
     const doc = await this.db.doc('one_plg_mail/control').get();
     return doc.exists ? JSON.parse(doc.get('payload')) as MailControl : emptyMailControl();
