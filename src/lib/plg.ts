@@ -146,6 +146,8 @@ export interface PlgContact {
   observationAt?: string | null;
   /** Canonical subscribers require a complete check under this exact email grant. */
   observationPermissionGeneration?: string;
+  /** Completeness applies only to the current signed capture generation. */
+  observationEpoch?: string;
   activity?: Omit<PlgActivity, 'rollups'> & { agents: PlgAgentActivity[] };
   /** Recent positive domain outcomes, bound to the permission generation that was read. */
   routingEvidence?: {

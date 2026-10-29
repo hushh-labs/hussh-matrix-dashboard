@@ -32,6 +32,7 @@ async function fixture() {
     secret: 'test-only-canonical-subscription-key-over-32-characters' };
   const snapshot = { url: 'https://api.hushh.ai/api/one/plg/snapshot', secret: 'test-only-canonical-source-key-over-32-characters' };
   let revision = 1, grant = generation, consentAt = new Date(START).toISOString();
+  let captureEpoch = 'e'.repeat(64), captureStartedAt = START;
   const checks: Record<string, unknown>[] = [];
   const source = new OneSubscriptions(subscriptions, (async (url, init) => {
     const purpose = String(url).split('/').at(-1)!;
@@ -68,7 +69,7 @@ async function fixture() {
         asOf: new Date(now).toISOString(),
         customerReporting: { scope: 'production_registered_contacts', policyRevision: 'd'.repeat(64) },
         accounts: requested.map((row: any) => ({ ...row, deleted: false, reportingEligible: true, tasks: [],
-          activity: { enabled: true, mode: 'best_effort', limited: false, startedAt: new Date(START).toISOString(), epoch: 'e'.repeat(64), rollups: [] },
+          activity: { enabled: true, mode: 'best_effort', limited: false, startedAt: new Date(captureStartedAt).toISOString(), epoch: captureEpoch, rollups: [] },
           verified: agentId ? [{ agentId, proof: outcomeProofs[agentId], count: firstAt === lastAt ? 1 : 2,
             firstAt: first, lastAt: last, days: [...new Set([first.slice(0, 10), last.slice(0, 10)])] }] : [] })) });
     }) as typeof fetch, clock);
@@ -86,6 +87,7 @@ async function fixture() {
     advance: (delta: number) => { now += delta; },
     renew: () => { revision++; grant = renewed; consentAt = new Date(now).toISOString(); },
     revise: () => { revision++; },
+    resetCapture: () => { captureEpoch = 'f'.repeat(64); captureStartedAt = now; },
   };
 }
 
@@ -124,7 +126,7 @@ describe('canonical One enrollment to contextual delivery', () => {
     await f.sync('agent_one', START + 1000, START + DAY);
     await f.store.transaction(state => ingestEvent(state, { eventId: 'complete-old-grant', accountId,
       journey: 'agent_one', environment: 'production', internal: false, kind: 'observation_completed',
-      verified: true, occurredAt: new Date(f.clock() - 1000).toISOString(), permissionGeneration: generation }, f.clock()));
+      verified: true, occurredAt: new Date(f.clock() - 1000).toISOString(), permissionGeneration: generation, activityEpoch: 'e'.repeat(64) }, f.clock()));
     const before = await f.store.read(), previous = before.contacts[0];
     expect(candidate(before, previous, f.clock())).toMatchObject({ eligible: true, step: 'repeat' });
     f.renew(); await f.sync();
@@ -151,7 +153,7 @@ describe('canonical One enrollment to contextual delivery', () => {
     await f.sync('agent_one', START + 1000, START + DAY);
     await f.store.transaction(state => ingestEvent(state, { eventId: 'current-observation', accountId,
       journey: 'agent_one', environment: 'production', internal: false, kind: 'observation_completed', verified: true,
-      occurredAt: new Date(f.clock()).toISOString(), permissionGeneration: generation }, f.clock()));
+      occurredAt: new Date(f.clock()).toISOString(), permissionGeneration: generation, activityEpoch: 'e'.repeat(64) }, f.clock()));
     f.revise(); await f.sync();
     const state = await f.store.read(), contact = state.contacts[0];
     expect(contact.permission).toMatchObject({ generation, revision: 2 });
@@ -161,7 +163,38 @@ describe('canonical One enrollment to contextual delivery', () => {
     contact.observationAt = new Date(f.clock() + 1000).toISOString();
     ingestEvent(state, { eventId: 'bound-replacement', accountId, journey: 'agent_one', environment: 'production',
       internal: false, kind: 'observation_completed', verified: true, permissionGeneration: generation,
-      occurredAt: new Date(f.clock()).toISOString() }, f.clock());
+      activityEpoch: 'e'.repeat(64), occurredAt: new Date(f.clock()).toISOString() }, f.clock());
     expect(contact.observationAt).toBe(new Date(f.clock()).toISOString());
+  });
+
+  it.each(['missing', 'old', 'before_start'] as const)('rejects a complete check outside the current capture epoch: %s', async invalid => {
+    const f = await fixture(); f.advance(3 * DAY); f.resetCapture(); await f.sync();
+    const before = await f.store.read();
+    await expect(f.store.transaction(state => ingestEvent(state, { eventId: `epoch-${invalid}`, accountId,
+      journey: 'agent_one', environment: 'production', internal: false, kind: 'observation_completed',
+      verified: true, permissionGeneration: generation,
+      occurredAt: new Date(f.clock() - (invalid === 'before_start' ? 1 : 0)).toISOString(),
+      ...(invalid === 'missing' ? {} : { activityEpoch: (invalid === 'old' ? 'e' : 'f').repeat(64) }),
+    }, f.clock()))).rejects.toThrow('current One capture epoch');
+    expect(await f.store.read()).toEqual(before);
+  });
+
+  it('invalidates completeness when the current capture epoch changes without erasing history or permission', async () => {
+    const f = await fixture(); f.advance(3 * DAY);
+    await f.sync('agent_one', START + 1000, START + DAY);
+    await f.store.transaction(state => ingestEvent(state, { eventId: 'before-epoch-reset', accountId,
+      journey: 'agent_one', environment: 'production', internal: false, kind: 'observation_completed',
+      verified: true, permissionGeneration: generation, activityEpoch: 'e'.repeat(64),
+      occurredAt: new Date(f.clock()).toISOString() }, f.clock()));
+    const before = await f.store.read();
+    expect(candidate(before, before.contacts[0], f.clock())).toMatchObject({ eligible: true, step: 'repeat' });
+    f.advance(1000); f.resetCapture(); await f.sync();
+    const after = await f.store.read(), contact = after.contacts[0];
+    expect(contact.permission).toMatchObject({ generation, revision: 1, enabled: true, eligible: true });
+    expect(contact.firstValueAt).toBe(before.contacts[0].firstValueAt);
+    expect(after.deliveries).toEqual(before.deliveries);
+    expect(contact.observationAt).toBeUndefined();
+    expect(contact.observationEpoch).toBeUndefined();
+    expect(candidate(after, contact, f.clock())).toMatchObject({ eligible: true, step: 'newsletter' });
   });
 });
