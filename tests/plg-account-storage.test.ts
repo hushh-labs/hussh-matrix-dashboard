@@ -93,9 +93,11 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     const nextGrant = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816', now = NOW + 3 * DAY;
     await root.transaction(state => {
       registerPlgCatalog(state, { revision: 'c'.repeat(64), actions: [], agents: [{ id: 'agent_one', label: 'One', public: true, available: true,
-        outcome: { status: 'supported', proof: 'one.distinct_domain_effects.v1', label: 'Confirmed effect', reason: 'Positive domain receipts only.' } }] });
-      state.ready.agent_one = true;
-      state.templates.filter(template => template.journey === 'agent_one').forEach(template => { template.published = true; });
+        outcome: { status: 'supported', proof: 'one.distinct_domain_effects.v1', label: 'Confirmed effect', reason: 'Positive domain receipts only.' } },
+        { id: 'agent_personal_information', label: 'Memory', public: true, available: true,
+          outcome: { status: 'supported', proof: outcomeProofs.agent_personal_information, label: 'Confirmed save', reason: 'Positive domain receipts only.' } }] });
+      state.ready.agent_one = state.ready.memory = true;
+      state.templates.filter(template => ['agent_one', 'memory'].includes(template.journey)).forEach(template => { template.published = true; });
       state.customerReporting!.checkedAt = new Date(now).toISOString();
     });
     const member = root.account(accountHash(id));
@@ -114,7 +116,9 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
         epoch: 'e'.repeat(64), startedAt: new Date(NOW).toISOString(), agents: [] };
       contact.routingEvidence = { checkedAt: new Date(now).toISOString(), generation: firstGrant,
         epoch: 'e'.repeat(64), agents: [{ agentId: 'agent_one', proof: outcomeProofs.agent_one,
-          firstAt: contact.firstValueAt, lastAt: contact.lastValueAt }] };
+          firstAt: contact.firstValueAt, lastAt: new Date(now - 1000).toISOString() },
+          { agentId: 'agent_personal_information', proof: outcomeProofs.agent_personal_information,
+            firstAt: contact.firstValueAt, lastAt: contact.lastValueAt }] };
       const welcome = { ...receipt(state, 'canonical-welcome'), templateId: 'agent_one-welcome',
         key: `${contact.id}:agent_one-welcome:1` };
       state.deliveries.push(welcome);
@@ -129,7 +133,9 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     delete positiveOnly.contacts[0].observationAt;
     delete positiveOnly.contacts[0].observationPermissionGeneration;
     delete positiveOnly.contacts[0].observationEpoch;
-    expect(candidate(positiveOnly, positiveOnly.contacts[0], now)).toMatchObject({ eligible: true, step: 'repeat' });
+    expect(candidate(positiveOnly, positiveOnly.contacts[0], now)).toMatchObject({
+      eligible: true, step: 'repeat', journey: 'memory', templateId: 'memory-repeat',
+    });
     positiveOnly.contacts[0].routingEvidence!.epoch = 'f'.repeat(64);
     expect(candidate(positiveOnly, positiveOnly.contacts[0], now)).toMatchObject({ eligible: true, step: 'newsletter' });
     await member.transaction(state => applySubscription(state, { ...change, revision: 2 }, now));

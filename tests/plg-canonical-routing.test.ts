@@ -57,7 +57,7 @@ async function fixture() {
     webhookSecret: 'test-only', apiKey: 'test-only', from: 'Fixture <sender@example.invalid>',
     replyTo: 'reply@example.invalid', subscriptions };
   const service = new PlgService(store, runtime, clock, transport, source);
-  const sync = async (agentId?: string, firstAt = now - 1000, lastAt = firstAt) => {
+  const sync = async (agentId?: string, firstAt = now - 1000, lastAt = firstAt, aggregateLastAt?: number) => {
     await syncSubscriptions(store, source, clock);
     await syncOneEvidence(store, snapshot, (async (_url, init) => {
       expect((init!.headers as Record<string, string>)['X-PLG-Signature'])
@@ -67,13 +67,20 @@ async function fixture() {
       expect(requested).toEqual([{ accountId, journey: 'agent_one', since: new Date(Math.max(START,
         Date.parse(consentAt), Date.parse(held.activity?.startedAt ?? new Date(START).toISOString()), now - 7 * DAY)).toISOString() }]);
       const first = new Date(firstAt).toISOString(), last = new Date(lastAt).toISOString();
+      const verified = agentId ? [{ agentId, proof: outcomeProofs[agentId], count: firstAt === lastAt ? 1 : 2,
+        firstAt: first, lastAt: last, days: [...new Set([first.slice(0, 10), last.slice(0, 10)])] }] : [];
+      if (aggregateLastAt !== undefined) {
+        const aggregateLast = new Date(aggregateLastAt).toISOString();
+        verified.push({ agentId: 'agent_one', proof: outcomeProofs.agent_one, count: 3,
+          firstAt: first, lastAt: aggregateLast,
+          days: [...new Set([first.slice(0, 10), last.slice(0, 10), aggregateLast.slice(0, 10)])] });
+      }
       return Response.json({ version: 2, environment: 'production', retainedOnly: true, catalog,
         asOf: new Date(now).toISOString(),
         customerReporting: { scope: 'production_registered_contacts', policyRevision: 'd'.repeat(64) },
         accounts: requested.map((row: any) => ({ ...row, deleted: false, reportingEligible: true, tasks: [],
           activity: { enabled: true, mode: 'best_effort', limited: false, startedAt: new Date(captureStartedAt).toISOString(), epoch: captureEpoch, rollups: [] },
-          verified: agentId ? [{ agentId, proof: outcomeProofs[agentId], count: firstAt === lastAt ? 1 : 2,
-            firstAt: first, lastAt: last, days: [...new Set([first.slice(0, 10), last.slice(0, 10)])] }] : [] })) });
+          verified })) });
     }) as typeof fetch, clock);
   };
   await store.transaction(state => {
@@ -94,6 +101,20 @@ async function fixture() {
 }
 
 describe('canonical One enrollment to contextual delivery', () => {
+  it.each(journeys.filter(([, agentId]) => agentId !== 'agent_one'))(
+    'keeps %s context when the same source also returns a newer One aggregate', async (journey, agentId) => {
+      const f = await fixture(); f.advance(3 * DAY);
+      await f.sync(agentId, START + 1000, START + DAY, f.clock() - 1000);
+      const state = await f.store.read();
+      expect(state.contacts[0].routingEvidence?.agents).toHaveLength(2);
+      expect(candidate(state, state.contacts[0], f.clock())).toMatchObject({
+        eligible: true, journey, step: 'repeat', templateId: `${journey}-repeat`,
+      });
+      expect(await f.service.run('Fixture worker')).toEqual({ sent: 1, uncertain: 0 });
+      expect(f.transport.mock.calls[1][0].delivery.templateId).toBe(`${journey}-repeat`);
+      expect(await f.service.run('Fixture replay')).toEqual({ sent: 0, uncertain: 0 });
+    });
+
   it.each(journeys)('offers the next %s task from a confirmed value without inventing complete activity coverage', async (journey, agentId) => {
     const f = await fixture(); f.advance(3 * DAY);
     await f.sync(agentId, START + 1000, START + DAY);

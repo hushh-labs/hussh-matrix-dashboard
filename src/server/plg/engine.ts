@@ -427,7 +427,10 @@ export function candidate(
     !Number.isFinite(Date.parse(proof.checkedAt)) || age(proof.checkedAt, now) > DAY ||
     Date.parse(proof.checkedAt) > now + 60_000 ||
     (base.eligible && base.step !== 'newsletter')) return base;
+  // One aggregates the same domain effects. Use it only after specific agent
+  // contexts, even when another domain effect makes the aggregate more recent.
   const agents = [...proof.agents].sort((a, b) =>
+    Number(a.agentId === 'agent_one') - Number(b.agentId === 'agent_one') ||
     b.lastAt.localeCompare(a.lastAt) || a.agentId.localeCompare(b.agentId));
   for (const evidence of agents) {
     const journey: PlgJourney = evidence.agentId === 'agent_personal_information' ? 'memory' :
