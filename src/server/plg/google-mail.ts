@@ -5,7 +5,7 @@ import { PlgError } from './engine';
 import { MAIL_OWNER, type MailControlStore, type MailCredentials } from './google-mail-store';
 import { GmailReadError, type GmailRead } from './google-mail-reconcile';
 import { googleMessageMetadata } from './google-mail-metadata';
-import { GmailSubmissionRejected, mailBackoff, recordMailRejection, requireMailReady } from './google-mail-backpressure';
+import { GmailSubmissionRejected, mailBackoff, mailPacingRetryAt, recordMailRejection, requireMailReady, reserveMailPacing } from './google-mail-backpressure';
 
 export const MAIL_SCOPES = ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.metadata'];
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -148,6 +148,7 @@ export class GoogleMail {
       reportReadingRequested: this.oauth.readReports === true, feedbackAuthorized: state.connection?.feedbackAllowed === true,
       feedbackCheckedAt: state.feedback?.checkedAt ?? null, feedbackBacklog: Boolean(state.feedback?.pending || state.feedback?.pageToken || state.feedback?.recovery),
       providerRetryAt: hold && hold.until > this.now() ? hold.until : null,
+      pacingRetryAt: mailPacingRetryAt(state, this.now()), applicationDailyLimit: null,
       deliveryObservation: 'API acceptance; inbox receipt for own tests. External delivery and opens are not inferred.' };
   }
   async feedbackReader(deadline: number): Promise<GmailRead> {
@@ -226,7 +227,7 @@ export class GoogleMail {
         throw new PlgError(409, 'Google feedback is not current; customer sending is held.');
       s.attempts = s.attempts.filter((a) => this.now() - a.at < 86_400_000);
       if (s.attempts.some((a) => a.id === delivery.id)) throw new PlgError(409, 'This mail reservation was already attempted.');
-      if (s.attempts.length >= 100) throw new PlgError(409, 'Application mail limit reached for this rolling day.');
+      reserveMailPacing(s, this.now());
       // Gmail has no idempotency-key contract. Persist the attempt before I/O;
       // ambiguous failures are never blindly retried.
       s.attempts.push({ id: delivery.id, at: this.now() });

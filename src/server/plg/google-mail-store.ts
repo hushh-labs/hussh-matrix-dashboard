@@ -23,6 +23,8 @@ export interface MailControl {
   feedbackLease?: { id: string; until: number };
   /** Mailbox-wide definite rejection; never a customer delivery receipt. */
   sendBackoff?: { version: string; generation: number; status: 401 | 403 | 429; until: number; failures: number };
+  /** Shared mailbox pacing survives worker restarts and OAuth grant rotation. */
+  pacingNextAt?: number;
   tests: MailTest[];
   attempts: { id: string; at: number }[];
 }
