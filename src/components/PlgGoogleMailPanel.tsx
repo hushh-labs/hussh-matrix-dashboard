@@ -47,7 +47,7 @@ export function PlgGoogleMailPanel({ templates, mailOwner = true }: { templates:
   return <section aria-label="Google work mailbox" className={cn(dashboardCard, 'p-5 sm:p-7')}>
     <details className="mb-5 rounded-xl border border-stroke p-4">
       <summary className="cursor-pointer font-semibold text-ink">Check my One activity</summary>
-      <p className="mt-2 text-sm text-muted">Check confirmed Production actions for your signed-in work account. This check sends no email and keeps staff activity out of customer totals.</p>
+      <p className="mt-2 text-sm text-muted">Check captured activity and confirmed Production actions for your signed-in work account. This check sends no email and keeps staff activity out of customer totals.</p>
       <button className={cn(button, 'mt-3')} disabled={busy} onClick={() => void action(async () => {
         setBehaviour(null); setBehaviourError('');
         try { setBehaviour(await api('my-behaviour')); }
@@ -62,6 +62,22 @@ export function PlgGoogleMailPanel({ templates, mailOwner = true }: { templates:
           {row.label}: {row.count} confirmed {row.count === 1 ? 'action' : 'actions'} · {new Date(row.lastAt).toLocaleString()}
           {!row.currentCapture && ' · outside current capture period'}
         </li>)}</ul> : <p className="mt-2">No confirmed actions found in this window. This does not prove inactivity.</p>}
+        <details className="mt-3">
+          <summary className="cursor-pointer font-medium">Captured observations by agent</summary>
+          <p className="mt-2 text-muted">Counts are app / server observations and may overlap. Returned means execution returned, not a confirmed successful task. Zero means no observation was captured in this window.</p>
+          {behaviour.limited && <p role="status" className="mt-2 text-muted">Collection limit reached; this observation window is incomplete.</p>}
+          {behaviour.observations ? <div className="metrics-table-scroll mt-2">
+            <table className="w-full min-w-[620px] text-left text-xs">
+              <caption className="pb-2 text-left text-muted">Recorded observations since {new Date(behaviour.since).toLocaleString()}. Collection is best effort.</caption>
+              <thead><tr>{['Agent', 'Started', 'Returned', 'Failed', 'Cancelled', 'Blocked'].map(label => <th key={label} className="p-2">{label}</th>)}</tr></thead>
+              <tbody>{behaviour.observations.map(row => <tr key={row.agentId}>
+                <th className="p-2 font-medium">{row.label}</th>
+                {(['started', 'returned', 'failed', 'cancelled', 'blocked'] as const).map(phase =>
+                  <td key={phase} className="p-2 tabular-nums">{row.reported[phase]} / {row.executed[phase]}</td>)}
+              </tr>)}</tbody>
+            </table>
+          </div> : <p className="mt-2 text-muted">No current collection baseline is available. Observation counts are unknown.</p>}
+        </details>
       </div>}
     </details>
     {mailOwner && <><h3 className="text-lg font-semibold text-ink">Google work mailbox</h3>

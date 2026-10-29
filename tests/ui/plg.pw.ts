@@ -203,7 +203,10 @@ test('lets a staff operator check only their own activity without mailbox privil
   });
   await page.route('**/api/plg/my-behaviour', route => {
     expect(new URL(route.request().url()).search).toBe('');
-    return route.fulfill({ json: { environment: 'production', checkedAt: new Date().toISOString(),
+    return route.fulfill({ json: { environment: 'production', checkedAt: new Date().toISOString(), since: new Date().toISOString(), limited: true,
+      observations: [{ agentId: 'agent_personal_information', label: 'Memory',
+        reported: { started: 2, returned: 1, failed: 0, cancelled: 1, blocked: 0 },
+        executed: { started: 3, returned: 1, failed: 1, cancelled: 0, blocked: 1 } }],
       captureEnabled: true, captureEpochPresent: true, positives: [{ agentId: 'agent_personal_information',
         label: 'Memory', count: 1, lastAt: new Date().toISOString(), currentCapture: true }] } });
   });
@@ -212,6 +215,10 @@ test('lets a staff operator check only their own activity without mailbox privil
   await page.getByText('Check my One activity', { exact: true }).click();
   await page.getByRole('button', { name: 'Check my activity', exact: true }).click();
   await expect(page.getByText(/Memory: 1 confirmed action/)).toBeVisible();
+  await page.getByText('Captured observations by agent', { exact: true }).click();
+  await expect(page.getByRole('cell', { name: '2 / 3', exact: true })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Cancelled', exact: true })).toBeVisible();
+  await expect(page.getByText('Collection limit reached; this observation window is incomplete.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send preview to my work email' })).toHaveCount(0);
   expect(writes).toEqual([]);
   expect(mailboxReads).toEqual([]);
