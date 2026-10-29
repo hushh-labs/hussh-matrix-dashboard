@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { PlgTemplate } from '../lib/plg';
 import { dashboardCard } from '../lib/theme';
 import { cn } from '../lib/utils';
+import type { readOwnEvidence } from '../server/plg/own-evidence';
 
 interface Status {
   email: string; connected: boolean; connectedAt: number | null; pending: boolean; deliveryObservation: string;
@@ -17,18 +18,21 @@ async function api<T>(path: string, body?: unknown, signal?: AbortSignal): Promi
   if (!response.ok) throw new Error(value.error || 'Mail connection unavailable.');
   return value;
 }
-export function PlgGoogleMailPanel({ templates }: { templates: PlgTemplate[] }) {
+export function PlgGoogleMailPanel({ templates, mailOwner = true }: { templates: PlgTemplate[]; mailOwner?: boolean }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [tests, setTests] = useState<Test[]>([]);
   const [selected, setSelected] = useState(templates[0]?.id ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [behaviour, setBehaviour] = useState<Awaited<ReturnType<typeof readOwnEvidence>> | null>(null);
+  const [behaviourError, setBehaviourError] = useState('');
   const reload = useCallback(async (signal?: AbortSignal) => {
+    if (!mailOwner) return;
     const [connection, receipts] = await Promise.all([
       api<Status>('google-mail/status', undefined, signal), api<{ tests: Test[] }>('mail-tests', undefined, signal),
     ]);
     if (!signal?.aborted) { setStatus(connection); setTests(receipts.tests); }
-  }, []);
+  }, [mailOwner]);
   useEffect(() => {
     const controller = new AbortController();
     void reload(controller.signal).catch((e) => { if (!controller.signal.aborted) setError(e.message); });
@@ -41,10 +45,29 @@ export function PlgGoogleMailPanel({ templates }: { templates: PlgTemplate[] }) 
   };
   const button = 'rounded-xl border border-stroke px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50';
   return <section aria-label="Google work mailbox" className={cn(dashboardCard, 'p-5 sm:p-7')}>
-    <h3 className="text-lg font-semibold text-ink">Google work mailbox</h3>
+    <details className="mb-5 rounded-xl border border-stroke p-4">
+      <summary className="cursor-pointer font-semibold text-ink">Check my One activity</summary>
+      <p className="mt-2 text-sm text-muted">Check confirmed Production actions for your signed-in work account. This check sends no email and keeps staff activity out of customer totals.</p>
+      <button className={cn(button, 'mt-3')} disabled={busy} onClick={() => void action(async () => {
+        setBehaviour(null); setBehaviourError('');
+        try { setBehaviour(await api('my-behaviour')); }
+        catch (e) { setBehaviourError(e instanceof Error ? e.message : 'Activity could not be verified.'); }
+      })}>Check my activity</button>
+      {behaviourError && <p role="alert" className="mt-2 text-sm text-muted">{behaviourError}</p>}
+      {behaviour && <div className="mt-3 text-sm text-ink" aria-live="polite">
+        <p>Checked {new Date(behaviour.checkedAt).toLocaleString()} · Production</p>
+        <p className="mt-1 text-muted">{behaviour.captureEnabled && behaviour.captureEpochPresent
+          ? 'Activity capture is enabled. Missing events do not prove inactivity.' : 'Current activity capture is unavailable.'}</p>
+        {behaviour.positives.length ? <ul className="mt-2 space-y-1">{behaviour.positives.map(row => <li key={row.agentId}>
+          {row.label}: {row.count} confirmed {row.count === 1 ? 'action' : 'actions'} · {new Date(row.lastAt).toLocaleString()}
+          {!row.currentCapture && ' · outside current capture period'}
+        </li>)}</ul> : <p className="mt-2">No confirmed actions found in this window. This does not prove inactivity.</p>}
+      </div>}
+    </details>
+    {mailOwner && <><h3 className="text-lg font-semibold text-ink">Google work mailbox</h3>
     <p className="mt-2 text-sm text-muted">Connect i-neelesh@hushh.ai to send through Google Workspace. {status?.reportReadingRequested
       ? 'Customer automation requests sending and read-only mail access to reconcile Gmail submission records and structured failure reports. Report bodies are processed transiently and are not saved. This expands the earlier metadata-only grant and requires Google consent.'
-      : 'Operator previews request sending and message metadata, including headers and labels, without bodies. Customer bounce handling must pass a separate release gate before customer sending is enabled.'} The grant is stored in Google Secret Manager.</p>
+      : 'Operator previews request sending and message metadata, including headers and labels, without bodies. Customer bounce handling must pass a separate release gate before customer sending is enabled.'} The grant is stored in Google Secret Manager.</p></>}
     {error && <p role="alert" className="mt-3 text-sm text-muted">{error}</p>}
     {status && <>
       <p className="mt-3 text-sm text-ink">{status.email}: {status.connected ? 'Authorization saved' : 'Not connected'}</p>

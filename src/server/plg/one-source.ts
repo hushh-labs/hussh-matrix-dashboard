@@ -13,6 +13,7 @@ interface SourceAccount {
   since: string;
 }
 interface Evidence extends SourceAccount {
+  staffTesting?: boolean;
   reportingEligible: boolean;
   deleted: boolean;
   tasks: { actionId: string; occurredAt: string }[];
@@ -21,6 +22,25 @@ interface Evidence extends SourceAccount {
 }
 const unavailable = () =>
   new PlgError(503, 'One task evidence is unavailable; no activity was inferred.');
+
+async function requestSnapshot(endpoint: URL, secret: string, body: string, at: number, deadline: number, fetcher: typeof fetch) {
+  const response = await fetcher(endpoint, {
+    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(Math.min(30_000, deadline - at)),
+    headers: { 'Content-Type': 'application/json', 'X-PLG-Version': '2', 'X-PLG-Timestamp': String(at),
+      'X-PLG-Signature': signValue(`snapshot\n${at}\n${body}`, secret) }, body,
+  });
+  if (!response.ok || !response.body) throw unavailable();
+  const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      size += value.byteLength;
+      if (size > 6_000_000) { await reader.cancel(); throw unavailable(); }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
 
 export function readCustomerReporting(value: any): PlgCustomerReportingProof {
   if (!value || value.scope !== 'production_registered_contacts' || typeof value.policyRevision !== 'string' || !/^[a-f0-9]{64}$/.test(value.policyRevision))
@@ -59,7 +79,7 @@ export function readCatalog(value: any): PlgCatalog {
   return { revision: value.revision, agents, actions };
 }
 
-function interval(row: any, since: string, until: number) {
+export function interval(row: any, since: string, until: number) {
   const first = Date.parse(row.firstAt), last = Date.parse(row.lastAt);
   if (typeof row.firstAt !== 'string' || typeof row.lastAt !== 'string' ||
     !Number.isFinite(first) || !Number.isFinite(last) || first < Date.parse(since) || last > until || last < first ||
@@ -73,7 +93,7 @@ function interval(row: any, since: string, until: number) {
   return { count: row.count as number, firstAt: new Date(first).toISOString(), lastAt: new Date(last).toISOString(), days: [...row.days].sort() as string[] };
 }
 
-function readActivity(value: any, catalog: PlgCatalog, since: string, until: number): PlgActivity {
+export function readActivity(value: any, catalog: PlgCatalog, since: string, until: number): PlgActivity {
   if (!value || typeof value.enabled !== 'boolean' || value.mode !== 'best_effort' || typeof value.limited !== 'boolean' ||
     !Array.isArray(value.rollups) || value.rollups.length > 4000 ||
     (value.startedAt !== null && (typeof value.startedAt !== 'string' || value.startedAt.length > 40 || !Number.isFinite(Date.parse(value.startedAt)) || Date.parse(value.startedAt) > until)) ||
@@ -157,39 +177,8 @@ export async function syncOneEvidence(
       since: new Date(Math.max(Date.parse(c.since), batchNow - 7 * DAY)).toISOString(),
     }));
     const body = JSON.stringify(batch.length ? { accounts: batch, customerReporting: true } : { version: 2, accounts: [], customerReporting: true });
-    const timestamp = String(batchNow);
     try {
-      const response = await fetcher(endpoint, {
-        method: 'POST',
-        redirect: 'error',
-        signal: AbortSignal.timeout(Math.min(30_000, deadline - batchNow)),
-        headers: {
-          'Content-Type': 'application/json',
-          'X-PLG-Version': '2',
-          'X-PLG-Timestamp': timestamp,
-          'X-PLG-Signature': signValue(`snapshot\n${timestamp}\n${body}`, options.secret),
-        },
-        body,
-      });
-      if (!response.ok || !response.body) throw unavailable();
-      const reader = response.body.getReader();
-      let size = 0;
-      const chunks: Uint8Array[] = [];
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          size += value.byteLength;
-          if (size > 6_000_000) {
-            await reader.cancel();
-            throw unavailable();
-          }
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-      const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const data = await requestSnapshot(endpoint, options.secret, body, batchNow, deadline, fetcher);
       const proof = readCustomerReporting(data.customerReporting);
       if (reporting && reporting.policyRevision !== proof.policyRevision) throw unavailable();
       reporting = proof;
@@ -217,8 +206,33 @@ export async function syncOneEvidence(
         if (catalog && JSON.stringify(catalog) !== JSON.stringify(receivedCatalog)) throw unavailable();
         catalog = receivedCatalog;
       }
+      const staffBatch = state.staffTestingEnabled === true && data.version === 2 ? batch.filter(requested => {
+        const c = selected.find(c => c.accountId === requested.accountId);
+        const row = data.accounts.find((row: any) => row.accountId === requested.accountId);
+        return c?.permission?.enabled && c.permission.eligible && !c.suppressed &&
+          /^[^\s@<>]+@hushh\.ai$/.test(c.email) && row?.deleted === false && row.reportingEligible === false;
+      }) : [];
+      let staffData: any;
+      if (staffBatch.length) {
+        const staffNow = clock(); if (staffNow >= deadline) throw unavailable();
+        staffData = await requestSnapshot(endpoint, options.secret,
+          JSON.stringify({ version: 2, accounts: staffBatch, customerReporting: false }), staffNow, deadline, fetcher);
+        const staffUntil = Date.parse(staffData.asOf);
+        if (clock() >= deadline || staffData.version !== 2 || staffData.environment !== 'production' || staffData.retainedOnly !== true ||
+          !Number.isFinite(staffUntil) || Math.abs(clock() - staffUntil) > 60_000 ||
+          JSON.stringify(readCatalog(staffData.catalog)) !== JSON.stringify(catalog) ||
+          !Array.isArray(staffData.accounts) || staffData.accounts.length !== staffBatch.length ||
+          new Set(staffData.accounts.map((row: any) => row.accountId)).size !== staffBatch.length ||
+          staffData.accounts.some((row: any) => !staffBatch.some(c => c.accountId === row.accountId && c.journey === row.journey && c.since === row.since))) throw unavailable();
+      }
       const seen = new Set<string>();
-      for (const row of data.accounts) {
+      for (const original of data.accounts) {
+        const staffRow = staffData?.accounts.find((row: any) => row.accountId === original.accountId);
+        if (staffRow && (original.journey !== staffRow.journey || original.since !== staffRow.since ||
+          !Array.isArray(original.tasks) || original.tasks.length || original.activity != null ||
+          !Array.isArray(original.verified) || original.verified.length)) throw unavailable();
+        const row = staffRow ? { ...staffRow, reportingEligible: original.reportingEligible } : original;
+        const rowUntil = staffRow ? Date.parse(staffData.asOf) : until;
         const requested = batch.find(
           (c) => c.accountId === row.accountId && c.journey === row.journey,
         );
@@ -233,7 +247,7 @@ export async function syncOneEvidence(
           (data.version === 2 && row.tasks.length !== 0) ||
           ((row.deleted || !row.reportingEligible) && row.tasks.length) ||
           (row.deleted && row.reportingEligible) ||
-          (!row.reportingEligible && (row.activity != null || (row.verified?.length ?? 0) !== 0))
+          (!row.reportingEligible && !staffRow && (row.activity != null || (row.verified?.length ?? 0) !== 0))
         )
           throw unavailable();
         seen.add(row.accountId);
@@ -253,13 +267,14 @@ export async function syncOneEvidence(
           ...requested,
           deleted: row.deleted,
           reportingEligible: row.reportingEligible,
+          ...(staffRow && !row.deleted ? { staffTesting: true } : {}),
           tasks: row.tasks.map((t: { actionId: string; occurredAt: string }) => ({
             actionId: t.actionId,
             occurredAt: t.occurredAt,
           })),
         };
-        if (data.version === 2 && !row.deleted && row.reportingEligible) {
-          const activity = readActivity(row.activity, catalog!, requested.since, until);
+        if (data.version === 2 && !row.deleted && (row.reportingEligible || staffRow)) {
+          const activity = readActivity(row.activity, catalog!, requested.since, rowUntil);
           entry.activity = compact(activity);
           if (inspectionId) inspected = activity;
           if (!Array.isArray(row.verified) || row.verified.length > catalog!.agents.length) throw unavailable();
@@ -267,7 +282,7 @@ export async function syncOneEvidence(
           entry.verified = row.verified.map((v: any) => {
             if (!outcomeSupported(catalog!, v.agentId) || !outcomeProofMatches(catalog!, v.agentId, v.proof) || verifiedAgents.has(v.agentId) || v.count > 1000) throw unavailable();
             verifiedAgents.add(v.agentId);
-            return { agentId: v.agentId, ...(v.proof ? { proof: v.proof } : {}), ...interval(v, requested.since, until) };
+            return { agentId: v.agentId, ...(v.proof ? { proof: v.proof } : {}), ...interval(v, requested.since, rowUntil) };
           });
         }
         evidence.push(entry);
@@ -310,11 +325,15 @@ export async function syncOneEvidence(
       }
       contact.customerReporting = { eligible: row.reportingEligible, policyRevision: reporting!.policyRevision,
         checkedAt: new Date(sourceAt).toISOString() };
+      delete contact.staffTesting;
       if (contact.suppressed || (contact.permission && (!contact.permission.enabled || !contact.permission.eligible))) {
         if (inspectionId) throw new PlgError(409, 'Email permission changed while evidence was loading.');
         continue;
       }
-      if (!row.reportingEligible) continue;
+      if (!row.reportingEligible && !(row.staffTesting && draft.staffTestingEnabled === true && contact.permission)) continue;
+      if (row.staffTesting && contact.permission) contact.staffTesting = {
+        generation: contact.permission.generation, email: contact.email, checkedAt: new Date(sourceAt).toISOString(),
+      };
       if (inspectionId) continue;
       if (row.activity) {
         if (contact.permission && contact.observationEpoch !== row.activity.epoch) {

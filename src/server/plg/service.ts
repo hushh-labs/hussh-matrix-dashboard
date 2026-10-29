@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { PlgDelivery, PlgWorkspace } from '../../lib/plg';
-import { accountHash, audit, candidate, customerReportingCurrent, customerReportingEligible, eraseAccountHash, iso, metrics, PlgError, timeline } from './engine';
+import { accountHash, audit, candidate, customerReportingCurrent, customerReportingEligible, staffTestingEligible, eraseAccountHash, iso, metrics, PlgError, timeline } from './engine';
 import type { PlgStore } from './store';
 import { automationStatus, deliveryBlockers } from './automation';
 import { applyAcceptedDelivery } from './delivery-events';
@@ -205,7 +205,7 @@ export class PlgService {
     const now = this.now();
     if (!this.store.readWorkspace && Object.keys(query).length) throw new PlgError(409, 'Campaign pages require active account storage.');
     const stored = this.store.readWorkspace ? await this.store.readWorkspace(query, now) : await this.store.read();
-    const contacts = stored.contacts.filter((c) => customerReportingEligible(stored, c, now));
+    const contacts = stored.contacts.filter((c) => customerReportingEligible(stored, c, now) || staffTestingEligible(stored, c, now));
     const ids = new Set(contacts.map((c) => c.id));
     const state = { ...stored, contacts, deliveries: stored.storage?.report ? stored.deliveries : stored.deliveries.filter((d) => ids.has(d.contactId)) };
     const mail = this.googleMail ? await this.googleMail.status() : null;
@@ -293,8 +293,8 @@ export class PlgService {
           key: next.key!,
           status: 'sending',
           createdAt: iso(now),
-          subject: t.subject,
-          body: t.body,
+          subject: `${staffTestingEligible(state, c, now) ? '[PLG TEAM TEST] ' : ''}${t.subject}`,
+          body: `${staffTestingEligible(state, c, now) ? 'Team workflow test. This message stays outside customer metrics.\n\n' : ''}${t.body}`,
           ctaLabel: t.ctaLabel,
           ctaUrl: t.ctaUrl,
           resourceUrl: t.resourceUrl || '',
