@@ -10,7 +10,9 @@ import { AccountStorageMigration } from '../src/server/plg/account-migration';
 import { FirestorePlgStore, validatePlgState } from '../src/server/plg/store';
 import { PlgService, signValue, type PlgRuntime } from '../src/server/plg/service';
 import { runAutomationCycle } from '../src/server/plg/automation';
-import { GoogleMailUnattempted } from '../src/server/plg/google-mail';
+import { GoogleMail, GoogleMailUnattempted } from '../src/server/plg/google-mail';
+import { FirestoreMailControl, MAIL_OWNER } from '../src/server/plg/google-mail-store';
+import { OneSubscriptions } from '../src/server/plg/one-subscriptions';
 import express from 'express';
 import request from 'supertest';
 import { registerPlgRoutes } from '../src/server/plg/routes';
@@ -289,6 +291,99 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     expect(await runAutomationCycle(new PlgService(root, runtime, () => NOW, accepted), sync, () => NOW)).toMatchObject({ sent: 1 });
     expect(accepted).toHaveBeenCalledOnce(); expect((await member.read()).deliveries).toHaveLength(1);
   }));
+  it('durably holds real Google rejections and resumes the same native account queue without duplicates', async () => fixture(async (root, db) => {
+    const members = [await enrollOne(root, 'google-first'), await enrollOne(root, 'google-second')];
+    for (const member of members) await member.transaction(state => {
+      state.contacts[0].permission = { revision: 1, generation: randomUUID(), enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
+    });
+    await root.transaction(state => { state.automation = { enabled: true }; });
+    let clock = NOW, posts = 0;
+    const control = new FirestoreMailControl('demo-plg-storage', db.databaseId, db);
+    await control.transaction(state => {
+      state.generation = 1; state.connection = { version: '1', generation: 1, connectedAt: NOW, feedbackAllowed: true };
+      state.feedback = { cursor: '100', checkedAt: clock };
+    });
+    const accepted = new Map<string, { to: string; messageId: string }>();
+    const transport = vi.fn(async (input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (options?.method === 'POST') {
+        posts++;
+        if (posts === 1) return new Response('Synthetic quota rejection', { status: 429, headers: { 'Retry-After': '900' } });
+        const mime = Buffer.from(JSON.parse(String(options.body)).raw, 'base64url').toString();
+        const id = `accepted${posts}`;
+        accepted.set(id, { to: mime.match(/\r\nTo: ([^\r\n]+)/)![1], messageId: `<${id}@example.invalid>` });
+        return Response.json({ id });
+      }
+      if (url.includes('/messages/')) {
+        const id = new URL(url).pathname.split('/').at(-1)!, metadata = accepted.get(id)!;
+        return Response.json({ id, labelIds: ['SENT'], payload: { headers: [
+          { name: 'Message-ID', value: metadata.messageId }, { name: 'From', value: `Neelesh Meena <${MAIL_OWNER}>` },
+          { name: 'To', value: metadata.to },
+        ] } });
+      }
+      if (url.includes('/history?')) return Response.json({ historyId: '101', history: [] });
+      throw new Error('Unexpected synthetic provider request');
+    });
+    const mail = new GoogleMail(control, { save: async () => '1', read: async () => 'synthetic-refresh' },
+      { readReports: true, url: () => '', exchange: async () => '', access: async () => 'synthetic-access' }, transport, () => clock);
+    const subscriptions = { enabled: true, url: 'https://api.hushh.ai/api/one/plg/subscriptions', secret: 'synthetic-only-secret-over-thirty-two-characters' };
+    const permission = new OneSubscriptions(subscriptions, (async () => Response.json({ allowed: true, erased: false })) as typeof fetch, () => clock);
+    const runtime: PlgRuntime = { enabled: true, deliveryEnabled: true, origin: 'https://metrics.example.invalid',
+      admins: new Set(), operators: new Set(), signingSecret: 'synthetic-only-signing-over-thirty-two-characters',
+      emailProvider: 'google_workspace', googleMailCampaignsEnabled: true, subscriptions,
+      apiKey: '', webhookSecret: '',
+      from: `Neelesh Meena <${MAIL_OWNER}>`, replyTo: MAIL_OWNER };
+    const service = new PlgService(root, runtime, () => clock, undefined, permission, mail);
+    const sync = async () => {
+      const after = (await root.readSettings()).automation?.accountCursor ?? null, page = await root.page(after, 25);
+      return { accounts: page.accounts.length, imported: 0, erased: 0, accountHashes: page.accounts, accountPage: { after, next: page.next } };
+    };
+    expect(await runAutomationCycle(service, sync, () => clock)).toMatchObject({ status: 'blocked', sent: 0, uncertain: 0 });
+    expect((await control.read()).sendBackoff).toMatchObject({ status: 429, generation: 1 });
+    expect((await control.read()).attempts).toHaveLength(0);
+    for (const member of members) expect((await member.read()).deliveries).toHaveLength(0);
+    expect((await root.readSettings()).automation?.accountCursor ?? null).toBeNull();
+    expect((await service.workspace('admin')).automation!.blockers.join(' ')).toContain('provider retry is deferred');
+    expect(await runAutomationCycle(service, sync, () => clock)).toMatchObject({ status: 'blocked', sent: 0, uncertain: 0 });
+    expect(posts).toBe(1);
+    clock += 16 * 60_000;
+    await control.transaction(state => { state.feedback!.checkedAt = clock; });
+    expect(await runAutomationCycle(service, sync, () => clock)).toMatchObject({ status: 'completed', sent: 2, uncertain: 0 });
+    expect(await runAutomationCycle(service, sync, () => clock)).toMatchObject({ sent: 0, uncertain: 0 });
+    expect(posts).toBe(3); expect((await control.read()).attempts).toHaveLength(2);
+    for (const member of members) expect((await member.read()).deliveries).toMatchObject([{ status: 'sent', provider: 'google_workspace' }]);
+    expect((await root.readSettings()).automation?.accountCursor ?? null).toBeNull();
+  }), 30_000);
+  it('preserves the longest native mailbox hold across concurrently in-flight provider rejections', async () => fixture(async (_root, db) => {
+    let clock = NOW;
+    const control = new FirestoreMailControl('demo-plg-storage', db.databaseId, db);
+    await control.transaction(state => {
+      state.generation = 1; state.connection = { version: '1', generation: 1, connectedAt: NOW };
+    });
+    const finish: ((response: Response) => void)[] = [];
+    const transport = vi.fn(async () => Response.json({ id: 'acceptedAfterWait' }))
+      .mockImplementationOnce(() => new Promise(resolve => { finish[0] = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finish[1] = resolve; }));
+    const mail = new GoogleMail(control, { save: async () => '1', read: async () => 'synthetic-refresh' },
+      { url: () => '', exchange: async () => '', access: async () => 'synthetic-access' }, transport, () => clock);
+    const delivery = { id: randomUUID(), subject: 'Synthetic native quota test' };
+    const message = { text: 'Synthetic', html: '<p>Synthetic</p>', headers: {} };
+    const first = mail.send(MAIL_OWNER, delivery, message).catch(error => error);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+    const second = mail.send(MAIL_OWNER, { ...delivery, id: randomUUID() }, message).catch(error => error);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2), { timeout: 10_000 });
+    finish[0](new Response(null, { status: 429, headers: { 'Retry-After': '7200' } }));
+    expect(await first).toBeInstanceOf(GoogleMailUnattempted);
+    finish[1](new Response(null, { status: 403 }));
+    expect(await second).toBeInstanceOf(GoogleMailUnattempted);
+    expect((await control.read()).sendBackoff).toMatchObject({ until: NOW + 7200_000, failures: 2, generation: 1 });
+    clock += 7200_000 - 1;
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(transport).toHaveBeenCalledTimes(2); expect((await control.read()).attempts).toHaveLength(0);
+    clock += 2;
+    expect(await mail.send(MAIL_OWNER, delivery, message)).toBe('acceptedAfterWait');
+    expect(transport).toHaveBeenCalledTimes(3); expect((await control.read()).attempts).toHaveLength(1);
+  }), 30_000);
   it('continues independent evidence collection across paused cycles without moving the unsent cursor', async () => fixture(async root => {
     for (let offset = 0; offset < 70; offset += 4)
       await Promise.all(Array.from({ length: Math.min(4, 70 - offset) }, (_, n) => enrollOne(root, `paused-${offset + n}`)));

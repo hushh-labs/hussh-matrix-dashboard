@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { OAuth2Client } from 'google-auth-library';
 import express from 'express';
 import request from 'supertest';
-import { GoogleMail, GoogleMailOAuth, MAIL_SCOPES, googleMailMime, mailMessageId, type MailOAuth } from '../src/server/plg/google-mail';
+import { GoogleMail, GoogleMailOAuth, GoogleMailUnattempted, MAIL_SCOPES, googleMailMime, mailMessageId, type MailOAuth } from '../src/server/plg/google-mail';
 import { emptyMailControl, MAIL_OWNER, type MailControl, type MailControlStore } from '../src/server/plg/google-mail-store';
 import { registerGoogleMailRoutes } from '../src/server/plg/google-mail-routes';
 import { MemoryPlgStore } from '../src/server/plg/store';
@@ -96,6 +96,85 @@ describe('Google mailbox authority and uncertain sends', () => {
     (oauth.access as any).mockImplementationOnce(async () => { await mail.disconnect(); return 'test-only-access'; });
     await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toThrow('not submitted');
     expect(transport).toHaveBeenCalledOnce();
+  });
+  it.each([401, 403, 429])('persists %s provider rejection backpressure without making a customer submission uncertain', async (status) => {
+    transport.mockResolvedValueOnce(new Response('private provider response must not be retained', { status }));
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(control.state.attempts).toHaveLength(0);
+    expect(JSON.stringify(control.state)).not.toContain('private provider response');
+    const secondWorker = new GoogleMail(control, { save: vi.fn(), read: vi.fn() }, oauth, transport);
+    await expect(secondWorker.send(MAIL_OWNER, { ...delivery, id: 'b763337a-bf20-4ad2-96e9-a9335b2a126c' }, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    control.state.connection!.feedbackAllowed = true;
+    await expect(secondWorker.prepareCampaign()).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(transport).toHaveBeenCalledOnce();
+    expect(oauth.access).toHaveBeenCalledOnce();
+    expect((await secondWorker.status()).providerRetryAt).toBeGreaterThan(Date.now());
+  });
+  it.each(['7200', 'Thu, 29 Oct 2026 02:00:00 GMT'])('honors Retry-After %s, then safely retries only a definitely rejected reservation', async (retryAfter) => {
+    let clock = Date.parse('2026-10-29T00:00:00Z');
+    mail = new GoogleMail(control, { save: vi.fn(), read: vi.fn(async () => 'synthetic') }, oauth, transport, () => clock);
+    transport.mockResolvedValueOnce(new Response(null, { status: 429, headers: { 'Retry-After': retryAfter } }));
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    clock += 60 * 60_000;
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(transport).toHaveBeenCalledOnce();
+    clock += 60 * 60_000 + 1;
+    expect(await mail.send(MAIL_OWNER, delivery, message)).toBe('accepted123');
+    expect(transport).toHaveBeenCalledTimes(2);
+    expect(control.state.attempts).toEqual([{ id, at: clock }]);
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+  it.each([null, '30'])('never shortens a longer mailbox wait when a concurrent rejection has Retry-After %s', async (shorter) => {
+    let clock = Date.parse('2026-10-29T00:00:00Z');
+    mail = new GoogleMail(control, { save: vi.fn(), read: vi.fn(async () => 'synthetic') }, oauth, transport, () => clock);
+    const finish: ((response: Response) => void)[] = [];
+    transport.mockImplementationOnce(() => new Promise(resolve => { finish[0] = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finish[1] = resolve; }));
+    const first = mail.send(MAIL_OWNER, delivery, message).catch(error => error);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
+    const second = mail.send(MAIL_OWNER, { ...delivery, id: 'b763337a-bf20-4ad2-96e9-a9335b2a126c' }, message).catch(error => error);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
+    finish[0](new Response(null, { status: 429, headers: { 'Retry-After': '7200' } }));
+    expect(await first).toBeInstanceOf(GoogleMailUnattempted);
+    const deadline = (await mail.status()).providerRetryAt;
+    finish[1](new Response(null, { status: 429, ...(shorter ? { headers: { 'Retry-After': shorter } } : {}) }));
+    expect(await second).toBeInstanceOf(GoogleMailUnattempted);
+    expect((await mail.status()).providerRetryAt).toBe(deadline);
+    clock += 2 * 60 * 60_000 - 1;
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(transport).toHaveBeenCalledTimes(2);
+    clock += 2;
+    expect(await mail.send(MAIL_OWNER, delivery, message)).toBe('accepted123');
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+  it.each([408, 500, 503])('keeps an ambiguous HTTP %s send permanently reserved without automatic resubmission', async (status) => {
+    transport.mockResolvedValueOnce(new Response(null, { status }));
+    const result = await mail.send(MAIL_OWNER, delivery, message).catch(error => error);
+    expect(result).not.toBeInstanceOf(GoogleMailUnattempted);
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(control.state.attempts).toHaveLength(1); expect(transport).toHaveBeenCalledOnce();
+  });
+  it('does not apply a late rejection to a replacement mailbox grant', async () => {
+    transport.mockImplementationOnce(async () => {
+      await control.transaction(state => { state.connection = { version: '2', generation: 2, connectedAt: Date.now() }; });
+      return new Response(null, { status: 429 });
+    });
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect((await mail.status()).providerRetryAt).toBeNull();
+    expect(await mail.send(MAIL_OWNER, delivery, message)).toBe('accepted123');
+  });
+  it('retains uncertainty when a definite provider rejection cannot be durably recorded', async () => {
+    const transaction = control.transaction.bind(control);
+    vi.spyOn(control, 'transaction').mockImplementation(async change => transaction(state => {
+      const result = change(state);
+      if (JSON.stringify(state).includes('sendBackoff')) throw new Error('Synthetic storage commit failure');
+      return result;
+    }));
+    transport.mockResolvedValueOnce(new Response(null, { status: 429 }));
+    const result = await mail.send(MAIL_OWNER, delivery, message).catch(error => error);
+    expect(result).not.toBeInstanceOf(GoogleMailUnattempted);
+    expect(control.state.attempts).toHaveLength(1);
   });
   it('binds rewritten Message-ID to the accepted Gmail ID and still requires Inbox', async () => {
     const assigned = '<google-assigned=opaque@mail.gmail.com>';

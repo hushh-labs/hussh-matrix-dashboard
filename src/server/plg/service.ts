@@ -216,6 +216,8 @@ export class PlgService {
       const feedbackAge = now - (mail.feedbackCheckedAt ?? 0);
       if (this.runtime.googleMailCampaignsEnabled && (!mail.feedbackAuthorized || !mail.feedbackCheckedAt || feedbackAge < 0 || feedbackAge > 20 * 60_000 || mail.feedbackBacklog))
         automation.blockers.push('Google feedback authorization or current complete checkpoint is missing');
+      if (mail.providerRetryAt && mail.providerRetryAt > now)
+        automation.blockers.push(`Email provider retry is deferred until ${new Date(mail.providerRetryAt).toISOString()}; messages remain queued`);
     }
     return {
       role,
@@ -374,11 +376,11 @@ export class PlgService {
       } catch (error) {
         if (error instanceof GoogleMailUnattempted) attempted = false;
         if (!attempted) {
-          // No provider request was attempted. Releasing this reservation lets
-          // an unpause or restored eligibility be evaluated on the next cycle.
+          // Sending never began, or the transport durably proved rejection.
+          // No accepted or ambiguous submission may release its reservation.
           await this.store.transaction((state) => {
             state.deliveries = state.deliveries.filter((d) => d.id !== reserved.delivery.id);
-            audit(state, actor, 'Released an unsent reservation after eligibility changed.', this.now());
+            audit(state, actor, 'Released an unsent reservation; no provider acceptance was reported.', this.now());
           });
           if (error instanceof PlgError && error.status >= 500) throw error;
           if (error instanceof GoogleMailUnattempted) { deferred = 'provider'; break; }

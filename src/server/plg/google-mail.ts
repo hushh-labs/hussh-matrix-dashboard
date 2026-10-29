@@ -5,6 +5,7 @@ import { PlgError } from './engine';
 import { MAIL_OWNER, type MailControlStore, type MailCredentials } from './google-mail-store';
 import { GmailReadError, type GmailRead } from './google-mail-reconcile';
 import { googleMessageMetadata } from './google-mail-metadata';
+import { GmailSubmissionRejected, mailBackoff, recordMailRejection, requireMailReady } from './google-mail-backpressure';
 
 export const MAIL_SCOPES = ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.metadata'];
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -17,7 +18,7 @@ function ownMessageHeaders(value: any) {
   return headers?.from === `Neelesh Meena <${MAIL_OWNER}>` && headers.to === MAIL_OWNER ? headers.messageId : null;
 }
 export class GoogleMailUnattempted extends PlgError {
-  constructor(status = 409) { super(status, 'Mail was not submitted. Repair the connection before retrying.'); }
+  constructor(status = 409) { super(status, 'Mail was not submitted. Check the provider status before retrying.'); }
 }
 async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -141,10 +142,12 @@ export class GoogleMail {
   }
   async status() {
     const state = await this.store.read();
+    const hold = mailBackoff(state);
     return { provider: 'google_workspace', email: MAIL_OWNER, connected: Boolean(state.connection),
       connectedAt: state.connection?.connectedAt ?? null, pending: Boolean(state.pending && state.pending.expiresAt > this.now()),
       reportReadingRequested: this.oauth.readReports === true, feedbackAuthorized: state.connection?.feedbackAllowed === true,
       feedbackCheckedAt: state.feedback?.checkedAt ?? null, feedbackBacklog: Boolean(state.feedback?.pending || state.feedback?.pageToken || state.feedback?.recovery),
+      providerRetryAt: hold && hold.until > this.now() ? hold.until : null,
       deliveryObservation: 'API acceptance; inbox receipt for own tests. External delivery and opens are not inferred.' };
   }
   async feedbackReader(deadline: number): Promise<GmailRead> {
@@ -162,7 +165,8 @@ export class GoogleMail {
   }
   async prepareCampaign(): Promise<PreparedGoogleMail> {
     try {
-      const before = (await this.store.read()).connection;
+      const state = await this.store.read(), before = state.connection;
+      requireMailReady(state, this.now());
       if (!before?.feedbackAllowed) throw new PlgError(409, 'Google feedback permission is missing.');
       const signal = AbortSignal.timeout(15_000);
       const token = await abortable(this.oauth.access(await abortable(this.credentials.read(before.version), signal)), signal);
@@ -177,7 +181,12 @@ export class GoogleMail {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    if (!response.ok) { await response.body?.cancel(); throw new GmailReadError(response.status); }
+    if (!response.ok) {
+      await response.body?.cancel();
+      if (path === 'messages/send' && body && [401, 403, 429].includes(response.status))
+        throw new GmailSubmissionRejected(response.status as 401 | 403 | 429, response.headers.get('retry-after'));
+      throw new GmailReadError(response.status);
+    }
     if (!response.body) throw new Error('Google mail request did not confirm success.');
     const reader = response.body.getReader(), chunks: Uint8Array[] = [];
     let bytes = 0;
@@ -198,7 +207,8 @@ export class GoogleMail {
     try {
     const raw = googleMailMime(to, delivery, message);
     const signal = AbortSignal.timeout(15_000);
-    const before = (await this.store.read()).connection;
+    const state = await this.store.read(), before = state.connection;
+    requireMailReady(state, this.now());
     if (!before) throw new PlgError(409, 'Connect the work mailbox first.');
     if (purpose === 'campaign' && (!prepared || prepared.version !== before.version || prepared.generation !== before.generation ||
       this.now() - prepared.preparedAt < 0 || this.now() - prepared.preparedAt > 60_000))
@@ -210,6 +220,7 @@ export class GoogleMail {
     await this.store.transaction((s) => {
       if (s.connection?.version !== before.version || s.connection?.generation !== before.generation)
         throw new PlgError(409, 'Mailbox connection changed before send.');
+      requireMailReady(s, this.now());
       const feedbackAge = this.now() - (s.feedback?.checkedAt ?? 0);
       if (purpose === 'campaign' && (!s.connection.feedbackAllowed || !s.feedback?.checkedAt || feedbackAge < 0 || feedbackAge > 20 * 60_000 || s.feedback.pending || s.feedback.pageToken || s.feedback.recovery))
         throw new PlgError(409, 'Google feedback is not current; customer sending is held.');
@@ -223,7 +234,16 @@ export class GoogleMail {
     reserved = true;
     signal.throwIfAborted();
     submitted = true;
-    const result = await this.api('messages/send', token, signal, { raw });
+    let result: any;
+    try { result = await this.api('messages/send', token, signal, { raw }); }
+    catch (error) {
+      if (!(error instanceof GmailSubmissionRejected)) throw error;
+      // Release only after the rejection and mailbox-wide wait are durable.
+      // A failed commit remains uncertain; there is no unrecorded retry loop.
+      await this.store.transaction(s => recordMailRejection(s, before, delivery.id, error, this.now()));
+      reserved = submitted = false;
+      throw new PlgError(error.status, 'Email provider rejected the submission; it remains queued.');
+    }
     if (typeof result.id !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(result.id)) throw new Error('Google acceptance missing.');
     return result.id;
     } catch (error) {
