@@ -1116,11 +1116,12 @@ describe('One retained task evidence bridge', () => {
       c.permission = { revision: 2, generation: '24dfc8fb-f456-46c2-ae3e-dc51f92a0816', enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
     });
     const at = new Date(NOW - 2_000).toISOString();
-    await syncOneEvidence(store, options, supportedSource((r) => {
+    const before = await store.read();
+    await expect(syncOneEvidence(store, options, supportedSource((r) => {
       r.accounts[0].verified = [{ agentId: 'agent_calendar', proof: 'calendar.provider_effect.v1',
         count: 1, firstAt: at, lastAt: at, days: [at.slice(0, 10)] }];
-    }), NOW);
-    expect((await store.read()).contacts[0].routingEvidence?.agents).toEqual([]);
+    }), NOW)).rejects.toThrow('unavailable');
+    expect(await store.read()).toEqual(before);
   });
   it('chooses the latest verified agent deterministically while keeping one account', async () => {
     const store = await fixture();

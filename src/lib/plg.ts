@@ -153,7 +153,8 @@ export interface PlgContact {
   routingEvidence?: {
     checkedAt: string;
     generation: string;
-    agents: { agentId: PlgAgentId; proof?: string; lastAt: string }[];
+    epoch?: string;
+    agents: { agentId: PlgAgentId; proof?: string; firstAt?: string; lastAt: string }[];
   };
   setupAt: string | null;
   failedAt: string | null;
