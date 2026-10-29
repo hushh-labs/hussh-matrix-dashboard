@@ -62,6 +62,21 @@ export async function readOwnEvidence(store: PlgStore, permissions: Pick<OneSubs
     row.deleted !== false || !Array.isArray(row.tasks) || row.tasks.length ||
     !Array.isArray(row.verified) || row.verified.length > catalog.agents.length) throw unavailable();
   const activity = readActivity(row.activity, catalog, requested.since, until);
+  // These are captured observations, not unique attempts or proof of absence.
+  // Keep app and server counts separate because both may describe one action.
+  const phases = ['started', 'returned', 'failed', 'cancelled', 'blocked'] as const;
+  const emptyCounts = () => ({ started: 0, returned: 0, failed: 0, cancelled: 0, blocked: 0 });
+  const observations = activity.enabled && activity.epoch && activity.startedAt
+    ? catalog.agents.filter(agent => agent.public && agent.available).map(agent => {
+      const reported = emptyCounts(), executed = emptyCounts(); let lastAt: string | null = null;
+      for (const event of activity.rollups.filter(event => event.agentId === agent.id)) {
+        if (Date.parse(event.firstAt) < Date.parse(activity.startedAt!)) throw unavailable();
+        if (!phases.includes(event.phase)) throw unavailable();
+        (event.source === 'client_reported' ? reported : executed)[event.phase] += event.count;
+        if (!lastAt || event.lastAt > lastAt) lastAt = event.lastAt;
+      }
+      return { agentId: agent.id, label: agent.label, reported, executed, lastAt };
+    }) : null;
   const seen = new Set<string>();
   const positives = row.verified.map((v: any) => {
     if (!v || !outcomeSupported(catalog, v.agentId) || !outcomeProofMatches(catalog, v.agentId, v.proof) ||
@@ -80,6 +95,6 @@ export async function readOwnEvidence(store: PlgStore, permissions: Pick<OneSubs
   if (clock() - started > 120_000) throw unavailable();
   return { environment: 'production' as const, checkedAt: new Date(until).toISOString(), since: requested.since,
     captureEnabled: activity.enabled, captureStartedAt: activity.startedAt, captureEpochPresent: activity.epoch !== null,
-    observationMode: activity.mode, limited: activity.limited, positives,
+    observationMode: activity.mode, limited: activity.limited, observations, positives,
     customerReportingChanged: false, emailsSent: 0, customerCampaignEligibilityProved: false };
 }

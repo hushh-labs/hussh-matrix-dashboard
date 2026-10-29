@@ -51,7 +51,46 @@ describe('fixed-own canonical behaviour inspection', () => {
   it('keeps missing capture and no domain receipts unknown', async () => {
     const f = await fixture(); f.snapshot.accounts[0].verified = [];
     Object.assign(f.snapshot.accounts[0].activity, { enabled: false, startedAt: null, epoch: null });
-    expect(await f.run()).toMatchObject({ positives: [], captureEnabled: false, captureEpochPresent: false });
+    expect(await f.run()).toMatchObject({ positives: [], captureEnabled: false, captureEpochPresent: false, observations: null });
+  });
+  it('shows every captured phase separately for app and server without claiming unique attempts or success', async () => {
+    const f = await fixture(), activity = f.snapshot.accounts[0].activity;
+    f.snapshot.catalog.actions = [
+      { id: 'memory.save', agentId: 'agent_personal_information', label: 'Save', kind: 'action', proof: 'client_reported' },
+      { id: 'agent:memory', agentId: 'agent_personal_information', label: 'Memory', kind: 'agent', proof: 'execution_observed' },
+    ];
+    for (const phase of ['started', 'returned', 'failed', 'cancelled', 'blocked']) {
+      for (const source of ['client_reported', 'execution_observed']) activity.rollups.push({
+        agentId: 'agent_personal_information', actionId: source === 'client_reported' ? 'memory.save' : 'agent:memory',
+        source, phase, count: source === 'client_reported' ? 2 : 3, firstAt: iso(now - 2000), lastAt: iso(now - 1000),
+        days: ['2026-10-29'], privateBody: 'observation-private',
+      });
+    }
+    const before = await f.store.read(), value = await f.run();
+    expect(value.observations).toEqual([{ agentId: 'agent_personal_information', label: 'Memory', lastAt: iso(now - 1000),
+      reported: { started: 2, returned: 2, failed: 2, cancelled: 2, blocked: 2 },
+      executed: { started: 3, returned: 3, failed: 3, cancelled: 3, blocked: 3 } }]);
+    expect(value.positives[0].count).toBe(1);
+    expect(JSON.stringify(value)).not.toContain('observation-private');
+    expect(await f.store.read()).toEqual(before);
+  });
+  it('keeps empty or limited observation windows distinct from complete coverage', async () => {
+    const f = await fixture(); f.snapshot.accounts[0].activity.limited = true;
+    const value = await f.run();
+    expect(value).toMatchObject({ observationMode: 'best_effort', limited: true, observations: [{
+      agentId: 'agent_personal_information', lastAt: null,
+      reported: { started: 0, returned: 0, failed: 0, cancelled: 0, blocked: 0 },
+      executed: { started: 0, returned: 0, failed: 0, cancelled: 0, blocked: 0 },
+    }] });
+  });
+  it('rejects an observation older than the current capture baseline', async () => {
+    const f = await fixture();
+    f.snapshot.catalog.actions = [{ id: 'memory.save', agentId: 'agent_personal_information', label: 'Save', kind: 'action', proof: 'client_reported' }];
+    Object.assign(f.snapshot.accounts[0].activity, { startedAt: iso(now - 1000), rollups: [{
+      agentId: 'agent_personal_information', actionId: 'memory.save', source: 'client_reported', phase: 'started',
+      count: 1, firstAt: iso(now - 2000), lastAt: iso(now - 2000), days: ['2026-10-29'],
+    }] });
+    await expect(f.run()).rejects.toThrow();
   });
   it.each(['wrong_owner', 'deleted', 'old_snapshot', 'wrong_environment', 'wrong_proof', 'duplicate_agent', 'before_consent', 'future_effect'])
     ('rejects %s without persisting or sending', async kind => {
