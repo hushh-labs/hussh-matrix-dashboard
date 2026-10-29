@@ -406,6 +406,14 @@ export function customerReportingCurrent(state: Pick<PlgState, 'customerReportin
 export function customerReportingEligible(state: Pick<PlgState, 'customerReporting'>, c: PlgContact, now: number) {
   return c.customerReporting?.eligible === true && customerReportingCurrent(state, c, now);
 }
+export function staffTestingEligible(state: Pick<PlgState, 'customerReporting' | 'staffTestingEnabled'>, c: PlgContact, now: number) {
+  const proof = c.staffTesting, at = Date.parse(proof?.checkedAt ?? '');
+  return state.staffTestingEnabled === true && /^[^\s@<>]+@hushh\.ai$/.test(c.email) &&
+    c.customerReporting?.eligible === false && customerReportingCurrent(state, c, now) &&
+    c.permission?.enabled === true && c.permission.eligible === true &&
+    proof?.generation === c.permission.generation && proof?.email === c.email &&
+    Number.isFinite(at) && at <= now + 60_000 && now - at <= DAY && at >= Date.parse(c.consentAt ?? '');
+}
 export function candidate(
   state: PlgState,
   c: PlgContact,
@@ -481,7 +489,7 @@ export function deliveryPolicy(c: PlgContact, deliveries: readonly PlgDelivery[]
 }
 
 export function candidateFromPolicy(
-  state: Pick<PlgState, 'paused' | 'catalog' | 'ready' | 'templates' | 'customerReporting'>,
+  state: Pick<PlgState, 'paused' | 'catalog' | 'ready' | 'templates' | 'customerReporting' | 'staffTestingEnabled'>,
   c: PlgContact,
   policy: PlgDeliveryPolicy,
   now: number,
@@ -502,10 +510,11 @@ export function candidateFromPolicy(
   if (c.suppressed) return stop(`Suppressed: ${c.suppressed}`);
   if (c.permission && (!c.permission.enabled || !c.permission.eligible))
     return stop('Current One email permission is unavailable or turned off');
-  if (!customerReportingEligible(state, c, now))
+  const staffTest = staffTestingEligible(state, c, now);
+  if (!customerReportingEligible(state, c, now) && !staffTest)
     return stop('Production customer reporting verification is pending or excluded');
   if (!c.consentAt) return stop('Messaging permission not recorded');
-  if (c.group === 'control') return stop('Comparison group; requested support remains available');
+  if (c.group === 'control' && !staffTest) return stop('Comparison group; requested support remains available');
   if (state.paused && !ignorePause) return stop('Campaigns paused');
   if (!plgJourneyOptions(state).some((j) => j.id === c.journey)) return stop('Agent journey is unavailable');
   if (!state.ready[c.journey]) return stop('Journey task has not been verified');

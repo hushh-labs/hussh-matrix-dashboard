@@ -88,6 +88,39 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     await store.transaction(state => Object.assign(state, stateFor(id)));
     return store;
   };
+  it.each([false, true])('persists staff test routing and isolates customer reporting (disable during permission check: %s)', async disable => fixture(async root => {
+    await enrollOne(root, 'customer');
+    const staff = await enrollOne(root, 'staff');
+    await root.transaction(s => { s.staffTestingEnabled = true; });
+    await staff.transaction(s => {
+      const c = s.contacts[0]; c.email = 'synthetic-team@hushh.ai'; c.group = 'control';
+      c.customerReporting!.eligible = false;
+      c.permission = { enabled: true, eligible: true, generation: '14dfc8fb-f456-46c2-ae3e-dc51f92a0816', revision: 1, checkedAt: new Date(NOW).toISOString() };
+      c.staffTesting = { generation: c.permission.generation, email: c.email, checkedAt: new Date(NOW).toISOString() };
+    });
+    const before = await root.readWorkspace({ query: 'synthetic-team' }, NOW);
+    expect(before.contacts).toHaveLength(1); expect(before.storage!.report!.metrics.enrolled).toBe(1);
+    expect(before.storage!.report!.reporting.excluded).toBe(1);
+    const runtime: PlgRuntime = { enabled: true, deliveryEnabled: true, origin: 'https://metrics.example.invalid',
+      admins: new Set(), operators: new Set(), signingSecret: 'test-only-signing-over-thirty-two-characters',
+      apiKey: 'synthetic', webhookSecret: 'synthetic', from: 'Test <sender@example.invalid>', replyTo: 'reply@example.invalid' };
+    const permission = new OneSubscriptions({ enabled: true, url: 'https://api.hushh.ai/api/one/plg/subscriptions', secret: 'synthetic-only-permission-key-over-thirty-two' },
+      (async () => { if (disable) await root.transaction(s => { s.staffTestingEnabled = false; }); return Response.json({ allowed: true, erased: false }); }) as typeof fetch, () => NOW);
+    const send = vi.fn(async () => 'synthetic-staff-accepted');
+    const service = new PlgService(staff, runtime, () => NOW, send, permission);
+    expect(await service.run('Team test')).toEqual({ sent: disable ? 0 : 1, uncertain: 0 });
+    expect(send).toHaveBeenCalledTimes(disable ? 0 : 1);
+    expect(await service.run('Replay')).toEqual({ sent: 0, uncertain: 0 });
+    if (!disable) {
+      const visible = await root.readWorkspace({}, NOW);
+      expect(visible.deliveries).toHaveLength(1);
+      expect(visible.deliveries[0].subject).toContain('[PLG TEAM TEST]');
+      expect(visible.storage!.report!.metrics.enrolled).toBe(1);
+      await root.transaction(s => { s.staffTestingEnabled = false; });
+    }
+    expect((await root.readWorkspace({ query: 'synthetic-team' }, NOW)).contacts).toHaveLength(0);
+    expect((await staff.read()).contacts[0].customerReporting?.eligible).toBe(false);
+  }));
   it('persists canonical observation grant fences through account reload and renewal without losing a delivery claim', async () => fixture(async (root, db) => {
     const id = 'canonical-behavior-1', firstGrant = '14dfc8fb-f456-46c2-ae3e-dc51f92a0816';
     const nextGrant = '24dfc8fb-f456-46c2-ae3e-dc51f92a0816', now = NOW + 3 * DAY;

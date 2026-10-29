@@ -10,7 +10,7 @@ import { renderPlgEmailHtml } from './email-layout';
 import { renderPlgTestPreview } from './test-preview';
 
 export function registerGoogleMailRoutes(app: express.Express, config: PlgRuntime,
-  templates: () => Promise<PlgTemplate[]>, injected?: GoogleMail) {
+  templates: () => Promise<PlgTemplate[]>, injected?: GoogleMail, ownEvidence?: (email: string) => Promise<unknown>) {
   let mail = injected;
   const get = () => {
     mail ??= configuredGoogleMail();
@@ -23,9 +23,16 @@ export function registerGoogleMailRoutes(app: express.Express, config: PlgRuntim
     if (email !== MAIL_OWNER || !config.admins.has(email)) throw new PlgError(403, 'The configured mailbox owner must perform this action.');
     if (req.method !== 'GET' && req.get('Origin') !== config.origin) throw new PlgError(403, 'Invalid request origin.');
   };
-  const handle = (fn: (req: express.Request, res: express.Response) => Promise<unknown>): express.RequestHandler => (req, res) => {
+  const handle = (fn: (req: express.Request, res: express.Response) => Promise<unknown>, staffSelfRead = false): express.RequestHandler => (req, res) => {
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' });
-    Promise.resolve().then(() => { owner(req); return fn(req, res); }).catch((error) => {
+    Promise.resolve().then(() => {
+      if (staffSelfRead) {
+        const email = (req as any).sessionUser?.email?.toLowerCase();
+        if (!email) throw new PlgError(401, 'Authentication required.');
+        if (!/^[^\s@<>]+@hushh\.ai$/.test(email)) throw new PlgError(403, 'Work-account self-check only.');
+      } else owner(req);
+      return fn(req, res);
+    }).catch((error) => {
       if (!res.headersSent) res.status(error instanceof PlgError ? error.status : 503)
         .json({ error: error instanceof PlgError ? error.message : 'Google mail did not confirm success. Check connection status before retrying.' });
     });
@@ -33,6 +40,11 @@ export function registerGoogleMailRoutes(app: express.Express, config: PlgRuntim
   const cookie = (req: express.Request, value: string, age: number) =>
     `plg_mail_pkce=${value}; Path=/; Max-Age=${age}; HttpOnly; SameSite=Lax${req.secure || req.get('X-Forwarded-Proto') === 'https' || process.env.NODE_ENV === 'production' ? '; Secure' : ''}`;
   app.get('/api/plg/google-mail/status', handle(async (_req, res) => res.json(await get().status())));
+  app.get('/api/plg/my-behaviour', handle(async (req, res) => {
+    if (Object.keys(req.query).length) throw new PlgError(400, 'Account and environment overrides are not accepted.');
+    if (!config.enabled || !ownEvidence) throw new PlgError(503, 'Own activity verification is not configured.');
+    return res.json(await ownEvidence((req as any).sessionUser.email.toLowerCase()));
+  }, true));
   app.post('/api/plg/google-mail/connect', handle(async (req, res) => {
     if (Object.keys(req.body ?? {}).length) throw new PlgError(400, 'No mailbox override is accepted.');
     const result = await get().begin();

@@ -25,7 +25,7 @@ const catalog: PlgCatalog = {
 };
 
 /** Real subscription/source/service code, synthetic signed HTTP and mock provider only. */
-async function fixture() {
+async function fixture(staff = false) {
   let now = START;
   const clock = () => now, store = new MemoryPlgStore();
   const subscriptions = { enabled: true, url: 'https://api.hushh.ai/api/one/plg/subscriptions',
@@ -45,7 +45,7 @@ async function fixture() {
     const change = { accountHash: `sha256:${accountHash(accountId)}`, revision, checkedAt: new Date(now).toISOString(),
       erased: false, enabled: true, eligible: true, generation: grant, frequency: 'weekly', consentAt,
       chosenAt: new Date(now).toISOString(), disclosureVersion: 'one-email-updates-v1', accountId,
-      email: 'canonical@example.invalid', name: 'Synthetic customer', cohort: 'existing' };
+      email: staff ? 'synthetic-team@hushh.ai' : 'canonical@example.invalid', name: 'Synthetic customer', cohort: 'existing' };
     if (purpose === 'pull') return Response.json({ version: 1, environment: 'production', changes: [change] });
     expect(purpose).toBe('ack');
     expect(JSON.parse(init!.body as string)).toEqual({ changes: [{ accountHash: change.accountHash, revision }] });
@@ -62,7 +62,7 @@ async function fixture() {
     await syncOneEvidence(store, snapshot, (async (_url, init) => {
       expect((init!.headers as Record<string, string>)['X-PLG-Signature'])
         .toBe(signValue(`snapshot\n${now}\n${init!.body}`, snapshot.secret));
-      const requested = JSON.parse(init!.body as string).accounts;
+      const payload = JSON.parse(init!.body as string), requested = payload.accounts;
       const held = (await store.read()).contacts[0];
       expect(requested).toEqual([{ accountId, journey: 'agent_one', since: new Date(Math.max(START,
         Date.parse(consentAt), Date.parse(held.activity?.startedAt ?? new Date(START).toISOString()), now - 7 * DAY)).toISOString() }]);
@@ -77,14 +77,16 @@ async function fixture() {
       }
       return Response.json({ version: 2, environment: 'production', retainedOnly: true, catalog,
         asOf: new Date(now).toISOString(),
-        customerReporting: { scope: 'production_registered_contacts', policyRevision: 'd'.repeat(64) },
-        accounts: requested.map((row: any) => ({ ...row, deleted: false, reportingEligible: true, tasks: [],
-          activity: { enabled: true, mode: 'best_effort', limited: false, startedAt: new Date(captureStartedAt).toISOString(), epoch: captureEpoch, rollups: [] },
-          verified })) });
+        ...(payload.customerReporting ? { customerReporting: { scope: 'production_registered_contacts', policyRevision: 'd'.repeat(64) } } : {}),
+        accounts: requested.map((row: any) => ({ ...row, deleted: false,
+          ...(payload.customerReporting ? { reportingEligible: !staff } : {}), tasks: [],
+          activity: staff && payload.customerReporting ? null : { enabled: true, mode: 'best_effort', limited: false, startedAt: new Date(captureStartedAt).toISOString(), epoch: captureEpoch, rollups: [] },
+          verified: staff && payload.customerReporting ? [] : verified })) });
     }) as typeof fetch, clock);
   };
   await store.transaction(state => {
     registerPlgCatalog(state, catalog); state.paused = false;
+    state.staffTestingEnabled = staff;
     for (const [journey] of journeys) state.ready[journey] = true;
     for (const template of state.templates) template.published = true;
   });
@@ -101,6 +103,34 @@ async function fixture() {
 }
 
 describe('canonical One enrollment to contextual delivery', () => {
+  it.each(journeys)('routes opted-in staff %s tests without adding customer metrics', async (journey, agentId) => {
+    const f = await fixture(true); f.advance(3 * DAY);
+    await f.sync(agentId, START + 1000, START + DAY);
+    const state = await f.store.read(), c = state.contacts[0];
+    expect(c.customerReporting?.eligible).toBe(false);
+    expect(candidate(state, c, f.clock())).toMatchObject({ eligible: true, journey, step: 'repeat' });
+    expect(await f.service.run('Staff test worker')).toEqual({ sent: 1, uncertain: 0 });
+    expect(f.transport.mock.calls[1][0]).toMatchObject({ to: 'synthetic-team@hushh.ai',
+      delivery: { templateId: `${journey}-repeat`, subject: expect.stringContaining('[PLG TEAM TEST]') } });
+    const workspace = await f.service.workspace('admin');
+    expect(workspace.metrics.enrolled).toBe(0);
+    expect(workspace.state.contacts).toHaveLength(1);
+    expect(await f.service.run('Staff duplicate')).toEqual({ sent: 0, uncertain: 0 });
+  });
+  it.each(['off', 'new_grant', 'suppressed', 'changed_email', 'stale', 'revoked'])('holds staff test sending after %s', async reason => {
+    const f = await fixture(true); f.advance(3 * DAY); await f.sync('agent_email', START + 1000, START + DAY);
+    await f.store.transaction(s => {
+      const c = s.contacts[0];
+      if (reason === 'off') s.staffTestingEnabled = false;
+      if (reason === 'new_grant') c.permission!.generation = renewed;
+      if (reason === 'suppressed') c.suppressed = 'unsubscribed';
+      if (reason === 'changed_email') c.email = 'external@example.invalid';
+      if (reason === 'stale') c.staffTesting!.checkedAt = new Date(START).toISOString();
+      if (reason === 'revoked') c.permission!.enabled = false;
+    });
+    expect(await f.service.run('Held staff worker')).toEqual({ sent: 0, uncertain: 0 });
+    expect(f.transport).toHaveBeenCalledTimes(1);
+  });
   it.each(journeys.filter(([, agentId]) => agentId !== 'agent_one'))(
     'keeps %s context when the same source also returns a newer One aggregate', async (journey, agentId) => {
       const f = await fixture(); f.advance(3 * DAY);

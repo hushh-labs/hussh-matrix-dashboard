@@ -304,7 +304,15 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       {tab === 'automation' && workspace.automation && <PlgAutomationPanel status={workspace.automation} deliveryEnabled={workspace.deliveryEnabled} admin={admin} busy={busy} checkedAt={checkedAt}
         refresh={() => void reload()}
         toggle={(enabled) => void mutate('automation', 'PATCH', { enabled })} />}
-      {tab === 'automation' && workspace.mailOwner && <PlgGoogleMailPanel templates={state.templates} />}
+      {tab === 'automation' && <section className={cn(dashboardCard, 'p-5')}>
+        <h3 className="font-semibold text-ink">Team workflow testing</h3>
+        <p className="mt-2 text-sm text-muted">Include opted-in @hushh.ai work accounts in behaviour-based emails. Team tests stay outside customer totals; consent, frequency and unsubscribe rules still apply.</p>
+        <button className={cn(buttonStyle, 'mt-3')} disabled={busy || !admin}
+          onClick={() => void updateSettings({ staffTestingEnabled: !state.staffTestingEnabled })}>
+          Staff testing: {state.staffTestingEnabled ? 'On' : 'Off'}
+        </button>
+      </section>}
+      {tab === 'automation' && <PlgGoogleMailPanel templates={state.templates} mailOwner={Boolean(workspace.mailOwner)} />}
       {tab === 'results' && <PlgAppUsage refreshKey={refreshKey} />}
       {tab === 'results' && <div>
         <h3 className="text-lg font-semibold text-ink">Campaign results</h3>
@@ -512,6 +520,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
                       <tr key={c.id} className="border-b border-stroke">
                         <td className="px-3 py-4">
                           <p className="font-semibold text-ink">{c.name || c.email}</p>
+                          {c.customerReporting?.eligible === false && c.staffTesting && <p className="text-xs text-muted">Team test · excluded from customer totals</p>}
                           <p className="mt-1 text-xs text-muted">
                             {c.name
                               ? c.email

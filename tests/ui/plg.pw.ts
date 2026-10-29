@@ -58,6 +58,7 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
     else if (pathname.endsWith('/settings')) {
       state.paused = input.paused;
       state.ready = input.ready;
+      if (input.staffTestingEnabled !== undefined) state.staffTestingEnabled = input.staffTestingEnabled;
     } else if (pathname.endsWith('/automation')) {
       state.automation ??= { enabled: false };
       state.automation.enabled = input.enabled;
@@ -192,6 +193,49 @@ test('keeps work-mail previews separate and distinguishes acceptance from inbox 
   await expect(panel).toContainText('Reconnect required');
   expect(JSON.stringify(state)).toBe(before);
 });
+test('lets a staff operator check only their own activity without mailbox privileges or sending', async ({ page }) => {
+  await mockPlg(page);
+  const writes: string[] = [], mailboxReads: string[] = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/plg/') && request.method() !== 'GET' && path !== '/api/plg/audience') writes.push(path);
+    if (path.includes('/google-mail/') || path.endsWith('/mail-tests')) mailboxReads.push(path);
+  });
+  await page.route('**/api/plg/my-behaviour', route => {
+    expect(new URL(route.request().url()).search).toBe('');
+    return route.fulfill({ json: { environment: 'production', checkedAt: new Date().toISOString(),
+      captureEnabled: true, captureEpochPresent: true, positives: [{ agentId: 'agent_personal_information',
+        label: 'Memory', count: 1, lastAt: new Date().toISOString(), currentCapture: true }] } });
+  });
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Automation', exact: true }).click();
+  await page.getByText('Check my One activity', { exact: true }).click();
+  await page.getByRole('button', { name: 'Check my activity', exact: true }).click();
+  await expect(page.getByText(/Memory: 1 confirmed action/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send preview to my work email' })).toHaveCount(0);
+  expect(writes).toEqual([]);
+  expect(mailboxReads).toEqual([]);
+});
+
+test('switches staff testing explicitly without altering customer totals or dispatching email', async ({ page }) => {
+  const state = await mockPlg(page), before = metrics(state, Date.now()), writes: string[] = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/plg/') && request.method() !== 'GET' && path !== '/api/plg/audience') writes.push(path);
+  });
+  await page.goto('/plg');
+  await page.getByRole('tab', { name: 'Automation', exact: true }).click();
+  await page.getByRole('button', { name: 'Staff testing: Off', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Staff testing: On', exact: true })).toBeVisible();
+  expect(state.staffTestingEnabled).toBe(true);
+  await page.getByRole('button', { name: 'Staff testing: On', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Staff testing: Off', exact: true })).toBeVisible();
+  expect(state.staffTestingEnabled).toBe(false);
+  expect(state.deliveries).toHaveLength(0);
+  expect(metrics(state, Date.now())).toEqual(before);
+  expect(writes).toEqual(['/api/plg/settings', '/api/plg/settings']);
+});
+
 test('shows automation blockers and changes future cycle controls without sending', async ({ page }) => {
   const state = await mockPlg(page);
   const mutations: string[] = [];

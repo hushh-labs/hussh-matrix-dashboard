@@ -33,6 +33,7 @@ import { applyDeliveryEvent } from './delivery-events';
 import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
 import { registerGoogleMailRoutes } from './google-mail-routes';
 import { MAIL_OWNER } from './google-mail-store';
+import { readOwnEvidence } from './own-evidence';
 import { decodeWorkspacePage, encodeWorkspacePages } from './workspace-pages';
 
 /** The same generation fence applies to new One links and already-sent legacy links. */
@@ -84,6 +85,9 @@ export function registerPlgRoutes(
   registerGoogleMailRoutes(app, config, async () => {
     const store = getService().store, accounts = await store.accountStorage?.();
     return (await (accounts ? accounts.readSettings() : store.read())).templates;
+  }, undefined, async (email) => {
+    if (!config.subscriptions?.enabled) throw new PlgError(503, 'One permission verification is not configured.');
+    return readOwnEvidence(getService().store, new OneSubscriptions(config.subscriptions), undefined, fetch, Date.now, email);
   });
   const synchronize = async (deadline = Date.now() + PLG_SYNC_BUDGET_MS, continuation = false, manual = false) => {
     const service = getService();
@@ -234,6 +238,7 @@ export function registerPlgRoutes(
       const settings = await getService().store.transaction((state) => {
         if (
           typeof req.body.paused !== 'boolean' ||
+          (req.body.staffTestingEnabled !== undefined && typeof req.body.staffTestingEnabled !== 'boolean') ||
           typeof req.body.ready?.memory !== 'boolean' ||
           typeof req.body.ready?.mail !== 'boolean' ||
           Object.entries(req.body.ready ?? {}).some(([id, value]) =>
@@ -241,15 +246,16 @@ export function registerPlgRoutes(
         )
           throw new PlgError(400, 'Supply campaign status and verified journey readiness.');
         state.paused = req.body.paused;
+        if (req.body.staffTestingEnabled !== undefined) state.staffTestingEnabled = req.body.staffTestingEnabled;
         state.ready = Object.fromEntries(plgJourneyOptions(state).map((j) =>
           [j.id, req.body.ready[j.id] ?? state.ready[j.id] ?? false])) as typeof state.ready;
         audit(
           state,
           user.email,
-          `Campaigns ${state.paused ? 'paused' : 'enabled'}; journey readiness updated.`,
+          `Campaigns ${state.paused ? 'paused' : 'enabled'}; staff testing ${state.staffTestingEnabled ? 'enabled' : 'disabled'}; journey readiness updated.`,
           Date.now(),
         );
-        return { paused: state.paused, ready: state.ready };
+        return { paused: state.paused, ready: state.ready, staffTestingEnabled: state.staffTestingEnabled === true };
       });
       return res.json(settings);
     }),

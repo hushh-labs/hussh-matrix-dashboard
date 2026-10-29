@@ -165,6 +165,8 @@ export interface PlgContact {
   timeline: PlgTimeline[];
   /** Server-only classification from the signed production snapshot. */
   customerReporting?: { eligible: boolean; policyRevision: string; checkedAt: string };
+  /** Explicit team-test authority, separate from customer reporting. */
+  staffTesting?: { checkedAt: string; generation: string; email: string };
   /** Canonical One permission; account identity alone never enables delivery. */
   permission?: {
     revision: number;
@@ -220,6 +222,7 @@ export interface PlgState {
   /** Latest signed source policy; older contact proofs must be rechecked. */
   customerReporting?: { policyRevision: string; checkedAt: string };
   paused: boolean;
+  staffTestingEnabled?: boolean;
   ready: Record<PlgJourney, boolean>;
   catalog?: PlgCatalog;
   contacts: PlgContact[];

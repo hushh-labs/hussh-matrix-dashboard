@@ -1,7 +1,7 @@
 /** Bounded projections and global reductions; account payload/history is never scanned. */
 import { FieldPath, type Firestore, type Timestamp, type Transaction } from '@google-cloud/firestore';
 import type { PlgAccountReport, PlgCandidate, PlgContact, PlgState } from '../../lib/plg';
-import { accountHash, candidate, customerReportingCurrent, customerReportingEligible, metrics, PlgError } from './engine';
+import { accountHash, candidate, customerReportingCurrent, customerReportingEligible, staffTestingEligible, metrics, PlgError } from './engine';
 import { accountProjectionHash, digest, hydrateAccount, projectPolicy, settings, stableHash,
   validateAccountPolicy, type AccountRecord } from './account-state';
 
@@ -20,7 +20,7 @@ const hash = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{64}$/.t
 const id = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(value);
 const policyHash = (base: Context['base'], now: number) => {
   const proof = base.customerReporting, checked = Date.parse(proof?.checkedAt ?? '');
-  return stableHash([base.paused, base.ready, base.catalog, base.templates,
+  return stableHash([base.paused, base.staffTestingEnabled, base.ready, base.catalog, base.templates,
     proof ? [proof.policyRevision, Number.isFinite(checked) && checked <= now + 60_000 && now - checked <= 86400_000] : null,
     base.automation?.enabled]);
 };
@@ -103,20 +103,23 @@ export async function readAccountReport(db: Firestore, generation: string,
       total++; summary.contacts.checked++;
       if (!customerReportingCurrent(state, row.contact, now)) summary.reporting.pending++;
       else if (!customerReportingEligible(state, row.contact, now)) summary.reporting.excluded++;
-      if (!customerReportingEligible(state, row.contact, now)) continue;
-      if (row.contact.activity?.enabled && row.contact.activity.epoch) summary.activity.connectedAccounts++;
-      for (const observed of row.contact.activity?.agents ?? []) {
-        const aggregate = activity.get(observed.agentId) ?? { agentId: observed.agentId, observedAccounts: 0, executed: 0, reported: 0, failed: 0 };
-        aggregate.observedAccounts++; aggregate.executed += observed.executed;
-        aggregate.reported += observed.reported; aggregate.failed += observed.failed;
-        activity.set(observed.agentId, aggregate);
+      const customer = customerReportingEligible(state, row.contact, now);
+      if (!customer && !staffTestingEligible(state, row.contact, now)) continue;
+      if (customer) {
+        if (row.contact.activity?.enabled && row.contact.activity.epoch) summary.activity.connectedAccounts++;
+        for (const observed of row.contact.activity?.agents ?? []) {
+          const aggregate = activity.get(observed.agentId) ?? { agentId: observed.agentId, observedAccounts: 0, executed: 0, reported: 0, failed: 0 };
+          aggregate.observedAccounts++; aggregate.executed += observed.executed;
+          aggregate.reported += observed.reported; aggregate.failed += observed.failed;
+          activity.set(observed.agentId, aggregate);
+        }
+        const one = metrics(row.local, now);
+        for (const key of Object.keys(summary.metrics) as (keyof PlgAccountReport['metrics'])[]) summary.metrics[key] += one[key];
+        const cohortKey = `${row.contact.cohort}:${row.contact.group}`;
+        const cohort = cohorts.get(cohortKey) ?? { cohort: row.contact.cohort, group: row.contact.group, enrolled: 0, activated: 0, repeat: 0 };
+        cohort.enrolled++; cohort.activated += Number(Boolean(row.contact.firstValueAt)); cohort.repeat += Number(row.contact.valueDays.length > 1);
+        cohorts.set(cohortKey, cohort);
       }
-      const one = metrics(row.local, now);
-      for (const key of Object.keys(summary.metrics) as (keyof PlgAccountReport['metrics'])[]) summary.metrics[key] += one[key];
-      const cohortKey = `${row.contact.cohort}:${row.contact.group}`;
-      const cohort = cohorts.get(cohortKey) ?? { cohort: row.contact.cohort, group: row.contact.group, enrolled: 0, activated: 0, repeat: 0 };
-      cohort.enrolled++; cohort.activated += Number(Boolean(row.contact.firstValueAt)); cohort.repeat += Number(row.contact.valueDays.length > 1);
-      cohorts.set(cohortKey, cohort);
       if (row.decision.eligible) summary.eligible++;
       else reasons.set(row.decision.reason, (reasons.get(row.decision.reason) ?? 0) + 1);
       if (!matches(row.contact, query, row.decision)) continue;
@@ -157,7 +160,7 @@ export async function readAccountReport(db: Firestore, generation: string,
       });
     }, { readOnly: true, readTime });
     for (const row of rows) {
-      if (!row.contact || !customerReportingEligible(state, row.contact, now)) continue;
+      if (!row.contact || (!customerReportingEligible(state, row.contact, now) && !staffTestingEligible(state, row.contact, now))) continue;
       if (state.deliveries.length === PAGE) {
         const previous = state.deliveries.at(-1)!;
         summary.history.nextAfter = { createdAt: previous.createdAt, id: previous.id }; break;
