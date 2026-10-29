@@ -28,7 +28,9 @@ export function recordMailRejection(state: MailControl, connection: NonNullable<
   if (state.connection?.version !== connection.version || state.connection.generation !== connection.generation) return;
   const previous = mailBackoff(state);
   const failures = Math.min(8, previous && now - previous.until < 86_400_000 ? previous.failures + 1 : 1);
-  let until = now + Math.min(86_400_000, 900_000 * 2 ** (failures - 1));
+  // Already in-flight requests can fail in either order. A later response must
+  // never shorten a longer wait committed by another request for this grant.
+  let until = Math.max(previous?.until ?? 0, now + Math.min(86_400_000, 900_000 * 2 ** (failures - 1)));
   const value = rejected.retryAfter;
   if (value && value.length <= 128) {
     const parsed = /^\d{1,10}$/.test(value) ? now + Number(value) * 1000 : Date.parse(value);

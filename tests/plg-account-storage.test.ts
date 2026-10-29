@@ -354,6 +354,36 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     for (const member of members) expect((await member.read()).deliveries).toMatchObject([{ status: 'sent', provider: 'google_workspace' }]);
     expect((await root.readSettings()).automation?.accountCursor ?? null).toBeNull();
   }), 30_000);
+  it('preserves the longest native mailbox hold across concurrently in-flight provider rejections', async () => fixture(async (_root, db) => {
+    let clock = NOW;
+    const control = new FirestoreMailControl('demo-plg-storage', db.databaseId, db);
+    await control.transaction(state => {
+      state.generation = 1; state.connection = { version: '1', generation: 1, connectedAt: NOW };
+    });
+    const finish: ((response: Response) => void)[] = [];
+    const transport = vi.fn(async () => Response.json({ id: 'acceptedAfterWait' }))
+      .mockImplementationOnce(() => new Promise(resolve => { finish[0] = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finish[1] = resolve; }));
+    const mail = new GoogleMail(control, { save: async () => '1', read: async () => 'synthetic-refresh' },
+      { url: () => '', exchange: async () => '', access: async () => 'synthetic-access' }, transport, () => clock);
+    const delivery = { id: randomUUID(), subject: 'Synthetic native quota test' };
+    const message = { text: 'Synthetic', html: '<p>Synthetic</p>', headers: {} };
+    const first = mail.send(MAIL_OWNER, delivery, message).catch(error => error);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+    const second = mail.send(MAIL_OWNER, { ...delivery, id: randomUUID() }, message).catch(error => error);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2), { timeout: 10_000 });
+    finish[0](new Response(null, { status: 429, headers: { 'Retry-After': '7200' } }));
+    expect(await first).toBeInstanceOf(GoogleMailUnattempted);
+    finish[1](new Response(null, { status: 403 }));
+    expect(await second).toBeInstanceOf(GoogleMailUnattempted);
+    expect((await control.read()).sendBackoff).toMatchObject({ until: NOW + 7200_000, failures: 2, generation: 1 });
+    clock += 7200_000 - 1;
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(transport).toHaveBeenCalledTimes(2); expect((await control.read()).attempts).toHaveLength(0);
+    clock += 2;
+    expect(await mail.send(MAIL_OWNER, delivery, message)).toBe('acceptedAfterWait');
+    expect(transport).toHaveBeenCalledTimes(3); expect((await control.read()).attempts).toHaveLength(1);
+  }), 30_000);
   it('continues independent evidence collection across paused cycles without moving the unsent cursor', async () => fixture(async root => {
     for (let offset = 0; offset < 70; offset += 4)
       await Promise.all(Array.from({ length: Math.min(4, 70 - offset) }, (_, n) => enrollOne(root, `paused-${offset + n}`)));

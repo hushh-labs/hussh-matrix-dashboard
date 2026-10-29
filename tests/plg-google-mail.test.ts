@@ -125,6 +125,29 @@ describe('Google mailbox authority and uncertain sends', () => {
     await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
     expect(transport).toHaveBeenCalledTimes(2);
   });
+  it.each([null, '30'])('never shortens a longer mailbox wait when a concurrent rejection has Retry-After %s', async (shorter) => {
+    let clock = Date.parse('2026-10-29T00:00:00Z');
+    mail = new GoogleMail(control, { save: vi.fn(), read: vi.fn(async () => 'synthetic') }, oauth, transport, () => clock);
+    const finish: ((response: Response) => void)[] = [];
+    transport.mockImplementationOnce(() => new Promise(resolve => { finish[0] = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finish[1] = resolve; }));
+    const first = mail.send(MAIL_OWNER, delivery, message).catch(error => error);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
+    const second = mail.send(MAIL_OWNER, { ...delivery, id: 'b763337a-bf20-4ad2-96e9-a9335b2a126c' }, message).catch(error => error);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
+    finish[0](new Response(null, { status: 429, headers: { 'Retry-After': '7200' } }));
+    expect(await first).toBeInstanceOf(GoogleMailUnattempted);
+    const deadline = (await mail.status()).providerRetryAt;
+    finish[1](new Response(null, { status: 429, ...(shorter ? { headers: { 'Retry-After': shorter } } : {}) }));
+    expect(await second).toBeInstanceOf(GoogleMailUnattempted);
+    expect((await mail.status()).providerRetryAt).toBe(deadline);
+    clock += 2 * 60 * 60_000 - 1;
+    await expect(mail.send(MAIL_OWNER, delivery, message)).rejects.toBeInstanceOf(GoogleMailUnattempted);
+    expect(transport).toHaveBeenCalledTimes(2);
+    clock += 2;
+    expect(await mail.send(MAIL_OWNER, delivery, message)).toBe('accepted123');
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
   it.each([408, 500, 503])('keeps an ambiguous HTTP %s send permanently reserved without automatic resubmission', async (status) => {
     transport.mockResolvedValueOnce(new Response(null, { status }));
     const result = await mail.send(MAIL_OWNER, delivery, message).catch(error => error);
