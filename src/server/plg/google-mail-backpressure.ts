@@ -20,6 +20,23 @@ export function mailBackoff(state: MailControl) {
 export function requireMailReady(state: MailControl, now: number) {
   const hold = mailBackoff(state);
   if (hold && hold.until > now) throw new PlgError(hold.status, 'Email provider retry is deferred.');
+  if (mailPacingRetryAt(state, now)) throw new PlgError(429, 'Mailbox sending is paced; messages remain queued.');
+}
+
+// Ten immediate submissions, then one slot per minute. This is an application
+// pacing policy, not a claim about paid/trial Gmail entitlement. It bounds the
+// rolling-day attempt ledger to 1,449 new entries without a daily send cutoff.
+const MAIL_INTERVAL = 60_000, MAIL_BURST = 10;
+export function mailPacingRetryAt(state: MailControl, now: number) {
+  if (state.pacingNextAt === undefined) return null;
+  if (!Number.isSafeInteger(state.pacingNextAt) || state.pacingNextAt < 0 || state.pacingNextAt > 8.64e15)
+    throw new PlgError(503, 'Mailbox pacing state could not be verified.');
+  const retryAt = state.pacingNextAt - (MAIL_BURST - 1) * MAIL_INTERVAL;
+  return retryAt > now ? retryAt : null;
+}
+export function reserveMailPacing(state: MailControl, now: number) {
+  requireMailReady(state, now);
+  state.pacingNextAt = Math.max(now, state.pacingNextAt ?? now) + MAIL_INTERVAL;
 }
 export function recordMailRejection(state: MailControl, connection: NonNullable<MailControl['connection']>,
   id: string, rejected: GmailSubmissionRejected, now: number) {

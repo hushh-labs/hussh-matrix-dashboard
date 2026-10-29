@@ -218,6 +218,8 @@ export class PlgService {
         automation.blockers.push('Google feedback authorization or current complete checkpoint is missing');
       if (mail.providerRetryAt && mail.providerRetryAt > now)
         automation.blockers.push(`Email provider retry is deferred until ${new Date(mail.providerRetryAt).toISOString()}; messages remain queued`);
+      if (mail.pacingRetryAt && mail.pacingRetryAt > now)
+        automation.blockers.push(`Mailbox sending resumes after ${new Date(mail.pacingRetryAt).toISOString()}; messages remain queued`);
     }
     return {
       role,

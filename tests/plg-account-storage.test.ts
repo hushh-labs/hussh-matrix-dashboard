@@ -367,7 +367,8 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     expect(accepted).toHaveBeenCalledOnce(); expect((await member.read()).deliveries).toHaveLength(1);
   }));
   it('durably holds real Google rejections and resumes the same native account queue without duplicates', async () => fixture(async (root, db) => {
-    const members = [await enrollOne(root, 'google-first'), await enrollOne(root, 'google-second')];
+    const members = [];
+    for (let n = 0; n < 12; n++) members.push(await enrollOne(root, `google-paced-${n}`));
     for (const member of members) await member.transaction(state => {
       state.contacts[0].permission = { revision: 1, generation: randomUUID(), enabled: true, eligible: true, checkedAt: new Date(NOW).toISOString() };
     });
@@ -423,9 +424,14 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     expect(posts).toBe(1);
     clock += 16 * 60_000;
     await control.transaction(state => { state.feedback!.checkedAt = clock; });
-    expect(await runAutomationCycle(service, sync, () => clock)).toMatchObject({ status: 'completed', sent: 2, uncertain: 0 });
+    expect(await runAutomationCycle(service, sync, () => clock)).toMatchObject({ status: 'blocked', sent: 10, uncertain: 0 });
     expect(await runAutomationCycle(service, sync, () => clock)).toMatchObject({ sent: 0, uncertain: 0 });
-    expect(posts).toBe(3); expect((await control.read()).attempts).toHaveLength(2);
+    const reloaded = new FirestoreMailControl('demo-plg-storage', db.databaseId, db);
+    expect((await reloaded.read()).pacingNextAt).toBe(clock + 10 * 60_000);
+    clock += 16 * 60_000;
+    await control.transaction(state => { state.feedback!.checkedAt = clock; });
+    expect(await runAutomationCycle(service, sync, () => clock)).toMatchObject({ status: 'completed', sent: 2, uncertain: 0 });
+    expect(posts).toBe(13); expect((await control.read()).attempts).toHaveLength(12);
     for (const member of members) expect((await member.read()).deliveries).toMatchObject([{ status: 'sent', provider: 'google_workspace' }]);
     expect((await root.readSettings()).automation?.accountCursor ?? null).toBeNull();
   }), 30_000);
