@@ -140,7 +140,8 @@ export async function syncOneEvidence(
   const accounts: SourceAccount[] = selected.map((c) => ({
     accountId: c.accountId,
     journey: c.journey,
-    since: c.enrolledAt,
+    since: c.permission ? new Date(Math.max(Date.parse(c.enrolledAt), Date.parse(c.consentAt ?? c.enrolledAt),
+      Date.parse(c.activity?.startedAt ?? c.enrolledAt))).toISOString() : c.enrolledAt,
   }));
   const evidence: Evidence[] = [];
   let catalog: PlgCatalog | undefined;
@@ -330,9 +331,10 @@ export async function syncOneEvidence(
         contact.routingEvidence = {
           checkedAt: new Date(sourceAt).toISOString(),
           generation: contact.permission.generation,
-          agents: row.verified.filter((v) => v.agentId !== 'agent_one' &&
+          ...(row.activity?.enabled && row.activity.epoch ? { epoch: row.activity.epoch } : {}),
+          agents: row.verified.filter((v) =>
             Date.parse(v.lastAt) >= Math.max(Date.parse(contact.enrolledAt), Date.parse(contact.consentAt!)))
-            .map(({ agentId, proof, lastAt }) => ({ agentId, ...(proof ? { proof } : {}), lastAt })),
+            .map(({ agentId, proof, firstAt, lastAt }) => ({ agentId, ...(proof ? { proof } : {}), firstAt, lastAt })),
         };
       }
       const focus = contact.journey === 'memory' ? 'agent_personal_information' : contact.journey === 'mail' ? 'agent_email' : contact.journey;

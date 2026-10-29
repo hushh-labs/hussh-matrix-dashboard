@@ -418,9 +418,9 @@ export function candidate(
     : deliveryPolicy(c, state.deliveries);
   const base = candidateFromPolicy(state, c, policy, now, ignorePause);
   const proof = c.routingEvidence;
-  // Preserve existing lifecycle decisions and one canonical account. A signed
-  // positive outcome can select a published agent newsletter; it cannot prove
-  // complete observation, abandonment, failure or any behavioral follow-up.
+  // Preserve existing lifecycle decisions and one canonical account. Present
+  // domain proof can support a next-use suggestion without asserting missing
+  // activity, abandonment, failure or complete observation.
   if (c.journey !== 'agent_one' || !c.permission || !proof ||
     proof.generation !== c.permission.generation || !state.catalog ||
     !c.consentAt || !Number.isFinite(Date.parse(c.consentAt)) || contactStage(c, now) === 'blocked' ||
@@ -436,11 +436,16 @@ export function candidate(
     if (!Number.isFinite(last) || last < Math.max(Date.parse(c.enrolledAt), Date.parse(c.consentAt)) || last < now - 7 * DAY ||
       last > now + 60_000 || !journeyOutcomeCoverage(state.catalog, journey).supported ||
       !outcomeProofMatches(state.catalog, evidence.agentId, evidence.proof)) continue;
+    const first = Date.parse(evidence.firstAt ?? '');
+    const confirmedPositive = c.activity?.enabled === true && typeof proof.epoch === 'string' &&
+      /^[a-f0-9]{64}$/.test(proof.epoch) && proof.epoch === c.activity.epoch &&
+      Number.isFinite(first) && first <= last &&
+      first >= Math.max(Date.parse(c.enrolledAt), Date.parse(c.consentAt), Date.parse(c.activity.startedAt ?? ''));
     const projected: PlgContact = { ...c, journey, observationAt: null, activity: undefined,
-      telemetryAt: null, setupAt: null, failedAt: null, firstValueAt: evidence.lastAt,
+      telemetryAt: null, setupAt: null, failedAt: null, firstValueAt: confirmedPositive ? evidence.firstAt! : evidence.lastAt,
       lastValueAt: evidence.lastAt, valueDays: [evidence.lastAt.slice(0, 10)] };
-    const next = candidateFromPolicy(state, projected, policy, now, ignorePause);
-    if (next.eligible && next.step === 'newsletter') return { ...next, journey };
+    const next = candidateFromPolicy(state, projected, policy, now, ignorePause, confirmedPositive);
+    if (next.eligible && (next.step === 'newsletter' || next.step === 'repeat')) return { ...next, journey };
   }
   return base;
 }
@@ -478,6 +483,7 @@ export function candidateFromPolicy(
   policy: PlgDeliveryPolicy,
   now: number,
   ignorePause = false,
+  confirmedPositive = false,
 ): PlgCandidate {
   const stage = contactStage(c, now);
   const out: PlgCandidate = {
@@ -528,10 +534,12 @@ export function candidateFromPolicy(
   let step: PlgStep | null = null;
   if (!freshObservation) {
     if (stage === 'blocked') return stop('Task failed; PLG assistance review needed');
+    if (confirmedPositive && c.firstValueAt && age(c.firstValueAt, now) >= 2 * DAY && !has('repeat'))
+      step = 'repeat';
     // Neutral welcome and explicitly subscribed content do not assert inactivity.
-    // Behavioral reminders still require complete, fresh product observations.
+    // Absence-based reminders still require complete, fresh product observations.
     if (
-      !c.firstValueAt && stage !== 'engaged' &&
+      !step && !c.firstValueAt && stage !== 'engaged' &&
       !has('welcome') &&
       state.templates.some((t) => t.journey === c.journey && t.step === 'welcome' && t.published)
     )

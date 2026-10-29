@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Firestore } from '@google-cloud/firestore';
 import { randomUUID } from 'node:crypto';
 import type { PlgDelivery, PlgState } from '../src/lib/plg';
+import { outcomeProofs } from '../src/lib/plg-outcomes';
 import { accountHash, candidate, DAY, enroll, eraseAccount, ingestEvent, initialPlgState, metrics, registerPlgCatalog } from '../src/server/plg/engine';
 import { digest, hydrateAccount, sealAccount, settings } from '../src/server/plg/account-state';
 import { AccountPlgStore } from '../src/server/plg/account-store';
@@ -111,6 +112,9 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
       contact.valueDays = [contact.firstValueAt.slice(0, 10), contact.lastValueAt.slice(0, 10)];
       contact.activity = { enabled: true, mode: 'best_effort', limited: false,
         epoch: 'e'.repeat(64), startedAt: new Date(NOW).toISOString(), agents: [] };
+      contact.routingEvidence = { checkedAt: new Date(now).toISOString(), generation: firstGrant,
+        epoch: 'e'.repeat(64), agents: [{ agentId: 'agent_one', proof: outcomeProofs.agent_one,
+          firstAt: contact.firstValueAt, lastAt: contact.lastValueAt }] };
       const welcome = { ...receipt(state, 'canonical-welcome'), templateId: 'agent_one-welcome',
         key: `${contact.id}:agent_one-welcome:1` };
       state.deliveries.push(welcome);
@@ -121,6 +125,13 @@ describe.skipIf(!emulator)('account Firestore integration', () => {
     const before = await member.read(), oldContact = before.contacts[0];
     expect(oldContact).toMatchObject({ journey: 'agent_one', observationPermissionGeneration: firstGrant });
     expect(candidate(before, oldContact, now)).toMatchObject({ eligible: true, step: 'repeat' });
+    const positiveOnly = structuredClone(before);
+    delete positiveOnly.contacts[0].observationAt;
+    delete positiveOnly.contacts[0].observationPermissionGeneration;
+    delete positiveOnly.contacts[0].observationEpoch;
+    expect(candidate(positiveOnly, positiveOnly.contacts[0], now)).toMatchObject({ eligible: true, step: 'repeat' });
+    positiveOnly.contacts[0].routingEvidence!.epoch = 'f'.repeat(64);
+    expect(candidate(positiveOnly, positiveOnly.contacts[0], now)).toMatchObject({ eligible: true, step: 'newsletter' });
     await member.transaction(state => applySubscription(state, { ...change, revision: 2 }, now));
     const sameGrant = await member.read();
     expect(candidate(sameGrant, sameGrant.contacts[0], now)).toMatchObject({ eligible: true, step: 'repeat' });

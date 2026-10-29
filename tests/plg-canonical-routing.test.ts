@@ -63,7 +63,9 @@ async function fixture() {
       expect((init!.headers as Record<string, string>)['X-PLG-Signature'])
         .toBe(signValue(`snapshot\n${now}\n${init!.body}`, snapshot.secret));
       const requested = JSON.parse(init!.body as string).accounts;
-      expect(requested).toEqual([{ accountId, journey: 'agent_one', since: new Date(Math.max(START, now - 7 * DAY)).toISOString() }]);
+      const held = (await store.read()).contacts[0];
+      expect(requested).toEqual([{ accountId, journey: 'agent_one', since: new Date(Math.max(START,
+        Date.parse(consentAt), Date.parse(held.activity?.startedAt ?? new Date(START).toISOString()), now - 7 * DAY)).toISOString() }]);
       const first = new Date(firstAt).toISOString(), last = new Date(lastAt).toISOString();
       return Response.json({ version: 2, environment: 'production', retainedOnly: true, catalog,
         asOf: new Date(now).toISOString(),
@@ -92,6 +94,43 @@ async function fixture() {
 }
 
 describe('canonical One enrollment to contextual delivery', () => {
+  it.each(journeys)('offers the next %s task from a confirmed value without inventing complete activity coverage', async (journey, agentId) => {
+    const f = await fixture(); f.advance(3 * DAY);
+    await f.sync(agentId, START + 1000, START + DAY);
+    const state = await f.store.read(), contact = state.contacts[0];
+    expect(contact.journey).toBe('agent_one');
+    expect(contact.observationAt).toBeUndefined();
+    expect(candidate(state, contact, f.clock())).toMatchObject({ eligible: true, step: 'repeat', templateId: `${journey}-repeat` });
+    expect(await f.service.run('Fixture worker')).toEqual({ sent: 1, uncertain: 0 });
+    expect(f.transport.mock.calls[1][0]).toMatchObject({ to: 'canonical@example.invalid', delivery: { templateId: `${journey}-repeat` } });
+    expect(f.checks[1]).toMatchObject({ accountId, generation, revision: 1 });
+    expect(await f.service.run('Fixture replay')).toEqual({ sent: 0, uncertain: 0 });
+    expect(f.transport).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['missing_epoch', 'old_epoch', 'old_grant', 'before_epoch', 'before_consent', 'missing_first'] as const)
+    ('holds a positive follow-up with an invalid cached proof: %s', async invalid => {
+      const f = await fixture(); f.advance(3 * DAY); await f.sync('agent_email', START + 1000, START + DAY);
+      const state = await f.store.read(), contact = state.contacts[0], proof = contact.routingEvidence!;
+      if (invalid === 'missing_epoch') delete proof.epoch;
+      if (invalid === 'old_epoch') proof.epoch = 'f'.repeat(64);
+      if (invalid === 'old_grant') proof.generation = renewed;
+      if (invalid === 'before_epoch') contact.activity!.startedAt = new Date(f.clock() - 1000).toISOString();
+      if (invalid === 'before_consent') contact.consentAt = new Date(f.clock() - 1000).toISOString();
+      if (invalid === 'missing_first') delete proof.agents[0].firstAt;
+      expect(candidate(state, contact, f.clock())).toMatchObject({ eligible: true, step: 'newsletter' });
+      expect(contact.observationAt).toBeUndefined();
+    });
+
+  it('rejects an old-grant positive interval at the actual renewed source boundary', async () => {
+    const f = await fixture(); f.advance(3 * DAY); f.renew();
+    await expect(f.sync('agent_email', START + 1000, START + DAY)).rejects.toThrow('unavailable');
+    const state = await f.store.read(), contact = state.contacts[0];
+    expect(contact.permission?.generation).toBe(renewed);
+    expect(contact.routingEvidence).toBeUndefined();
+    expect(candidate(state, contact, f.clock())).toMatchObject({ eligible: false });
+  });
+
   it.each(journeys)('selects %s positive content from the canonical account and rechecks its actual permission', async (journey, agentId) => {
     const f = await fixture(), id = (await f.store.read()).contacts[0].id;
     f.advance(DAY + 1);
