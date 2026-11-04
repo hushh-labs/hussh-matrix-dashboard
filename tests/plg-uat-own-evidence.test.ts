@@ -6,8 +6,8 @@ const now = Date.parse('2026-10-31T08:00:00Z');
 const since = '2026-10-31T07:00:00Z';
 const epoch = 'b'.repeat(64);
 const scope = { environment: 'uat' as const, authorityScope: 'uat-live-owner' as const,
-  accountId: 'uat-owner', journey: 'agent_one', since, revision: 1,
-  generation: '12345678-1234-1234-1234-123456789abc', emailHash: 'a'.repeat(64) };
+  accountId: 'uat-owner', journey: 'agent_one', since, readAuthority: 'verified_owner' as const,
+  ownerEpoch: epoch, emailHash: 'a'.repeat(64) };
 const catalog = { revision: 'c'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }],
   actions: [{ id: 'agent:agent_one', agentId: 'agent_one', label: 'One', kind: 'agent', proof: 'execution_observed' }] };
 const activity = { enabled: true, mode: 'best_effort', limited: false, startedAt: since, epoch,
@@ -68,7 +68,7 @@ describe('UAT own evidence boundary', () => {
     vi.stubEnv('PLG_FIRESTORE_PROJECT', '');
     vi.stubEnv('PLG_FIRESTORE_DATABASE', '');
     const owner = { environment: 'uat', accountId: scope.accountId, journey: scope.journey,
-      since, generation: scope.generation, revision: scope.revision, emailHash: hash };
+      since, readAuthority: 'verified_owner', ownerEpoch: epoch, emailHash: hash };
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const target = String(input);
       if (target.endsWith('/owner-uat')) return new Response(JSON.stringify({ environment: 'uat', deliveryAuthorized: false, scope: owner }));
@@ -86,7 +86,7 @@ describe('UAT own evidence boundary', () => {
     await expect(readUatSessionEvidence('other@hushh.ai', fetcher, () => now)).rejects.toThrow();
   });
 
-  it('rejects a re-enrolled owner generation even if both permission reads are allowed', async () => {
+  it('rejects a reset owner epoch even if both permission reads claim to be allowed', async () => {
     setup();
     const hash = createHash('sha256').update('tester@hushh.ai').digest('hex');
     vi.stubEnv('PLG_UAT_OWNER_EMAIL_HASHES', hash);
@@ -97,8 +97,8 @@ describe('UAT own evidence boundary', () => {
       const target = String(input);
       if (target.endsWith('/owner-uat')) return new Response(JSON.stringify({ environment: 'uat',
         deliveryAuthorized: false, scope: { environment: 'uat', accountId: scope.accountId,
-          journey: scope.journey, since, generation: ++owners === 1 ? scope.generation :
-            '87654321-4321-4321-4321-cba987654321', revision: 1, emailHash: hash } }));
+          journey: scope.journey, since, readAuthority: 'verified_owner',
+          ownerEpoch: ++owners === 1 ? epoch : 'c'.repeat(64), emailHash: hash } }));
       if (target.endsWith('/permission-uat')) return new Response(JSON.stringify({ environment: 'uat',
         allowed: true, erased: false, deliveryAuthorized: false, ownerEpoch: epoch }));
       const requested = JSON.parse(String(init?.body)).accounts[0];

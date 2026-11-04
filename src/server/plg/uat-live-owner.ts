@@ -26,7 +26,7 @@ export function createUatLiveScopeLoader(sessionEmail: string, fetcher: typeof f
     if (!scope || scope.emailHash !== emailHash) throw unavailable();
     if (!pinnedSince) pinnedSince = new Date(Math.max(Date.parse(scope.since), floor)).toISOString();
     if (Date.parse(scope.since) > Date.parse(pinnedSince)) throw unavailable();
-    return { ...scope, environment: 'uat' as const, since: pinnedSince,
+    return { ...scope, environment: 'uat' as const, readAuthority: 'verified_owner' as const, since: pinnedSince,
       authorityScope: 'uat-live-owner' as const };
   };
 }

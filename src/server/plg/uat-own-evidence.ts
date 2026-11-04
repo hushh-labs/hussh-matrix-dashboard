@@ -4,7 +4,7 @@ import { readUatPermission, readUatSnapshot } from './uat-snapshot-client.mjs';
 
 type UatScope = {
   environment: 'uat'; authorityScope: 'uat-live-owner'; accountId: string; journey: string;
-  since: string; generation: string; emailHash: string; revision: number;
+  since: string; readAuthority: 'verified_owner'; emailHash: string; ownerEpoch: string;
 };
 
 /**

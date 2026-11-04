@@ -7,8 +7,7 @@ const now = Date.parse('2026-10-31T08:00:00Z');
 const url = 'https://api.uat.hushh.ai/api/one/plg/snapshot-uat';
 const secret = 'x'.repeat(40);
 const permission = { environment: 'uat', enabled: true, eligible: true, accountId: 'uat-owner',
-  journey: 'agent_one', since: '2026-10-31T07:00:00Z', revision: 1,
-  generation: '12345678-1234-1234-1234-123456789abc', emailHash: 'a'.repeat(64),
+  journey: 'agent_one', since: '2026-10-31T07:00:00Z', readAuthority: 'verified_owner', emailHash: 'a'.repeat(64),
   ownerEpoch: 'b'.repeat(64), verified: true };
 const snapshot = (overrides = {}) => ({ version: 2, environment: 'uat', retainedOnly: true,
   asOf: new Date(now).toISOString(), catalog: {}, accounts: [{ accountId: permission.accountId,
@@ -18,7 +17,7 @@ const options = () => ({ url, secret, loadPermission: async () => ({ ...permissi
   validate: async ({ row }) => ({ activity: row.activity }) });
 
 test('UAT owner projection is bounded, separately signed and grants no delivery', async () => {
-  const { enabled, eligible, verified, ownerEpoch, ...scope } = permission;
+  const { enabled, eligible, verified, ...scope } = permission;
   const fetcher = async (target, request) => {
     assert.equal(target, 'https://api.uat.hushh.ai/api/one/plg/owner-uat');
     assert.equal(request.body, JSON.stringify({ emailHash: permission.emailHash }));
@@ -27,6 +26,9 @@ test('UAT owner projection is bounded, separately signed and grants no delivery'
     return new Response(JSON.stringify({ environment: 'uat', deliveryAuthorized: false, scope }));
   };
   assert.deepEqual(await readUatOwnerProjection({ secret, emailHash: permission.emailHash }, fetcher, () => now), scope);
+  await assert.rejects(readUatOwnerProjection({ secret, emailHash: permission.emailHash }, async () => new Response(JSON.stringify({
+    environment: 'uat', deliveryAuthorized: false, scope: { ...scope, readAuthority: undefined, revision: 1 },
+  })), () => now)); // A marketing projection is not current verified-owner authority.
   await assert.rejects(readUatOwnerProjection({ secret, emailHash: permission.emailHash }, async () => new Response(JSON.stringify({
     environment: 'production', deliveryAuthorized: false, scope,
   })), () => now));

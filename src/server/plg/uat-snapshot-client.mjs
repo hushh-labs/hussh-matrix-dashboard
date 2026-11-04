@@ -38,36 +38,33 @@ export async function readUatOwnerProjection({ secret, emailHash, productionSecr
   if (scope === null) return null;
   if (!scope || scope.environment !== 'uat' || typeof scope.accountId !== 'string' ||
     !scope.accountId || scope.accountId.length > 128 || /[\x00-\x1f\x7f]/.test(scope.accountId) ||
-    typeof scope.generation !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(scope.generation) ||
-    scope.emailHash !== emailHash ||
-    !Number.isSafeInteger(scope.revision) || scope.revision < 1 || scope.journey !== 'agent_one' ||
+    scope.readAuthority !== 'verified_owner' || scope.emailHash !== emailHash ||
+    typeof scope.ownerEpoch !== 'string' || !/^[a-f0-9]{64}$/.test(scope.ownerEpoch) || scope.journey !== 'agent_one' ||
     typeof scope.since !== 'string' || !Number.isFinite(Date.parse(scope.since)) ||
     Date.parse(scope.since) > received || Date.parse(scope.since) < received - 7 * DAY - 60_000) throw unavailable();
-  return { environment: 'uat', accountId: scope.accountId, generation: scope.generation,
-    emailHash: scope.emailHash, revision: scope.revision, since: scope.since, journey: scope.journey };
+  return { environment: 'uat', readAuthority: 'verified_owner', accountId: scope.accountId,
+    emailHash: scope.emailHash, ownerEpoch: scope.ownerEpoch, since: scope.since, journey: scope.journey };
 }
 
-/** Scope must come from an authenticated, isolated UAT owner store. */
+/** Scope comes from the current verified owner, independent of marketing choice. */
 export async function readUatPermission({ scope, secret, productionSecret }, fetcher = fetch, clock = Date.now) {
   if (productionSecret || typeof secret !== 'string' || secret.length < 32 || !scope ||
     scope.environment !== 'uat' || typeof scope.accountId !== 'string' || !scope.accountId ||
     scope.accountId.length > 128 || /[\x00-\x1f\x7f]/.test(scope.accountId) ||
-    typeof scope.generation !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(scope.generation) ||
+    scope.readAuthority !== 'verified_owner' ||
     typeof scope.emailHash !== 'string' || !/^[a-f0-9]{64}$/.test(scope.emailHash) ||
-    !Number.isSafeInteger(scope.revision) || scope.revision < 1) throw unavailable();
+    typeof scope.ownerEpoch !== 'string' || !/^[a-f0-9]{64}$/.test(scope.ownerEpoch)) throw unavailable();
   const started = clock();
-  const body = JSON.stringify({ accountId: scope.accountId, generation: scope.generation,
-    emailHash: scope.emailHash, revision: scope.revision });
+  const body = JSON.stringify({ accountId: scope.accountId,
+    emailHash: scope.emailHash, ownerEpoch: scope.ownerEpoch });
   const data = await postSigned(UAT_PERMISSION, 'permission-uat', secret, body, started, fetcher);
   const received = clock();
   if (received < started || received - started > 60_000 || data?.environment !== 'uat' ||
     data.allowed !== true || data.erased !== false || data.deliveryAuthorized !== false ||
-    typeof data.ownerEpoch !== 'string' || !/^[a-f0-9]{64}$/.test(data.ownerEpoch)) throw unavailable();
+    data.ownerEpoch !== scope.ownerEpoch) throw unavailable();
   return { environment: 'uat', accountId: scope.accountId, journey: scope.journey,
-    since: scope.since, generation: scope.generation, emailHash: scope.emailHash,
-    revision: scope.revision, enabled: true, eligible: true, verified: true, ownerEpoch: data.ownerEpoch };
+    since: scope.since, readAuthority: 'verified_owner', emailHash: scope.emailHash,
+    enabled: true, eligible: true, verified: true, ownerEpoch: data.ownerEpoch };
 }
 
 /**
@@ -85,9 +82,7 @@ export async function readUatSnapshot({ url, secret, productionSecret, loadPermi
   if (!before || before.environment !== 'uat' || before.enabled !== true || before.eligible !== true ||
     typeof before.accountId !== 'string' || !before.accountId || before.accountId.length > 128 ||
     /[\x00-\x1f\x7f]/.test(before.accountId) || typeof before.journey !== 'string' ||
-    !before.journey || before.journey.length > 128 || !Number.isSafeInteger(before.revision) ||
-    before.revision < 1 || typeof before.generation !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(before.generation) ||
+    !before.journey || before.journey.length > 128 || before.readAuthority !== 'verified_owner' ||
     typeof before.emailHash !== 'string' || !/^[a-f0-9]{64}$/.test(before.emailHash) ||
     typeof before.ownerEpoch !== 'string' || !/^[a-f0-9]{64}$/.test(before.ownerEpoch) ||
     before.verified !== true || typeof before.since !== 'string' ||
@@ -95,10 +90,10 @@ export async function readUatSnapshot({ url, secret, productionSecret, loadPermi
     Date.parse(before.since) < started - 7 * DAY - 60_000) throw unavailable();
   const requested = { accountId: before.accountId, journey: before.journey, since: before.since };
   const authorityKeys = ['environment', 'enabled', 'eligible', 'verified', 'accountId', 'journey',
-    'since', 'revision', 'generation', 'emailHash', 'ownerEpoch'];
+    'since', 'readAuthority', 'emailHash', 'ownerEpoch'];
   const authority = JSON.stringify(authorityKeys.map(key => before[key]));
-  const body = JSON.stringify({ version: 2, accounts: [{ ...requested, generation: before.generation,
-    emailHash: before.emailHash, revision: before.revision, ownerEpoch: before.ownerEpoch }],
+  const body = JSON.stringify({ version: 2, accounts: [{ ...requested,
+    emailHash: before.emailHash, ownerEpoch: before.ownerEpoch }],
     customerReporting: false });
   const data = await postSigned(url, 'snapshot-uat', secret, body, started, fetcher);
   const received = clock(), asOf = Date.parse(data?.asOf), row = data?.accounts?.[0];

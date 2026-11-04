@@ -5,7 +5,7 @@ import { createUatLiveScopeLoader } from '../src/server/plg/uat-live-owner';
 const now = Date.parse('2026-10-31T08:00:00Z');
 const emailHash = createHash('sha256').update('tester@hushh.ai').digest('hex');
 const scope = { environment: 'uat', accountId: 'uat-owner', emailHash,
-  generation: '12345678-1234-1234-1234-123456789abc', revision: 1,
+  readAuthority: 'verified_owner', ownerEpoch: 'b'.repeat(64),
   since: '2026-10-31T07:00:00Z', journey: 'agent_one' };
 function setup() {
   vi.stubEnv('PLG_UAT_EVIDENCE_ENABLED', 'true');

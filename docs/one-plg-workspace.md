@@ -713,6 +713,20 @@ No production account, permission, template, enrollment, sending setting or
 customer data was changed during this audit. Local browser tests use synthetic
 fixtures and establish UI behavior, not completeness of production telemetry.
 
+## Own UAT activity
+
+The default-off `/plg/uat` view uses a verified Matrix session, an explicit UAT
+team email-hash cohort and the separately signed One UAT owner/snapshot endpoints.
+One resolves candidates within its explicit UAT account cohort, then checks the
+current verified identity and the activity epoch around the read. A cached email
+only selects a candidate; it cannot authorize the projection. Missing, ambiguous,
+erased or reset owners produce no activity result. The signed scope carries
+`readAuthority=verified_owner` and `ownerEpoch`, not marketing consent revisions.
+Own activity access does not require a marketing subscription and never grants
+permission to send mail. Per-attempt receipts have their own explicit preference.
+This view has no production source or campaign storage access. Local checks do
+not establish a deployed UAT runtime or complete event capture.
+
 ## Verify
 
 PLG Results requests `/api/analytics/one/app?environment=production` with its
