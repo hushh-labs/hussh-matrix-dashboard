@@ -12,6 +12,7 @@ on:
       - 'index.html'
       - 'infra/one-plg/**'
       - 'scripts/plg-worker.mjs'
+      - 'scripts/plg-attempt-mail-job.ts'
       - 'scripts/plg-environment-release.mjs'
       - 'scripts/deploy-plg-environment.sh'
       - '.github/workflows/deploy-main.yml'
@@ -116,6 +117,8 @@ jobs:
       - run: terraform init -backend=false -input=false -lockfile=readonly
         working-directory: infra/one-plg
       - run: terraform validate -no-color
+        working-directory: infra/one-plg
+      - run: terraform test -no-color
         working-directory: infra/one-plg
   verify:
     runs-on: ubuntu-latest

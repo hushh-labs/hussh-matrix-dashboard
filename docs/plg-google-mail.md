@@ -202,3 +202,36 @@ own-Inbox proof, revocation, deduplication and timing, then ordinary Production
 promotion. Local provider fixtures and renderer acceptance are not that proof.
 Capture remains best-effort and capped; this worker cannot establish universal
 attempt coverage or an unconditional few-minute delivery guarantee.
+
+### Private Dev/UAT mail execution
+
+When the common mailbox control is in Production, use the optional
+`attempt_mail_job_releases` in the existing locked PLG Terraform state. Keep the
+Dev/UAT dashboard's `MATRIX_ATTEMPT_EMAIL_CONFIG=null` and
+`attempt_worker_releases={}`. The private job runs the same bounded cycle beside
+the mailbox, without an HTTP listener. Each lane has its own Production mail-job
+identity, exact One source key and feedback/lease namespace. Nonproduction web
+identities receive no Production database or mailbox credentials. Firestore IAM
+is database-scoped; the fixed job code accesses only `one_plg_mail/control`.
+Its custom role admits transactions, document reads and upserts, without query,
+listing, deletion, export or database administration. This is not document-level
+IAM; use the pinned entrypoint and retain job-edit/impersonation restrictions.
+
+The job verifies its native project and exact service-account email before any
+mailbox access. It refuses web-service execution, extra tasks, retries, emulator
+or credential-file overrides, Production source selection and caller-selected
+stores. Recipient, template and unsubscribe authority still come only from One's
+current opted-in claim. The scheduler has `roles/run.invoker` on this job only;
+it cannot override arguments, environment, image or task count.
+
+The map is empty by default. Each entry must pin a Dev-qualified image digest,
+source SHA, environment source-secret version, public mailbox client ID and
+client-secret version. Validate exact CI/release receipts and a reviewed plan
+before creating it; start with `scheduled=false`. Creation never executes it.
+Enable the existing one-minute schedule only after an authorized own-recipient
+cycle and actual feedback/Inbox/revocation/dedup checks. No application traffic,
+existing sender, provider state or OAuth grant is migrated by this option.
+
+Cloud Run references: [job runtime contract](https://docs.cloud.google.com/run/docs/container-contract)
+and [execution versus override permissions](https://docs.cloud.google.com/run/docs/execute/jobs).
+The control role follows [Firestore's method permissions](https://docs.cloud.google.com/firestore/native/docs/security/iam).
