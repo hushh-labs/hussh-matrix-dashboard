@@ -5,9 +5,24 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Existing Production candidate or dedicated Dev/UAT runtime
+        type: choice
+        options: [production, dev, uat]
+        default: production
+      source_sha:
+        description: Dev/UAT exact reviewed source (must be merged into main)
+        type: string
+      ci_run_id:
+        description: Passing canonical PR CI run for that exact source
+        type: string
+      dev_run_id:
+        description: UAT only - successful canonical Dev runtime run for this source
+        type: string
 
 concurrency:
-  group: metrics-hushh-ai-production
+  group: metrics-hushh-ai-${{ inputs.target_environment || 'production' }}
   cancel-in-progress: false
 
 permissions:
@@ -41,6 +56,7 @@ env:
 jobs:
   deploy:
     name: Build, deploy, and verify production
+    if: ${{ github.event_name == 'push' || inputs.target_environment == 'production' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -544,3 +560,65 @@ jobs:
             --format=json | node scripts/capture-cloud-run-traffic.mjs)"
           echo "Candidate verification failed. Preserving operator traffic: ${CURRENT_TRAFFIC}"
           echo "No production traffic is changed by this zero-traffic workflow."
+
+  deploy-nonproduction:
+    name: Deploy verified Matrix Dev/UAT runtime
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_environment == 'dev' || inputs.target_environment == 'uat') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: matrix-${{ inputs.target_environment }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      CI_RUN_ID: ${{ inputs.ci_run_id }}
+      DEV_RUN_ID: ${{ inputs.dev_run_id }}
+      MATRIX_GOOGLE_CLIENT_ID: ${{ vars.MATRIX_GOOGLE_CLIENT_ID }}
+      MATRIX_SECRET_VERSIONS: ${{ vars.MATRIX_SECRET_VERSIONS }}
+      MATRIX_OWNER_READ_ENABLED: ${{ vars.MATRIX_OWNER_READ_ENABLED || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check exact reviewed source before cloud authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ && "$CI_RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > "$RUNNER_TEMP/matrix-ci.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/jobs?per_page=100" > "$RUNNER_TEMP/matrix-ci-jobs.json"
+          node scripts/plg-environment-release.mjs ci "$RUNNER_TEMP/matrix-ci.json" "$RUNNER_TEMP/matrix-ci-jobs.json" "$SOURCE_SHA"
+          git checkout --detach "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          node scripts/plg-environment-release.mjs target "$TARGET_ENVIRONMENT" > "$RUNNER_TEMP/matrix-target.json"
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const t = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/matrix-target.json`, 'utf8'));
+          appendFileSync(process.env.GITHUB_ENV, `PROJECT_ID=${t.project}\nDEPLOY_SERVICE_ACCOUNT=${t.deployer}\n`);
+          NODE
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Authenticate through the existing main-only Matrix federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy exact Dev image or promote the same digest to UAT
+        run: bash scripts/deploy-plg-environment.sh
+      - name: Save runtime evidence (not owner journey or Inbox acceptance)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-${{ inputs.target_environment }}-runtime
+          path: ${{ runner.temp }}/matrix-runtime/result.json
+          if-no-files-found: ignore
+          retention-days: 14

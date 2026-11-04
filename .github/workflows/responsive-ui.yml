@@ -12,6 +12,8 @@ on:
       - 'index.html'
       - 'infra/one-plg/**'
       - 'scripts/plg-worker.mjs'
+      - 'scripts/plg-environment-release.mjs'
+      - 'scripts/deploy-plg-environment.sh'
       - '.github/workflows/deploy-main.yml'
       - '.github/workflows/responsive-ui.yml'
 
@@ -129,6 +131,7 @@ jobs:
       - run: npm test
       - run: npm run test:deploy:traffic-snapshot
       - run: bash -n scripts/run-release-api-phase.sh
+      - run: bash -n scripts/deploy-plg-environment.sh
       - run: npm run test:ui:one-platforms
       - run: npm run test:ui:agent-feature-render
       - run: npm run build
