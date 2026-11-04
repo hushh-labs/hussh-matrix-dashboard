@@ -713,6 +713,49 @@ No production account, permission, template, enrollment, sending setting or
 customer data was changed during this audit. Local browser tests use synthetic
 fixtures and establish UI behavior, not completeness of production telemetry.
 
+## Own activity
+
+The default-off `/plg/uat` view uses a verified Matrix session, an explicit UAT
+team email-hash cohort and the separately signed One UAT owner/snapshot endpoints.
+One resolves candidates within its explicit UAT account cohort, then checks the
+current verified identity and the activity epoch around the read. A cached email
+only selects a candidate; it cannot authorize the projection. Missing, ambiguous,
+erased or reset owners produce no activity result. The signed scope carries
+`readAuthority=verified_owner` and `ownerEpoch`, not marketing consent revisions.
+Own activity access does not require a marketing subscription and never grants
+permission to send mail. Per-attempt receipts have their own explicit preference.
+This view has no production source or campaign storage access. Local checks do
+not establish a deployed UAT runtime or complete event capture.
+
+The separate `/plg/activity` page reads `/api/plg/my-activity` for the signed-in
+production owner. It requires `GOOGLE_CLOUD_PROJECT=hushh-ai-prod`,
+`PLG_OWNER_EVIDENCE_ENABLED=true`, an explicit `PLG_OWNER_EMAIL_HASHES` cohort
+(1–100 unique verified work-account hashes), and a separate
+`PLG_OWNER_SOURCE_SECRET`. Its fixed One source is `api.hushh.ai` with the
+`owner`, `permission-owner` and `snapshot-owner` contracts. UAT uses its own
+project, credential, cohort and fixed `api.uat.hushh.ai` source. Neither view
+accepts an account override or grants sending authority. The page linked from
+mail setup reads one's activity without depending on a marketing subscription.
+Missing, stale, reset or mismatched identity fails closed. These default-off
+paths require runtime configuration and actual environment verification before
+being described as live.
+
+Dev uses `/plg/dev` and `/api/plg/dev/my-behaviour`, with the same verified-session
+and current-owner/epoch checks. It requires `GOOGLE_CLOUD_PROJECT=hushh-pda-dev`,
+`PLG_DEV_RUNTIME=dev`, `PLG_DEV_IDENTITY_MODE=live-signed`,
+`PLG_DEV_EVIDENCE_ENABLED=true`, its own `PLG_DEV_OWNER_EMAIL_HASHES` cohort and
+separate `PLG_DEV_SOURCE_SECRET`. The source is pinned to the native Dev backend
+`https://consent-protocol-aqahj4iyha-uc.a.run.app` and separately signed
+`owner-dev`, `permission-dev`, `snapshot-dev` endpoints. UAT/Production settings
+cannot substitute for these. Dev does not read campaign storage.
+
+The optional attempt worker also admits `PLG_ATTEMPT_ENVIRONMENT=dev` only in
+that exact project/runtime. Its read key, worker key and owner-read credential
+must differ. Feedback/lease/acknowledgement state has a distinct Dev namespace;
+mailbox disconnect, provider backoff and pacing remain shared. Source support is
+default-off, not evidence of provisioned infrastructure, a verified login, or a
+sent email. Verify the canonical Dev source and runtime before activating it.
+
 ## Verify
 
 PLG Results requests `/api/analytics/one/app?environment=production` with its

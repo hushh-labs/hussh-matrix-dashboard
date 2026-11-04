@@ -9,6 +9,7 @@ import { MetricsSkeleton } from './components/MetricsLoading';
 import { MatrixBrand } from './components/MatrixBrand';
 const dashboardModule = import('./Dashboard');
 const Dashboard = lazy(() => dashboardModule);
+const PlgUatActivity = lazy(() => import('./components/PlgUatActivity').then(module => ({ default: module.PlgUatActivity })));
 function DashboardShell() { return <div className="mx-auto min-h-screen max-w-[1320px] bg-canvas p-5 sm:p-8"><div className="mb-6"><MatrixBrand /></div><MetricsSkeleton label="Opening your metrics dashboard" /></div>; }
 import { AuthProvider, useAuth } from './components/AuthProvider';
 import { LoginPage } from './components/LoginPage';
@@ -48,6 +49,15 @@ function AppContent() {
       />
     );
   }
+
+  // The UAT self-check reads only the isolated UAT endpoint and has its own
+  // session gate; it does not load the production PLG workspace.
+  if (typeof window !== 'undefined' && window.location.pathname === '/plg/uat')
+    return <Suspense fallback={<DashboardShell />}><PlgUatActivity /></Suspense>;
+  if (typeof window !== 'undefined' && window.location.pathname === '/plg/dev')
+    return <Suspense fallback={<DashboardShell />}><PlgUatActivity environment="dev" /></Suspense>;
+  if (typeof window !== 'undefined' && window.location.pathname === '/plg/activity')
+    return <Suspense fallback={<DashboardShell />}><PlgUatActivity environment="production" /></Suspense>;
 
   // 3. Authenticated & Authorized -> render full Dashboard
   return <Suspense fallback={<DashboardShell />}><Dashboard /></Suspense>;

@@ -14,6 +14,13 @@ import { PlgService, type PlgRuntime } from '../src/server/plg/service';
 import { applySubscription, OneSubscriptions } from '../src/server/plg/one-subscriptions';
 import { renderPlgEmailHtml } from '../src/server/plg/email-layout';
 import { renderPlgTestPreview } from '../src/server/plg/test-preview';
+import { createHmac } from 'node:crypto';
+import { OneAttemptEmails } from '../src/server/plg/attempt-email-source';
+import { AttemptMailControl } from '../src/server/plg/attempt-email-control';
+import { runAttemptEmailCycle } from '../src/server/plg/attempt-email-worker';
+import { registerAttemptEmailRoute } from '../src/server/plg/attempt-email-routes';
+
+afterEach(() => vi.unstubAllEnvs());
 
 class Control implements MailControlStore {
   state = emptyMailControl();
@@ -502,5 +509,141 @@ describe('Canonical permission to Google transport integration', () => {
     await expect(mail.send('synthetic@example.invalid', delivery, message, 'campaign', prepared)).rejects.toThrow('not submitted');
     expect(transport).not.toHaveBeenCalled();
     expect(control.state.attempts).toHaveLength(0);
+  });
+});
+
+describe('Opted-in owner attempt delivery through the existing mail transport', () => {
+  function attemptFixture(fault?: 'revoked' | 'wrong_link' | 'uncertain' | 'rejected', environment: 'dev' | 'uat' = 'uat') {
+    const sourceKey = 'test-only-separate-attempt-source-secret-32-characters';
+    const accountId = 'synthetic-owner';
+    let pending = true;
+    const settlements: any[] = [];
+    control.state.connection!.feedbackAllowed = true;
+    control.state.feedback = { cursor: 'production-cursor', checkedAt: 1 };
+    const origin = environment === 'dev' ? 'https://consent-protocol-aqahj4iyha-uc.a.run.app' : 'https://api.uat.hushh.ai';
+    const scoped = new AttemptMailControl(control, environment);
+    const provider = vi.fn<typeof fetch>(async (url, options) => {
+      if (String(url).endsWith('/profile')) return Response.json({ historyId: '500' });
+      if (String(url).includes('/history?')) return Response.json({ historyId: '501', history: [] });
+      expect(String(url)).toBe('https://gmail.googleapis.com/gmail/v1/users/me/messages/send');
+      expect(options?.method).toBe('POST');
+      if (fault === 'uncertain') throw new Error('synthetic lost provider response');
+      if (fault === 'rejected') return new Response('', { status: 429, headers: { 'retry-after': '120' } });
+      return Response.json({ id: 'attemptAccepted123' });
+    });
+    const sender = new GoogleMail(scoped, { read: async () => 'test-refresh', save: async () => '1' }, oauth, provider);
+    const sourceFetch = vi.fn<typeof fetch>(async (url, options) => {
+      expect(String(url).startsWith(`${origin}/api/one/plg/attempt-email/`)).toBe(true);
+      expect(options?.redirect).toBe('error');
+      const action = String(url).split('/').at(-1), body = JSON.parse(String(options?.body));
+      const headers = options?.headers as Record<string, string>;
+      expect(headers['X-PLG-Signature']).toBe(createHmac('sha256', sourceKey)
+        .update(`attempt-emails.${environment}.${action}\n${headers['X-PLG-Timestamp']}\n${options?.body}`).digest('hex'));
+      const respond = (value: object) => Response.json({ environment, ...value });
+      if (action === 'feedback-state') return respond({ oldestAt: null, unsettled: false, unbound: [] });
+      if (action === 'feedback-apply') return respond({ complete: true });
+      if (action === 'pull') return respond({ deliveries: pending ? [{ id, accountId }] : [] });
+      if (action === 'settle') { settlements.push(body); pending = body.notSubmitted === true; return respond({ received: true }); }
+      expect(action).toBe('claim');
+      pending = false;
+      return respond({ delivery: fault === 'revoked' ? null : { id, claimId: body.claimId, to: 'synthetic@example.invalid',
+        agentId: 'agent_one', actionId: 'synthetic-action', agentLabel: 'Private agent', actionLabel: 'Ask a question',
+        phase: 'returned', observedAt: new Date().toISOString(), source: 'client_reported', permissionGeneration: id,
+        unsubscribeUrl: `${fault === 'wrong_link' ? 'https://api.hushh.ai' : origin}/api/one/plg/attempt-email/unsubscribe?token=${createHash('sha256').update(accountId).digest('hex')}.${id}.${'b'.repeat(64)}`,
+        text: 'must never leak a product payload', bcc: 'untrusted@example.invalid' } });
+    });
+    const source = new OneAttemptEmails(environment, sourceKey, sourceFetch);
+    return { source, sourceFetch, provider, sender, scoped, settlements };
+  }
+  it.each(['dev', 'uat'] as const)('%s sends one closed metadata receipt, preserves shared pacing and leaves production feedback untouched', async environment => {
+    const f = attemptFixture(undefined, environment);
+    expect(await runAttemptEmailCycle(f.source, f.sender, f.scoped)).toEqual({ accepted: 1, uncertain: 0, deferred: false });
+    const send = f.provider.mock.calls.find(([url]) => String(url).endsWith('/messages/send'))!;
+    const mime = Buffer.from(JSON.parse(String(send[1]!.body)).raw, 'base64url').toString();
+    expect(mime).toContain('To: synthetic@example.invalid\r\n');
+    expect(mime).not.toMatch(/\r\n(?:Bcc|Cc):/i);
+    const bodies = [...mime.matchAll(/Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)\r\n--/g)]
+      .map(m => Buffer.from(m[1].replace(/\s/g, ''), 'base64').toString()).join('\n');
+    expect(bodies).toContain('Ask a question');
+    expect(bodies).toContain('does not confirm an external action succeeded');
+    expect(bodies).toContain(`https://${environment}.one.hussh.ai`);
+    expect(bodies).not.toContain('must never leak');
+    expect(f.settlements[0]).toMatchObject({ providerId: 'attemptAccepted123', notSubmitted: false });
+    expect(control.state.feedback).toEqual({ cursor: 'production-cursor', checkedAt: 1 });
+    expect(control.state.attemptEmail?.[environment]?.feedback?.cursor).toBe('500');
+    expect(control.state.attempts).toHaveLength(1);
+    expect(control.state.pacingNextAt).toBeGreaterThan(Date.now());
+    expect(await runAttemptEmailCycle(f.source, f.sender, f.scoped)).toEqual({ accepted: 0, uncertain: 0, deferred: false });
+    expect(f.provider.mock.calls.filter(([url]) => String(url).endsWith('/messages/send'))).toHaveLength(1);
+  });
+  it.each(['revoked', 'wrong_link'] as const)('%s cannot reach the provider', async fault => {
+    const f = attemptFixture(fault);
+    const result = await runAttemptEmailCycle(f.source, f.sender, f.scoped);
+    expect(result.accepted).toBe(0);
+    expect(result.uncertain).toBe(fault === 'wrong_link' ? 1 : 0);
+    expect(f.provider.mock.calls.some(([url]) => String(url).endsWith('/messages/send'))).toBe(false);
+  });
+  it('replays a durable lost acknowledgement after restart without submitting again', async () => {
+    const f = attemptFixture(), original = f.sourceFetch.getMockImplementation()!;
+    let lost = true;
+    f.sourceFetch.mockImplementation(async (url, options) => {
+      if (String(url).endsWith('/settle') && lost) { lost = false; throw new Error('synthetic acknowledgement outage'); }
+      return original(url, options);
+    });
+    expect(await runAttemptEmailCycle(f.source, f.sender, f.scoped)).toEqual({ accepted: 0, uncertain: 1, deferred: false });
+    const saved = control.state.attemptEmail!.uat!.acknowledgements!;
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ id, providerId: 'attemptAccepted123', notSubmitted: false });
+    expect(JSON.stringify(saved)).not.toMatch(/synthetic-owner|synthetic@example|Ask a question/);
+    const callsBefore = f.sourceFetch.mock.calls.length;
+    const restarted = new AttemptMailControl(control, 'uat');
+    expect(await runAttemptEmailCycle(f.source, f.sender, restarted)).toEqual({ accepted: 0, uncertain: 0, deferred: false });
+    expect(String(f.sourceFetch.mock.calls[callsBefore][0])).toMatch(/\/settle$/);
+    expect(f.settlements[0]).not.toHaveProperty('accountId');
+    expect(await restarted.acknowledgements()).toEqual([]);
+    expect(f.provider.mock.calls.filter(([url]) => String(url).endsWith('/messages/send'))).toHaveLength(1);
+  });
+  it.each(['uncertain', 'rejected'] as const)('distinguishes %s submissions and never repeats a provider call during the cycle', async fault => {
+    const f = attemptFixture(fault);
+    const result = await runAttemptEmailCycle(f.source, f.sender, f.scoped);
+    expect(result).toEqual({ accepted: 0, uncertain: fault === 'uncertain' ? 1 : 0, deferred: fault === 'rejected' });
+    expect(f.settlements[0]).toMatchObject({ providerId: null, notSubmitted: fault === 'rejected' });
+    expect(f.provider.mock.calls.filter(([url]) => String(url).endsWith('/messages/send'))).toHaveLength(1);
+    if (fault === 'rejected') expect(control.state.sendBackoff?.status).toBe(429);
+  });
+  it('shares disconnection authority and excludes another running cycle', async () => {
+    const f = attemptFixture();
+    await f.scoped.acquire('active', Date.now());
+    await expect(runAttemptEmailCycle(f.source, f.sender, f.scoped)).rejects.toThrow('already running');
+    expect(f.sourceFetch).not.toHaveBeenCalled();
+    await f.scoped.transaction(state => { ++state.generation; delete state.connection; });
+    expect(control.state.connection).toBeUndefined();
+    expect(control.state.feedback?.cursor).toBe('production-cursor');
+  });
+  it('authenticates the exact lane and empty scheduler body without exposing a manual send route', async () => {
+    const run = vi.fn(async () => ({ accepted: 0, uncertain: 0, deferred: false }));
+    const workerKey = 'test-only-separate-attempt-worker-secret-32-characters';
+    const server = express(); server.use(express.json({ verify(req, _res, buffer) { (req as any).plgRawBody = buffer.toString(); } }));
+    registerAttemptEmailRoute(server, run);
+    const invoke = (lane = 'uat', body: object = {}) => {
+      const timestamp = String(Date.now()), raw = JSON.stringify(body);
+      const signature = createHmac('sha256', workerKey).update(`attempt-cycle.${lane}\n${timestamp}\n${raw}`).digest('hex');
+      return request(server).post('/integrations/plg/attempts').set('Content-Type', 'application/json')
+        .set('X-PLG-Timestamp', timestamp).set('X-PLG-Signature', signature).send(raw);
+    };
+    expect((await invoke()).status).toBe(404);
+    for (const [key, value] of Object.entries({ PLG_ATTEMPT_EMAIL_ENABLED: 'true', PLG_ATTEMPT_ENVIRONMENT: 'uat',
+      GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: 'uat', PLG_ATTEMPT_WORKER_SECRET: workerKey,
+      PLG_ATTEMPT_SOURCE_SECRET: 'test-only-other-source-key-32-characters' })) vi.stubEnv(key, value);
+    expect((await invoke('production')).status).toBe(401);
+    expect((await invoke('uat', { to: 'override@example.invalid' })).status).toBe(401);
+    expect((await invoke()).status).toBe(200);
+    expect(run).toHaveBeenCalledTimes(1);
+    vi.stubEnv('PLG_ONE_AUDIENCE_SECRET', workerKey);
+    expect((await invoke()).status).toBe(503);
+    vi.stubEnv('PLG_ONE_AUDIENCE_SECRET', '');
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-ai-prod');
+    expect((await invoke()).status).toBe(503);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });

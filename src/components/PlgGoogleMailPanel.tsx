@@ -47,6 +47,7 @@ export function PlgGoogleMailPanel({ templates, mailOwner = true }: { templates:
   return <section aria-label="Google work mailbox" className={cn(dashboardCard, 'p-5 sm:p-7')}>
     <details className="mb-5 rounded-xl border border-stroke p-4">
       <summary className="cursor-pointer font-semibold text-ink">Check my One activity</summary>
+      <a href="/plg/activity" className="mt-3 inline-block text-sm font-semibold underline">Open my agent activity</a>
       <p className="mt-2 text-sm text-muted">Check captured activity and confirmed Production actions for your signed-in work account. This check sends no email and keeps staff activity out of customer totals.</p>
       <button className={cn(button, 'mt-3')} disabled={busy} onClick={() => void action(async () => {
         setBehaviour(null); setBehaviourError('');

@@ -1,5 +1,76 @@
 # One PLG infrastructure
 
+## Dev and UAT owner-read runtime
+
+The same `deploy-main.yml` workflow accepts `target_environment=dev|uat` after
+the reviewed source has merged into `main`. The existing main-only Matrix
+Workload Identity provider is reused; no branch trust, Production service,
+Production traffic, database or mailbox grant is changed by this path.
+
+Provision the additive `owner_environments=["dev"]` foundation with this
+directory's existing private locked state, then include `uat`. Default is empty.
+Review the complete plan and import any already-existing owned resources before
+apply; do not use a second state for these addresses or recreate identities.
+The new runtimes receive only their five named secret readers. The deploy
+identities get Cloud Run administration in their respective nonproduction
+project, act-as only on their own runtime, secret-version metadata (not payload)
+and the needed image-repository access. Dev builds the immutable image; UAT
+pulls that same digest. No production database/secret access is provisioned.
+
+Configure a separate Google Web OAuth client in each target project. Register
+only its corresponding callback below. The deterministic Cloud Run URL format
+is [documented by Google](https://docs.cloud.google.com/run/docs/triggering/https-request);
+the deployed native revision and anonymous auth boundary are checked separately.
+
+| GitHub environment | Project | OAuth callback |
+| --- | --- | --- |
+| `matrix-dev` | `hushh-pda-dev` | `https://hushh-matrix-dashboard-621416509462.us-central1.run.app/auth/callback` |
+| `matrix-uat` | `hushh-pda-uat` | `https://hushh-matrix-dashboard-745506018753.us-central1.run.app/auth/callback` |
+
+Restrict each GitHub environment's deployment branches to `main`. Set its public
+`MATRIX_GOOGLE_CLIENT_ID`, and `MATRIX_SECRET_VERSIONS` as a JSON mapping from
+the following names to enabled numeric versions. Values are supplied to Secret
+Manager through secure stdin, never Terraform/GitHub variables or this document:
+
+- `metrics-dashboard-google-client-secret`: that environment's OAuth secret.
+- `metrics-dashboard-session-secret`: independent cryptographically random key.
+- `metrics-dashboard-allowed-emails`: the explicit testing cohort.
+- `metrics-one-plg-owner-source-secret`: independent environment read HMAC,
+  paired with One's `ONE_PLG_DEV_EXPORT_SECRET` or `ONE_PLG_UAT_EXPORT_SECRET`.
+- `metrics-one-plg-owner-email-hashes`: SHA256 of normalized verified cohort emails.
+
+The cohort and its paired One UUID allowlist must come from current authenticated
+owner identities, never invented fixture IDs or another environment's snapshots.
+No secret version is created by Terraform. Missing/disabled/unpinned versions
+fail before image or service mutation. OAuth consent/callback configuration
+requires the authorized client's actual setup; a container or public client ID
+alone does not establish working sign-in.
+
+Dispatch the existing workflow from `main` with the exact merged `source_sha`
+and its successful canonical `Responsive dashboard UI` PR `ci_run_id`. All
+three jobs must have actually passed for that SHA. UAT additionally requires
+`dev_run_id`, whose successful canonical runtime artifact binds the same source
+and image digest. No production image, mutable tag or differently sourced Dev
+receipt is accepted. This workflow manages only the named Matrix service in
+the selected project and refuses an existing service with another owner label.
+
+`MATRIX_OWNER_READ_ENABLED` defaults false. Enable it only after the paired One
+release, separate source key/cohort and signed identity are ready. A runtime
+artifact explicitly records `interactiveSignInVerified=false`,
+`behaviourVerified=false`, `emailEnabled=false` and `inboxVerified=false`:
+native readiness and an anonymous OAuth boundary probe are not those proofs.
+Complete actual Dev owner-flow verification before proceeding to UAT acceptance.
+This foundation intentionally creates no Gmail grant, outbox worker, scheduler,
+customer campaign state or per-attempt preference. Those remain separately
+authorized release configuration and acceptance, not implied by runtime deploy.
+
+The nonproduction deployment replaces its owned manifest, clearing stale
+credentials/settings, and checks exact source/image/runtime/secret references.
+It serves the nonproduction revision at100% and does not mutate Production.
+If postdeploy verification fails, record it as failed and inspect native state;
+do not blindly rerun or change another operator's traffic. Restore the recorded
+prior reviewed nonproduction manifest through the same workflow as needed.
+
 The production foundation uses the named Native Firestore database
 `hushh-ai-prod/one-plg-production`, protected against deletion with PITR enabled.
 The existing `(default)` Datastore database is separate. Runtime access is IAM

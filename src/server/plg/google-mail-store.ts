@@ -27,6 +27,13 @@ export interface MailControl {
   pacingNextAt?: number;
   tests: MailTest[];
   attempts: { id: string; at: number }[];
+  /** Separate delivery owners have independent feedback cursors, never a copied OAuth grant or pacing budget. */
+  attemptEmail?: Partial<Record<'dev' | 'uat' | 'production', {
+    feedback?: MailControl['feedback']; feedbackLease?: MailControl['feedbackLease'];
+    cycle?: { id: string; until: number };
+    acknowledgements?: { id: string; claimId: string; providerId: string | null; notSubmitted: boolean }[];
+    lastCycle?: { finishedAt: number; accepted: number; uncertain: number; deferred: boolean; status: 'completed' | 'blocked' | 'failed' };
+  }>>;
 }
 export const emptyMailControl = (): MailControl => ({ generation: 0, tests: [], attempts: [] });
 export interface MailControlStore {
