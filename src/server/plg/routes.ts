@@ -34,6 +34,7 @@ import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from
 import { registerGoogleMailRoutes } from './google-mail-routes';
 import { MAIL_OWNER } from './google-mail-store';
 import { readOwnEvidence } from './own-evidence';
+import { registerUatEvidenceRoute } from './uat-evidence-routes';
 import { decodeWorkspacePage, encodeWorkspacePages } from './workspace-pages';
 
 /** The same generation fence applies to new One links and already-sent legacy links. */
@@ -52,6 +53,7 @@ export function registerPlgRoutes(
   production: boolean,
   injected?: PlgService,
 ) {
+  registerUatEvidenceRoute(app);
   const config = injected?.runtime ?? plgRuntime();
   let service = injected;
   const getService = () => {
