@@ -13,6 +13,24 @@ function appFor(email: string | null, read: (email: string) => Promise<unknown>)
 }
 
 describe('UAT own activity route', () => {
+  it('keeps Dev own reads session-bound and unavailable on UAT or Production', async () => {
+    vi.stubEnv('PLG_DEV_EVIDENCE_ENABLED', 'true');
+    vi.stubEnv('PLG_DEV_RUNTIME', 'dev');
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-dev');
+    const dev = vi.fn(async (email: string) => ({ environment: 'dev', email }));
+    const app = express();
+    app.use((req, _res, next) => { (req as any).sessionUser = { email: 'tester@hushh.ai' }; next(); });
+    registerUatEvidenceRoute(app, vi.fn(), vi.fn(), dev);
+    expect((await request(app).get('/api/plg/dev/my-behaviour?accountId=other')).status).toBe(400);
+    expect((await request(app).get('/api/plg/dev/my-behaviour')).status).toBe(200);
+    expect(dev).toHaveBeenCalledExactlyOnceWith('tester@hushh.ai');
+    for (const project of ['hushh-pda-uat', 'hushh-ai-prod']) {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', project);
+      const wrong = express(); registerUatEvidenceRoute(wrong, vi.fn(), vi.fn(), dev);
+      expect((await request(wrong).get('/api/plg/dev/my-behaviour')).status).toBe(404);
+    }
+    expect(dev).toHaveBeenCalledTimes(1);
+  });
   it('pins Production own reads to the Production runtime and session, never an account override', async () => {
     vi.stubEnv('PLG_OWNER_EVIDENCE_ENABLED', 'true');
     vi.stubEnv('PLG_UAT_RUNTIME', '');

@@ -48,3 +48,7 @@ export function readUatOwnEvidence(loadScope: () => Promise<OwnerScope>, fetcher
 export async function readProductionSessionEvidence(sessionEmail: string, fetcher: typeof fetch = fetch, clock = Date.now) {
   return readOwnerEvidence('production', createOwnerScopeLoader('production', sessionEmail, fetcher, clock), fetcher, clock);
 }
+
+export async function readDevSessionEvidence(sessionEmail: string, fetcher: typeof fetch = fetch, clock = Date.now) {
+  return readOwnerEvidence('dev', createOwnerScopeLoader('dev', sessionEmail, fetcher, clock), fetcher, clock);
+}

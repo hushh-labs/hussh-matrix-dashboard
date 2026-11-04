@@ -513,14 +513,15 @@ describe('Canonical permission to Google transport integration', () => {
 });
 
 describe('Opted-in owner attempt delivery through the existing mail transport', () => {
-  function attemptFixture(fault?: 'revoked' | 'wrong_link' | 'uncertain' | 'rejected') {
+  function attemptFixture(fault?: 'revoked' | 'wrong_link' | 'uncertain' | 'rejected', environment: 'dev' | 'uat' = 'uat') {
     const sourceKey = 'test-only-separate-attempt-source-secret-32-characters';
     const accountId = 'synthetic-owner';
     let pending = true;
     const settlements: any[] = [];
     control.state.connection!.feedbackAllowed = true;
     control.state.feedback = { cursor: 'production-cursor', checkedAt: 1 };
-    const scoped = new AttemptMailControl(control, 'uat');
+    const origin = environment === 'dev' ? 'https://consent-protocol-aqahj4iyha-uc.a.run.app' : 'https://api.uat.hushh.ai';
+    const scoped = new AttemptMailControl(control, environment);
     const provider = vi.fn<typeof fetch>(async (url, options) => {
       if (String(url).endsWith('/profile')) return Response.json({ historyId: '500' });
       if (String(url).includes('/history?')) return Response.json({ historyId: '501', history: [] });
@@ -532,13 +533,13 @@ describe('Opted-in owner attempt delivery through the existing mail transport', 
     });
     const sender = new GoogleMail(scoped, { read: async () => 'test-refresh', save: async () => '1' }, oauth, provider);
     const sourceFetch = vi.fn<typeof fetch>(async (url, options) => {
-      expect(String(url).startsWith('https://api.uat.hushh.ai/api/one/plg/attempt-email/')).toBe(true);
+      expect(String(url).startsWith(`${origin}/api/one/plg/attempt-email/`)).toBe(true);
       expect(options?.redirect).toBe('error');
       const action = String(url).split('/').at(-1), body = JSON.parse(String(options?.body));
       const headers = options?.headers as Record<string, string>;
       expect(headers['X-PLG-Signature']).toBe(createHmac('sha256', sourceKey)
-        .update(`attempt-emails.uat.${action}\n${headers['X-PLG-Timestamp']}\n${options?.body}`).digest('hex'));
-      const respond = (value: object) => Response.json({ environment: 'uat', ...value });
+        .update(`attempt-emails.${environment}.${action}\n${headers['X-PLG-Timestamp']}\n${options?.body}`).digest('hex'));
+      const respond = (value: object) => Response.json({ environment, ...value });
       if (action === 'feedback-state') return respond({ oldestAt: null, unsettled: false, unbound: [] });
       if (action === 'feedback-apply') return respond({ complete: true });
       if (action === 'pull') return respond({ deliveries: pending ? [{ id, accountId }] : [] });
@@ -548,14 +549,14 @@ describe('Opted-in owner attempt delivery through the existing mail transport', 
       return respond({ delivery: fault === 'revoked' ? null : { id, claimId: body.claimId, to: 'synthetic@example.invalid',
         agentId: 'agent_one', actionId: 'synthetic-action', agentLabel: 'Private agent', actionLabel: 'Ask a question',
         phase: 'returned', observedAt: new Date().toISOString(), source: 'client_reported', permissionGeneration: id,
-        unsubscribeUrl: `${fault === 'wrong_link' ? 'https://api.hushh.ai' : 'https://api.uat.hushh.ai'}/api/one/plg/attempt-email/unsubscribe?token=${createHash('sha256').update(accountId).digest('hex')}.${id}.${'b'.repeat(64)}`,
+        unsubscribeUrl: `${fault === 'wrong_link' ? 'https://api.hushh.ai' : origin}/api/one/plg/attempt-email/unsubscribe?token=${createHash('sha256').update(accountId).digest('hex')}.${id}.${'b'.repeat(64)}`,
         text: 'must never leak a product payload', bcc: 'untrusted@example.invalid' } });
     });
-    const source = new OneAttemptEmails('uat', sourceKey, sourceFetch);
+    const source = new OneAttemptEmails(environment, sourceKey, sourceFetch);
     return { source, sourceFetch, provider, sender, scoped, settlements };
   }
-  it('sends one closed metadata receipt, preserves shared pacing and leaves production feedback untouched', async () => {
-    const f = attemptFixture();
+  it.each(['dev', 'uat'] as const)('%s sends one closed metadata receipt, preserves shared pacing and leaves production feedback untouched', async environment => {
+    const f = attemptFixture(undefined, environment);
     expect(await runAttemptEmailCycle(f.source, f.sender, f.scoped)).toEqual({ accepted: 1, uncertain: 0, deferred: false });
     const send = f.provider.mock.calls.find(([url]) => String(url).endsWith('/messages/send'))!;
     const mime = Buffer.from(JSON.parse(String(send[1]!.body)).raw, 'base64url').toString();
@@ -565,11 +566,11 @@ describe('Opted-in owner attempt delivery through the existing mail transport', 
       .map(m => Buffer.from(m[1].replace(/\s/g, ''), 'base64').toString()).join('\n');
     expect(bodies).toContain('Ask a question');
     expect(bodies).toContain('does not confirm an external action succeeded');
-    expect(bodies).toContain('https://uat.one.hussh.ai');
+    expect(bodies).toContain(`https://${environment}.one.hussh.ai`);
     expect(bodies).not.toContain('must never leak');
     expect(f.settlements[0]).toMatchObject({ providerId: 'attemptAccepted123', notSubmitted: false });
     expect(control.state.feedback).toEqual({ cursor: 'production-cursor', checkedAt: 1 });
-    expect(control.state.attemptEmail?.uat?.feedback?.cursor).toBe('500');
+    expect(control.state.attemptEmail?.[environment]?.feedback?.cursor).toBe('500');
     expect(control.state.attempts).toHaveLength(1);
     expect(control.state.pacingNextAt).toBeGreaterThan(Date.now());
     expect(await runAttemptEmailCycle(f.source, f.sender, f.scoped)).toEqual({ accepted: 0, uncertain: 0, deferred: false });

@@ -28,7 +28,7 @@ export interface MailControl {
   tests: MailTest[];
   attempts: { id: string; at: number }[];
   /** Separate delivery owners have independent feedback cursors, never a copied OAuth grant or pacing budget. */
-  attemptEmail?: Partial<Record<'uat' | 'production', {
+  attemptEmail?: Partial<Record<'dev' | 'uat' | 'production', {
     feedback?: MailControl['feedback']; feedbackLease?: MailControl['feedbackLease'];
     cycle?: { id: string; until: number };
     acknowledgements?: { id: string; claimId: string; providerId: string | null; notSubmitted: boolean }[];

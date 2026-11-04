@@ -740,6 +740,22 @@ Missing, stale, reset or mismatched identity fails closed. These default-off
 paths require runtime configuration and actual environment verification before
 being described as live.
 
+Dev uses `/plg/dev` and `/api/plg/dev/my-behaviour`, with the same verified-session
+and current-owner/epoch checks. It requires `GOOGLE_CLOUD_PROJECT=hushh-pda-dev`,
+`PLG_DEV_RUNTIME=dev`, `PLG_DEV_IDENTITY_MODE=live-signed`,
+`PLG_DEV_EVIDENCE_ENABLED=true`, its own `PLG_DEV_OWNER_EMAIL_HASHES` cohort and
+separate `PLG_DEV_SOURCE_SECRET`. The source is pinned to the native Dev backend
+`https://consent-protocol-aqahj4iyha-uc.a.run.app` and separately signed
+`owner-dev`, `permission-dev`, `snapshot-dev` endpoints. UAT/Production settings
+cannot substitute for these. Dev does not read campaign storage.
+
+The optional attempt worker also admits `PLG_ATTEMPT_ENVIRONMENT=dev` only in
+that exact project/runtime. Its read key, worker key and owner-read credential
+must differ. Feedback/lease/acknowledgement state has a distinct Dev namespace;
+mailbox disconnect, provider backoff and pacing remain shared. Source support is
+default-off, not evidence of provisioned infrastructure, a verified login, or a
+sent email. Verify the canonical Dev source and runtime before activating it.
+
 ## Verify
 
 PLG Results requests `/api/analytics/one/app?environment=production` with its

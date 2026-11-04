@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 
 const endpoints = {
+  dev: { origin: 'https://consent-protocol-aqahj4iyha-uc.a.run.app', owner: 'owner-dev', permission: 'permission-dev', snapshot: 'snapshot-dev' },
   uat: { origin: 'https://api.uat.hushh.ai', owner: 'owner-uat', permission: 'permission-uat', snapshot: 'snapshot-uat' },
   production: { origin: 'https://api.hushh.ai', owner: 'owner', permission: 'permission-owner', snapshot: 'snapshot-owner' },
 };
@@ -9,7 +10,7 @@ function target(environment, action) {
   if (!lane) throw unavailable();
   return `${lane.origin}/api/one/plg/${lane[action]}`;
 }
-const purpose = (environment, action) => environment === 'uat' ? `${action}-uat` : `owner.production.${action}`;
+const purpose = (environment, action) => environment === 'production' ? `owner.production.${action}` : `${action}-${environment}`;
 const DAY = 86_400_000;
 const unavailable = () => new Error('Own activity evidence is unavailable.');
 
@@ -35,7 +36,7 @@ async function postSigned(url, purpose, secret, body, started, fetcher) {
 
 /** Signed projection for a verified session within its environment cohort; never a send grant. */
 export async function readOwnerProjection({ environment, secret, emailHash, productionSecret = '' }, fetcher = fetch, clock = Date.now) {
-  if (environment === 'uat' && productionSecret || typeof secret !== 'string' || secret.length < 32 ||
+  if (environment !== 'production' && productionSecret || typeof secret !== 'string' || secret.length < 32 ||
     typeof emailHash !== 'string' || !/^[a-f0-9]{64}$/.test(emailHash)) throw unavailable();
   const started = clock();
   const data = await postSigned(target(environment, 'owner'), purpose(environment, 'owner'), secret, JSON.stringify({ emailHash }), started, fetcher);
@@ -55,7 +56,7 @@ export async function readOwnerProjection({ environment, secret, emailHash, prod
 
 /** Scope comes from the current verified owner, independent of marketing choice. */
 export async function readOwnerPermission({ environment, scope, secret, productionSecret = '' }, fetcher = fetch, clock = Date.now) {
-  if (environment === 'uat' && productionSecret || typeof secret !== 'string' || secret.length < 32 || !scope ||
+  if (environment !== 'production' && productionSecret || typeof secret !== 'string' || secret.length < 32 || !scope ||
     scope.environment !== environment || typeof scope.accountId !== 'string' || !scope.accountId ||
     scope.accountId.length > 128 || /[\x00-\x1f\x7f]/.test(scope.accountId) ||
     scope.readAuthority !== 'verified_owner' ||
@@ -82,7 +83,7 @@ export async function readOwnerPermission({ environment, scope, secret, producti
 export async function readOwnerSnapshot({ environment, url, secret, productionSecret = '', loadPermission, validate },
   fetcher = fetch, clock = Date.now) {
   if (url !== target(environment, 'snapshot') || typeof secret !== 'string' || secret.length < 32 ||
-    environment === 'uat' && productionSecret || typeof loadPermission !== 'function' || typeof validate !== 'function')
+    environment !== 'production' && productionSecret || typeof loadPermission !== 'function' || typeof validate !== 'function')
     throw unavailable();
   const started = clock();
   const before = await loadPermission();

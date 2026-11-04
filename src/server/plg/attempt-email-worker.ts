@@ -3,17 +3,17 @@ import { GoogleMailUnattempted, type GoogleMail } from './google-mail';
 import { reconcileGoogleFeedback } from './google-mail-reconcile';
 import { MemoryPlgStore } from './store';
 import { renderPlgEmailHtml } from './email-layout';
-import type { AttemptGrant, OneAttemptEmails } from './attempt-email-source';
+import type { AttemptEnvironment, AttemptGrant, OneAttemptEmails } from './attempt-email-source';
 import type { AttemptMailControl } from './attempt-email-control';
 
 /** Fixed metadata only. There is no freeform body, address, CC or BCC input. */
-export function attemptEmailMessage(grant: AttemptGrant, environment: 'uat' | 'production') {
+export function attemptEmailMessage(grant: AttemptGrant, environment: AttemptEnvironment) {
   const outcome = { returned: 'A response was reported', failed: 'A failure was reported',
     cancelled: 'Cancellation was reported', blocked: 'The attempt was reported as blocked' }[grant.phase];
-  const subject = `${environment === 'uat' ? '[UAT] ' : ''}${grant.agentLabel}: ${outcome.toLowerCase()}`;
+  const subject = `${environment === 'production' ? '' : `[${environment.toUpperCase()}] `}${grant.agentLabel}: ${outcome.toLowerCase()}`;
   const body = `${grant.agentLabel}\n${grant.actionLabel}\n${outcome}\nReported at ${new Date(grant.observedAt).toISOString()}\n\n` +
     'You chose an email for each reported attempt. This receipt reflects an application report; it does not confirm an external action succeeded. Prompts, arguments and results are not included.';
-  const origin = environment === 'uat' ? 'https://uat.one.hussh.ai' : 'https://one.hussh.ai';
+  const origin = { dev: 'https://dev.one.hussh.ai', uat: 'https://uat.one.hussh.ai', production: 'https://one.hussh.ai' }[environment];
   const manage = `${origin}/one/profile/account`;
   return { delivery: { id: grant.id, subject }, message: {
     text: `${subject}\n\n${body}\n\nActivity email preferences: ${manage}\nStop these emails: ${grant.unsubscribeUrl}`,

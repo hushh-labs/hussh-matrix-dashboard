@@ -1,6 +1,10 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createUatLiveScopeLoader } from '../src/server/plg/uat-live-owner';
+import { createOwnerScopeLoader, ownerActivityConfig } from '../src/server/plg/owner-activity-runtime';
+import { readOwnerSnapshot } from '../src/server/plg/owner-snapshot-client.mjs';
+import { OneAttemptEmails } from '../src/server/plg/attempt-email-source';
+import { attemptRuntime } from '../src/server/plg/attempt-email-routes';
 
 const now = Date.parse('2026-10-31T08:00:00Z');
 const emailHash = createHash('sha256').update('tester@hushh.ai').digest('hex');
@@ -19,6 +23,48 @@ function setup() {
   vi.stubEnv('PLG_FIRESTORE_DATABASE', '');
 }
 afterEach(() => vi.unstubAllEnvs());
+
+it('binds Dev reads and delivery to its own project, origin, purpose and cohort', async () => {
+  const origin = 'https://consent-protocol-aqahj4iyha-uc.a.run.app';
+  vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-dev');
+  vi.stubEnv('PLG_DEV_EVIDENCE_ENABLED', 'true');
+  vi.stubEnv('PLG_DEV_RUNTIME', 'dev');
+  vi.stubEnv('PLG_DEV_IDENTITY_MODE', 'live-signed');
+  vi.stubEnv('PLG_DEV_SOURCE_SECRET', 'd'.repeat(40));
+  vi.stubEnv('PLG_DEV_OWNER_EMAIL_HASHES', emailHash);
+  expect(ownerActivityConfig('dev').snapshotUrl).toBe(`${origin}/api/one/plg/snapshot-dev`);
+  const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    expect(url).toBe(`${origin}/api/one/plg/owner-dev`);
+    expect((init?.headers as Record<string, string>)['X-PLG-Signature']).toBe(createHmac('sha256', 'd'.repeat(40))
+      .update(`owner-dev\n${now}\n${init?.body}`).digest('hex'));
+    return new Response(JSON.stringify({ environment: 'dev', deliveryAuthorized: false, scope: { ...scope, environment: 'dev' } }));
+  }) as typeof fetch;
+  const load = createOwnerScopeLoader('dev', 'tester@hushh.ai', fetcher, () => now);
+  expect((await load()).authorityScope).toBe('dev-live-owner');
+  expect(() => createOwnerScopeLoader('dev', 'other@hushh.ai', fetcher, () => now)).toThrow();
+  await expect(readOwnerSnapshot({ environment: 'dev', url: 'https://api.uat.hushh.ai/api/one/plg/snapshot-uat',
+    secret: 'd'.repeat(40), loadPermission: vi.fn(), validate: vi.fn() }, fetcher, () => now)).rejects.toThrow();
+  vi.stubEnv('PLG_ATTEMPT_EMAIL_ENABLED', 'true');
+  vi.stubEnv('PLG_ATTEMPT_ENVIRONMENT', 'dev');
+  vi.stubEnv('PLG_ATTEMPT_SOURCE_SECRET', 's'.repeat(40));
+  vi.stubEnv('PLG_ATTEMPT_WORKER_SECRET', 'w'.repeat(40));
+  expect(attemptRuntime().lane).toBe('dev');
+  const worker = new OneAttemptEmails('dev', 's'.repeat(40), async (url, init) => {
+    expect(url).toBe(`${origin}/api/one/plg/attempt-email/pull`);
+    expect((init?.headers as Record<string, string>)['X-PLG-Signature']).toBe(createHmac('sha256', 's'.repeat(40))
+      .update(`attempt-emails.dev.pull\n${now}\n${init?.body}`).digest('hex'));
+    return new Response(JSON.stringify({ environment: 'dev', deliveries: [] }));
+  }, () => now);
+  expect(await worker.pending()).toEqual([]);
+  vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat');
+  expect(() => ownerActivityConfig('dev')).toThrow();
+  expect(() => attemptRuntime()).toThrow();
+  vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-dev');
+  vi.stubEnv('PLG_UAT_SOURCE_SECRET', 'd'.repeat(40));
+  expect(() => ownerActivityConfig('dev')).toThrow();
+  vi.stubEnv('PLG_DEV_SOURCE_SECRET', 's'.repeat(40));
+  expect(() => attemptRuntime()).toThrow();
+});
 
 it('binds the signed UAT owner to the session and re-reads current scope', async () => {
   setup();

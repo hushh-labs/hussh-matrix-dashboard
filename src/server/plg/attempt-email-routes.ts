@@ -11,15 +11,17 @@ import { PlgError } from './engine';
 export function attemptRuntime(env = process.env) {
   if (env.PLG_ATTEMPT_EMAIL_ENABLED !== 'true') throw new PlgError(404, 'Attempt emails are not enabled.');
   const lane = env.PLG_ATTEMPT_ENVIRONMENT;
-  const project = lane === 'uat' ? 'hushh-pda-uat' : lane === 'production' ? 'hushh-ai-prod' : null;
+  const project = lane === 'dev' ? 'hushh-pda-dev' : lane === 'uat' ? 'hushh-pda-uat' : lane === 'production' ? 'hushh-ai-prod' : null;
   const sourceSecret = env.PLG_ATTEMPT_SOURCE_SECRET ?? '', workerSecret = env.PLG_ATTEMPT_WORKER_SECRET ?? '';
   if (!project || env.GOOGLE_CLOUD_PROJECT !== project || sourceSecret.length < 32 || workerSecret.length < 32 ||
     sourceSecret === workerSecret || [sourceSecret, workerSecret].some(s =>
-      [env.PLG_UAT_SOURCE_SECRET, env.PLG_OWNER_SOURCE_SECRET, env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET,
+      [env.PLG_DEV_SOURCE_SECRET, env.PLG_UAT_SOURCE_SECRET, env.PLG_OWNER_SOURCE_SECRET, env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET,
         env.PLG_ONE_AUDIENCE_SECRET, env.PLG_SYNC_SECRET, env.PLG_CYCLE_SECRET, env.PLG_SIGNING_SECRET].includes(s)) ||
-    lane === 'uat' && env.PLG_UAT_RUNTIME !== 'uat' || lane === 'production' && env.PLG_UAT_RUNTIME === 'uat')
+    lane === 'dev' && (env.PLG_DEV_RUNTIME !== 'dev' || env.PLG_UAT_RUNTIME === 'uat') ||
+    lane === 'uat' && (env.PLG_UAT_RUNTIME !== 'uat' || env.PLG_DEV_RUNTIME === 'dev') ||
+    lane === 'production' && (env.PLG_UAT_RUNTIME === 'uat' || env.PLG_DEV_RUNTIME === 'dev'))
     throw new PlgError(503, 'Attempt email authority is not configured.');
-  return { lane: lane as 'uat' | 'production', sourceSecret, workerSecret };
+  return { lane: lane as 'dev' | 'uat' | 'production', sourceSecret, workerSecret };
 }
 
 function configuredCycle() {

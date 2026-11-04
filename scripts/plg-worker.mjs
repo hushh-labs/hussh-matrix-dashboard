@@ -20,7 +20,7 @@ if (
   (sync && (!syncSecret || syncSecret.length < 32)) ||
   (!send && !sync && !cycle && !attempts) ||
   (cycle && (send || sync || attempts)) ||
-  (attempts && (send || sync || !['uat', 'production'].includes(attemptLane) || !attemptSecret || attemptSecret.length < 32))
+  (attempts && (send || sync || !['dev', 'uat', 'production'].includes(attemptLane) || !attemptSecret || attemptSecret.length < 32))
 ) {
   console.error(
     'Use --cycle for campaign sync/delivery, --sync-only for source reads, or --attempts with its separate environment and worker key. Do not combine delivery modes.',

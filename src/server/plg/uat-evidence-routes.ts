@@ -1,12 +1,16 @@
 import type express from 'express';
-import { readProductionSessionEvidence, readUatSessionEvidence } from './uat-own-evidence';
+import { readDevSessionEvidence, readProductionSessionEvidence, readUatSessionEvidence } from './uat-own-evidence';
 
 /** Each own-activity route requires its explicitly configured runtime. */
 export function registerUatEvidenceRoute(
   app: express.Express,
   read: (email: string) => Promise<unknown> = readUatSessionEvidence,
   readProduction: (email: string) => Promise<unknown> = readProductionSessionEvidence,
+  readDev: (email: string) => Promise<unknown> = readDevSessionEvidence,
 ) {
+  if (process.env.PLG_DEV_EVIDENCE_ENABLED === 'true' && process.env.PLG_DEV_RUNTIME === 'dev' &&
+    process.env.GOOGLE_CLOUD_PROJECT === 'hushh-pda-dev' && process.env.PLG_UAT_RUNTIME !== 'uat')
+    registerOwnRoute(app, '/api/plg/dev/my-behaviour', readDev);
   if (process.env.PLG_UAT_EVIDENCE_ENABLED === 'true' && process.env.PLG_UAT_RUNTIME === 'uat')
     registerOwnRoute(app, '/api/plg/uat/my-behaviour', read);
   if (process.env.PLG_OWNER_EVIDENCE_ENABLED === 'true' && process.env.PLG_UAT_RUNTIME !== 'uat' &&

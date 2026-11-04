@@ -4,7 +4,7 @@ import { reportedHardBounces, type GmailMessage } from './google-mail-feedback';
 import { googleMessageMetadata } from './google-mail-metadata';
 import { MAIL_OWNER } from './google-mail-store';
 
-export type AttemptEnvironment = 'uat' | 'production';
+export type AttemptEnvironment = 'dev' | 'uat' | 'production';
 export interface AttemptReference { id: string; accountId: string }
 export interface AttemptAcknowledgement {
   id: string; claimId: string; providerId: string | null; notSubmitted: boolean;
@@ -25,8 +25,9 @@ export class OneAttemptEmails implements GoogleFeedbackExtension {
   readonly origin: string;
   constructor(readonly environment: AttemptEnvironment, private secret: string,
     private fetcher: typeof fetch = fetch, private now = Date.now) {
-    if (!['uat', 'production'].includes(environment) || secret.length < 32) throw failure();
-    this.origin = environment === 'uat' ? 'https://api.uat.hushh.ai' : 'https://api.hushh.ai';
+    if (!['dev', 'uat', 'production'].includes(environment) || secret.length < 32) throw failure();
+    this.origin = { dev: 'https://consent-protocol-aqahj4iyha-uc.a.run.app',
+      uat: 'https://api.uat.hushh.ai', production: 'https://api.hushh.ai' }[environment];
   }
   private async request(action: string, input: object) {
     const started = this.now(), body = JSON.stringify(input);

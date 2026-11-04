@@ -4,7 +4,7 @@ import { dashboardCard } from '../lib/theme';
 import { MatrixBrand } from './MatrixBrand';
 
 export interface UatActivityEvidence {
-  environment: 'uat' | 'production'; checkedAt: string; catalog: PlgCatalog; activity: PlgActivity;
+  environment: 'dev' | 'uat' | 'production'; checkedAt: string; catalog: PlgCatalog; activity: PlgActivity;
   deliveryAuthorized: false;
 }
 
@@ -12,7 +12,7 @@ export function UatActivityContent({ evidence }: { evidence: UatActivityEvidence
   const actions = new Map(evidence.catalog.actions.map(action => [action.id, action]));
   const agents = new Map(evidence.catalog.agents.map(agent => [agent.id, agent]));
   return <div className="mt-5 text-sm text-ink" aria-live="polite">
-    <p>{evidence.environment === 'uat' ? 'UAT' : 'Production'} · checked {new Date(evidence.checkedAt).toLocaleString()}</p>
+    <p>{{ dev: 'Dev', uat: 'UAT', production: 'Production' }[evidence.environment]} · checked {new Date(evidence.checkedAt).toLocaleString()}</p>
     <p className="mt-2 text-muted">These are captured app and server observations. Collection is best effort; missing events do not prove inactivity, and a return does not prove a successful outcome.</p>
     {evidence.activity.limited && <p role="status" className="mt-2 text-muted">The collection limit was reached; this window is incomplete.</p>}
     {evidence.activity.rollups.length ? <div className="metrics-table-scroll mt-4">
@@ -31,14 +31,15 @@ export function UatActivityContent({ evidence }: { evidence: UatActivityEvidence
   </div>;
 }
 
-export function PlgUatActivity({ environment = 'uat' }: { environment?: 'uat' | 'production' }) {
+export function PlgUatActivity({ environment = 'uat' }: { environment?: 'dev' | 'uat' | 'production' }) {
   const [evidence, setEvidence] = useState<UatActivityEvidence | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true); setError(''); setEvidence(null);
     try {
-      const response = await fetch(environment === 'uat' ? '/api/plg/uat/my-behaviour' : '/api/plg/my-activity', { credentials: 'same-origin', cache: 'no-store', signal });
+      const endpoint = environment === 'production' ? '/api/plg/my-activity' : `/api/plg/${environment}/my-behaviour`;
+      const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', signal });
       const data = await response.json();
       if (!response.ok || data?.environment !== environment || data.deliveryAuthorized !== false ||
         !data.catalog || !Array.isArray(data.catalog.agents) || !Array.isArray(data.catalog.actions) ||
@@ -51,7 +52,7 @@ export function PlgUatActivity({ environment = 'uat' }: { environment?: 'uat' | 
   return <main className="mx-auto min-h-screen max-w-[1100px] bg-canvas p-5 sm:p-8">
     <MatrixBrand />
     <section aria-label="My agent activity" className={`${dashboardCard} mt-6 p-5 sm:p-7`}>
-      <h1 className="text-xl font-semibold text-ink">My {environment === 'uat' ? 'UAT ' : ''}agent activity</h1>
+      <h1 className="text-xl font-semibold text-ink">My {{ dev: 'Dev ', uat: 'UAT ', production: '' }[environment]}agent activity</h1>
       <p className="mt-2 text-sm text-muted">Your signed-in account only. This view does not send email.</p>
       <button className="mt-4 rounded-xl border border-stroke px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50"
         disabled={loading} onClick={() => void load()}>{loading ? 'Checking…' : 'Refresh activity'}</button>
