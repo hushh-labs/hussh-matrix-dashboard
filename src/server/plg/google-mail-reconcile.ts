@@ -13,9 +13,15 @@ export class GmailReadError extends Error {
 }
 const numeric = (id: unknown): id is string => typeof id === 'string' && /^\d{1,30}$/.test(id);
 const opaque = (id: unknown): id is string => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(id);
+/** A separate durable delivery owner participates before the shared cursor can advance. */
+export interface GoogleFeedbackExtension {
+  bind(api: GmailRead, signal: AbortSignal, assertAuthority: () => Promise<unknown>): Promise<boolean>;
+  oldestReservation(): Promise<string | null>;
+  apply(messages: GmailMessage[]): Promise<boolean>;
+}
 /** No mailbox content or identity fields enter the persisted cursor. */
 export async function reconcileGoogleFeedback(control: MailControlStore, campaigns: PlgStore, api: GmailRead,
-  deadline = Date.now() + 45_000, now = Date.now) {
+  deadline = Date.now() + 45_000, now = Date.now, extension?: GoogleFeedbackExtension) {
   const accounts = await campaigns.accountStorage?.();
   const campaignState = () => accounts ? accounts.mailView() : campaigns.read();
   const lease = randomUUID();
@@ -35,6 +41,11 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
   const signal = AbortSignal.timeout(Math.max(1, Math.min(45_000, remaining)));
   try {
     if (remaining < 5000) throw new PlgError(503, 'Google feedback deadline is too close.');
+    if (extension) {
+      await update(s => { if (s.feedback) s.feedback.checkedAt = null; });
+      if (!await extension.bind(api, signal, () => update(() => undefined))) return { complete: false, inspected: 0 };
+      signal.throwIfAborted();
+    }
     // Never advance past a report while its accepted message still lacks the
     // actual RFC header. Binding by provider ID does not depend on history order.
     if (unboundGoogleDeliveries(await campaignState()).length) {
@@ -46,6 +57,8 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
     const recover = async () => {
       const deliveries = (await campaignState()).deliveries.filter((d) => d.provider === 'google_workspace');
       const dates = deliveries.map((d) => Date.parse(d.createdAt));
+      const externalOldest = await extension?.oldestReservation();
+      if (externalOldest) dates.push(Date.parse(externalOldest));
       if (dates.some((date) => !Number.isFinite(date) || date > now()))
         throw new PlgError(409, 'Google feedback history is missing a valid recovery boundary.');
       // Retained mail since the oldest retained Google reservation, with a day
@@ -61,7 +74,7 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
     if (!state.feedback) {
       // Establish the baseline BEFORE the first campaign send. Reconnecting
       // keeps this cursor; missing history after previous sends cannot reset it.
-      if ((await campaignState()).deliveries.some((d) => d.provider === 'google_workspace')) await recover();
+      if ((await campaignState()).deliveries.some((d) => d.provider === 'google_workspace') || await extension?.oldestReservation()) await recover();
       else {
         const profile = await api('profile', signal);
         if (!numeric(profile.historyId)) throw new Error('Invalid Google history checkpoint.');
@@ -154,7 +167,9 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
       }
       return true;
     });
-    if (!applied) {
+    const externalApplied = extension ? await extension.apply(messages) : true;
+    signal.throwIfAborted();
+    if (!applied || !externalApplied) {
       await update((s) => { s.feedback!.checkedAt = null; });
       return { complete: false, inspected: 0 };
     }

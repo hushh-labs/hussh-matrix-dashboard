@@ -37,6 +37,23 @@ async function fixture(count = 1) {
   return { campaigns, control };
 }
 describe('Durable Gmail acceptance binding before feedback history', () => {
+  it('keeps attempt-owner reports replayable until its durable acknowledgement, including a failed remote write', async () => {
+    const { campaigns, control } = await fixture();
+    const extension = { bind: vi.fn(async () => true), oldestReservation: vi.fn(async () => null), apply: vi.fn(async () => false) };
+    const api = vi.fn<GmailRead>(async path => {
+      if (path.startsWith('messages/accepted123?')) return metadata();
+      if (path.startsWith('history?')) return { historyId: '200', history: [{ messagesAdded: [{ message: { id: 'report123' } }] }] };
+      return path.includes('format=full') ? report() : { ...report(), payload: { mimeType: 'multipart/report', headers: report().payload.headers } };
+    });
+    expect(await reconcileGoogleFeedback(control, campaigns, api, Date.now() + 45_000, Date.now, extension)).toEqual({ complete: false, inspected: 0 });
+    expect(control.state.feedback).toMatchObject({ cursor: '100', checkedAt: null, pending: { ids: ['report123'] } });
+    extension.apply.mockRejectedValueOnce(new Error('synthetic remote acknowledgement unavailable'));
+    await expect(reconcileGoogleFeedback(control, campaigns, api, Date.now() + 45_000, Date.now, extension)).rejects.toThrow();
+    expect(control.state.feedback?.cursor).toBe('100');
+    extension.apply.mockResolvedValue(true);
+    expect(await reconcileGoogleFeedback(control, campaigns, api, Date.now() + 45_000, Date.now, extension)).toEqual({ complete: true, inspected: 1 });
+    expect(control.state.feedback?.cursor).toBe('200');
+  });
   it('binds historical accepted IDs before a DSN on the first page, even when SENT is on a later page', async () => {
     const { campaigns, control } = await fixture();
     const api = vi.fn<GmailRead>(async (path) => {

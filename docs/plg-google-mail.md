@@ -150,3 +150,49 @@ Google references: [sending](https://developers.google.com/workspace/gmail/api/g
 [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes),
 [history and full synchronization](https://developers.google.com/workspace/gmail/api/guides/sync),
 [message listing and its metadata-scope restriction](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list).
+
+## Optional per-attempt receipts
+
+This path is separate from marketing campaigns and their consent. One owns the
+explicit default-off account choice and durable outbox (migrations 448/449).
+Matrix's existing `scripts/plg-worker.mjs --attempts` calls the separately signed
+`POST /integrations/plg/attempts`. Browsing the dashboard cannot send a receipt.
+The runtime requires an exact `PLG_ATTEMPT_ENVIRONMENT` (`uat` or `production`),
+matching `GOOGLE_CLOUD_PROJECT` (`hushh-pda-uat` or `hushh-ai-prod`) and
+`PLG_ATTEMPT_EMAIL_ENABLED=true`. UAT also requires `PLG_UAT_RUNTIME=uat`.
+
+Secret-backed settings are `PLG_ATTEMPT_SOURCE_SECRET` (the corresponding One
+`ONE_PLG_ATTEMPT_EMAIL_SECRET`), distinct `PLG_ATTEMPT_WORKER_SECRET`,
+`PLG_ATTEMPT_MAIL_PROJECT`, `PLG_ATTEMPT_MAIL_DATABASE`,
+`PLG_ATTEMPT_MAIL_CREDENTIAL_SECRET`, `PLG_ATTEMPT_GOOGLE_CLIENT_ID`,
+`PLG_ATTEMPT_GOOGLE_CLIENT_SECRET` and `PLG_ATTEMPT_GOOGLE_REDIRECT_URI`.
+The credential resource must be the explicit configured project's
+`metrics-one-plg-google-mail` Secret Manager resource. Verify the actual mailbox
+control database, existing grant, runtime IAM and service target before wiring
+these references. No new OAuth grant, resource or runtime setting is implied by
+this source contract.
+
+The same authorized mailbox's connection, pacing, rejection backoff and durable
+submission attempts are shared across senders. Each attempt environment has its
+own feedback cursor and cycle lease in that control record. UAT activity,
+permission and outbox records remain in UAT One; no campaign account is enrolled
+or copied. This is deliberate shared provider control, not an isolated mailbox.
+A disconnect invalidates every lane. Neither a new lane nor a new worker gets
+another pacing allowance.
+
+Each cycle reconciles the canonical Gmail report reader with the remote One
+outbox, then prepares OAuth before the last current-owner claim. It sends only
+the returned verified recipient a fixed agent/action/reported-status message,
+with a generation-bound unsubscribe link and no CC/BCC or product content.
+Duplicate callbacks are deduplicated by One. Lost claims and ambiguous sends are
+never retried. Known unsubmitted rejections may be released, with One's three-
+claim ceiling and existing mailbox backoff. API acceptance is not Inbox delivery.
+Hard failure reports require the actual accepted provider ID, its actual RFC
+header and immutable recipient hash; incomplete acknowledgements hold the cursor.
+
+Qualification still requires exact-source CI/review, canonical migration and
+Dev/UAT deployments, real opted-in attempts, actual Matrix evidence, metadata-only
+own-Inbox proof, revocation, deduplication and timing, then ordinary Production
+promotion. Local provider fixtures and renderer acceptance are not that proof.
+Capture remains best-effort and capped; this worker cannot establish universal
+attempt coverage or an unconditional few-minute delivery guarantee.
