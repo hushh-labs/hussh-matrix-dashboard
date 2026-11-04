@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PlgActivity, PlgCatalog } from '../lib/plg';
+import { createPlgWorkspaceReader, watchPlgWorkspaceStatus } from '../lib/plg-workspace-refresh';
 import { dashboardCard } from '../lib/theme';
 import { MatrixBrand } from './MatrixBrand';
 
@@ -35,29 +36,43 @@ export function PlgUatActivity({ environment = 'uat' }: { environment?: 'dev' | 
   const [evidence, setEvidence] = useState<UatActivityEvidence | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true); setError(''); setEvidence(null);
-    try {
+  const reader = useMemo(() => createPlgWorkspaceReader<UatActivityEvidence>({
+    read: async (signal) => {
+      setLoading(true); setError('');
       const endpoint = environment === 'production' ? '/api/plg/my-activity' : `/api/plg/${environment}/my-behaviour`;
       const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', signal });
       const data = await response.json();
       if (!response.ok || data?.environment !== environment || data.deliveryAuthorized !== false ||
         !data.catalog || !Array.isArray(data.catalog.agents) || !Array.isArray(data.catalog.actions) ||
         !data.activity || !Array.isArray(data.activity.rollups)) throw new Error();
-      if (!signal?.aborted) setEvidence(data);
-    } catch { if (!signal?.aborted) setError('Activity is unavailable. No activity or email outcome was inferred.'); }
-    finally { if (!signal?.aborted) setLoading(false); }
-  }, [environment]);
-  useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+      return data;
+    },
+    accept: (data) => { setEvidence(data); setError(''); setLoading(false); },
+    reject: () => {
+      setEvidence(null); setLoading(false);
+      setError('Activity is unavailable. No activity or email outcome was inferred.');
+    },
+  }), [environment]);
+  useEffect(() => {
+    setEvidence(null); setError(''); setLoading(false);
+    reader.activate();
+    const stop = watchPlgWorkspaceStatus({
+      refresh: () => reader.refresh(true), cancel: () => reader.cancel(),
+      visible: () => document.visibilityState !== 'hidden', idle: () => true,
+      documentTarget: document, windowTarget: window,
+    });
+    return () => { stop(); reader.deactivate(); };
+  }, [reader]);
   return <main className="mx-auto min-h-screen max-w-[1100px] bg-canvas p-5 sm:p-8">
     <MatrixBrand />
     <section aria-label="My agent activity" className={`${dashboardCard} mt-6 p-5 sm:p-7`}>
       <h1 className="text-xl font-semibold text-ink">My {{ dev: 'Dev ', uat: 'UAT ', production: '' }[environment]}agent activity</h1>
       <p className="mt-2 text-sm text-muted">Your signed-in account only. This view does not send email.</p>
+      <p className="mt-2 text-sm text-muted">Activity checks refresh every 30 seconds while this page is visible.</p>
       <button className="mt-4 rounded-xl border border-stroke px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50"
-        disabled={loading} onClick={() => void load()}>{loading ? 'Checking…' : 'Refresh activity'}</button>
+        disabled={loading} onClick={() => void reader.refresh()}>{loading ? 'Checking…' : 'Refresh activity'}</button>
       {error && <p role="alert" className="mt-4 text-sm text-muted">{error}</p>}
-      {evidence && <UatActivityContent evidence={evidence} />}
+      {evidence?.environment === environment && <UatActivityContent evidence={evidence} />}
     </section>
   </main>;
 }
