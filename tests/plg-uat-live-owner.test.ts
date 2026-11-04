@@ -8,6 +8,7 @@ const scope = { environment: 'uat', accountId: 'uat-owner', emailHash,
   readAuthority: 'verified_owner', ownerEpoch: 'b'.repeat(64),
   since: '2026-10-31T07:00:00Z', journey: 'agent_one' };
 function setup() {
+  vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat');
   vi.stubEnv('PLG_UAT_EVIDENCE_ENABLED', 'true');
   vi.stubEnv('PLG_UAT_RUNTIME', 'uat');
   vi.stubEnv('PLG_UAT_IDENTITY_MODE', 'live-signed');

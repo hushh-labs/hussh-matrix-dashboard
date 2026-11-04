@@ -54,6 +54,8 @@ function AppContent() {
   // session gate; it does not load the production PLG workspace.
   if (typeof window !== 'undefined' && window.location.pathname === '/plg/uat')
     return <Suspense fallback={<DashboardShell />}><PlgUatActivity /></Suspense>;
+  if (typeof window !== 'undefined' && window.location.pathname === '/plg/activity')
+    return <Suspense fallback={<DashboardShell />}><PlgUatActivity environment="production" /></Suspense>;
 
   // 3. Authenticated & Authorized -> render full Dashboard
   return <Suspense fallback={<DashboardShell />}><Dashboard /></Suspense>;

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { readUatOwnEvidence, readUatSessionEvidence } from '../src/server/plg/uat-own-evidence';
+import { readProductionSessionEvidence, readUatOwnEvidence, readUatSessionEvidence } from '../src/server/plg/uat-own-evidence';
+import { createHmac } from 'node:crypto';
 
 const now = Date.parse('2026-10-31T08:00:00Z');
 const since = '2026-10-31T07:00:00Z';
@@ -15,6 +16,8 @@ const activity = { enabled: true, mode: 'best_effort', limited: false, startedAt
     count: 1, firstAt: '2026-10-31T07:30:00Z', lastAt: '2026-10-31T07:30:00Z', days: ['2026-10-31'] }] };
 
 function setup() {
+  vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat');
+  vi.stubEnv('PLG_UAT_OWNER_EMAIL_HASHES', scope.emailHash);
   vi.stubEnv('PLG_UAT_EVIDENCE_ENABLED', 'true');
   vi.stubEnv('PLG_UAT_RUNTIME', 'uat');
   vi.stubEnv('PLG_UAT_IDENTITY_MODE', 'live-signed');
@@ -39,6 +42,44 @@ function transport(overrides: { revoked?: boolean; badAction?: boolean } = {}) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('UAT own evidence boundary', () => {
+  it('reads Production own activity without marketing and refuses wrong-lane or changed identity', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-ai-prod');
+    vi.stubEnv('PLG_OWNER_EVIDENCE_ENABLED', 'true');
+    vi.stubEnv('PLG_UAT_RUNTIME', '');
+    const secret = 'separate-owner-fixture-'.repeat(2);
+    vi.stubEnv('PLG_OWNER_SOURCE_SECRET', secret);
+    vi.stubEnv('PLG_ONE_SOURCE_SECRET', 'existing-campaign-read-key');
+    const hash = createHash('sha256').update('tester@hushh.ai').digest('hex');
+    vi.stubEnv('PLG_OWNER_EMAIL_HASHES', hash);
+    let wrongLane = false, changed = false, owners = 0;
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input)), body = String(init?.body);
+      expect(url.origin).toBe('https://api.hushh.ai');
+      const action = url.pathname.endsWith('/owner') ? 'owner' : url.pathname.endsWith('/permission-owner') ? 'permission' : 'snapshot';
+      const signature = createHmac('sha256', secret).update(`owner.production.${action}\n${now}\n${body}`).digest('hex');
+      expect((init?.headers as Record<string,string>)['X-PLG-Signature']).toBe(signature);
+      const environment = wrongLane ? 'uat' : 'production';
+      if (action === 'owner') return new Response(JSON.stringify({ environment, deliveryAuthorized: false,
+        scope: { ...scope, environment, emailHash: hash, ownerEpoch: changed && ++owners > 1 ? 'f'.repeat(64) : epoch } }));
+      if (action === 'permission') return new Response(JSON.stringify({ environment, deliveryAuthorized: false,
+        allowed: true, erased: false, ownerEpoch: epoch }));
+      const requested = JSON.parse(body).accounts[0];
+      return new Response(JSON.stringify({ version: 2, environment, retainedOnly: true, asOf: new Date(now).toISOString(), catalog,
+        accounts: [{ accountId: requested.accountId, journey: requested.journey, since: requested.since,
+          deleted: false, tasks: [], verified: [], activity }] }));
+    }) as unknown as typeof fetch;
+    const result = await readProductionSessionEvidence('tester@hushh.ai', fetcher, () => now);
+    expect(result.environment).toBe('production');
+    expect(result.activity.rollups).toHaveLength(1);
+    expect(result.deliveryAuthorized).toBe(false);
+    wrongLane = true;
+    await expect(readProductionSessionEvidence('tester@hushh.ai', fetcher, () => now)).rejects.toThrow();
+    wrongLane = false; changed = true;
+    await expect(readProductionSessionEvidence('tester@hushh.ai', fetcher, () => now)).rejects.toThrow();
+    await expect(readProductionSessionEvidence('other@hushh.ai', fetcher, () => now)).rejects.toThrow();
+    vi.stubEnv('PLG_OWNER_SOURCE_SECRET', 'existing-campaign-read-key');
+    await expect(readProductionSessionEvidence('tester@hushh.ai', fetcher, () => now)).rejects.toThrow();
+  });
   it('uses strict existing catalog/activity validation and current read permission twice', async () => {
     setup();
     const fetcher = transport();

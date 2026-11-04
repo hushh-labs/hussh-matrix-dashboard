@@ -713,7 +713,7 @@ No production account, permission, template, enrollment, sending setting or
 customer data was changed during this audit. Local browser tests use synthetic
 fixtures and establish UI behavior, not completeness of production telemetry.
 
-## Own UAT activity
+## Own activity
 
 The default-off `/plg/uat` view uses a verified Matrix session, an explicit UAT
 team email-hash cohort and the separately signed One UAT owner/snapshot endpoints.
@@ -726,6 +726,19 @@ Own activity access does not require a marketing subscription and never grants
 permission to send mail. Per-attempt receipts have their own explicit preference.
 This view has no production source or campaign storage access. Local checks do
 not establish a deployed UAT runtime or complete event capture.
+
+The separate `/plg/activity` page reads `/api/plg/my-activity` for the signed-in
+production owner. It requires `GOOGLE_CLOUD_PROJECT=hushh-ai-prod`,
+`PLG_OWNER_EVIDENCE_ENABLED=true`, an explicit `PLG_OWNER_EMAIL_HASHES` cohort
+(1–100 unique verified work-account hashes), and a separate
+`PLG_OWNER_SOURCE_SECRET`. Its fixed One source is `api.hushh.ai` with the
+`owner`, `permission-owner` and `snapshot-owner` contracts. UAT uses its own
+project, credential, cohort and fixed `api.uat.hushh.ai` source. Neither view
+accepts an account override or grants sending authority. The page linked from
+mail setup reads one's activity without depending on a marketing subscription.
+Missing, stale, reset or mismatched identity fails closed. These default-off
+paths require runtime configuration and actual environment verification before
+being described as live.
 
 ## Verify
 

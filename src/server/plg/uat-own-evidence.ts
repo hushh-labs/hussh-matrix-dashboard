@@ -1,43 +1,34 @@
 import { readActivity, readCatalog } from './one-source';
 import { createUatLiveScopeLoader } from './uat-live-owner';
-import { readUatPermission, readUatSnapshot } from './uat-snapshot-client.mjs';
-
-type UatScope = {
-  environment: 'uat'; authorityScope: 'uat-live-owner'; accountId: string; journey: string;
-  since: string; readAuthority: 'verified_owner'; emailHash: string; ownerEpoch: string;
-};
+import { readOwnerPermission, readOwnerSnapshot } from './owner-snapshot-client.mjs';
+import { createOwnerScopeLoader, ownerActivityConfig, type OwnerScope, type OwnerEnvironment } from './owner-activity-runtime';
 
 /**
- * UAT-only own activity projection. The route derives the owner from a signed
- * Matrix session and fresh UAT authority. No delivery or storage authority.
+ * Environment-bound own activity projection. The route derives the owner from a signed
+ * Matrix session and fresh One identity. No delivery or storage authority.
  */
-export async function readUatOwnEvidence(
-  loadScope: () => Promise<UatScope>, fetcher: typeof fetch = fetch, clock = Date.now,
+export async function readOwnerEvidence(
+  environment: OwnerEnvironment, loadScope: () => Promise<OwnerScope>, fetcher: typeof fetch = fetch, clock = Date.now,
 ) {
-  const secret = process.env.PLG_UAT_SOURCE_SECRET ?? '';
-  if (process.env.PLG_UAT_EVIDENCE_ENABLED !== 'true' ||
-    process.env.PLG_UAT_RUNTIME !== 'uat' || process.env.PLG_UAT_IDENTITY_MODE !== 'live-signed' ||
-    process.env.PLG_ONE_SOURCE_SECRET || process.env.PLG_FIRESTORE_PROJECT ||
-    process.env.PLG_FIRESTORE_DATABASE || secret.length < 32) throw new Error('UAT activity evidence is unavailable.');
-  return readUatSnapshot({
-    url: 'https://api.uat.hushh.ai/api/one/plg/snapshot-uat', secret,
-    productionSecret: process.env.PLG_ONE_SOURCE_SECRET,
+  const { secret, snapshotUrl } = ownerActivityConfig(environment);
+  return readOwnerSnapshot({
+    environment, url: snapshotUrl, secret,
     loadPermission: async () => {
       const scope = await loadScope();
-      if (scope?.environment !== 'uat' || scope.authorityScope !== 'uat-live-owner')
-        throw new Error('UAT activity evidence is unavailable.');
-      return readUatPermission({ scope, secret, productionSecret: process.env.PLG_ONE_SOURCE_SECRET }, fetcher, clock);
+      if (scope?.environment !== environment || scope.authorityScope !== `${environment}-live-owner`)
+        throw new Error('Own activity evidence is unavailable.');
+      return readOwnerPermission({ environment, scope, secret }, fetcher, clock);
     },
     validate: ({ row, catalog: rawCatalog, since, asOf }: { row: any; catalog: any; since: string; asOf: number }) => {
       if (!Array.isArray(row.tasks) || row.tasks.length || !Array.isArray(row.verified))
-        throw new Error('UAT activity evidence is unavailable.');
+        throw new Error('Own activity evidence is unavailable.');
       const catalog = readCatalog(rawCatalog);
-      if (row.verified.length > catalog.agents.length) throw new Error('UAT activity evidence is unavailable.');
+      if (row.verified.length > catalog.agents.length) throw new Error('Own activity evidence is unavailable.');
       const activity = readActivity(row.activity, catalog, since, asOf);
       if (!activity.enabled || !activity.startedAt || !activity.epoch ||
         activity.rollups.some(event => Date.parse(event.firstAt) < Date.parse(activity.startedAt!)))
-        throw new Error('UAT activity evidence is unavailable.');
-      return { environment: 'uat' as const, checkedAt: new Date(asOf).toISOString(),
+        throw new Error('Own activity evidence is unavailable.');
+      return { environment, checkedAt: new Date(asOf).toISOString(),
         catalog, activity, deliveryAuthorized: false as const };
     },
   }, fetcher, clock);
@@ -47,5 +38,13 @@ export async function readUatOwnEvidence(
 export async function readUatSessionEvidence(
   sessionEmail: string, fetcher: typeof fetch = fetch, clock = Date.now,
 ) {
-  return readUatOwnEvidence(createUatLiveScopeLoader(sessionEmail, fetcher, clock), fetcher, clock);
+  return readOwnerEvidence('uat', createUatLiveScopeLoader(sessionEmail, fetcher, clock), fetcher, clock);
+}
+
+export function readUatOwnEvidence(loadScope: () => Promise<OwnerScope>, fetcher: typeof fetch = fetch, clock = Date.now) {
+  return readOwnerEvidence('uat', loadScope, fetcher, clock);
+}
+
+export async function readProductionSessionEvidence(sessionEmail: string, fetcher: typeof fetch = fetch, clock = Date.now) {
+  return readOwnerEvidence('production', createOwnerScopeLoader('production', sessionEmail, fetcher, clock), fetcher, clock);
 }

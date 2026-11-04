@@ -15,7 +15,7 @@ export function attemptRuntime(env = process.env) {
   const sourceSecret = env.PLG_ATTEMPT_SOURCE_SECRET ?? '', workerSecret = env.PLG_ATTEMPT_WORKER_SECRET ?? '';
   if (!project || env.GOOGLE_CLOUD_PROJECT !== project || sourceSecret.length < 32 || workerSecret.length < 32 ||
     sourceSecret === workerSecret || [sourceSecret, workerSecret].some(s =>
-      [env.PLG_UAT_SOURCE_SECRET, env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET,
+      [env.PLG_UAT_SOURCE_SECRET, env.PLG_OWNER_SOURCE_SECRET, env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET,
         env.PLG_ONE_AUDIENCE_SECRET, env.PLG_SYNC_SECRET, env.PLG_CYCLE_SECRET, env.PLG_SIGNING_SECRET].includes(s)) ||
     lane === 'uat' && env.PLG_UAT_RUNTIME !== 'uat' || lane === 'production' && env.PLG_UAT_RUNTIME === 'uat')
     throw new PlgError(503, 'Attempt email authority is not configured.');

@@ -13,6 +13,21 @@ function appFor(email: string | null, read: (email: string) => Promise<unknown>)
 }
 
 describe('UAT own activity route', () => {
+  it('pins Production own reads to the Production runtime and session, never an account override', async () => {
+    vi.stubEnv('PLG_OWNER_EVIDENCE_ENABLED', 'true');
+    vi.stubEnv('PLG_UAT_RUNTIME', '');
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-ai-prod');
+    const prod = vi.fn(async (email: string) => ({ environment: 'production', email }));
+    const app = express();
+    app.use((req, _res, next) => { (req as any).sessionUser = { email: 'tester@hushh.ai' }; next(); });
+    registerUatEvidenceRoute(app, vi.fn(), prod);
+    expect((await request(app).get('/api/plg/my-activity?accountId=other')).status).toBe(400);
+    expect((await request(app).get('/api/plg/my-activity')).status).toBe(200);
+    expect(prod).toHaveBeenCalledExactlyOnceWith('tester@hushh.ai');
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat');
+    const uat = express(); registerUatEvidenceRoute(uat, vi.fn(), prod);
+    expect((await request(uat).get('/api/plg/my-activity')).status).toBe(404);
+  });
   it('is absent unless the UAT runtime is explicitly enabled', async () => {
     vi.stubEnv('PLG_UAT_EVIDENCE_ENABLED', 'false');
     vi.stubEnv('PLG_UAT_RUNTIME', 'production');
