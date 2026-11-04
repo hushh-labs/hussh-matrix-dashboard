@@ -580,6 +580,7 @@ jobs:
       MATRIX_GOOGLE_CLIENT_ID: ${{ vars.MATRIX_GOOGLE_CLIENT_ID }}
       MATRIX_SECRET_VERSIONS: ${{ vars.MATRIX_SECRET_VERSIONS }}
       MATRIX_OWNER_READ_ENABLED: ${{ vars.MATRIX_OWNER_READ_ENABLED || 'false' }}
+      MATRIX_ATTEMPT_EMAIL_CONFIG: ${{ vars.MATRIX_ATTEMPT_EMAIL_CONFIG || 'null' }}
     steps:
       - uses: actions/checkout@v4
         with:
