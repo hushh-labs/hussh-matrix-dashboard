@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { assertEnvironmentRevision, assertSourceCi, devRuntimeImage, environmentService, environmentTarget } from '../scripts/plg-environment-release.mjs';
+import { assertEnvironmentRevision, assertSourceCi, devRuntimeImage, environmentSecretVersions, environmentService, environmentTarget } from '../scripts/plg-environment-release.mjs';
+import { attemptRuntime } from '../src/server/plg/attempt-email-routes';
 
 const source = 'a'.repeat(40);
 const image = `us-central1-docker.pkg.dev/hushh-pda-dev/matrix-images/hushh-matrix-dashboard@sha256:${'b'.repeat(64)}`;
@@ -9,6 +10,35 @@ const input = (environment = 'dev') => ({ environment, source, image,
   clientId: '123-fixture.apps.googleusercontent.com', versions });
 
 describe('canonical Matrix nonproduction release', () => {
+  it.each(['dev', 'uat'])('wires an explicit %s attempt worker without borrowing read authority or copying the mailbox grant', environment => {
+    const config = { ...input(environment), readEnabled: true,
+      versions: { ...versions, 'metrics-one-plg-attempt-source-secret': '3', 'metrics-one-plg-attempt-worker-secret': '4' },
+      attemptEmail: { clientId: '456-mailbox.apps.googleusercontent.com', clientSecretVersion: '7' } };
+    const document = environmentService(config);
+    const entries = document.spec.template.spec.containers[0].env;
+    const env = Object.fromEntries(entries.map(e => [e.name, e]));
+    expect(env.PLG_ATTEMPT_EMAIL_ENABLED.value).toBe('true');
+    expect(env.PLG_ATTEMPT_ENVIRONMENT.value).toBe(environment);
+    expect(env.PLG_ATTEMPT_SOURCE_SECRET.valueFrom.secretKeyRef).toEqual({ name: 'metrics-one-plg-attempt-source-secret', key: '3' });
+    expect(env.PLG_ATTEMPT_WORKER_SECRET.valueFrom.secretKeyRef).toEqual({ name: 'metrics-one-plg-attempt-worker-secret', key: '4' });
+    expect(env.PLG_ATTEMPT_GOOGLE_CLIENT_SECRET.valueFrom.secretKeyRef).toEqual({ name: 'attempt-mail-oauth', key: '7' });
+    expect(env.PLG_ATTEMPT_MAIL_CREDENTIAL_SECRET.value).toBe('projects/hushh-ai-prod/secrets/metrics-one-plg-google-mail');
+    expect(env.PLG_GOOGLE_MAIL_ENABLED.value).toBe('false');
+    expect(env.PLG_DELIVERY_ENABLED.value).toBe('false');
+    expect(environmentSecretVersions(config)).toContainEqual({ project: 'hushh-ai-prod', secret: 'metrics-dashboard-google-client-secret', version: '7' });
+    const resolved = Object.fromEntries(entries.map(e => [e.name, e.value ?? e.valueFrom.secretKeyRef.name.repeat(2)]));
+    expect(attemptRuntime(resolved).lane).toBe(environment);
+    const revision = { metadata: structuredClone(document.spec.template.metadata),
+      spec: structuredClone(document.spec.template.spec), status: { conditions: [{ type: 'Ready', status: 'True' }] } };
+    expect(() => assertEnvironmentRevision(revision, document)).not.toThrow();
+    revision.metadata.annotations['run.googleapis.com/secrets'] = 'attempt-mail-oauth:projects/unrelated/secrets/key';
+    expect(() => assertEnvironmentRevision(revision, document)).toThrow('Mailbox secret reference mismatch');
+    for (const patch of [{ readEnabled: false }, { versions },
+      { attemptEmail: { ...config.attemptEmail, clientSecretVersion: 'latest' } },
+      { attemptEmail: { ...config.attemptEmail, project: 'unrelated' } }])
+      expect(() => environmentService({ ...config, ...patch })).toThrow();
+  });
+
   it.each(['dev', 'uat'])('pins %s identity, source and credentials without campaign or send authority', environment => {
     const document = environmentService(input(environment));
     const config = document.spec.template.spec;

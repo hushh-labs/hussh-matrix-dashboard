@@ -15,18 +15,20 @@ import { environmentService } from './scripts/plg-environment-release.mjs';
 const config = { environment: process.env.TARGET_ENVIRONMENT, source: process.env.SOURCE_SHA,
   image: `us-central1-docker.pkg.dev/hushh-pda-dev/matrix-images/hushh-matrix-dashboard@sha256:${'0'.repeat(64)}`,
   clientId: process.env.MATRIX_GOOGLE_CLIENT_ID, versions: JSON.parse(process.env.MATRIX_SECRET_VERSIONS || 'null'),
-  readEnabled: process.env.MATRIX_OWNER_READ_ENABLED === 'true' };
+  readEnabled: process.env.MATRIX_OWNER_READ_ENABLED === 'true',
+  attemptEmail: JSON.parse(process.env.MATRIX_ATTEMPT_EMAIL_CONFIG || 'null') };
 environmentService(config); // Schema validation only; this placeholder image is never deployed.
 writeFileSync(`${process.env.RUNNER_TEMP}/matrix-runtime/config.json`, JSON.stringify(config));
 for (const [secret, version] of Object.entries(config.versions)) process.stdout.write(`${secret} ${version}\n`);
 NODE
 node --input-type=module <<'NODE' > "$directory/versions.txt"
 import { readFileSync } from 'node:fs';
-const { versions } = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/matrix-runtime/config.json`, 'utf8'));
-for (const [secret, version] of Object.entries(versions)) console.log(secret, version);
+import { environmentSecretVersions } from './scripts/plg-environment-release.mjs';
+const config = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/matrix-runtime/config.json`, 'utf8'));
+for (const {project, secret, version} of environmentSecretVersions(config)) console.log(project, secret, version);
 NODE
-while read -r secret version; do
-  state="$(gcloud secrets versions describe "$version" --secret="$secret" --project="$PROJECT_ID" --format='value(state)')"
+while read -r secret_project secret version; do
+  state="$(gcloud secrets versions describe "$version" --secret="$secret" --project="$secret_project" --format='value(state)')"
   [[ "$state" == ENABLED ]] || exit 1
 done < "$directory/versions.txt"
 
@@ -98,13 +100,15 @@ export GOOGLE_CLIENT_ID="$MATRIX_GOOGLE_CLIENT_ID" GOOGLE_REDIRECT_URI="$METRICS
 node scripts/check-auth-production.mjs
 export MATRIX_REVISION="$revision"
 node --input-type=module <<'NODE'
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+const config = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/matrix-runtime/config.json`, 'utf8'));
 const result = { at: new Date().toISOString(), environment: process.env.TARGET_ENVIRONMENT,
   project: process.env.PROJECT_ID, source: process.env.SOURCE_SHA, image: process.env.MATRIX_IMAGE,
   revision: process.env.MATRIX_REVISION, origin: process.env.METRICS_DASHBOARD_URL,
   ciRun: process.env.CI_RUN_ID, workflowRun: process.env.GITHUB_RUN_ID,
   runtimeVerified: true, ownerReadEnabled: process.env.MATRIX_OWNER_READ_ENABLED === 'true',
-  interactiveSignInVerified: false, behaviourVerified: false, emailEnabled: false, inboxVerified: false };
+  interactiveSignInVerified: false, behaviourVerified: false, emailEnabled: Boolean(config.attemptEmail),
+  schedulerVerified: false, providerSubmissionVerified: false, inboxVerified: false };
 writeFileSync(`${process.env.RUNNER_TEMP}/matrix-runtime/result.json`, JSON.stringify(result, null, 2));
 console.log('Native runtime and anonymous auth boundary verified. Owner sign-in, behaviour and email remain unaccepted.');
 NODE

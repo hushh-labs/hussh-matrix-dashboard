@@ -14,6 +14,33 @@ const secretNames = {
   SESSION_SECRET: 'metrics-dashboard-session-secret',
   ALLOWED_EMAILS: 'metrics-dashboard-allowed-emails',
 };
+const attemptSecrets = {
+  PLG_ATTEMPT_SOURCE_SECRET: 'metrics-one-plg-attempt-source-secret',
+  PLG_ATTEMPT_WORKER_SECRET: 'metrics-one-plg-attempt-worker-secret',
+};
+const mailbox = { project: 'hushh-ai-prod', database: 'one-plg-production',
+  clientSecret: 'metrics-dashboard-google-client-secret',
+  redirectUri: 'https://metrics.hussh.ai/auth/callback' };
+
+function checkedAttemptEmail(config) {
+  if (config === null) return null;
+  assert(config && typeof config === 'object' && !Array.isArray(config) &&
+    Object.keys(config).sort().join(',') === 'clientId,clientSecretVersion',
+  'Attempt activation requires the exact shared mailbox OAuth reference, never a copied grant.');
+  assert(/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(config.clientId), 'Mailbox OAuth client ID required.');
+  assert(/^[1-9][0-9]*$/.test(String(config.clientSecretVersion)), 'Pin the mailbox client secret version.');
+  return config;
+}
+
+/** Metadata-only preflight inputs, including the separately governed mailbox. */
+export function environmentSecretVersions(config) {
+  environmentService(config);
+  const project = environmentTarget(config.environment).project;
+  const references = Object.entries(config.versions).map(([secret, version]) => ({ project, secret, version: String(version) }));
+  if (config.attemptEmail) references.push({ project: mailbox.project, secret: mailbox.clientSecret,
+    version: String(config.attemptEmail.clientSecretVersion) });
+  return references;
+}
 
 export function environmentTarget(environment) {
   assert(Object.hasOwn(targets, environment), 'Only Dev/UAT are admitted by this release owner.');
@@ -53,15 +80,17 @@ export function devRuntimeImage(run, receipt, source, runId) {
 }
 
 /** Produces references only. OAuth setup and secret versions must already exist. */
-export function environmentService({ environment, source, image, clientId, versions, readEnabled = false }) {
+export function environmentService({ environment, source, image, clientId, versions, readEnabled = false, attemptEmail = null }) {
   const target = environmentTarget(environment), prefix = `PLG_${environment.toUpperCase()}`;
   assert(/^[a-f0-9]{40}$/.test(source), 'Exact source SHA required.');
   assert(/^us-central1-docker\.pkg\.dev\/hushh-pda-dev\/matrix-images\/hushh-matrix-dashboard@sha256:[a-f0-9]{64}$/.test(image),
     'Promote the immutable Dev-built image; tags and other registries are refused.');
   assert(/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(clientId), 'Verified OAuth client ID required.');
   assert(typeof readEnabled === 'boolean', 'Read activation must be explicit.');
+  const attempt = checkedAttemptEmail(attemptEmail);
+  assert(!attempt || readEnabled, 'Verify owner-read configuration before enabling attempt email.');
   const names = { ...secretNames, [`${prefix}_SOURCE_SECRET`]: 'metrics-one-plg-owner-source-secret',
-    [`${prefix}_OWNER_EMAIL_HASHES`]: 'metrics-one-plg-owner-email-hashes' };
+    [`${prefix}_OWNER_EMAIL_HASHES`]: 'metrics-one-plg-owner-email-hashes', ...(attempt ? attemptSecrets : {}) };
   assert(versions && Object.keys(versions).length === Object.keys(names).length &&
     Object.keys(versions).every(key => Object.values(names).includes(key)), 'Exact secret-version map required.');
   /** @type {Array<{name: string, value?: string, valueFrom?: {secretKeyRef: {name: string, key: string}}}>} */
@@ -73,13 +102,23 @@ export function environmentService({ environment, source, image, clientId, versi
     GOOGLE_REDIRECT_URI: `${target.origin}/auth/callback`, REQUIRE_AUTH: 'true', ALLOW_PUBLIC_DASHBOARD: 'false',
     ALLOWED_EMAIL_DOMAINS: 'hushh.ai', [`${prefix}_RUNTIME`]: environment,
     [`${prefix}_IDENTITY_MODE`]: 'live-signed', [`${prefix}_EVIDENCE_ENABLED`]: String(readEnabled),
-    PLG_ENABLED: 'false', PLG_DELIVERY_ENABLED: 'false', PLG_ATTEMPT_EMAIL_ENABLED: 'false',
+    PLG_ENABLED: 'false', PLG_DELIVERY_ENABLED: 'false', PLG_ATTEMPT_EMAIL_ENABLED: String(Boolean(attempt)),
     PLG_GOOGLE_MAIL_ENABLED: 'false', PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED: 'false', INSTAGRAM_ANALYTICS_ENABLED: 'false' };
+  const annotations = { 'autoscaling.knative.dev/maxScale': '2' };
+  if (attempt) {
+    Object.assign(plain, { PLG_ATTEMPT_ENVIRONMENT: environment,
+      PLG_ATTEMPT_MAIL_PROJECT: mailbox.project, PLG_ATTEMPT_MAIL_DATABASE: mailbox.database,
+      PLG_ATTEMPT_MAIL_CREDENTIAL_SECRET: `projects/${mailbox.project}/secrets/metrics-one-plg-google-mail`,
+      PLG_ATTEMPT_GOOGLE_CLIENT_ID: attempt.clientId, PLG_ATTEMPT_GOOGLE_REDIRECT_URI: mailbox.redirectUri });
+    annotations['run.googleapis.com/secrets'] = `attempt-mail-oauth:projects/${mailbox.project}/secrets/${mailbox.clientSecret}`;
+    env.push({ name: 'PLG_ATTEMPT_GOOGLE_CLIENT_SECRET', valueFrom: { secretKeyRef: {
+      name: 'attempt-mail-oauth', key: String(attempt.clientSecretVersion) } } });
+  }
   env.push(...Object.entries(plain).map(([name, value]) => ({ name, value })));
   return { apiVersion: 'serving.knative.dev/v1', kind: 'Service', metadata: { name: service,
     labels: { 'plg-environment': environment, 'source-sha': source } }, spec: {
     template: { metadata: { labels: { 'plg-environment': environment, 'source-sha': source },
-      annotations: { 'autoscaling.knative.dev/maxScale': '2' } }, spec: { serviceAccountName: target.runtime,
+      annotations }, spec: { serviceAccountName: target.runtime,
       containers: [{ image, ports: [{ containerPort: 8080 }], env,
         resources: { limits: { cpu: '1', memory: '1Gi' } } }] } },
     traffic: [{ latestRevision: true, percent: 100 }],
@@ -92,6 +131,8 @@ export function assertEnvironmentRevision(revision, expected) {
   assert(actual?.serviceAccountName === wanted.serviceAccountName, 'Runtime identity mismatch.');
   assert(revision.metadata?.labels?.['source-sha'] === expected.metadata.labels['source-sha'], 'Source label mismatch.');
   assert(revision.metadata?.labels?.['plg-environment'] === expected.metadata.labels['plg-environment'], 'Environment mismatch.');
+  assert.equal(revision.metadata?.annotations?.['run.googleapis.com/secrets'],
+    expected.spec.template.metadata.annotations['run.googleapis.com/secrets'], 'Mailbox secret reference mismatch.');
   assert(actual.containers?.length === 1 && actual.containers[0].image === wanted.containers[0].image, 'Image digest mismatch.');
   const entries = actual.containers[0].env ?? [];
   assert(entries.length === wanted.containers[0].env.length, 'Unexpected runtime configuration.');

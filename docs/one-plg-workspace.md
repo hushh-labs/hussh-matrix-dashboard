@@ -756,6 +756,37 @@ mailbox disconnect, provider backoff and pacing remain shared. Source support is
 default-off, not evidence of provisioned infrastructure, a verified login, or a
 sent email. Verify the canonical Dev source and runtime before activating it.
 
+The canonical Matrix Dev/UAT deployment accepts an optional
+`MATRIX_ATTEMPT_EMAIL_CONFIG` JSON object containing only the shared mailbox's
+public `clientId` and numeric `clientSecretVersion`. Absence or `null` keeps
+attempt emails off. Explicit activation also requires owner reads enabled and
+two additional pinned versions in `MATRIX_SECRET_VERSIONS`:
+`metrics-one-plg-attempt-source-secret` and
+`metrics-one-plg-attempt-worker-secret`. Neither may reuse an owner-read key.
+The runtime references the existing mailbox grant and common pacing/disconnect
+control; it never copies a refresh token into Dev/UAT or enables campaign mail.
+The mailbox OAuth secret uses a pinned cross-project Secret Manager reference.
+
+Before activation, verify the current mailbox OAuth client/reference, runtime
+access to the existing mail control and credential, exact One attempt-secret
+pair, explicit recipient cohort and the user's separate per-attempt preference.
+The deployment metadata preflight does not establish those permissions or Inbox
+delivery. This infrastructure change grants no cross-project mailbox access;
+do not broaden production database IAM just to satisfy this prerequisite.
+Dashboard sign-in still uses its environment's own OAuth client.
+
+The existing PLG Terraform state owns optional `attempt_worker_releases` for
+Dev/UAT. Each entry pins the accepted environment runtime's Dev-built image
+digest, source SHA and worker-key version; start with `scheduled=false`.
+The separate job identity can read only its worker key. The scheduler can invoke
+only that job, runs once a minute when explicitly enabled, and has no retry.
+The job uses the existing `plg-worker.mjs --attempts` route and no task retries;
+the durable cycle lease, acknowledgement queue and common mailbox pacing remain
+authoritative. Enable scheduling only after a controlled authorized owner cycle
+and its feedback checks succeed. A one-minute poll does not promise a one-minute
+Inbox arrival or bypass provider backoff. Runtime receipts keep scheduler,
+provider submission and Inbox proof separately unverified.
+
 ## Verify
 
 PLG Results requests `/api/analytics/one/app?environment=production` with its
