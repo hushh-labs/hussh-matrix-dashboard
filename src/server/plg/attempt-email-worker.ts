@@ -30,6 +30,14 @@ export async function runAttemptEmailCycle(source: OneAttemptEmails, mail: Googl
   await control.acquire(id, started);
   let accepted = 0, uncertain = 0, deferred = false, failed = true;
   try {
+    // Replay receipts before feedback and before any provider work. This queue
+    // contains no account ID, recipient or message body; erasure retires it in One.
+    for (const receipt of await control.acknowledgements()) {
+      await control.assertLease(id, now());
+      if (now() + 35_000 >= deadline) { deferred = true; failed = false; return { accepted, uncertain, deferred }; }
+      await source.acknowledge(receipt);
+      await control.forgetAcknowledgement(receipt);
+    }
     // This delivery owner has no marketing campaign contacts. Its remote SQL
     // ledger participates in the same canonical Gmail feedback implementation.
     const feedbackDeadline = Math.min(deadline, now() + 60_000);
@@ -62,7 +70,12 @@ export async function runAttemptEmailCycle(source: OneAttemptEmails, mail: Googl
       }
       // Only acknowledgement is idempotent. A failed acknowledgement never
       // calls the provider again or releases an ambiguous submission.
-      try { await source.settle(row, claimId, providerId, notSubmitted); }
+      try {
+        const receipt = { id: row.id, claimId, providerId, notSubmitted };
+        await control.recordAcknowledgement(id, receipt, now());
+        await source.acknowledge(receipt);
+        await control.forgetAcknowledgement(receipt);
+      }
       catch { uncertain++; break; }
       if (providerId) accepted++;
       else if (notSubmitted) { deferred = true; break; }

@@ -31,6 +31,7 @@ export interface MailControl {
   attemptEmail?: Partial<Record<'uat' | 'production', {
     feedback?: MailControl['feedback']; feedbackLease?: MailControl['feedbackLease'];
     cycle?: { id: string; until: number };
+    acknowledgements?: { id: string; claimId: string; providerId: string | null; notSubmitted: boolean }[];
     lastCycle?: { finishedAt: number; accepted: number; uncertain: number; deferred: boolean; status: 'completed' | 'blocked' | 'failed' };
   }>>;
 }

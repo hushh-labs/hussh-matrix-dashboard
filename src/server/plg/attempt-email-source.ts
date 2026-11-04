@@ -6,6 +6,9 @@ import { MAIL_OWNER } from './google-mail-store';
 
 export type AttemptEnvironment = 'uat' | 'production';
 export interface AttemptReference { id: string; accountId: string }
+export interface AttemptAcknowledgement {
+  id: string; claimId: string; providerId: string | null; notSubmitted: boolean;
+}
 export interface AttemptGrant {
   id: string; claimId: string; to: string; agentId: string; actionId: string;
   agentLabel: string; actionLabel: string; phase: 'returned' | 'failed' | 'cancelled' | 'blocked';
@@ -75,10 +78,10 @@ export class OneAttemptEmails implements GoogleFeedbackExtension {
       agentLabel: d.agentLabel, actionLabel: d.actionLabel, phase: d.phase, observedAt: d.observedAt,
       source: d.source, permissionGeneration: d.permissionGeneration, unsubscribeUrl: d.unsubscribeUrl };
   }
-  async settle(row: AttemptReference, claimId: string, providerId: string | null, notSubmitted = false) {
-    if (!uuid(row.id) || !uuid(claimId) || !label(row.accountId, 128) || providerId !== null && !opaque(providerId)) throw failure();
+  async acknowledge({ id, claimId, providerId, notSubmitted }: AttemptAcknowledgement) {
+    if (!uuid(id) || !uuid(claimId) || typeof notSubmitted !== 'boolean' || providerId !== null && !opaque(providerId)) throw failure();
     if (notSubmitted && providerId !== null) throw failure();
-    const data = await this.request('settle', { ...row, claimId, providerId, notSubmitted });
+    const data = await this.request('settle', { id, claimId, providerId, notSubmitted });
     if (data.received !== true) throw failure();
   }
   private async state() {

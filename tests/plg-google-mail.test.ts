@@ -582,6 +582,26 @@ describe('Opted-in owner attempt delivery through the existing mail transport', 
     expect(result.uncertain).toBe(fault === 'wrong_link' ? 1 : 0);
     expect(f.provider.mock.calls.some(([url]) => String(url).endsWith('/messages/send'))).toBe(false);
   });
+  it('replays a durable lost acknowledgement after restart without submitting again', async () => {
+    const f = attemptFixture(), original = f.sourceFetch.getMockImplementation()!;
+    let lost = true;
+    f.sourceFetch.mockImplementation(async (url, options) => {
+      if (String(url).endsWith('/settle') && lost) { lost = false; throw new Error('synthetic acknowledgement outage'); }
+      return original(url, options);
+    });
+    expect(await runAttemptEmailCycle(f.source, f.sender, f.scoped)).toEqual({ accepted: 0, uncertain: 1, deferred: false });
+    const saved = control.state.attemptEmail!.uat!.acknowledgements!;
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ id, providerId: 'attemptAccepted123', notSubmitted: false });
+    expect(JSON.stringify(saved)).not.toMatch(/synthetic-owner|synthetic@example|Ask a question/);
+    const callsBefore = f.sourceFetch.mock.calls.length;
+    const restarted = new AttemptMailControl(control, 'uat');
+    expect(await runAttemptEmailCycle(f.source, f.sender, restarted)).toEqual({ accepted: 0, uncertain: 0, deferred: false });
+    expect(String(f.sourceFetch.mock.calls[callsBefore][0])).toMatch(/\/settle$/);
+    expect(f.settlements[0]).not.toHaveProperty('accountId');
+    expect(await restarted.acknowledgements()).toEqual([]);
+    expect(f.provider.mock.calls.filter(([url]) => String(url).endsWith('/messages/send'))).toHaveLength(1);
+  });
   it.each(['uncertain', 'rejected'] as const)('distinguishes %s submissions and never repeats a provider call during the cycle', async fault => {
     const f = attemptFixture(fault);
     const result = await runAttemptEmailCycle(f.source, f.sender, f.scoped);

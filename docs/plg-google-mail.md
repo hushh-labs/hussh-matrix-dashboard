@@ -187,6 +187,12 @@ with a generation-bound unsubscribe link and no CC/BCC or product content.
 Duplicate callbacks are deduplicated by One. Lost claims and ambiguous sends are
 never retried. Known unsubmitted rejections may be released, with One's three-
 claim ceiling and existing mailbox backoff. API acceptance is not Inbox delivery.
+Before acknowledging a provider outcome to One, the worker retains its opaque
+delivery/claim/provider receipt in the shared durable control record, separately
+for each environment. A restarted cycle replays acknowledgements before feedback
+or sending. It never replays the provider submission. The bounded receipt queue
+contains no owner ID, address or content, and One confirms reset/erased delivery
+absence without recreating a record. A failed durable write remains uncertain.
 Hard failure reports require the actual accepted provider ID, its actual RFC
 header and immutable recipient hash; incomplete acknowledgements hold the cursor.
 
