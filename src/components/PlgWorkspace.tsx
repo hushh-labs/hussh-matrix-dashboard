@@ -93,6 +93,8 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const pageRequest = useRef<{ query: string; filter: string; contactId: string | null; queueCursor: string | null; historyCursor: string | null }>({
     query: '', filter: 'all', contactId: null, queueCursor: null, historyCursor: null,
   });
+  const acceptedPageRequest = useRef({ ...pageRequest.current });
+  const acceptedQueue = useRef<{ pages: (string | null)[]; index: number }>({ pages: [null], index: 0 });
   const [queuePages, setQueuePages] = useState<(string | null)[]>([null]);
   const [queuePage, setQueuePage] = useState(0);
   const pendingQueuePage = useRef(0);
@@ -122,15 +124,23 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
         ? api<Workspace>('workspace/query', 'POST', view, signal) : api<Workspace>('workspace', 'GET', undefined, signal);
     },
     accept: (value, at) => {
+      const previous = acceptedPageRequest.current;
+      const changedView = previous.query !== pageRequest.current.query || previous.filter !== pageRequest.current.filter ||
+        previous.contactId !== pageRequest.current.contactId;
+      acceptedPageRequest.current = { ...pageRequest.current };
       setWorkspace(value); setCheckedAt(at); setError(''); setLoading(false);
       if (value.pages) {
-        setQueuePage(pendingQueuePage.current);
-        setQueuePages(before => audiencePageCursors(before, pendingQueuePage.current, value.pages!.contacts.next));
+        const index = pendingQueuePage.current;
+        const pages = audiencePageCursors(changedView ? [null] : acceptedQueue.current.pages, index, value.pages.contacts.next);
+        acceptedQueue.current = { index, pages };
+        setQueuePage(index); setQueuePages(pages);
       }
     },
     reject: (e) => {
       // A retry starts a fresh view instead of replaying an expired continuation.
       pageRequest.current = { query: '', filter: 'all', contactId: null, queueCursor: null, historyCursor: null };
+      acceptedPageRequest.current = { ...pageRequest.current };
+      acceptedQueue.current = { pages: [null], index: 0 };
       setQueuePages([null]); setQueuePage(0); pendingQueuePage.current = 0;
       setHistoryPages([null]); setQuery(''); setFilter('all'); setSelected(null);
       setWorkspace(null); setCheckedAt(null); setError((e as Error).message); setLoading(false);
@@ -154,9 +164,9 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const hasWorkspace = workspace !== null;
   const pagedQueue = Boolean(workspace?.pages);
   useEffect(() => {
-    if (tab !== 'queue' || !pagedQueue || query === pageRequest.current.query && filter === pageRequest.current.filter) return;
+    if (tab !== 'queue' || !pagedQueue || query === acceptedPageRequest.current.query && filter === acceptedPageRequest.current.filter) return;
     const timer = setTimeout(() => {
-      if (query === pageRequest.current.query && filter === pageRequest.current.filter) return;
+      if (query === acceptedPageRequest.current.query && filter === acceptedPageRequest.current.filter) return;
       setSelected(null); setQueuePages([null]); pendingQueuePage.current = 0;
       void readPage({ query, filter, contactId: null, queueCursor: null });
     }, 350);
@@ -194,7 +204,14 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   }
   function changeQueue(patch: { query?: string; filter?: string }) {
     // Fence an in-flight page immediately, before the debounce starts another read.
-    if (pageBusy) { pageSequence.current++; reader.cancel(); setPageBusy(false); setWorking(false); }
+    if (pageBusy) {
+      pageSequence.current++; reader.cancel(); setPageBusy(false); setWorking(false);
+      // A cancelled request never became the displayed view. Restore the last
+      // accepted continuation too, so Refresh cannot replay cancelled filters.
+      pageRequest.current = { ...acceptedPageRequest.current };
+      pendingQueuePage.current = acceptedQueue.current.index;
+      setQueuePage(acceptedQueue.current.index); setQueuePages(acceptedQueue.current.pages);
+    }
     setSelected(null);
     if (patch.query !== undefined) setQuery(patch.query);
     if (patch.filter !== undefined) setFilter(patch.filter);
@@ -224,7 +241,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
       </section>
     );
   const { state, metrics, queue, role } = workspace;
-  const queueUpdating = Boolean(workspace.pages && (pageBusy || query !== pageRequest.current.query || filter !== pageRequest.current.filter));
+  const queueUpdating = Boolean(workspace.pages && (pageBusy || query !== acceptedPageRequest.current.query || filter !== acceptedPageRequest.current.filter));
   const admin = role === 'admin';
   const person = state.contacts.find((c) => c.id === selected);
   const contentTemplates = state.templates.filter((template) => contentJourney === 'all' || template.journey === contentJourney);
@@ -514,7 +531,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
           {workspace.pages && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted" aria-label="Campaign queue pages">
             <p>{workspace.pages.contacts.matches} matching {workspace.pages.contacts.matches === 1 ? 'account' : 'accounts'} · page {queuePage + 1} · checked {workspace.pages.contacts.checked} enrolled accounts</p>
             <PlgPagination label="Campaign queue pagination" page={queuePage} count={queuePages.length}
-              busy={busy || query !== pageRequest.current.query || filter !== pageRequest.current.filter} select={index => {
+              busy={busy || queueUpdating} select={index => {
                 pendingQueuePage.current = index; setSelected(null); void readPage({ queueCursor: queuePages[index] });
               }} />
           </div>}

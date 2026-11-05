@@ -158,6 +158,42 @@ test('pages the complete campaign queue and independent history while retaining 
   expect(requests.every(request => request.path === '/api/plg/workspace' || request.path === '/api/plg/workspace/query')).toBe(true);
 });
 
+test('restarts a cancelled queue search when returning to the same text', async ({ page }) => {
+  const state = await mockPlg(page);
+  const contact = enroll(state, { accountId: 'queue-return', email: 'alpha@example.invalid', name: 'Accepted alpha',
+    journey: 'memory', cohort: 'new', frequency: 'daily', consent: true, consentSource: 'Synthetic UI test',
+    environment: 'production', internal: false }, 'Fixture', Date.now());
+  let alphaReads = 0;
+  let release: () => void = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/plg\/workspace(?:\/query)?$/, async route => {
+    const body = route.request().method() === 'GET' ? {} : route.request().postDataJSON();
+    const stale = body.query === 'alpha' && ++alphaReads === 1;
+    if (stale) await held;
+    const contacts = body.query === 'alpha' ? [{ ...contact, name: stale ? 'Cancelled alpha' : 'Accepted alpha' }] : [];
+    const result: PlgWorkspace = { configured: true, deliveryEnabled: false, role: 'operator',
+      state: { ...state, contacts }, queue: contacts.map(value => candidate(state, value, Date.now())),
+      metrics: metrics(state, Date.now()), pages: { asOf: new Date().toISOString(),
+        contacts: { next: null, matches: contacts.length, checked: 1 }, history: { next: null } } };
+    await route.fulfill({ json: result });
+  });
+  await page.goto('/plg');
+  await page.getByRole('button', { name: 'Campaign follow-up queue', exact: true }).click();
+  const search = page.getByLabel('Search enrolled accounts');
+  await search.fill('alpha');
+  await expect.poll(() => alphaReads).toBe(1);
+  try {
+    // The original request never supplied rows. Returning before the debounce
+    // must issue a new read instead of treating that cancelled request as data.
+    await search.fill('alphabet');
+    await search.fill('alpha');
+    await expect.poll(() => alphaReads).toBe(2);
+    await expect(page.locator('tbody').getByText('Accepted alpha', { exact: true })).toBeVisible();
+  } finally { release(); }
+  await expect(page.locator('tbody').getByText('Cancelled alpha', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Updating account results…', { exact: true })).toHaveCount(0);
+});
+
 test('keeps work-mail previews separate and distinguishes acceptance from inbox confirmation', async ({ page }) => {
   const state = await mockPlg(page, false, false, undefined, true);
   const before = JSON.stringify(state);

@@ -10,7 +10,7 @@ import { applyDeliveryEvent } from '../src/server/plg/delivery-events';
 import * as audienceSource from '../src/server/plg/one-audience';
 import * as evidenceSource from '../src/server/plg/one-source';
 import { PLG_SYNC_REQUEST_TIMEOUT_MS } from '../src/lib/plg-budgets.mjs';
-import { uatWorkspaceMember } from '../src/server/plg/workspace-access';
+import { workProfileWorkspaceMember } from '../src/server/plg/workspace-access';
 
 const secret = 'test-plg-signing-secret-more-than-32-characters';
 const config: PlgRuntime = {
@@ -59,10 +59,12 @@ function app(runtime = config, member: (email: string) => boolean = () => false)
   return server;
 }
 describe('Private PLG API boundaries', () => {
-  it('opens the UAT workspace to signed work-profile members without a second email list', async () => {
-    const env = { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: 'uat' };
+  it.each([
+    { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: 'uat' },
+    { GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '' },
+  ])('opens the workspace to signed work profiles in $GOOGLE_CLOUD_PROJECT without another list', async env => {
     const auth = { requireAuth: true, allowedDomains: ['hushh.ai', 'hussh.ai'] };
-    const server = app(config, email => uatWorkspaceMember(email, auth, env));
+    const server = app(config, email => workProfileWorkspaceMember(email, auth, env));
     expect((await request(server).get('/api/plg/workspace')).status).toBe(401);
     const member = await request(server).get('/api/plg/workspace').set('Test-User', 'new-team-member@hushh.ai');
     expect(member.status).toBe(200); expect(member.body.role).toBe('operator');
@@ -72,9 +74,13 @@ describe('Private PLG API boundaries', () => {
       .set('Origin', config.origin).send({ paused: false })).status).toBe(403);
     expect((await request(server).post('/api/plg/workspace/query').set('Test-User', 'new-team-member@hushh.ai')
       .set('Origin', 'https://foreign.example.invalid').send({})).status).toBe(403);
-    expect(uatWorkspaceMember('member@hushh.ai', { ...auth, requireAuth: false }, env)).toBe(false);
-    expect(uatWorkspaceMember('member@hushh.ai', auth, { ...env, GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod' })).toBe(false);
-    expect(uatWorkspaceMember('member@hushh.ai', auth, { ...env, PLG_UAT_RUNTIME: '' })).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', { ...auth, requireAuth: false }, env)).toBe(false);
+    for (const email of ['member@hushh.ai.evil.test', 'spoof@@hushh.ai', 'not a member@hushh.ai', 'user@gmail.com'])
+      expect(workProfileWorkspaceMember(email, auth, env)).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', auth, { ...env, GOOGLE_CLOUD_PROJECT: 'hushh-pda-dev' })).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', auth, { ...env, PLG_DEV_RUNTIME: 'dev' })).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', auth, { GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: 'uat' })).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', auth, { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: '' })).toBe(false);
   });
   it('keeps manual source refresh progress separate from the automatic send continuation', async () => {
     await store.transaction(state => { state.automation = { enabled: true, accountCursor: 'a'.repeat(64) }; });

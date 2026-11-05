@@ -715,6 +715,15 @@ fixtures and establish UI behavior, not completeness of production telemetry.
 
 ## UAT people directory
 
+Verified Google work-profile sessions admitted by the dashboard's existing
+allowed-domain policy receive PLG operator access on Production Metrics and the
+isolated UAT runtime. They do not need an additional per-person PLG list.
+Anonymous users, unrelated email domains and mixed runtime configurations are
+rejected; administrative settings and email activation retain their own gates.
+Campaign searches debounce input and compare against the last accepted view, so
+returning to a cancelled search reissues the read instead of showing stale rows.
+Numbered pages refer only to confirmed continuation cursors.
+
 The workspace audience route selects the UAT reader when the runtime/project is
 UAT, and fails closed on mixed or missing configuration. It requires
 `GOOGLE_CLOUD_PROJECT=hushh-pda-uat`, `PLG_UAT_RUNTIME=uat`,
