@@ -57,6 +57,7 @@ describe('UAT own activity route', () => {
   it('uses only the verified session owner and rejects account overrides', async () => {
     vi.stubEnv('PLG_UAT_EVIDENCE_ENABLED', 'true');
     vi.stubEnv('PLG_UAT_RUNTIME', 'uat');
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat');
     const read = vi.fn(async () => ({ environment: 'uat', deliveryAuthorized: false }));
     const app = appFor('tester@hushh.ai', read);
     expect((await request(app).get('/api/plg/uat/my-behaviour?accountId=other')).status).toBe(400);
@@ -66,6 +67,14 @@ describe('UAT own activity route', () => {
     expect(read).toHaveBeenCalledOnce();
     expect(read).toHaveBeenCalledWith('tester@hushh.ai');
     expect((await request(appFor(null, read)).get('/api/plg/uat/my-behaviour')).status).toBe(401);
-    expect((await request(appFor('other@example.test', read)).get('/api/plg/uat/my-behaviour')).status).toBe(403);
+    // Only signed sessions admitted by dashboard auth reach this middleware;
+    // configured work domains are not restricted again to a hard-coded domain.
+    expect((await request(appFor('member@hushhtech.com', read)).get('/api/plg/uat/my-behaviour')).status).toBe(200);
+    expect(read).toHaveBeenLastCalledWith('member@hushhtech.com');
+    expect((await request(appFor('invalid@@example.test', read)).get('/api/plg/uat/my-behaviour')).status).toBe(403);
+    for (const project of ['hushh-pda-dev', 'hushh-ai-prod']) {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', project);
+      expect((await request(appFor('member@hushhtech.com', read)).get('/api/plg/uat/my-behaviour')).status).toBe(404);
+    }
   });
 });

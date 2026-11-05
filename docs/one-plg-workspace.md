@@ -715,9 +715,10 @@ fixtures and establish UI behavior, not completeness of production telemetry.
 
 ## Own activity
 
-The default-off `/plg/uat` view uses a verified Matrix session, an explicit UAT
-team email-hash cohort and the separately signed One UAT owner/snapshot endpoints.
-One resolves candidates within its explicit UAT account cohort, then checks the
+The default-off `/plg/uat` view uses the dashboard's existing verified Google
+work-account session and separately signed One UAT owner/snapshot endpoints.
+UAT has no second per-person email-hash or account-ID tester list. One resolves
+at most two identity-shadow candidates for the session email hash, then checks the
 current verified identity and the activity epoch around the read. A cached email
 only selects a candidate; it cannot authorize the projection. Missing, ambiguous,
 erased or reset owners produce no activity result. The signed scope carries
@@ -733,7 +734,7 @@ production owner. It requires `GOOGLE_CLOUD_PROJECT=hushh-ai-prod`,
 (1–100 unique verified work-account hashes), and a separate
 `PLG_OWNER_SOURCE_SECRET`. Its fixed One source is `api.hushh.ai` with the
 `owner`, `permission-owner` and `snapshot-owner` contracts. UAT uses its own
-project, credential, cohort and fixed `api.uat.hushh.ai` source. Neither view
+project, credential and fixed `api.uat.hushh.ai` source. Neither view
 accepts an account override or grants sending authority. The page linked from
 mail setup reads one's activity without depending on a marketing subscription.
 Missing, stale, reset or mismatched identity fails closed. These default-off
@@ -769,7 +770,11 @@ The mailbox OAuth secret uses a pinned cross-project Secret Manager reference.
 
 Before activation, verify the current mailbox OAuth client/reference, runtime
 access to the existing mail control and credential, exact One attempt-secret
-pair, explicit recipient cohort and the user's separate per-attempt preference.
+pair and the user's separate per-attempt preference. UAT permits all registered
+owners; Dev/Production retain their explicit recipient cohorts. UAT admission
+does not opt anybody in: a current verified recipient, lifecycle/epoch checks,
+preference revision, provider suppression and durable duplicate prevention still
+govern every claim. Anonymous identities are not admitted to activity capture.
 The deployment metadata preflight does not establish those permissions or Inbox
 delivery. This infrastructure change grants no cross-project mailbox access;
 do not broaden production database IAM just to satisfy this prerequisite.
