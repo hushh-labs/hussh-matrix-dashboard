@@ -44,12 +44,15 @@ export function audienceFilters(value: unknown): PlgAudienceFilters {
 }
 
 /** Whitelist every returned field; provider/SDK objects never reach the browser. */
-function page(value: unknown, filters: PlgAudienceFilters, now: number): PlgAudiencePage {
+function page(value: unknown, filters: PlgAudienceFilters, now: number, environment: 'production' | 'uat'): PlgAudiencePage {
   const input = object(value), catalog = readCatalog(input.catalog);
-  const customerReporting = readCustomerReporting(input.customerReporting);
+  const scope = environment === 'production'
+    ? { version: 1 as const, environment, customerReporting: readCustomerReporting(input.customerReporting) }
+    : { version: 2 as const, environment, customerReporting: false as const, deliveryAuthorized: false as const };
+  if (environment === 'uat' && (input.customerReporting !== false || input.deliveryAuthorized !== false)) return unavailable();
   const at = date(input.asOf, now + 10_000, now - 15 * 60_000), since = date(input.windowStart, now);
-  if (!at || !since || Date.parse(at) - Date.parse(since) !== 7 * DAY || input.version !== 1 ||
-    input.environment !== 'production' || input.source !== 'firebase_registered_accounts' || input.traversal !== 'live' ||
+  if (!at || !since || Date.parse(at) - Date.parse(since) !== 7 * DAY || input.version !== scope.version ||
+    input.environment !== environment || input.source !== 'firebase_registered_accounts' || input.traversal !== 'live' ||
     input.campaignEnrollmentChanged !== false || input.graceMinutes !== filters.graceMinutes ||
     !catalog.agents.some((a) => a.id === filters.agentId)) return unavailable();
   const scanned = number(input.scanned, 25), excluded = number(input.excluded, scanned);
@@ -90,7 +93,7 @@ function page(value: unknown, filters: PlgAudienceFilters, now: number): PlgAudi
   if (new Set(rows.map((r) => r.accountId)).size !== rows.length) return unavailable();
   const nextCursor = text(input.nextCursor, 6000);
   if (nextCursor && !/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(nextCursor)) return unavailable();
-  return { version: 1, environment: 'production', customerReporting, catalog, asOf: at, windowStart: since, graceMinutes: filters.graceMinutes,
+  return { ...scope, catalog, asOf: at, windowStart: since, graceMinutes: filters.graceMinutes,
     source: 'firebase_registered_accounts', traversal: 'live', scanned, excluded, rows, nextCursor, campaignEnrollmentChanged: false };
 }
 
@@ -99,26 +102,58 @@ export async function readOneAudience(
   options = { url: process.env.PLG_ONE_AUDIENCE_URL ?? '', secret: process.env.PLG_ONE_AUDIENCE_SECRET ?? '' },
   fetcher: typeof fetch = fetch,
   time: number | (() => number) = Date.now,
+  callerSignal?: AbortSignal,
 ): Promise<PlgAudiencePage> {
-  const filters = audienceFilters(input);
+  // Nonproduction callers must not fall back to a configured Production source.
+  if (['hushh-pda-dev', 'hushh-pda-uat'].includes(process.env.GOOGLE_CLOUD_PROJECT ?? '') ||
+    process.env.PLG_UAT_RUNTIME === 'uat' || process.env.PLG_DEV_RUNTIME === 'dev') return unavailable();
   const endpoint = oneProductionEndpoint(options.url, '/api/one/plg/audience');
   if (!endpoint || options.secret.length < 32) return unavailable();
+  return fetchAudience(input, endpoint, options.secret, 'production', fetcher, time, callerSignal);
+}
+
+/** Directory access is a separate credential from the session owner's private read. */
+export async function readUatAudience(input: unknown, env = process.env, fetcher: typeof fetch = fetch,
+  time: number | (() => number) = Date.now, callerSignal?: AbortSignal): Promise<PlgAudiencePage> {
+  const secret = env.PLG_UAT_AUDIENCE_SECRET ?? '';
+  const endpoint = 'https://api.uat.hushh.ai/api/one/plg/audience-uat';
+  if (env.GOOGLE_CLOUD_PROJECT !== 'hushh-pda-uat' || env.PLG_UAT_RUNTIME !== 'uat' ||
+    env.PLG_DEV_RUNTIME === 'dev' || env.PLG_UAT_AUDIENCE_ENABLED !== 'true' || secret.length < 32 ||
+    (env.PLG_UAT_AUDIENCE_URL && env.PLG_UAT_AUDIENCE_URL !== endpoint) ||
+    env.PLG_ONE_SOURCE_SECRET || env.PLG_ONE_AUDIENCE_SECRET || env.PLG_ONE_SUBSCRIPTION_SECRET ||
+    env.PLG_FIRESTORE_PROJECT || env.PLG_FIRESTORE_DATABASE ||
+    [env.PLG_UAT_SOURCE_SECRET, env.PLG_DEV_SOURCE_SECRET, env.PLG_OWNER_SOURCE_SECRET,
+      env.PLG_ATTEMPT_SOURCE_SECRET, env.PLG_ATTEMPT_WORKER_SECRET, env.PLG_SYNC_SECRET,
+      env.PLG_CYCLE_SECRET, env.PLG_SIGNING_SECRET].includes(secret)) return unavailable();
+  return fetchAudience(input, endpoint, secret, 'uat', fetcher, time, callerSignal);
+}
+
+async function fetchAudience(input: unknown, endpoint: string | URL, secret: string, environment: 'production' | 'uat',
+  fetcher: typeof fetch, time: number | (() => number), callerSignal?: AbortSignal): Promise<PlgAudiencePage> {
+  const filters = audienceFilters(input);
   const clock = typeof time === 'function' ? time : () => time;
   const timestamp = String(clock()), body = JSON.stringify(filters);
+  const purpose = environment === 'uat' ? 'audience-uat' : 'audience';
   try {
-    const response = await fetcher(endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30_000),
+    const signal = callerSignal ? AbortSignal.any([callerSignal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    signal.throwIfAborted();
+    const response = await fetcher(endpoint, { method: 'POST', redirect: 'error', signal,
       headers: { 'Content-Type': 'application/json', 'X-PLG-Timestamp': timestamp,
-        'X-PLG-Signature': signValue(`audience\n${timestamp}\n${body}`, options.secret) }, body });
+        'X-PLG-Signature': signValue(`${purpose}\n${timestamp}\n${body}`, secret) }, body });
     if (!response.ok || !response.body) return unavailable();
     const reader = response.body.getReader(), chunks: Uint8Array[] = [];
     let size = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 750_000) { await reader.cancel(); return unavailable(); }
-      chunks.push(value);
-    }
-    return page(JSON.parse(Buffer.concat(chunks).toString('utf8')), filters, clock());
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 750_000) { await reader.cancel(); return unavailable(); }
+        chunks.push(value);
+      }
+      signal.throwIfAborted();
+    } finally { reader.releaseLock(); }
+    return page(JSON.parse(Buffer.concat(chunks).toString('utf8')), filters, clock(), environment);
   } catch { return unavailable(); }
 }

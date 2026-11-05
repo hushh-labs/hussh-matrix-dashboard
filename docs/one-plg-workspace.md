@@ -713,11 +713,45 @@ No production account, permission, template, enrollment, sending setting or
 customer data was changed during this audit. Local browser tests use synthetic
 fixtures and establish UI behavior, not completeness of production telemetry.
 
+## UAT people directory
+
+Verified Google work-profile sessions admitted by the dashboard's existing
+allowed-domain policy receive PLG operator access on Production Metrics and the
+isolated UAT runtime. They do not need an additional per-person PLG list.
+Anonymous users, unrelated email domains and mixed runtime configurations are
+rejected; administrative settings and email activation retain their own gates.
+Campaign searches debounce input and compare against the last accepted view, so
+returning to a cancelled search reissues the read instead of showing stale rows.
+Numbered pages refer only to confirmed continuation cursors.
+
+The workspace audience route selects the UAT reader when the runtime/project is
+UAT, and fails closed on mixed or missing configuration. It requires
+`GOOGLE_CLOUD_PROJECT=hushh-pda-uat`, `PLG_UAT_RUNTIME=uat`,
+`PLG_UAT_AUDIENCE_ENABLED=true`, a distinct `PLG_UAT_AUDIENCE_SECRET`, and no
+Production source/store bindings. The source URL is pinned to
+`https://api.uat.hushh.ai/api/one/plg/audience-uat`; redirects are rejected. The
+credential is separate from own-activity and email-worker credentials.
+
+Existing work-session/operator, same-origin and `PLG_ENABLED` checks still
+apply. UAT registered team and customer accounts are shown with their UAT
+observations, without joining the Production campaign store. Version 2 requires
+`environment=uat`, `customerReporting=false` and `deliveryAuthorized=false`;
+the same strict catalog, identity, activity and outcome validators apply.
+Production continues to require its version 1 customer-reporting proof, and its
+reader refuses nonproduction runtimes. Cursors are source-project-bound.
+
+This read does not enroll accounts or enable emails. Activity email preference
+and verified recipient checks remain in One UAT. Source capture is best effort;
+an empty or capped result does not establish inactivity. Runtime provisioning,
+full workspace storage/results integration and real UAT acceptance are separate
+requirements. No deployment workflow or runtime flag is changed by this code.
+
 ## Own activity
 
-The default-off `/plg/uat` view uses a verified Matrix session, an explicit UAT
-team email-hash cohort and the separately signed One UAT owner/snapshot endpoints.
-One resolves candidates within its explicit UAT account cohort, then checks the
+The default-off `/plg/uat` view uses the dashboard's existing verified Google
+work-account session and separately signed One UAT owner/snapshot endpoints.
+UAT has no second per-person email-hash or account-ID tester list. One resolves
+at most two identity-shadow candidates for the session email hash, then checks the
 current verified identity and the activity epoch around the read. A cached email
 only selects a candidate; it cannot authorize the projection. Missing, ambiguous,
 erased or reset owners produce no activity result. The signed scope carries
@@ -733,7 +767,7 @@ production owner. It requires `GOOGLE_CLOUD_PROJECT=hushh-ai-prod`,
 (1–100 unique verified work-account hashes), and a separate
 `PLG_OWNER_SOURCE_SECRET`. Its fixed One source is `api.hushh.ai` with the
 `owner`, `permission-owner` and `snapshot-owner` contracts. UAT uses its own
-project, credential, cohort and fixed `api.uat.hushh.ai` source. Neither view
+project, credential and fixed `api.uat.hushh.ai` source. Neither view
 accepts an account override or grants sending authority. The page linked from
 mail setup reads one's activity without depending on a marketing subscription.
 Missing, stale, reset or mismatched identity fails closed. These default-off
@@ -769,7 +803,11 @@ The mailbox OAuth secret uses a pinned cross-project Secret Manager reference.
 
 Before activation, verify the current mailbox OAuth client/reference, runtime
 access to the existing mail control and credential, exact One attempt-secret
-pair, explicit recipient cohort and the user's separate per-attempt preference.
+pair and the user's separate per-attempt preference. UAT permits all registered
+owners; Dev/Production retain their explicit recipient cohorts. UAT admission
+does not opt anybody in: a current verified recipient, lifecycle/epoch checks,
+preference revision, provider suppression and durable duplicate prevention still
+govern every claim. Anonymous identities are not admitted to activity capture.
 The deployment metadata preflight does not establish those permissions or Inbox
 delivery. This infrastructure change grants no cross-project mailbox access;
 do not broaden production database IAM just to satisfy this prerequisite.

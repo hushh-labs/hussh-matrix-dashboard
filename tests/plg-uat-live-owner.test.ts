@@ -17,12 +17,27 @@ function setup() {
   vi.stubEnv('PLG_UAT_RUNTIME', 'uat');
   vi.stubEnv('PLG_UAT_IDENTITY_MODE', 'live-signed');
   vi.stubEnv('PLG_UAT_SOURCE_SECRET', 'x'.repeat(40));
-  vi.stubEnv('PLG_UAT_OWNER_EMAIL_HASHES', emailHash);
+  vi.stubEnv('PLG_UAT_OWNER_EMAIL_HASHES', '');
   vi.stubEnv('PLG_ONE_SOURCE_SECRET', '');
   vi.stubEnv('PLG_FIRESTORE_PROJECT', '');
   vi.stubEnv('PLG_FIRESTORE_DATABASE', '');
 }
 afterEach(() => vi.unstubAllEnvs());
+
+it('refuses the directory identity key for both owner reads and email-worker authority', () => {
+  setup();
+  expect(ownerActivityConfig('uat').secret).toBe('x'.repeat(40));
+  vi.stubEnv('PLG_UAT_AUDIENCE_SECRET', 'x'.repeat(40));
+  expect(() => ownerActivityConfig('uat')).toThrow();
+  vi.stubEnv('PLG_UAT_SOURCE_SECRET', 'different-owner-key-with-more-than-32-characters');
+  vi.stubEnv('PLG_ATTEMPT_EMAIL_ENABLED', 'true');
+  vi.stubEnv('PLG_ATTEMPT_ENVIRONMENT', 'uat');
+  vi.stubEnv('PLG_ATTEMPT_SOURCE_SECRET', 'x'.repeat(40));
+  vi.stubEnv('PLG_ATTEMPT_WORKER_SECRET', 'w'.repeat(40));
+  expect(() => attemptRuntime()).toThrow();
+  vi.stubEnv('PLG_UAT_AUDIENCE_SECRET', 'different-directory-key-with-more-than-32-characters');
+  expect(attemptRuntime().lane).toBe('uat');
+});
 
 it('binds Dev reads and delivery to its own project, origin, purpose and cohort', async () => {
   const origin = 'https://consent-protocol-aqahj4iyha-uc.a.run.app';
@@ -74,13 +89,12 @@ it('binds the signed UAT owner to the session and re-reads current scope', async
   expect((await load()).accountId).toBe('uat-owner');
   expect((await load()).authorityScope).toBe('uat-live-owner');
   expect(fetcher).toHaveBeenCalledTimes(2);
-  expect(() => createUatLiveScopeLoader('other@hushh.ai', fetcher, () => now)).toThrow();
+  await expect(createUatLiveScopeLoader('other@hushh.ai', fetcher, () => now)()).rejects.toThrow();
 });
 
-it('isolates two enrolled team members and refuses a cross-owner response', async () => {
+it('admits UAT work accounts without a second list and refuses a cross-owner response', async () => {
   setup();
-  const secondHash = createHash('sha256').update('second@hushh.ai').digest('hex');
-  vi.stubEnv('PLG_UAT_OWNER_EMAIL_HASHES', `${emailHash},${secondHash}`);
+  const secondHash = createHash('sha256').update('second@hushhtech.com').digest('hex');
   const seen: string[] = [];
   const fetcher = vi.fn(async (_url: unknown, init: RequestInit | undefined) => {
     const requested = JSON.parse(String(init?.body)).emailHash;
@@ -89,11 +103,11 @@ it('isolates two enrolled team members and refuses a cross-owner response', asyn
       scope: { ...scope, emailHash: requested, accountId: requested === secondHash ? 'second-owner' : 'uat-owner' } }));
   }) as unknown as typeof fetch;
   expect((await createUatLiveScopeLoader('tester@hushh.ai', fetcher, () => now)()).accountId).toBe('uat-owner');
-  expect((await createUatLiveScopeLoader('second@hushh.ai', fetcher, () => now)()).accountId).toBe('second-owner');
+  expect((await createUatLiveScopeLoader('second@hushhtech.com', fetcher, () => now)()).accountId).toBe('second-owner');
   expect(seen).toEqual([emailHash, secondHash]);
   const wrongOwner = async () => new Response(JSON.stringify({ environment: 'uat', deliveryAuthorized: false, scope }));
-  await expect(createUatLiveScopeLoader('second@hushh.ai', wrongOwner, () => now)()).rejects.toThrow();
-  expect(() => createUatLiveScopeLoader('outside@hushh.ai', fetcher, () => now)).toThrow();
+  await expect(createUatLiveScopeLoader('second@hushhtech.com', wrongOwner, () => now)()).rejects.toThrow();
+  expect(() => createUatLiveScopeLoader('invalid@@hushh.ai', fetcher, () => now)).toThrow();
 });
 
 it('fails closed on revocation, recipient change and production configuration', async () => {

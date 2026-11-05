@@ -27,7 +27,7 @@ import {
   tokenPreference,
 } from './service';
 import { syncOneEvidence } from './one-source';
-import { readOneAudience } from './one-audience';
+import { readOneAudience, readUatAudience } from './one-audience';
 import { deliveryBlockers, runAutomationCycle, setAutomationEnabled } from './automation';
 import { applyDeliveryEvent } from './delivery-events';
 import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
@@ -53,6 +53,7 @@ export function registerPlgRoutes(
   app: express.Express,
   production: boolean,
   injected?: PlgService,
+  workspaceMember: (email: string) => boolean = () => false,
 ) {
   registerUatEvidenceRoute(app);
   registerAttemptEmailRoute(app);
@@ -165,7 +166,7 @@ export function registerPlgRoutes(
     if (!email) throw new PlgError(401, 'Authentication required');
     const value = config.admins.has(email)
       ? 'admin'
-      : config.operators.has(email)
+      : config.operators.has(email) || workspaceMember(email)
         ? 'operator'
         : null;
     if (!value || (admin && value !== 'admin'))
@@ -284,11 +285,21 @@ export function registerPlgRoutes(
     handle(async (req, res) => {
       role(req);
       if (!config.enabled) throw new PlgError(503, 'PLG is not configured.');
-      const page = await readOneAudience(req.body), accounts = await getService().store.accountStorage?.();
-      if (!accounts) return res.json(page);
-      const enrolled = await accounts.readAccounts(page.rows.map(row => accountHash(row.accountId)));
-      return res.json({ ...page, rows: page.rows.map(row => ({ ...row,
-        campaignContactId: enrolled.contacts.find(contact => contact.accountId === row.accountId)?.id ?? null })) });
+      const active = new AbortController();
+      const disconnected = () => { if (!res.writableEnded) active.abort(); };
+      res.once('close', disconnected);
+      try {
+        const uat = process.env.GOOGLE_CLOUD_PROJECT === 'hushh-pda-uat' || process.env.PLG_UAT_RUNTIME === 'uat';
+        const page = await (uat ? readUatAudience : readOneAudience)(req.body, undefined, fetch, Date.now, active.signal);
+        active.signal.throwIfAborted();
+        // UAT directory reads never open or link the Production campaign store.
+        if (page.environment === 'uat') return res.json(page);
+        const accounts = await getService().store.accountStorage?.();
+        if (!accounts) return res.json(page);
+        const enrolled = await accounts.readAccounts(page.rows.map(row => accountHash(row.accountId)));
+        return res.json({ ...page, rows: page.rows.map(row => ({ ...row,
+          campaignContactId: enrolled.contacts.find(contact => contact.accountId === row.accountId)?.id ?? null })) });
+      } finally { res.off('close', disconnected); }
     }),
   );
   app.post(

@@ -134,14 +134,13 @@ test('pages the complete campaign queue and independent history while retaining 
   await page.getByRole('button', { name: 'Close account details' }).click();
   const queuePages = page.getByLabel('Campaign queue pages');
   await expect(queuePages).toContainText('33 matching accounts');
-  await page.getByRole('button', { name: 'Next queue page', exact: true }).click();
+  await queuePages.getByRole('button', { name: 'Page 2', exact: true }).click();
   await expect(page.locator('tbody').getByText('Page 32', { exact: true })).toBeVisible();
   await expect(queuePages).toContainText('page 2');
-  await page.getByRole('button', { name: 'Previous queue page', exact: true }).click();
+  await queuePages.getByRole('button', { name: 'Page 1', exact: true }).click();
   await expect(page.locator('tbody').getByText('Page 0', { exact: true })).toBeVisible();
   await page.getByLabel('Search enrolled accounts').fill('page-32@');
-  await expect(page.locator('tbody').getByText('Page 0', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Apply queue filters', exact: true }).click();
+  await expect(page.locator('tbody').getByText('Page 0', { exact: true })).toHaveCount(0);
   await expect(queuePages).toContainText('1 matching account');
   await expect(page.locator('tbody').getByText('Page 32', { exact: true })).toBeVisible();
   expect(requests.at(-1)?.body).toMatchObject({ query: 'page-32@', queueCursor: null });
@@ -157,6 +156,42 @@ test('pages the complete campaign queue and independent history while retaining 
   await expect(deliveryTable.locator('tbody tr')).toHaveCount(25);
   await expect(page.getByText('Enrolled accounts', { exact: true }).locator('..')).toContainText('1001');
   expect(requests.every(request => request.path === '/api/plg/workspace' || request.path === '/api/plg/workspace/query')).toBe(true);
+});
+
+test('restarts a cancelled queue search when returning to the same text', async ({ page }) => {
+  const state = await mockPlg(page);
+  const contact = enroll(state, { accountId: 'queue-return', email: 'alpha@example.invalid', name: 'Accepted alpha',
+    journey: 'memory', cohort: 'new', frequency: 'daily', consent: true, consentSource: 'Synthetic UI test',
+    environment: 'production', internal: false }, 'Fixture', Date.now());
+  let alphaReads = 0;
+  let release: () => void = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/plg\/workspace(?:\/query)?$/, async route => {
+    const body = route.request().method() === 'GET' ? {} : route.request().postDataJSON();
+    const stale = body.query === 'alpha' && ++alphaReads === 1;
+    if (stale) await held;
+    const contacts = body.query === 'alpha' ? [{ ...contact, name: stale ? 'Cancelled alpha' : 'Accepted alpha' }] : [];
+    const result: PlgWorkspace = { configured: true, deliveryEnabled: false, role: 'operator',
+      state: { ...state, contacts }, queue: contacts.map(value => candidate(state, value, Date.now())),
+      metrics: metrics(state, Date.now()), pages: { asOf: new Date().toISOString(),
+        contacts: { next: null, matches: contacts.length, checked: 1 }, history: { next: null } } };
+    await route.fulfill({ json: result });
+  });
+  await page.goto('/plg');
+  await page.getByRole('button', { name: 'Campaign follow-up queue', exact: true }).click();
+  const search = page.getByLabel('Search enrolled accounts');
+  await search.fill('alpha');
+  await expect.poll(() => alphaReads).toBe(1);
+  try {
+    // The original request never supplied rows. Returning before the debounce
+    // must issue a new read instead of treating that cancelled request as data.
+    await search.fill('alphabet');
+    await search.fill('alpha');
+    await expect.poll(() => alphaReads).toBe(2);
+    await expect(page.locator('tbody').getByText('Accepted alpha', { exact: true })).toBeVisible();
+  } finally { release(); }
+  await expect(page.locator('tbody').getByText('Cancelled alpha', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Updating account results…', { exact: true })).toHaveCount(0);
 });
 
 test('keeps work-mail previews separate and distinguishes acceptance from inbox confirmation', async ({ page }) => {
@@ -445,10 +480,10 @@ test('reads agent people with phone-only identity, filters and live pagination w
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   expect(bodies.at(-1)).toMatchObject({ agentId: 'agent_calendar', segment: 'possible_incomplete', query: '+9198', graceMinutes: 240, cursor: null });
-  await page.getByRole('button', { name: 'Next source page' }).click();
+  await page.getByRole('navigation', { name: 'User result pages' }).getByRole('button', { name: 'Page 2', exact: true }).click();
   await expect(page.getByText('0 accounts in this result')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Next source page' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Previous source page' }).click();
+  await expect(page.getByRole('button', { name: 'Page 3', exact: true })).toHaveCount(0);
+  await page.getByRole('navigation', { name: 'User result pages' }).getByRole('button', { name: 'Page 1', exact: true }).click();
   await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
   expect(state.contacts).toHaveLength(0); expect(state.deliveries).toHaveLength(0);
   expect(mutations).toEqual([]);
@@ -475,8 +510,7 @@ test('starts with people and searches beyond empty filtered source pages without
   await page.getByRole('combobox', { name: 'Agent', exact: true }).selectOption('agent_calendar');
   await page.getByLabel('Task status').selectOption('failed');
   await expect(page.getByText('Registered person', { exact: true })).toHaveCount(0);
-  await expect(page.getByText('Filters changed. Apply filters to update the results.')).toBeVisible();
-  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  // Filter changes apply after typing settles, without an extra submit.
   await expect(page.getByText('Later match', { exact: true })).toBeVisible();
   expect(cursors).toEqual([null, 'scan-1', 'scan-2']);
   await expect(page.getByText('Checked 75 source accounts', { exact: false })).toBeVisible();
@@ -486,7 +520,56 @@ test('starts with people and searches beyond empty filtered source pages without
   await expect(page.getByText('No verified value observed', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Business completion is not measured for this agent', { exact: false })).toHaveCount(0);
   await expect(page.getByText('Completion definition', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Next source page' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Page 2', exact: true })).toHaveCount(0);
+});
+
+test('debounces typed people searches and ignores a cancelled slow response', async ({ page }) => {
+  const queries: string[] = [];
+  let release: () => void = () => {}, ready: () => void = () => {};
+  const waiting = new Promise<void>(resolve => { ready = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await mockPlg(page, false, false, async (input, result) => {
+    queries.push(input.query);
+    if (input.query === 'slow') { ready(); await held; }
+    return { ...result, nextCursor: null, rows: result.rows.map(person => ({ ...person,
+      identity: { ...person.identity, name: input.query ? `${input.query} result` : 'Initial result' } })) };
+  });
+  await page.goto('/plg');
+  await expect(page.getByText('Initial result', { exact: true })).toBeVisible();
+  await page.clock.install();
+  const search = page.getByLabel('Search name, email or phone');
+  await search.fill('s'); await search.fill('sl'); await search.fill('slow');
+  // Development StrictMode can mount the initial empty query twice.
+  expect(queries.filter(Boolean)).toEqual([]);
+  await page.clock.runFor(351); await waiting;
+  await search.fill('latest');
+  await expect(page.getByText('Initial result', { exact: true })).toHaveCount(0);
+  await page.clock.runFor(351);
+  await expect(page.getByText('latest result', { exact: true })).toBeVisible();
+  release();
+  await expect(page.getByText('slow result', { exact: true })).toHaveCount(0);
+  expect(queries.filter(Boolean)).toEqual(['slow', 'latest']);
+  await expect(page.getByRole('button', { name: 'Page 1', exact: true })).toHaveAttribute('aria-current', 'page');
+});
+
+test('renders UAT registered accounts without Production campaign links or email activation', async ({ page }) => {
+  const writes: string[] = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/plg/') && request.method() !== 'GET' && path !== '/api/plg/audience') writes.push(path);
+  });
+  const state = await mockPlg(page, false, false, (_input, result) => ({ ...result,
+    version: 2, environment: 'uat', customerReporting: false, deliveryAuthorized: false,
+    rows: result.rows.map(person => ({ ...person, campaignContactId: 'production-contact-must-not-open' })),
+  }));
+  await page.goto('/plg');
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  await expect(page.getByText('UAT registered accounts include team and test accounts.', { exact: false })).toBeVisible();
+  await expect(page.getByText("Activity emails use each owner's separate preference in One UAT.")).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open follow-up', exact: true })).toHaveCount(0);
+  await expect(page.getByText('Production account counts exclude', { exact: false })).toHaveCount(0);
+  expect(state.contacts).toHaveLength(0); expect(state.deliveries).toHaveLength(0);
+  expect(writes).toEqual([]);
 });
 
 test('keeps missing collection baselines distinct from measured zero usage', async ({ page }) => {
@@ -524,11 +607,11 @@ test('keeps a bounded empty search resumable instead of claiming a global zero',
   await expect(page.getByText('No matches in the accounts checked so far.', { exact: false })).toBeVisible();
   expect(cursors).toHaveLength(160); expect(cursors[0]).toBeNull(); expect(cursors.at(-1)).toBe('scan-159');
   await expect(page.getByText('Checked 4000 source accounts', { exact: false })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Next source page' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Next source page' }).click();
+  await expect(page.getByRole('button', { name: 'Page 2', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Page 2', exact: true }).click();
   await expect(page.getByText('No matches in the accounts checked so far.', { exact: false })).toBeVisible();
   expect(cursors.at(160)).toBe('scan-160');
-  await expect(page.getByRole('button', { name: 'Previous source page' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Page 1', exact: true })).toBeEnabled();
 });
 
 test('finds a filtered account beyond the first 150 source accounts without another click', async ({ page }) => {
@@ -570,9 +653,9 @@ test('pauses a filtered search at its confirmed cursor and ignores its late resp
   await page.getByRole('button', { name: 'Pause search', exact: true }).click(); release();
   await expect(page.getByText('Search paused.', { exact: false })).toBeVisible();
   await expect(page.getByText('Checked 50 source accounts', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: 'Next source page', exact: true }).click();
+  await page.getByRole('button', { name: 'Page 2', exact: true }).click();
   await expect(page.getByText('Reached the end of this directory traversal.', { exact: false })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Next source page' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Page 3', exact: true })).toHaveCount(0);
 });
 
 test('edits content, verifies journeys and leaves immature cohorts unavailable', async ({ page }) => {

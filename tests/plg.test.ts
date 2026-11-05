@@ -239,6 +239,19 @@ describe('production-only private evidence sources', () => {
 describe('Private One audience contract', () => {
   const filters = { agentId: 'agent_one' as const, segment: 'all' as const, query: '', graceMinutes: 60 };
   const options = { url: 'https://api.hushh.ai/api/one/plg/audience', secret: 'audience-test-key-with-more-than-32-characters' };
+  it('cancels upstream work when a search is replaced and refuses late results', async () => {
+    const caller = new AbortController();
+    const fetcher = vi.fn(async (_url, init) => {
+      expect(init!.signal!.aborted).toBe(false);
+      caller.abort();
+      expect(init!.signal!.aborted).toBe(true);
+      return Response.json(fixture());
+    }) as unknown as typeof fetch;
+    await expect(readOneAudience(filters, options, fetcher, NOW, caller.signal)).rejects.toThrow('unavailable');
+    expect(fetcher).toHaveBeenCalledOnce();
+    await expect(readOneAudience(filters, options, fetcher, NOW, caller.signal)).rejects.toThrow('unavailable');
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   const fixture = () => ({
     version: 1, environment: 'production', source: 'firebase_registered_accounts', traversal: 'live', customerReporting: reportingProof,
     catalog: { revision: 'a'.repeat(64), agents: [{ id: 'agent_one', label: 'One', public: true, available: true }],

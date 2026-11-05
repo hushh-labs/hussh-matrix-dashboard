@@ -9,7 +9,7 @@ export type OwnerScope = {
 };
 const unavailable = () => new Error('Own activity evidence is unavailable.');
 
-/** One cohort and read credential per environment. Marketing stores grant no own-read authority. */
+/** Isolated UAT admits signed-in owners; Dev/Production retain explicit cohorts. */
 export function ownerActivityConfig(environment: OwnerEnvironment, env = process.env) {
   if (!['dev', 'uat', 'production'].includes(environment)) throw unavailable();
   const nonproduction = environment !== 'production';
@@ -25,13 +25,13 @@ export function ownerActivityConfig(environment: OwnerEnvironment, env = process
       : env.PLG_UAT_RUNTIME === 'uat' || env.PLG_DEV_RUNTIME === 'dev') ||
     (environment === 'dev' && env.PLG_UAT_RUNTIME === 'uat') ||
     (environment === 'uat' && env.PLG_DEV_RUNTIME === 'dev') || secret.length < 32 ||
-    [env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET, env.PLG_ONE_AUDIENCE_SECRET,
+    [env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET, env.PLG_ONE_AUDIENCE_SECRET, env.PLG_UAT_AUDIENCE_SECRET,
       env.PLG_ATTEMPT_SOURCE_SECRET, env.PLG_ATTEMPT_WORKER_SECRET, env.PLG_SYNC_SECRET,
       env.PLG_CYCLE_SECRET, env.PLG_SIGNING_SECRET,
       ...['PLG_DEV_SOURCE_SECRET', 'PLG_UAT_SOURCE_SECRET', 'PLG_OWNER_SOURCE_SECRET']
         .filter(key => key !== secretName).map(key => env[key])].includes(secret) ||
-    hashes.length < 1 || hashes.length > 100 || new Set(hashes).size !== hashes.length ||
-    hashes.some(hash => !/^[a-f0-9]{64}$/.test(hash))) throw unavailable();
+    (environment !== 'uat' && (hashes.length < 1 || hashes.length > 100 || new Set(hashes).size !== hashes.length ||
+    hashes.some(hash => !/^[a-f0-9]{64}$/.test(hash))))) throw unavailable();
   const urls = { dev: 'https://consent-protocol-aqahj4iyha-uc.a.run.app/api/one/plg/snapshot-dev',
     uat: 'https://api.uat.hushh.ai/api/one/plg/snapshot-uat',
     production: 'https://api.hushh.ai/api/one/plg/snapshot-owner' };
@@ -43,9 +43,12 @@ export function createOwnerScopeLoader(environment: OwnerEnvironment, sessionEma
   fetcher: typeof fetch = fetch, clock = Date.now): () => Promise<OwnerScope> {
   const { secret, hashes } = ownerActivityConfig(environment);
   const email = typeof sessionEmail === 'string' ? sessionEmail.trim().toLowerCase() : '';
-  if (!/^[^\s@<>]+@hushh\.ai$/.test(email)) throw unavailable();
+  // The dashboard middleware already verifies its configured Google work-domain
+  // policy. Do not introduce another UAT domain or per-person allowlist here.
+  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email) || email.length > 254 ||
+    (environment !== 'uat' && !email.endsWith('@hushh.ai'))) throw unavailable();
   const emailHash = createHash('sha256').update(email).digest('hex');
-  if (!hashes.includes(emailHash)) throw unavailable();
+  if (environment !== 'uat' && !hashes.includes(emailHash)) throw unavailable();
   const floor = clock() - 7 * 86_400_000 + 120_000;
   let pinnedSince: string | undefined;
   return async () => {

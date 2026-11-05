@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { PlgAudienceFilters, PlgAudiencePage, PlgState } from '../lib/plg';
 import { dashboardCard } from '../lib/theme';
 import { cn } from '../lib/utils';
-import { audienceFilterScan, findAudiencePage, outcomeCoverage } from '../lib/plg-audience';
+import { audienceFilterScan, audiencePageCursors, findAudiencePage, outcomeCoverage } from '../lib/plg-audience';
+import { PlgPagination } from './PlgPagination';
 
 const control = 'w-full rounded-xl border border-stroke bg-surface px-3 py-2.5 text-sm text-ink';
 const button = 'rounded-xl border border-stroke bg-surface px-4 py-2.5 text-sm font-semibold text-ink disabled:opacity-50';
@@ -21,8 +22,8 @@ export function PlgAudiencePanel({ state, load, openContact }: {
   const [filters, setFilters] = useState<PlgAudienceFilters>(defaults);
   const [data, setData] = useState<PlgAudiencePage | null>(null);
   const [sourceCatalog, setSourceCatalog] = useState<PlgAudiencePage['catalog'] | null>(null);
-  const [history, setHistory] = useState<(string | null)[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [pages, setPages] = useState<(string | null)[]>([null]);
+  const [pageIndex, setPageIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -30,31 +31,33 @@ export function PlgAudiencePanel({ state, load, openContact }: {
   const [paused, setPaused] = useState(false);
   const [includeTechnicalAgents, setIncludeTechnicalAgents] = useState(false);
   const sequence = useRef(0), controller = useRef<AbortController | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const confirmed = useRef<{ request: number; page: PlgAudiencePage; scanned: number; start: string | null;
-    direction: 'reset' | 'next' | 'previous'; previous: string | null } | null>(null);
+    index: number; reset: boolean } | null>(null);
   function display(record: NonNullable<typeof confirmed.current>) {
-    setData(record.page); setSourceCatalog(record.page.catalog); setCursor(record.start); setScanned(record.scanned); setDirty(false);
-    setHistory(before => record.direction === 'next' ? [...before, record.previous] : record.direction === 'previous' ? before.slice(0, -1) : []);
+    setData(record.page); setSourceCatalog(record.page.catalog); setPageIndex(record.index); setScanned(record.scanned); setDirty(false);
+    setPages(before => audiencePageCursors(record.reset ? [null] : before, record.index, record.page.nextCursor));
   }
   function pause() {
     const request = sequence.current++;
     controller.current?.abort(); setBusy(false); setPaused(true);
     if (confirmed.current?.request === request) display(confirmed.current);
   }
-  async function read(next: string | null, direction: 'reset' | 'next' | 'previous' = 'reset') {
+  async function read(next: string | null, index = 0, reset = true) {
     const request = ++sequence.current;
+    if (searchTimer.current) clearTimeout(searchTimer.current);
     controller.current?.abort();
     const active = new AbortController();
     controller.current = active;
     confirmed.current = null;
-    setBusy(true); setError(''); setData(null); setScanned(0); setPaused(false);
+    setBusy(true); setDirty(false); setError(''); setData(null); setScanned(0); setPaused(false);
     try {
       const { page: result, scanned: checked } = await findAudiencePage(load, { ...filters, cursor: next }, active.signal,
         (count, page) => { if (request === sequence.current) {
-          setScanned(count); confirmed.current = { request, page, scanned: count, start: next, direction, previous: cursor };
+          setScanned(count); confirmed.current = { request, page, scanned: count, start: next, index, reset };
         } }, Date.now, audienceFilterScan);
       if (request !== sequence.current) return;
-      display({ request, page: result, scanned: checked, start: next, direction, previous: cursor });
+      display({ request, page: result, scanned: checked, start: next, index, reset });
     } catch (e) {
       if (request === sequence.current && !active.signal.aborted) setError((e as Error).message);
     } finally { if (request === sequence.current) setBusy(false); }
@@ -63,9 +66,14 @@ export function PlgAudiencePanel({ state, load, openContact }: {
     void read(null);
     return () => { sequence.current++; controller.current?.abort(); };
   }, [load]);
+  useEffect(() => {
+    if (!dirty) return;
+    searchTimer.current = setTimeout(() => void read(null), 350);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, [filters, dirty]);
   function change(patch: Partial<PlgAudienceFilters>) {
     sequence.current++; controller.current?.abort(); confirmed.current = null; setBusy(false); setDirty(true); setError(''); setPaused(false);
-    setHistory([]); setCursor(null); setFilters((before) => ({ ...before, ...patch }));
+    setPages([null]); setPageIndex(0); setData(null); setFilters((before) => ({ ...before, ...patch }));
   }
   function submit(event: FormEvent) { event.preventDefault(); void read(null); }
   const catalog = sourceCatalog ?? state.catalog;
@@ -76,15 +84,17 @@ export function PlgAudiencePanel({ state, load, openContact }: {
   return <section className="min-w-0 space-y-5" aria-label="Agent people">
     <div className={cn(dashboardCard, 'p-5 sm:p-6')}>
       <h3 className="text-lg font-semibold text-ink">Users and agent drop-offs</h3>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Find registered accounts and their recorded activity in the last seven days. Choose an agent, then apply your filters. Campaign enrollment is separate.</p>
-      <p className="mt-2 text-xs leading-5 text-muted">Production account counts exclude confirmed staff, test and reviewer accounts. Accounts are distinct; they are not proven unique people.</p>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Find registered accounts and their recorded activity in the last seven days. Results update as you change your filters. Campaign enrollment is separate.</p>
+      <p className="mt-2 text-xs leading-5 text-muted">{data?.environment === 'uat'
+        ? 'UAT registered accounts include team and test accounts. These records are separate from Production.'
+        : data?.environment === 'production' ? 'Production account counts exclude confirmed staff, test and reviewer accounts.' : 'The connected environment is shown when the directory loads.'} Accounts are distinct; they are not proven unique people.</p>
       <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <label className="grid gap-1.5 text-xs font-semibold text-muted">Agent<select className={control} value={filters.agentId} onChange={(e) => change({ agentId: e.target.value as PlgAudienceFilters['agentId'] })}>
           {!catalog?.agents.some((a) => a.id === 'agent_one') && <option value="agent_one">One</option>}
           {selectableAgents?.map((a) => <option key={a.id} value={a.id}>{a.label}{a.public ? a.available ? '' : ' (unavailable)' : ' (internal)'}</option>)}
         </select></label>
         <label className="grid gap-1.5 text-xs font-semibold text-muted">Task status<select className={control} value={filters.segment} onChange={(e) => change({ segment: e.target.value as PlgAudienceFilters['segment'] })}>
-          <option value="all">All production registered contacts</option><option value="possible_incomplete">Possible incomplete attempts</option>
+          <option value="all">All registered contacts</option><option value="possible_incomplete">Possible incomplete attempts</option>
           <option value="failed">Observed failures</option><option value="blocked">Blocked attempts</option><option value="cancelled">Cancelled attempts</option>
           <option value="returned">Return observations</option><option value="verified">Verified value observed</option>
           <option value="unknown">Unknown or partial evidence</option><option value="in_progress">Recent starts</option>
@@ -98,7 +108,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
         <button className={button} type="button" disabled={busy} onClick={() => change(defaults)}>Reset filters</button>
       </form>
       <label className="mt-4 flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={includeTechnicalAgents} onChange={(e) => setIncludeTechnicalAgents(e.target.checked)} />Include internal and unavailable agents</label>
-      {dirty && <p role="status" className="mt-4 text-sm font-medium text-ink">Filters changed. Apply filters to update the results.</p>}
+      {dirty && <p role="status" className="mt-4 text-sm font-medium text-ink">Updating results…</p>}
       {selectedAgent && (selectedAgent.outcome ? selectedAgent.outcome.status !== 'supported' :
         !['agent_personal_information', 'agent_email'].includes(selectedAgent.id)) && <div role="status" className="mt-4 rounded-xl border border-stroke bg-canvas p-4 text-sm text-ink">
           This connection does not provide verified completion tracking for {selectedAgent.label}. Recorded usage remains visible below. This does not mean nobody used the agent.
@@ -146,13 +156,16 @@ export function PlgAudiencePanel({ state, load, openContact }: {
               {person.verified.limited && <p className="mt-1 text-xs text-muted">Outcome evidence is partial; additional results may be outside retained bounds.</p>}
             </td>
             <td className="max-w-[200px] p-3 text-xs"><p>{activity.lastObservedAt ? time(activity.lastObservedAt) : '—'}</p>{action && <p className="mt-1 text-muted">{action.label}</p>}{activity.firstAttemptAt && <p className="mt-2 text-muted">First start: {time(activity.firstAttemptAt)}</p>}</td>
-            <td className="p-3">{enrolledId ? <button className={button} onClick={() => openContact(enrolledId)}>Open follow-up</button> : <span className="text-xs text-muted">Not enrolled in campaigns</span>}</td>
+            <td className="p-3">{data.environment === 'uat' ? <span className="text-xs text-muted">Activity emails use each owner's separate preference in One UAT.</span> : enrolledId ? <button className={button} onClick={() => openContact(enrolledId)}>Open follow-up</button> : <span className="text-xs text-muted">Not enrolled in campaigns</span>}</td>
           </tr>;
         })}</tbody></table>
       </div>
       {!data.rows.length && <p role="status" className="mt-5 rounded-xl bg-canvas p-4 text-sm text-muted">{data.nextCursor ? 'No matches in the accounts checked so far. More accounts remain to search.' : 'No matching accounts were found in this directory traversal.'} Missing activity is not proof of inactivity.</p>}
-      <div className="mt-5 flex flex-wrap gap-3"><button className={button} disabled={busy || !history.length} onClick={() => void read(history.at(-1) ?? null, 'previous')}>Previous source page</button>
-        <button className={button} disabled={busy || !data.nextCursor} onClick={() => void read(data.nextCursor, 'next')}>Next source page</button></div>
+      <div className="mt-5 space-y-2">
+        <PlgPagination label="User result pages" page={pageIndex} count={pages.length} busy={busy}
+          select={index => void read(pages[index], index, false)} />
+        <p className="text-xs text-muted">Page {pageIndex + 1}. {data.nextCursor ? 'More page numbers appear as you browse.' : 'End of results.'} Page sizes vary with the matching accounts.</p>
+      </div>
     </div>}
   </section>;
 }

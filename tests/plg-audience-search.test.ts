@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { audienceFilterScan, findAudiencePage, outcomeCoverage } from '../src/lib/plg-audience';
+import { audienceFilterScan, audiencePageCursors, findAudiencePage, outcomeCoverage } from '../src/lib/plg-audience';
 import type { PlgAudienceFilters, PlgAudiencePage } from '../src/lib/plg';
 
 const filters: PlgAudienceFilters = { agentId: 'agent_one', segment: 'failed', query: '', graceMinutes: 60 };
@@ -8,6 +8,13 @@ const page = (nextCursor: string | null, matches = false) => ({
 } as PlgAudiencePage);
 
 describe('Private people directory search', () => {
+  it('keeps numbered continuations when unchanged and discards stale downstream links', () => {
+    const pages = [null, 'second', 'third'];
+    expect(audiencePageCursors(pages, 0, 'second')).toEqual(pages);
+    expect(audiencePageCursors(pages, 1, 'replacement')).toEqual([null, 'second', 'replacement']);
+    expect(audiencePageCursors(pages, 0, null)).toEqual([null]);
+    expect(() => audiencePageCursors(pages, 3, 'fourth')).toThrow('Invalid people page');
+  });
   it('finds a match after empty source pages and preserves the next continuation', async () => {
     const load = vi.fn().mockResolvedValueOnce(page('second')).mockResolvedValueOnce(page('third'))
       .mockResolvedValueOnce(page('fourth', true));

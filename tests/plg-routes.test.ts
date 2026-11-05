@@ -10,6 +10,7 @@ import { applyDeliveryEvent } from '../src/server/plg/delivery-events';
 import * as audienceSource from '../src/server/plg/one-audience';
 import * as evidenceSource from '../src/server/plg/one-source';
 import { PLG_SYNC_REQUEST_TIMEOUT_MS } from '../src/lib/plg-budgets.mjs';
+import { workProfileWorkspaceMember } from '../src/server/plg/workspace-access';
 
 const secret = 'test-plg-signing-secret-more-than-32-characters';
 const config: PlgRuntime = {
@@ -39,7 +40,7 @@ const input = {
   internal: false,
 };
 let store: MemoryPlgStore;
-function app(runtime = config) {
+function app(runtime = config, member: (email: string) => boolean = () => false) {
   const server = express();
   server.use(
     express.json({
@@ -54,10 +55,41 @@ function app(runtime = config) {
     if (req.get('Test-User')) (req as any).sessionUser = { email: req.get('Test-User') };
     next();
   });
-  registerPlgRoutes(server, false, new PlgService(store, runtime));
+  registerPlgRoutes(server, false, new PlgService(store, runtime), member);
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it.each([
+    { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: 'uat' },
+    { GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '', PLG_FIRESTORE_PROJECT: 'hushh-ai-prod',
+      PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai' },
+    { GOOGLE_CLOUD_PROJECT: undefined, PLG_UAT_RUNTIME: '', PLG_FIRESTORE_PROJECT: 'hushh-ai-prod',
+      PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai' },
+  ])('opens the workspace to signed work profiles in $GOOGLE_CLOUD_PROJECT without another list', async env => {
+    const auth = { requireAuth: true, allowedDomains: ['hushh.ai', 'hussh.ai'] };
+    const server = app(config, email => workProfileWorkspaceMember(email, auth, env));
+    expect((await request(server).get('/api/plg/workspace')).status).toBe(401);
+    const member = await request(server).get('/api/plg/workspace').set('Test-User', 'new-team-member@hushh.ai');
+    expect(member.status).toBe(200); expect(member.body.role).toBe('operator');
+    expect((await request(server).get('/api/plg/workspace').set('Test-User', 'new-team-member@hussh.ai')).status).toBe(200);
+    expect((await request(server).get('/api/plg/workspace').set('Test-User', 'outside@example.invalid')).status).toBe(403);
+    expect((await request(server).patch('/api/plg/settings').set('Test-User', 'new-team-member@hushh.ai')
+      .set('Origin', config.origin).send({ paused: false })).status).toBe(403);
+    expect((await request(server).post('/api/plg/workspace/query').set('Test-User', 'new-team-member@hushh.ai')
+      .set('Origin', 'https://foreign.example.invalid').send({})).status).toBe(403);
+    expect(workProfileWorkspaceMember('member@hushh.ai', { ...auth, requireAuth: false }, env)).toBe(false);
+    for (const email of ['member@hushh.ai.evil.test', 'spoof@@hushh.ai', 'not a member@hushh.ai', 'user@gmail.com'])
+      expect(workProfileWorkspaceMember(email, auth, env)).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', auth, { ...env, GOOGLE_CLOUD_PROJECT: 'hushh-pda-dev' })).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', auth, { ...env, PLG_DEV_RUNTIME: 'dev' })).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', auth, { GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: 'uat' })).toBe(false);
+    expect(workProfileWorkspaceMember('member@hushh.ai', auth, { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: '' })).toBe(false);
+    if (env.PLG_FIRESTORE_PROJECT) {
+      for (const patch of [{ PLG_PUBLIC_ORIGIN: 'https://foreign.example.invalid' }, { PLG_FIRESTORE_DATABASE: 'other' },
+        { PLG_FIRESTORE_PROJECT: 'hushh-pda-uat' }, { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat' }])
+        expect(workProfileWorkspaceMember('member@hushh.ai', auth, { ...env, ...patch })).toBe(false);
+    }
+  });
   it('keeps manual source refresh progress separate from the automatic send continuation', async () => {
     await store.transaction(state => { state.automation = { enabled: true, accountCursor: 'a'.repeat(64) }; });
     const page = vi.fn(async () => ({ accounts: ['b'.repeat(64)], next: 'b'.repeat(64) }));
@@ -184,6 +216,22 @@ describe('Private PLG API boundaries', () => {
     expect((await store.read()).contacts).toHaveLength(0);
     expect((await store.read()).deliveries).toHaveLength(0);
   });
+  it('routes UAT directory reads without touching the campaign store or Production source', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat');
+    vi.stubEnv('PLG_UAT_RUNTIME', 'uat');
+    const production = vi.spyOn(audienceSource, 'readOneAudience');
+    const uat = vi.spyOn(audienceSource, 'readUatAudience').mockResolvedValue({ environment: 'uat', rows: [] } as any);
+    const storage = vi.spyOn(store, 'read').mockRejectedValue(new Error('Production store must not be read'));
+    (store as any).accountStorage = vi.fn(() => { throw new Error('Production account store must not be read'); });
+    const response = await request(app()).post('/api/plg/audience').set('Test-User', 'operator@example.invalid')
+      .set('Origin', config.origin).send({ agentId: 'agent_one' });
+    expect(response.status).toBe(200);
+    expect(response.body.environment).toBe('uat');
+    expect(uat).toHaveBeenCalledOnce();
+    expect(production).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+    expect((store as any).accountStorage).not.toHaveBeenCalled();
+  });
   it('resolves source-page enrollment without depending on the current campaign page', async () => {
     const contact = await store.transaction(state => enroll(state, input, 'Fixture', Date.now()));
     const readAccounts = vi.fn(async () => ({ ...(await store.read()), contacts: [contact] }));
@@ -248,7 +296,7 @@ describe('Private PLG API boundaries', () => {
   beforeEach(() => {
     store = new MemoryPlgStore();
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
   it('requires a real session and explicit role even when analytics is public', async () => {
     expect((await request(app()).get('/api/plg/workspace')).status).toBe(401);
     const denied = await request(app())

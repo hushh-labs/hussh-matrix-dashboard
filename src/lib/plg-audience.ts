@@ -2,6 +2,13 @@ import type { PlgAudienceFilters, PlgAudiencePage } from './plg';
 
 export const audienceFilterScan = { maxPages: 160, budgetMs: 90_000 } as const;
 
+/** Keep page links only while their source continuation is still confirmed. */
+export function audiencePageCursors(pages: (string | null)[], index: number, next: string | null) {
+  if (!Number.isInteger(index) || index < 0 || index >= pages.length) throw new Error('Invalid people page.');
+  if (next && pages[index + 1] === next) return pages;
+  return [...pages.slice(0, index + 1), ...(next ? [next] : [])];
+}
+
 /** A filtered source page can be empty even when later pages have matches. */
 export async function findAudiencePage(
   load: (filters: PlgAudienceFilters, signal: AbortSignal) => Promise<PlgAudiencePage>,
