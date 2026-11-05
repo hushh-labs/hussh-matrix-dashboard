@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import express from 'express';
 import { registerPlgRoutes } from './src/server/plg/routes';
+import { uatWorkspaceMember } from './src/server/plg/workspace-access';
 import path from 'path';
 import { promisify } from 'node:util';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -9277,7 +9278,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
     next();
   });
 
-  registerPlgRoutes(app, config.isProduction);
+  registerPlgRoutes(app, config.isProduction, undefined, email => uatWorkspaceMember(email, config));
 
   // 4. API No-Cache Headers & Protection Middleware
   app.use('/api', (_req, res, next) => {

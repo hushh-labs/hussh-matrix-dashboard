@@ -99,6 +99,7 @@ export async function readOneAudience(
   options = { url: process.env.PLG_ONE_AUDIENCE_URL ?? '', secret: process.env.PLG_ONE_AUDIENCE_SECRET ?? '' },
   fetcher: typeof fetch = fetch,
   time: number | (() => number) = Date.now,
+  callerSignal?: AbortSignal,
 ): Promise<PlgAudiencePage> {
   const filters = audienceFilters(input);
   const endpoint = oneProductionEndpoint(options.url, '/api/one/plg/audience');
@@ -106,19 +107,25 @@ export async function readOneAudience(
   const clock = typeof time === 'function' ? time : () => time;
   const timestamp = String(clock()), body = JSON.stringify(filters);
   try {
-    const response = await fetcher(endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30_000),
+    const signal = callerSignal ? AbortSignal.any([callerSignal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    signal.throwIfAborted();
+    const response = await fetcher(endpoint, { method: 'POST', redirect: 'error', signal,
       headers: { 'Content-Type': 'application/json', 'X-PLG-Timestamp': timestamp,
         'X-PLG-Signature': signValue(`audience\n${timestamp}\n${body}`, options.secret) }, body });
     if (!response.ok || !response.body) return unavailable();
     const reader = response.body.getReader(), chunks: Uint8Array[] = [];
     let size = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 750_000) { await reader.cancel(); return unavailable(); }
-      chunks.push(value);
-    }
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 750_000) { await reader.cancel(); return unavailable(); }
+        chunks.push(value);
+      }
+      signal.throwIfAborted();
+    } finally { reader.releaseLock(); }
     return page(JSON.parse(Buffer.concat(chunks).toString('utf8')), filters, clock());
   } catch { return unavailable(); }
 }
