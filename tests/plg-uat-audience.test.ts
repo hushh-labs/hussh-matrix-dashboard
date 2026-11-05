@@ -26,6 +26,29 @@ const fixture = () => ({
 
 afterEach(() => vi.unstubAllEnvs());
 describe('Isolated UAT people directory', () => {
+  it('allows an explicit hosted UAT view without using Production credentials or joining Production data', async () => {
+    const hosted = { ...env, GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '',
+      PLG_UAT_VIEW_ENABLED: 'true', PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai',
+      PLG_FIRESTORE_PROJECT: 'hushh-ai-prod', PLG_FIRESTORE_DATABASE: 'one-plg-production',
+      PLG_ONE_SOURCE_SECRET: 'different-production-source-key', PLG_ONE_AUDIENCE_SECRET: 'different-production-directory-key' };
+    const fetcher = vi.fn(async (url, init) => {
+      expect(url).toBe('https://api.uat.hushh.ai/api/one/plg/audience-uat');
+      expect(init.headers['X-PLG-Signature']).toBe(signValue(`audience-uat\n${now}\n${init.body}`, secret));
+      return Response.json(fixture());
+    });
+    const result = await readUatAudience(filters, hosted, fetcher as typeof fetch, now);
+    expect(result.environment).toBe('uat');
+    expect(result.rows[0]).not.toHaveProperty('campaignContactId');
+    expect(fetcher).toHaveBeenCalledOnce();
+    fetcher.mockClear();
+    for (const changed of [
+      { PLG_UAT_VIEW_ENABLED: 'false' }, { GOOGLE_CLOUD_PROJECT: 'hushh-pda-dev' },
+      { PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai.evil.test' }, { PLG_FIRESTORE_DATABASE: 'other' },
+      { PLG_UAT_RUNTIME: 'uat' }, { PLG_DEV_RUNTIME: 'dev' }, { PLG_ONE_SOURCE_SECRET: secret },
+      { PLG_ONE_AUDIENCE_SECRET: secret }, { PLG_ONE_SUBSCRIPTION_SECRET: secret },
+    ]) await expect(readUatAudience(filters, { ...hosted, ...changed }, fetcher, now)).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it('pins the UAT host/purpose, preserves unknown coverage and strips provider fields', async () => {
     const fetcher = vi.fn(async (url, init) => {
       expect(url).toBe('https://api.uat.hushh.ai/api/one/plg/audience-uat');

@@ -15,7 +15,7 @@ const coverage = {
 };
 
 export function PlgAudiencePanel({ state, load, openContact }: {
-  state: PlgState;
+  state: Pick<PlgState, 'catalog' | 'contacts'>;
   load: (filters: PlgAudienceFilters, signal: AbortSignal) => Promise<PlgAudiencePage>;
   openContact: (contactId: string) => void;
 }) {

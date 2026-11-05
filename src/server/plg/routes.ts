@@ -37,6 +37,7 @@ import { readOwnEvidence } from './own-evidence';
 import { registerUatEvidenceRoute } from './uat-evidence-routes';
 import { registerAttemptEmailRoute } from './attempt-email-routes';
 import { decodeWorkspacePage, encodeWorkspacePages } from './workspace-pages';
+import { hostedUatView } from './uat-view-runtime';
 
 /** The same generation fence applies to new One links and already-sent legacy links. */
 function unsubscribeContact(state: PlgState, contact: PlgContact, generation?: string) {
@@ -280,6 +281,20 @@ export function registerPlgRoutes(
         setAutomationEnabled(state, req.body.enabled, user.email, Date.now())));
     }),
   );
+  // This route has the same verified work-profile membership and origin checks,
+  // but never opens the Production campaign store or joins its contact IDs.
+  app.post('/api/plg/uat/audience', handle(async (req, res) => {
+    role(req);
+    if (!config.enabled || !hostedUatView()) throw new PlgError(503, 'UAT workspace is not configured.');
+    const active = new AbortController();
+    const disconnected = () => { if (!res.writableEnded) active.abort(); };
+    res.once('close', disconnected);
+    try {
+      const page = await readUatAudience(req.body, undefined, fetch, Date.now, active.signal);
+      active.signal.throwIfAborted();
+      return res.json(page);
+    } finally { res.off('close', disconnected); }
+  }));
   app.post(
     '/api/plg/audience',
     handle(async (req, res) => {

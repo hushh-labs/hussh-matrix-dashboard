@@ -92,8 +92,10 @@ including Spam and Trash, from one day before the oldest retained Google
 reservation. A history checkpoint taken before that scan catches later arrivals
 in a subsequent incremental poll. Customer sending remains held until recovery
 and catch-up finish. Other provider failures never reset the cursor. A referenced
-message that is permanently deleted or cannot be read remains a visible blocked
-cycle: the system cannot reconstruct deleted reports or claim complete evidence.
+message that returns HTTP404 triggers that same bounded recovery and is counted
+as unavailable evidence. Sending stays held until retained-mail recovery and
+incremental catch-up finish. Other unreadable messages continue to block the
+cycle. Deleted reports cannot be reconstructed or treated as delivery evidence.
 
 The reconciler accepts only these facts:
 
