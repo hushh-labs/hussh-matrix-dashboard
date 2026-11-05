@@ -203,6 +203,13 @@ promotion. Local provider fixtures and renderer acceptance are not that proof.
 Capture remains best-effort and capped; this worker cannot establish universal
 attempt coverage or an unconditional few-minute delivery guarantee.
 
+Deleted history messages are recovered like expired history: capture a provider
+watermark, scan retained mail from the oldest retained reservation with overlap,
+then catch up incrementally before allowing sends. Only an exact provider 404
+starts this recovery; authorization, rate-limit and transient failures keep the
+pending checkpoint. Unavailable reads remain counted as unknown in sender status.
+They never create a delivery, bounce, unsubscribe or Inbox receipt.
+
 ### Private Dev/UAT mail execution
 
 When the common mailbox control is in Production, use the optional

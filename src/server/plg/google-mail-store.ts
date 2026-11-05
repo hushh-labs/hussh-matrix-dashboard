@@ -16,6 +16,8 @@ export interface MailControl {
   connection?: { version: string; connectedAt: number; generation: number; feedbackAllowed?: boolean };
   feedback?: {
     cursor: string; checkedAt: number | null;
+    /** Missing provider records remain unknown even after retained-mail recovery. */
+    unavailableReads?: { count: number; lastObservedAt: number };
     pending?: { ids: string[]; nextPage: string | null; upper: string };
     pageToken?: string; upper?: string;
     recovery?: { after: number; upper: string };
