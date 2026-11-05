@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readOwnerProjection } from './owner-snapshot-client.mjs';
+import { hostedUatView } from './uat-view-runtime';
 
 export type OwnerEnvironment = 'dev' | 'uat' | 'production';
 export type OwnerScope = {
@@ -16,12 +17,13 @@ export function ownerActivityConfig(environment: OwnerEnvironment, env = process
   const prefix = nonproduction ? `PLG_${environment.toUpperCase()}` : 'PLG_OWNER';
   const secretName = `${prefix}_SOURCE_SECRET`;
   const secret = env[secretName] ?? '';
+  const hostedUat = environment === 'uat' && hostedUatView(env);
   const hashes = (env[`${prefix}_${nonproduction ? 'OWNER_' : ''}EMAIL_HASHES`] ?? '')
     .split(',').map(s => s.trim()).filter(Boolean);
-  if (env.GOOGLE_CLOUD_PROJECT !== (nonproduction ? `hushh-pda-${environment}` : 'hushh-ai-prod') ||
+  if ((!hostedUat && env.GOOGLE_CLOUD_PROJECT !== (nonproduction ? `hushh-pda-${environment}` : 'hushh-ai-prod')) ||
     env[`${prefix}_EVIDENCE_ENABLED`] !== 'true' ||
-    (nonproduction ? env[`${prefix}_RUNTIME`] !== environment || env[`${prefix}_IDENTITY_MODE`] !== 'live-signed' ||
-      env.PLG_ONE_SOURCE_SECRET || env.PLG_FIRESTORE_PROJECT || env.PLG_FIRESTORE_DATABASE
+    (nonproduction ? env[`${prefix}_IDENTITY_MODE`] !== 'live-signed' || (!hostedUat &&
+      (env[`${prefix}_RUNTIME`] !== environment || env.PLG_ONE_SOURCE_SECRET || env.PLG_FIRESTORE_PROJECT || env.PLG_FIRESTORE_DATABASE))
       : env.PLG_UAT_RUNTIME === 'uat' || env.PLG_DEV_RUNTIME === 'dev') ||
     (environment === 'dev' && env.PLG_UAT_RUNTIME === 'uat') ||
     (environment === 'uat' && env.PLG_DEV_RUNTIME === 'dev') || secret.length < 32 ||

@@ -3,6 +3,7 @@ import { DAY, PlgError } from './engine';
 import { signValue } from './service';
 import { outcomeProofMatches, outcomeSupported, readCatalog, readCustomerReporting } from './one-source';
 import { oneProductionEndpoint } from '../one-scope.mjs';
+import { hostedUatView } from './uat-view-runtime';
 
 const segments = ['all', 'possible_incomplete', 'failed', 'blocked', 'cancelled', 'returned', 'verified', 'unknown', 'in_progress'];
 const keys = ['started', 'returned', 'failed', 'cancelled', 'blocked', 'possibleIncomplete', 'inProgress', 'uncorrelated', 'otherObservations'] as const;
@@ -117,12 +118,14 @@ export async function readUatAudience(input: unknown, env = process.env, fetcher
   time: number | (() => number) = Date.now, callerSignal?: AbortSignal): Promise<PlgAudiencePage> {
   const secret = env.PLG_UAT_AUDIENCE_SECRET ?? '';
   const endpoint = 'https://api.uat.hushh.ai/api/one/plg/audience-uat';
-  if (env.GOOGLE_CLOUD_PROJECT !== 'hushh-pda-uat' || env.PLG_UAT_RUNTIME !== 'uat' ||
+  const hosted = hostedUatView(env);
+  if ((!hosted && (env.GOOGLE_CLOUD_PROJECT !== 'hushh-pda-uat' || env.PLG_UAT_RUNTIME !== 'uat')) ||
     env.PLG_DEV_RUNTIME === 'dev' || env.PLG_UAT_AUDIENCE_ENABLED !== 'true' || secret.length < 32 ||
     (env.PLG_UAT_AUDIENCE_URL && env.PLG_UAT_AUDIENCE_URL !== endpoint) ||
-    env.PLG_ONE_SOURCE_SECRET || env.PLG_ONE_AUDIENCE_SECRET || env.PLG_ONE_SUBSCRIPTION_SECRET ||
-    env.PLG_FIRESTORE_PROJECT || env.PLG_FIRESTORE_DATABASE ||
-    [env.PLG_UAT_SOURCE_SECRET, env.PLG_DEV_SOURCE_SECRET, env.PLG_OWNER_SOURCE_SECRET,
+    (!hosted && (env.PLG_ONE_SOURCE_SECRET || env.PLG_ONE_AUDIENCE_SECRET || env.PLG_ONE_SUBSCRIPTION_SECRET ||
+    env.PLG_FIRESTORE_PROJECT || env.PLG_FIRESTORE_DATABASE)) ||
+    [env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_AUDIENCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET,
+      env.PLG_UAT_SOURCE_SECRET, env.PLG_DEV_SOURCE_SECRET, env.PLG_OWNER_SOURCE_SECRET,
       env.PLG_ATTEMPT_SOURCE_SECRET, env.PLG_ATTEMPT_WORKER_SECRET, env.PLG_SYNC_SECRET,
       env.PLG_CYCLE_SECRET, env.PLG_SIGNING_SECRET].includes(secret)) return unavailable();
   return fetchAudience(input, endpoint, secret, 'uat', fetcher, time, callerSignal);

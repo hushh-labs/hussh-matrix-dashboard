@@ -59,6 +59,29 @@ function app(runtime = config, member: (email: string) => boolean = () => false)
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('serves a separate UAT directory to workspace members without opening the Production store', async () => {
+    for (const [key, value] of Object.entries({ GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '',
+      PLG_DEV_RUNTIME: '', PLG_UAT_VIEW_ENABLED: 'true', PLG_FIRESTORE_PROJECT: 'hushh-ai-prod',
+      PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai' })) vi.stubEnv(key, value);
+    const read = vi.spyOn(audienceSource, 'readUatAudience').mockResolvedValue({ environment: 'uat', rows: [],
+      deliveryAuthorized: false, customerReporting: false } as any);
+    const productionRead = vi.spyOn(audienceSource, 'readOneAudience');
+    const storeRead = vi.spyOn(store, 'read').mockRejectedValue(new Error('Production store must not open'));
+    const server = app(config, email => email === 'team@hushhtech.com');
+    expect((await request(server).post('/api/plg/uat/audience').send({})).status).toBe(401);
+    expect((await request(server).post('/api/plg/uat/audience').set('Test-User', 'outside@example.invalid')
+      .set('Origin', config.origin).send({})).status).toBe(403);
+    expect((await request(server).post('/api/plg/uat/audience').set('Test-User', 'team@hushhtech.com')
+      .set('Origin', 'https://elsewhere.example.invalid').send({})).status).toBe(403);
+    const result = await request(server).post('/api/plg/uat/audience').set('Test-User', 'team@hushhtech.com')
+      .set('Origin', config.origin).send({ agentId: 'agent_one' });
+    expect(result.status).toBe(200); expect(result.body.environment).toBe('uat');
+    expect(read).toHaveBeenCalledOnce(); expect(storeRead).not.toHaveBeenCalled(); expect(productionRead).not.toHaveBeenCalled();
+    vi.stubEnv('PLG_UAT_VIEW_ENABLED', 'false');
+    expect((await request(server).post('/api/plg/uat/audience').set('Test-User', 'team@hushhtech.com')
+      .set('Origin', config.origin).send({})).status).toBe(503);
+    expect(read).toHaveBeenCalledOnce();
+  });
   it.each([
     { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: 'uat' },
     { GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '', PLG_FIRESTORE_PROJECT: 'hushh-ai-prod',

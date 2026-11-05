@@ -42,6 +42,40 @@ function transport(overrides: { revoked?: boolean; badAction?: boolean } = {}) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('UAT own evidence boundary', () => {
+  it('binds the Production-hosted UAT view to the current UAT owner and rejects changed epochs', async () => {
+    setup();
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('PLG_UAT_RUNTIME', '');
+    vi.stubEnv('PLG_UAT_VIEW_ENABLED', 'true');
+    vi.stubEnv('PLG_PUBLIC_ORIGIN', 'https://metrics.hussh.ai');
+    vi.stubEnv('PLG_FIRESTORE_PROJECT', 'hushh-ai-prod');
+    vi.stubEnv('PLG_FIRESTORE_DATABASE', 'one-plg-production');
+    vi.stubEnv('PLG_ONE_SOURCE_SECRET', 'different-production-credential');
+    const emailHash = createHash('sha256').update('member@hushhtech.com').digest('hex');
+    let changed = false, owners = 0;
+    const source = transport();
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      expect(new URL(String(url)).origin).toBe('https://api.uat.hushh.ai');
+      if (String(url).endsWith('/owner-uat')) {
+        expect(JSON.parse(String(init.body))).toEqual({ emailHash });
+        return Response.json({ environment: 'uat', deliveryAuthorized: false,
+          scope: { ...scope, emailHash, ownerEpoch: changed && ++owners > 1 ? 'd'.repeat(64) : epoch } });
+      }
+      const response = await source(url, init);
+      if (String(url).endsWith('/snapshot-uat')) {
+        const data = await response.json();
+        data.accounts[0].since = JSON.parse(String(init.body)).accounts[0].since;
+        return Response.json(data);
+      }
+      return response;
+    }) as unknown as typeof fetch;
+    const result = await readUatSessionEvidence('member@hushhtech.com', fetcher, () => now);
+    expect(result).toMatchObject({ environment: 'uat', deliveryAuthorized: false });
+    changed = true;
+    await expect(readUatSessionEvidence('member@hushhtech.com', fetcher, () => now)).rejects.toThrow();
+    vi.stubEnv('PLG_UAT_VIEW_ENABLED', 'false');
+    await expect(readUatSessionEvidence('member@hushhtech.com', fetcher, () => now)).rejects.toThrow();
+  });
   it('reads Production own activity without marketing and refuses wrong-lane or changed identity', async () => {
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-ai-prod');
     vi.stubEnv('PLG_OWNER_EVIDENCE_ENABLED', 'true');

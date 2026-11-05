@@ -278,6 +278,7 @@ export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
               Find users by agent and task progress, prepare helpful messages,
               and measure what brings them back.
             </p>
+            <a href="/plg/uat/workspace" className="mt-3 inline-block text-sm font-semibold text-ink underline">Open UAT workspace</a>
           </div>
           <span className="inline-flex items-center gap-2 rounded-full border border-stroke px-3 py-1.5 text-xs font-semibold text-muted">
             <LockKeyhole size={13} />
