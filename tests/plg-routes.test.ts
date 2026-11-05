@@ -61,7 +61,10 @@ function app(runtime = config, member: (email: string) => boolean = () => false)
 describe('Private PLG API boundaries', () => {
   it.each([
     { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: 'uat' },
-    { GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '' },
+    { GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '', PLG_FIRESTORE_PROJECT: 'hushh-ai-prod',
+      PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai' },
+    { GOOGLE_CLOUD_PROJECT: undefined, PLG_UAT_RUNTIME: '', PLG_FIRESTORE_PROJECT: 'hushh-ai-prod',
+      PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai' },
   ])('opens the workspace to signed work profiles in $GOOGLE_CLOUD_PROJECT without another list', async env => {
     const auth = { requireAuth: true, allowedDomains: ['hushh.ai', 'hussh.ai'] };
     const server = app(config, email => workProfileWorkspaceMember(email, auth, env));
@@ -81,6 +84,11 @@ describe('Private PLG API boundaries', () => {
     expect(workProfileWorkspaceMember('member@hushh.ai', auth, { ...env, PLG_DEV_RUNTIME: 'dev' })).toBe(false);
     expect(workProfileWorkspaceMember('member@hushh.ai', auth, { GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: 'uat' })).toBe(false);
     expect(workProfileWorkspaceMember('member@hushh.ai', auth, { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat', PLG_UAT_RUNTIME: '' })).toBe(false);
+    if (env.PLG_FIRESTORE_PROJECT) {
+      for (const patch of [{ PLG_PUBLIC_ORIGIN: 'https://foreign.example.invalid' }, { PLG_FIRESTORE_DATABASE: 'other' },
+        { PLG_FIRESTORE_PROJECT: 'hushh-pda-uat' }, { GOOGLE_CLOUD_PROJECT: 'hushh-pda-uat' }])
+        expect(workProfileWorkspaceMember('member@hushh.ai', auth, { ...env, ...patch })).toBe(false);
+    }
   });
   it('keeps manual source refresh progress separate from the automatic send continuation', async () => {
     await store.transaction(state => { state.automation = { enabled: true, accountCursor: 'a'.repeat(64) }; });
