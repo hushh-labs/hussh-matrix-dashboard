@@ -516,6 +516,26 @@ test('debounces typed people searches and ignores a cancelled slow response', as
   await expect(page.getByRole('button', { name: 'Page 1', exact: true })).toHaveAttribute('aria-current', 'page');
 });
 
+test('renders UAT registered accounts without Production campaign links or email activation', async ({ page }) => {
+  const writes: string[] = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/plg/') && request.method() !== 'GET' && path !== '/api/plg/audience') writes.push(path);
+  });
+  const state = await mockPlg(page, false, false, (_input, result) => ({ ...result,
+    version: 2, environment: 'uat', customerReporting: false, deliveryAuthorized: false,
+    rows: result.rows.map(person => ({ ...person, campaignContactId: 'production-contact-must-not-open' })),
+  }));
+  await page.goto('/plg');
+  await expect(page.getByText('Registered person', { exact: true })).toBeVisible();
+  await expect(page.getByText('UAT registered accounts include team and test accounts.', { exact: false })).toBeVisible();
+  await expect(page.getByText("Activity emails use each owner's separate preference in One UAT.")).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open follow-up', exact: true })).toHaveCount(0);
+  await expect(page.getByText('Production account counts exclude', { exact: false })).toHaveCount(0);
+  expect(state.contacts).toHaveLength(0); expect(state.deliveries).toHaveLength(0);
+  expect(writes).toEqual([]);
+});
+
 test('keeps missing collection baselines distinct from measured zero usage', async ({ page }) => {
   await mockPlg(page, false, false, (_input, result) => ({ ...result,
     rows: result.rows.map((person) => ({ ...person, activity: { ...person.activity,

@@ -202,6 +202,22 @@ describe('Private PLG API boundaries', () => {
     expect((await store.read()).contacts).toHaveLength(0);
     expect((await store.read()).deliveries).toHaveLength(0);
   });
+  it('routes UAT directory reads without touching the campaign store or Production source', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat');
+    vi.stubEnv('PLG_UAT_RUNTIME', 'uat');
+    const production = vi.spyOn(audienceSource, 'readOneAudience');
+    const uat = vi.spyOn(audienceSource, 'readUatAudience').mockResolvedValue({ environment: 'uat', rows: [] } as any);
+    const storage = vi.spyOn(store, 'read').mockRejectedValue(new Error('Production store must not be read'));
+    (store as any).accountStorage = vi.fn(() => { throw new Error('Production account store must not be read'); });
+    const response = await request(app()).post('/api/plg/audience').set('Test-User', 'operator@example.invalid')
+      .set('Origin', config.origin).send({ agentId: 'agent_one' });
+    expect(response.status).toBe(200);
+    expect(response.body.environment).toBe('uat');
+    expect(uat).toHaveBeenCalledOnce();
+    expect(production).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+    expect((store as any).accountStorage).not.toHaveBeenCalled();
+  });
   it('resolves source-page enrollment without depending on the current campaign page', async () => {
     const contact = await store.transaction(state => enroll(state, input, 'Fixture', Date.now()));
     const readAccounts = vi.fn(async () => ({ ...(await store.read()), contacts: [contact] }));
@@ -266,7 +282,7 @@ describe('Private PLG API boundaries', () => {
   beforeEach(() => {
     store = new MemoryPlgStore();
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
   it('requires a real session and explicit role even when analytics is public', async () => {
     expect((await request(app()).get('/api/plg/workspace')).status).toBe(401);
     const denied = await request(app())

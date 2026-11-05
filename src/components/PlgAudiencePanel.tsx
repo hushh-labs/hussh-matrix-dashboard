@@ -85,14 +85,16 @@ export function PlgAudiencePanel({ state, load, openContact }: {
     <div className={cn(dashboardCard, 'p-5 sm:p-6')}>
       <h3 className="text-lg font-semibold text-ink">Users and agent drop-offs</h3>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Find registered accounts and their recorded activity in the last seven days. Results update as you change your filters. Campaign enrollment is separate.</p>
-      <p className="mt-2 text-xs leading-5 text-muted">Production account counts exclude confirmed staff, test and reviewer accounts. Accounts are distinct; they are not proven unique people.</p>
+      <p className="mt-2 text-xs leading-5 text-muted">{data?.environment === 'uat'
+        ? 'UAT registered accounts include team and test accounts. These records are separate from Production.'
+        : data?.environment === 'production' ? 'Production account counts exclude confirmed staff, test and reviewer accounts.' : 'The connected environment is shown when the directory loads.'} Accounts are distinct; they are not proven unique people.</p>
       <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <label className="grid gap-1.5 text-xs font-semibold text-muted">Agent<select className={control} value={filters.agentId} onChange={(e) => change({ agentId: e.target.value as PlgAudienceFilters['agentId'] })}>
           {!catalog?.agents.some((a) => a.id === 'agent_one') && <option value="agent_one">One</option>}
           {selectableAgents?.map((a) => <option key={a.id} value={a.id}>{a.label}{a.public ? a.available ? '' : ' (unavailable)' : ' (internal)'}</option>)}
         </select></label>
         <label className="grid gap-1.5 text-xs font-semibold text-muted">Task status<select className={control} value={filters.segment} onChange={(e) => change({ segment: e.target.value as PlgAudienceFilters['segment'] })}>
-          <option value="all">All production registered contacts</option><option value="possible_incomplete">Possible incomplete attempts</option>
+          <option value="all">All registered contacts</option><option value="possible_incomplete">Possible incomplete attempts</option>
           <option value="failed">Observed failures</option><option value="blocked">Blocked attempts</option><option value="cancelled">Cancelled attempts</option>
           <option value="returned">Return observations</option><option value="verified">Verified value observed</option>
           <option value="unknown">Unknown or partial evidence</option><option value="in_progress">Recent starts</option>
@@ -154,7 +156,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
               {person.verified.limited && <p className="mt-1 text-xs text-muted">Outcome evidence is partial; additional results may be outside retained bounds.</p>}
             </td>
             <td className="max-w-[200px] p-3 text-xs"><p>{activity.lastObservedAt ? time(activity.lastObservedAt) : '—'}</p>{action && <p className="mt-1 text-muted">{action.label}</p>}{activity.firstAttemptAt && <p className="mt-2 text-muted">First start: {time(activity.firstAttemptAt)}</p>}</td>
-            <td className="p-3">{enrolledId ? <button className={button} onClick={() => openContact(enrolledId)}>Open follow-up</button> : <span className="text-xs text-muted">Not enrolled in campaigns</span>}</td>
+            <td className="p-3">{data.environment === 'uat' ? <span className="text-xs text-muted">Activity emails use each owner's separate preference in One UAT.</span> : enrolledId ? <button className={button} onClick={() => openContact(enrolledId)}>Open follow-up</button> : <span className="text-xs text-muted">Not enrolled in campaigns</span>}</td>
           </tr>;
         })}</tbody></table>
       </div>

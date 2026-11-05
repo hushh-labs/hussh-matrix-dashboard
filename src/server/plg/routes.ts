@@ -27,7 +27,7 @@ import {
   tokenPreference,
 } from './service';
 import { syncOneEvidence } from './one-source';
-import { readOneAudience } from './one-audience';
+import { readOneAudience, readUatAudience } from './one-audience';
 import { deliveryBlockers, runAutomationCycle, setAutomationEnabled } from './automation';
 import { applyDeliveryEvent } from './delivery-events';
 import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
@@ -289,8 +289,11 @@ export function registerPlgRoutes(
       const disconnected = () => { if (!res.writableEnded) active.abort(); };
       res.once('close', disconnected);
       try {
-        const page = await readOneAudience(req.body, undefined, fetch, Date.now, active.signal);
+        const uat = process.env.GOOGLE_CLOUD_PROJECT === 'hushh-pda-uat' || process.env.PLG_UAT_RUNTIME === 'uat';
+        const page = await (uat ? readUatAudience : readOneAudience)(req.body, undefined, fetch, Date.now, active.signal);
         active.signal.throwIfAborted();
+        // UAT directory reads never open or link the Production campaign store.
+        if (page.environment === 'uat') return res.json(page);
         const accounts = await getService().store.accountStorage?.();
         if (!accounts) return res.json(page);
         const enrolled = await accounts.readAccounts(page.rows.map(row => accountHash(row.accountId)));

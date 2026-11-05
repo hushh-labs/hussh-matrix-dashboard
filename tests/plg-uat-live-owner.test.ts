@@ -24,6 +24,21 @@ function setup() {
 }
 afterEach(() => vi.unstubAllEnvs());
 
+it('refuses the directory identity key for both owner reads and email-worker authority', () => {
+  setup();
+  expect(ownerActivityConfig('uat').secret).toBe('x'.repeat(40));
+  vi.stubEnv('PLG_UAT_AUDIENCE_SECRET', 'x'.repeat(40));
+  expect(() => ownerActivityConfig('uat')).toThrow();
+  vi.stubEnv('PLG_UAT_SOURCE_SECRET', 'different-owner-key-with-more-than-32-characters');
+  vi.stubEnv('PLG_ATTEMPT_EMAIL_ENABLED', 'true');
+  vi.stubEnv('PLG_ATTEMPT_ENVIRONMENT', 'uat');
+  vi.stubEnv('PLG_ATTEMPT_SOURCE_SECRET', 'x'.repeat(40));
+  vi.stubEnv('PLG_ATTEMPT_WORKER_SECRET', 'w'.repeat(40));
+  expect(() => attemptRuntime()).toThrow();
+  vi.stubEnv('PLG_UAT_AUDIENCE_SECRET', 'different-directory-key-with-more-than-32-characters');
+  expect(attemptRuntime().lane).toBe('uat');
+});
+
 it('binds Dev reads and delivery to its own project, origin, purpose and cohort', async () => {
   const origin = 'https://consent-protocol-aqahj4iyha-uc.a.run.app';
   vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-dev');

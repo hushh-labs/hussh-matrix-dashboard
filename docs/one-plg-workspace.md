@@ -713,6 +713,30 @@ No production account, permission, template, enrollment, sending setting or
 customer data was changed during this audit. Local browser tests use synthetic
 fixtures and establish UI behavior, not completeness of production telemetry.
 
+## UAT people directory
+
+The workspace audience route selects the UAT reader when the runtime/project is
+UAT, and fails closed on mixed or missing configuration. It requires
+`GOOGLE_CLOUD_PROJECT=hushh-pda-uat`, `PLG_UAT_RUNTIME=uat`,
+`PLG_UAT_AUDIENCE_ENABLED=true`, a distinct `PLG_UAT_AUDIENCE_SECRET`, and no
+Production source/store bindings. The source URL is pinned to
+`https://api.uat.hushh.ai/api/one/plg/audience-uat`; redirects are rejected. The
+credential is separate from own-activity and email-worker credentials.
+
+Existing work-session/operator, same-origin and `PLG_ENABLED` checks still
+apply. UAT registered team and customer accounts are shown with their UAT
+observations, without joining the Production campaign store. Version 2 requires
+`environment=uat`, `customerReporting=false` and `deliveryAuthorized=false`;
+the same strict catalog, identity, activity and outcome validators apply.
+Production continues to require its version 1 customer-reporting proof, and its
+reader refuses nonproduction runtimes. Cursors are source-project-bound.
+
+This read does not enroll accounts or enable emails. Activity email preference
+and verified recipient checks remain in One UAT. Source capture is best effort;
+an empty or capped result does not establish inactivity. Runtime provisioning,
+full workspace storage/results integration and real UAT acceptance are separate
+requirements. No deployment workflow or runtime flag is changed by this code.
+
 ## Own activity
 
 The default-off `/plg/uat` view uses the dashboard's existing verified Google

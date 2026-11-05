@@ -25,7 +25,7 @@ export function ownerActivityConfig(environment: OwnerEnvironment, env = process
       : env.PLG_UAT_RUNTIME === 'uat' || env.PLG_DEV_RUNTIME === 'dev') ||
     (environment === 'dev' && env.PLG_UAT_RUNTIME === 'uat') ||
     (environment === 'uat' && env.PLG_DEV_RUNTIME === 'dev') || secret.length < 32 ||
-    [env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET, env.PLG_ONE_AUDIENCE_SECRET,
+    [env.PLG_ONE_SOURCE_SECRET, env.PLG_ONE_SUBSCRIPTION_SECRET, env.PLG_ONE_AUDIENCE_SECRET, env.PLG_UAT_AUDIENCE_SECRET,
       env.PLG_ATTEMPT_SOURCE_SECRET, env.PLG_ATTEMPT_WORKER_SECRET, env.PLG_SYNC_SECRET,
       env.PLG_CYCLE_SECRET, env.PLG_SIGNING_SECRET,
       ...['PLG_DEV_SOURCE_SECRET', 'PLG_UAT_SOURCE_SECRET', 'PLG_OWNER_SOURCE_SECRET']

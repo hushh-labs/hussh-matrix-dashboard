@@ -35,10 +35,7 @@ export interface PlgAudiencePerson {
   };
   verified: { supported: boolean; proof?: string | null; count: number; lastAt: string | null; limited: boolean };
 }
-export interface PlgAudiencePage {
-  version: 1;
-  environment: 'production';
-  customerReporting: PlgCustomerReportingProof;
+interface PlgAudienceData {
   catalog: PlgCatalog;
   asOf: string;
   windowStart: string;
@@ -51,6 +48,10 @@ export interface PlgAudiencePage {
   nextCursor: string | null;
   campaignEnrollmentChanged: false;
 }
+export type PlgAudiencePage = PlgAudienceData & (
+  { version: 1; environment: 'production'; customerReporting: PlgCustomerReportingProof } |
+  { version: 2; environment: 'uat'; customerReporting: false; deliveryAuthorized: false }
+);
 export interface PlgCustomerReportingProof { scope: 'production_registered_contacts'; policyRevision: string }
 export type PlgJourney = 'memory' | 'mail' | PlgAgentId;
 export interface PlgOutcomeCoverage {
