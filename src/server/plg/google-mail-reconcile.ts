@@ -54,7 +54,7 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
         return { complete: false, inspected: 0 };
     }
     let state = await control.read();
-    const recover = async () => {
+    const recover = async (unavailableReads = 0) => {
       const deliveries = (await campaignState()).deliveries.filter((d) => d.provider === 'google_workspace');
       const dates = deliveries.map((d) => Date.parse(d.createdAt));
       const externalOldest = await extension?.oldestReservation();
@@ -67,8 +67,16 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
       const profile = await api('profile', signal);
       if (!numeric(profile.historyId)) throw new Error('Invalid Google history checkpoint.');
       const after = Math.max(0, Math.floor((Math.min(now(), ...dates) - 86_400_000) / 1000));
-      await update((s) => { s.feedback = { cursor: s.feedback?.cursor ?? '0', checkedAt: null,
-        recovery: { after, upper: profile.historyId } }; });
+      await update((s) => {
+        const previous = s.feedback;
+        s.feedback = { cursor: previous?.cursor ?? '0', checkedAt: null,
+          recovery: { after, upper: profile.historyId },
+          ...(previous?.unavailableReads ? { unavailableReads: previous.unavailableReads } : {}) };
+        if (unavailableReads) s.feedback.unavailableReads = {
+          count: Math.min(Number.MAX_SAFE_INTEGER, (previous?.unavailableReads?.count ?? 0) + unavailableReads),
+          lastObservedAt: now(),
+        };
+      });
       state = await control.read();
     };
     if (!state.feedback) {
@@ -151,7 +159,19 @@ export async function reconcileGoogleFeedback(control: MailControlStore, campaig
         const id = batch[next++]; messages.push(await read(id));
       }
     }));
-    if (outcomes.some((result) => result.status === 'rejected')) throw new PlgError(503, 'Google feedback read is incomplete; sending remains held.');
+    const failures = outcomes.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length) {
+      signal.throwIfAborted();
+      // History can reference a message permanently removed before this read.
+      // Use the same bounded retained-mail recovery as an expired history ID.
+      // Keep sending held until recovery AND incremental catch-up complete;
+      // never turn an unavailable message into a delivery or bounce fact.
+      if (failures.every(result => result.reason instanceof GmailReadError && result.reason.status === 404)) {
+        await recover(failures.length);
+        return { complete: false, inspected: 0 };
+      }
+      throw new PlgError(503, 'Google feedback read is incomplete; sending remains held.');
+    }
     signal.throwIfAborted();
     await update(() => undefined); // authority check before committing facts
     const accountStorage = await campaigns.accountStorage?.();

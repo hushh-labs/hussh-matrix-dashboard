@@ -147,6 +147,8 @@ export class GoogleMail {
       connectedAt: state.connection?.connectedAt ?? null, pending: Boolean(state.pending && state.pending.expiresAt > this.now()),
       reportReadingRequested: this.oauth.readReports === true, feedbackAuthorized: state.connection?.feedbackAllowed === true,
       feedbackCheckedAt: state.feedback?.checkedAt ?? null, feedbackBacklog: Boolean(state.feedback?.pending || state.feedback?.pageToken || state.feedback?.recovery),
+      unavailableFeedbackReads: state.feedback?.unavailableReads?.count ?? 0,
+      lastUnavailableFeedbackAt: state.feedback?.unavailableReads?.lastObservedAt ?? null,
       providerRetryAt: hold && hold.until > this.now() ? hold.until : null,
       pacingRetryAt: mailPacingRetryAt(state, this.now()), applicationDailyLimit: null,
       deliveryObservation: 'API acceptance; inbox receipt for own tests. External delivery and opens are not inferred.' };
