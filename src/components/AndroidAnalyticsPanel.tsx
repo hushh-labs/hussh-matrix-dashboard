@@ -9,7 +9,7 @@ export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one
   const data = one.androidCapture;
   const startDate = one.range?.startDate;
   const endDate = one.range?.endDate;
-  const resource = useMetricsResource<any>(startDate && endDate && environment === 'production' ? '/api/analytics/one/android?' + new URLSearchParams({ start_date: startDate, end_date: endDate }) : null, { refreshIntervalMs: 30_000 });
+  const resource = useMetricsResource<any>(startDate && endDate && environment === 'production' ? '/api/analytics/one/android?' + new URLSearchParams({ start_date: startDate, end_date: endDate }) : null, {});
   const { data: report, loading, error } = resource;
   return <section className="mb-5 rounded-2xl border border-stroke bg-surface p-5" aria-label="Android app analytics">
     <h3 className="text-lg font-semibold">Android app analytics</h3>

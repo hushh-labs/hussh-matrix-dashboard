@@ -22,8 +22,6 @@ import {
   MapPin,
   LogOut,
   MousePointerClick,
-  Pause,
-  Play,
   RefreshCw,
   Search,
   Server,
@@ -932,44 +930,27 @@ function ProductLivePanel({
   refreshingLabel,
   freshness,
   lastUpdated,
-  autoRefresh,
   isRefreshing,
-  onToggleAutoRefresh,
 }: {
   kicker: string;
   title: string;
   refreshingLabel: string;
   freshness: HushhAiFreshness | null | undefined;
   lastUpdated: string | null | undefined;
-  autoRefresh: boolean;
   isRefreshing: boolean;
-  onToggleAutoRefresh: () => void;
 }) {
   const sources = freshness?.sources ?? [];
-  const refreshSeconds = freshness?.refreshIntervalSeconds ?? 30;
 
   return (
     <div className={cn(dashboardCard, 'p-5')}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className={dashboardLabel}>{kicker}</p>
-          <h3 className="mt-1 text-xl font-semibold text-ink">{title} · auto-updating every {refreshSeconds}s</h3>
+          <h3 className="mt-1 text-xl font-semibold text-ink">{title} · refresh on request</h3>
           <p className="mt-2 text-sm font-medium leading-6 text-muted">
             Last dashboard pull: {formatTimestamp(lastUpdated)} · {formatAge(lastUpdated)}
           </p>
         </div>
-        <button
-          onClick={onToggleAutoRefresh}
-          className={cn(
-            'inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold transition',
-            autoRefresh
-              ? 'bg-brand-500 text-white hover:bg-brand-600'
-              : 'bg-canvas text-ink hover:bg-subtle',
-          )}
-        >
-          {autoRefresh ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-          {autoRefresh ? 'Pause live refresh' : 'Resume live refresh'}
-        </button>
       </div>
 
       <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1204,28 +1185,21 @@ export default function Dashboard() {
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
   const [refreshKey, setRefreshKey] = useState(0);
   const [compareRefreshKey, setCompareRefreshKey] = useState(0);
-  const [autoRefresh, setAutoRefresh] = useState(true);
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
   const scope = ['one', 'growth', 'apps', 'overview', 'platforms'].includes(activeTab) ? activeTab as 'one' | 'growth' | 'apps' | 'overview' | 'platforms' : null;
   const overviewScope = scope === 'overview' || scope === 'platforms';
   const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one',
     ...(overviewScope ? { kaiStartDate: kaiRange.startDate, kaiEndDate: kaiRange.endDate, hushhAiStartDate: hushhAiRange.startDate, hushhAiEndDate: hushhAiRange.endDate }
       : { oneStartDate: range.startDate, oneEndDate: range.endDate }) });
-  const presets: DatePreset[] = [7, 14, 30, 90];
-  const prefetchUrls = overviewScope ? presets.flatMap(days => {
-    const range = rangeForPreset(days), current = rangeOptions();
-    return [buildAnalyticsUrl({ ...current, kaiStartDate: range.startDate, kaiEndDate: range.endDate }),
-      buildAnalyticsUrl({ ...current, hushhAiStartDate: range.startDate, hushhAiEndDate: range.endDate })];
-  }) : scope ? presets.map(days => buildAnalyticsUrl(rangeOptions(rangeForPreset(days)))) : [];
   const resource = useMetricsResource<AllAnalyticsResponse>(scope ? buildAnalyticsUrl(rangeOptions()) : null, {
-    refreshKey, refreshIntervalMs: autoRefresh ? 30_000 : undefined, prefetchUrls,
+    refreshKey,
   });
   const data = useMemo(() => resource.data ? normalizeAnalytics(resource.data) : null, [resource.data]);
   const loading = resource.loading;
   const isRefreshing = resource.refreshing;
   const usingMock = resource.error || Boolean(data?.error);
   const loadData = () => setRefreshKey(key => key + 1);
-  const comparison = useMetricsResource<GrowthCompare>(activeTab === 'compare' ? '/api/analytics/growth/compare' : null, { refreshKey: compareRefreshKey, refreshIntervalMs: autoRefresh ? 30_000 : undefined });
+  const comparison = useMetricsResource<GrowthCompare>(activeTab === 'compare' ? '/api/analytics/growth/compare' : null, { refreshKey: compareRefreshKey });
   const compare = comparison.data;
   const compareLoading = comparison.loading;
   const compareError = comparison.error ? 'Comparison temporarily unavailable.' : compare?.error ?? null;
@@ -1349,7 +1323,7 @@ export default function Dashboard() {
     ? 'Referral rankings'
     : activeTab === 'briefing'
     ? 'One production · completed reporting days'
-    : loading ? 'Loading the selected period' : usingMock ? 'Metrics temporarily unavailable · details below' : isRefreshing ? 'Updating metrics in the background' : 'Metrics ready · dates shown on each report';
+    : loading ? 'Loading the selected period' : usingMock ? 'Metrics temporarily unavailable · details below' : isRefreshing ? 'Refreshing selected metrics' : 'Metrics ready · dates shown on each report';
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
 
   const ga4SummaryRows = () => {
@@ -1871,9 +1845,7 @@ export default function Dashboard() {
                   refreshingLabel="Refreshing One production sources"
                   freshness={kaiProductionFreshness}
                   lastUpdated={data?.lastUpdated}
-                  autoRefresh={autoRefresh}
                   isRefreshing={isRefreshing}
-                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
                 />
               </div>
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">
@@ -1970,9 +1942,7 @@ export default function Dashboard() {
                   refreshingLabel="Refreshing Hussh AI sources"
                   freshness={hushhAiFreshness}
                   lastUpdated={data?.lastUpdated}
-                  autoRefresh={autoRefresh}
                   isRefreshing={isRefreshing}
-                  onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
                 />
               </div>
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.45fr]">

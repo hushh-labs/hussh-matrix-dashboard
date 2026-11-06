@@ -18,7 +18,7 @@ export function MetricsUpdateStatus({ period, updatedAt, refreshing, loading, er
 }) {
   return <p role="status" aria-live="polite" className="my-3 text-xs font-medium leading-5 text-muted" data-metrics-state={loading ? 'loading' : refreshing ? 'refreshing' : error ? 'error' : 'ready'}>
     {loading ? `Loading ${period || 'metrics'}…` : error && !updatedAt ? `Metrics unavailable for ${period || 'this selection'}` : `${period ? `Showing ${period}` : 'Showing latest metrics'}${updatedAt ? ` · Updated ${new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}`}
-    {refreshing && !loading ? ' · Refreshing in the background' : ''}
+    {refreshing && !loading ? ' · Refreshing selected metrics' : ''}
     {error && updatedAt ? ' · Refresh unavailable; showing the last successful update' : ''}
   </p>;
 }

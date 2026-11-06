@@ -3,19 +3,16 @@ import request from 'supertest';
 import { createApp, signCookie } from '../server';
 import { readCustomerCohort, withCustomerCohort } from '../src/server/one-customer-cohort';
 
-const state = vi.hoisted(() => ({ caches: [] as { refreshActive(): Promise<void> }[], query: vi.fn(async (_options: unknown) => [[]]) }));
-vi.mock('@google-cloud/bigquery', () => ({ BigQuery: class { query = state.query; } }));
-vi.mock('../src/server/aggregate-cache', async (original) => {
-  const actual = await original<typeof import('../src/server/aggregate-cache')>();
-  return { ...actual, AggregateCache: class extends actual.AggregateCache<unknown> {
-    constructor(options: ConstructorParameters<typeof actual.AggregateCache>[0]) { super(options); state.caches.push(this); }
-  } };
-});
+const state = vi.hoisted(() => ({ query: vi.fn(async (_options: unknown) => [[]]) }));
+vi.mock('../src/server/bigquery-cost-control', () => ({
+  guardedBigQuery: (_project: string, options: unknown) => state.query(options),
+  guardedBigQueryDryRun: vi.fn(async () => { throw new Error('no estimate'); }),
+}));
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('production route cohort fencing', () => {
-  it('cannot refresh A with B totals and later serve those totals when A returns; identical proof renewal still works', async () => {
+  it('keeps retained A totals isolated from B and renews identical membership proof', async () => {
     const start = Date.parse('2026-10-22T07:00:00Z');
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(start);
     vi.stubEnv('PLG_ONE_AUDIENCE_URL', 'https://api.hushh.ai/api/one/plg/audience');
@@ -31,7 +28,6 @@ describe('production route cohort fencing', () => {
     vi.stubGlobal('fetch', fetcher);
     const secret = 'test-only-cache-session-secret-with-thirty-two-characters';
     const app = createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-    const snapshots = state.caches.at(-1)!;
     const cookie = `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email: 'metrics-qa@hushh.ai', exp: Math.floor(start / 1000) + 3600 }), secret))}`;
     const url = '/api/analytics/one/app?environment=production&one_window_days=7';
     const read = () => request(app).get(url).set('Cookie', cookie);
@@ -40,18 +36,17 @@ describe('production route cohort fencing', () => {
     expect(first.body.data.production.registeredAccounts.totalAccounts).toBe(1);
     const a = await readCustomerCohort();
 
-    // Keep A's retained loader active before another reader renews membership.
+    // A normal read reuses its snapshot before membership is renewed.
     vi.setSystemTime(start + 100_000);
     expect((await read()).status).toBe(200);
     await new Promise(resolve => setImmediate(resolve));
-    // The background refresh now sees B, but must not write B into key A.
+    // Membership changes to B, but must not contaminate cached key A.
     vi.setSystemTime(start + 190_000); ids = ['b'.repeat(32), 'd'.repeat(32)];
     const b = await readCustomerCohort(120_000);
     expect(b.cacheKey).not.toBe(a.cacheKey);
     await expect(withCustomerCohort(a.cacheKey, async () => 'wrong population')).rejects.toThrow('could not be verified');
-    await snapshots.refreshActive();
 
-    // Return to A while its old aggregate is still within the ten-minute bound.
+    // Return to A while its old aggregate is still within its cache age bound.
     vi.setSystemTime(start + 491_000); ids = ['a'.repeat(32)];
     const again = await read();
     expect(again.status).toBe(200);

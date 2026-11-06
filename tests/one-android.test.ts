@@ -124,7 +124,7 @@ it('refreshes platform rows through one cache owner while reusing bounded captur
     const captureRead=vi.fn().mockResolvedValue({rows:[envelope],error:null});
     const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture',
       ts.transpile(seam,{target:ts.ScriptTarget.ES2022})+';return queryOnePlatformCapture;')(
-        crypto,{getStore:()=>({refresh:false})},new AggregateCache({freshMs:30000,maxAgeMs:30000,maxEntries:128}),
+        crypto,{getStore:()=>({refresh:false})},new AggregateCache({maxAgeMs:30000,maxEntries:128}),
         uncached,nestedCache,async()=>({}),captureRead);
     const first=unpackPlatformCapture(await read('project',queries));
     expect(first.platforms.rows[0].events).toBe(2);

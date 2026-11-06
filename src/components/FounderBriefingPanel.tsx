@@ -113,8 +113,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
   const [chartMode, setChartMode] = useState<ChartMode>('accounts');
   const latestComplete = founderLatestCompleteDate();
   const briefingUrl = (range: FounderPeriod) => '/api/analytics/founder?' + new URLSearchParams({ start_date: range.startDate, end_date: range.endDate });
-  const resource = useMetricsResource<FounderBriefingData>(briefingUrl(period), { refreshKey, refreshIntervalMs: 30_000,
-    prefetchUrls: [7, 30, 90].map(days => briefingUrl(founderPresetRange(days as 7 | 30 | 90))) });
+  const resource = useMetricsResource<FounderBriefingData>(briefingUrl(period), { refreshKey });
   const brief = resource.data?.period && resource.data.one?.platforms && resource.data.one?.agents && resource.data.one?.daily && resource.data.search ? resource.data : null;
   const error = resource.error || Boolean(resource.data && !brief);
 

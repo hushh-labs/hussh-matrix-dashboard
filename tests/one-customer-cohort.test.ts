@@ -24,7 +24,7 @@ describe('private production customer aggregate boundary', () => {
     expect(renewed.cacheKey).toBe(first.cacheKey);
     expect(renewed.asOf).not.toBe(first.asOf);
     expect(customerEventSql(renewed)).toBe(customerEventSql(first));
-    const cache = new AggregateCache<number>({ freshMs: 60_000, maxAgeMs: 600_000, maxEntries: 4, now: () => later });
+    const cache = new AggregateCache<number>({ maxAgeMs: 600_000, maxEntries: 4, now: () => later });
     await cache.read(`${first.cacheKey}:7d`, async () => 2);
     expect(await cache.read(`${renewed.cacheKey}:7d`, async () => { throw new Error('unnecessary cold query'); })).toMatchObject({ value: 2, state: 'HIT' });
     expect(() => requireFreshCohort(first, later)).toThrow('could not be verified');
