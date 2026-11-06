@@ -45,6 +45,7 @@ env:
   INSTAGRAM_ADMIN_EMAIL: i-neelesh@hushh.ai
   ONE_PLG_CONFIGURED: ${{ vars.ONE_PLG_CONFIGURED }}
   ONE_PLG_AUDIENCE_CONFIGURED: ${{ vars.ONE_PLG_AUDIENCE_CONFIGURED }}
+  ONE_PLG_HOSTED_UAT_VIEW_CONFIGURED: ${{ vars.ONE_PLG_HOSTED_UAT_VIEW_CONFIGURED }}
   ONE_PLG_SENDER_CONFIGURED: ${{ vars.ONE_PLG_SENDER_CONFIGURED }}
   ONE_PLG_DELIVERY_CONFIGURED: ${{ vars.ONE_PLG_DELIVERY_CONFIGURED }}
   ONE_PLG_SUBSCRIPTIONS_CONFIGURED: ${{ vars.ONE_PLG_SUBSCRIPTIONS_CONFIGURED }}
@@ -246,7 +247,7 @@ jobs:
             [[ "${ONE_PLG_CONFIGURED}" == "true" && "${ONE_PLG_SUBSCRIPTIONS_CONFIGURED}" == "true" ]] || exit 1
           fi
           GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=false|PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED=false|PLG_EMAIL_PROVIDER=resend|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET="
-          REMOVE_PROVIDER_SECRETS=()
+          REMOVE_SECRET_KEYS=()
           if [[ "${ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED}" == "true" ]]; then
             [[ "${ONE_PLG_GOOGLE_MAIL_CONFIGURED}" == "true" && "${ONE_PLG_SUBSCRIPTIONS_CONFIGURED}" == "true" ]] || exit 1
           fi
@@ -260,7 +261,7 @@ jobs:
             GOOGLE_CAMPAIGNS=false
             [[ "${ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED}" != "true" ]] || GOOGLE_CAMPAIGNS=true
             GOOGLE_MAIL_ENV="|PLG_GOOGLE_MAIL_ENABLED=true|PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED=${GOOGLE_CAMPAIGNS}|PLG_EMAIL_PROVIDER=google_workspace|PLG_GOOGLE_MAIL_CREDENTIAL_SECRET=projects/${PROJECT_ID}/secrets/metrics-one-plg-google-mail"
-            REMOVE_PROVIDER_SECRETS=(--remove-secrets=PLG_RESEND_API_KEY,PLG_RESEND_WEBHOOK_SECRET)
+            REMOVE_SECRET_KEYS+=(PLG_RESEND_API_KEY PLG_RESEND_WEBHOOK_SECRET)
           fi
           if [[ "${ONE_PLG_DELIVERY_CONFIGURED}" == "true" ]]; then
             if [[ "${ONE_PLG_CONFIGURED}" != "true" || "${ONE_PLG_SENDER_CONFIGURED}" != "true" ]]; then
@@ -318,6 +319,21 @@ jobs:
             PLG_ENV_SUFFIX+="|PLG_ONE_SUBSCRIPTION_ENABLED=false|PLG_ONE_SUBSCRIPTION_URL="
           fi
           # Explicit empty value turns off new-link generation on rollback.
+          if [[ "${ONE_PLG_HOSTED_UAT_VIEW_CONFIGURED}" == "true" ]]; then
+            [[ "${ONE_PLG_CONFIGURED}" == "true" && "${PROJECT_ID}" == "hushh-ai-prod" ]] || exit 1
+            for secret in metrics-one-plg-uat-source-secret metrics-one-plg-uat-audience-secret; do
+              [[ "$(gcloud secrets versions describe latest --secret="$secret" --project="${PROJECT_ID}" --format='value(state)')" == "ENABLED" ]] || exit 1
+            done
+            PLG_ENV_SUFFIX+="|PLG_UAT_VIEW_ENABLED=true|PLG_UAT_AUDIENCE_ENABLED=true|PLG_UAT_EVIDENCE_ENABLED=true|PLG_UAT_IDENTITY_MODE=live-signed"
+            PLG_SECRET_SUFFIX+=",PLG_UAT_SOURCE_SECRET=metrics-one-plg-uat-source-secret:latest,PLG_UAT_AUDIENCE_SECRET=metrics-one-plg-uat-audience-secret:latest"
+          else
+            PLG_ENV_SUFFIX+="|PLG_UAT_VIEW_ENABLED=false|PLG_UAT_AUDIENCE_ENABLED=false|PLG_UAT_EVIDENCE_ENABLED=false|PLG_UAT_IDENTITY_MODE="
+            REMOVE_SECRET_KEYS+=(PLG_UAT_SOURCE_SECRET PLG_UAT_AUDIENCE_SECRET)
+          fi
+          REMOVE_SECRET_ARGS=()
+          if ((${#REMOVE_SECRET_KEYS[@]})); then
+            REMOVE_SECRET_ARGS=(--remove-secrets="$(IFS=,; printf '%s' "${REMOVE_SECRET_KEYS[*]}")")
+          fi
           PLG_ENV_SUFFIX+="|PLG_PREFERENCE_ORIGIN=${PLG_PREFERENCE_ORIGIN}${GOOGLE_MAIL_ENV}"
           gcloud run deploy "${SERVICE}" \
             --project="${PROJECT_ID}" \
@@ -326,7 +342,7 @@ jobs:
             --service-account="${RUNTIME_SERVICE_ACCOUNT}" \
             --update-env-vars="^|^GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}|GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}|ALLOWED_EMAIL_DOMAINS=hussh.ai,hushh.ai,hushhtech.com,hushh.labs,hush1one.com|REQUIRE_AUTH=true|INSTAGRAM_ANALYTICS_ENABLED=true|INSTAGRAM_USER_ID=${INSTAGRAM_ACCOUNT_ID}|INSTAGRAM_CREDENTIAL_SECRET=${INSTAGRAM_CREDENTIAL_RESOURCE}|INSTAGRAM_ANALYTICS_ADMIN_EMAILS=${INSTAGRAM_ADMIN_EMAIL}${PLG_ENV_SUFFIX}" \
             --update-secrets="GOOGLE_CLIENT_SECRET=metrics-dashboard-google-client-secret:latest,SESSION_SECRET=metrics-dashboard-session-secret:latest,ALLOWED_EMAILS=metrics-dashboard-allowed-emails:latest${PLG_SECRET_SUFFIX}" \
-            "${REMOVE_PROVIDER_SECRETS[@]}" \
+            "${REMOVE_SECRET_ARGS[@]}" \
             --allow-unauthenticated \
             --port=8080 \
             --memory=1Gi \
@@ -396,6 +412,7 @@ jobs:
             'PLG_ENABLED', 'PLG_STORAGE', 'PLG_FIRESTORE_PROJECT', 'PLG_FIRESTORE_DATABASE',
             'PLG_PUBLIC_ORIGIN', 'PLG_PREFERENCE_ORIGIN', 'PLG_ONE_SOURCE_URL', 'PLG_ONE_AUDIENCE_URL', 'PLG_DELIVERY_ENABLED',
             'PLG_ONE_SUBSCRIPTION_ENABLED', 'PLG_ONE_SUBSCRIPTION_URL',
+            'PLG_UAT_VIEW_ENABLED', 'PLG_UAT_AUDIENCE_ENABLED', 'PLG_UAT_EVIDENCE_ENABLED', 'PLG_UAT_IDENTITY_MODE',
             'PLG_GOOGLE_MAIL_ENABLED', 'PLG_GOOGLE_MAIL_CREDENTIAL_SECRET',
             'PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED', 'PLG_EMAIL_PROVIDER',
           ]);
@@ -466,6 +483,23 @@ jobs:
             Object.assign(requiredSecrets, { PLG_ONE_SUBSCRIPTION_SECRET: 'metrics-one-plg-subscription-secret' });
           } else if (byName.get('PLG_ONE_SUBSCRIPTION_ENABLED')?.value !== 'false' || byName.get('PLG_ONE_SUBSCRIPTION_URL')?.value) {
             throw new Error('Subscription integration must be disabled');
+          }
+          const hostedUat = process.env.ONE_PLG_HOSTED_UAT_VIEW_CONFIGURED === 'true';
+          for (const name of ['PLG_UAT_VIEW_ENABLED', 'PLG_UAT_AUDIENCE_ENABLED', 'PLG_UAT_EVIDENCE_ENABLED']) {
+            if (byName.get(name)?.value !== String(hostedUat)) throw new Error(`Hosted UAT setting mismatch: ${name}`);
+          }
+          if ((byName.get('PLG_UAT_IDENTITY_MODE')?.value || '') !== (hostedUat ? 'live-signed' : '') ||
+              byName.has('PLG_DEV_RUNTIME') || byName.has('PLG_UAT_RUNTIME')) {
+            throw new Error('Hosted UAT must use the existing Metrics runtime');
+          }
+          if (hostedUat) {
+            if (process.env.ONE_PLG_CONFIGURED !== 'true') throw new Error('Hosted UAT requires the existing PLG workspace');
+            Object.assign(requiredSecrets, {
+              PLG_UAT_SOURCE_SECRET: 'metrics-one-plg-uat-source-secret',
+              PLG_UAT_AUDIENCE_SECRET: 'metrics-one-plg-uat-audience-secret',
+            });
+          } else if (byName.has('PLG_UAT_SOURCE_SECRET') || byName.has('PLG_UAT_AUDIENCE_SECRET')) {
+            throw new Error('Disabled hosted UAT must remove both UAT read keys');
           }
           for (const [name, secretName] of Object.entries(requiredSecrets)) {
             if (byName.get(name)?.valueFrom?.secretKeyRef?.name !== secretName) {

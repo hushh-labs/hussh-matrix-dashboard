@@ -22,15 +22,19 @@ it('emits explicit disabled PLG runtime flags and binds sender independently fro
     .split('          gcloud run deploy')[0].split('        run: |')[1]
     .split('\n').map((line) => line.replace(/^          /, '')).join('\n');
   const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
-  const script = `set -e\nfunction gcloud() { if [[ "$1" == "firestore" ]]; then echo FIRESTORE_NATIVE; else echo ENABLED; fi; }\n${block}\nprintf '%s\\n' "$PLG_ENV_SUFFIX" "$PLG_SECRET_SUFFIX" "\${REMOVE_PROVIDER_SECRETS[*]}"`;
-  const invoke = (workspace: boolean, sender: boolean, delivery: boolean, subscriptions = false, google = false, feedback = false) => execFileSync(bash, ['-c', script], {
-    encoding: 'utf8', env: { ...process.env, PROJECT_ID: 'example-project', PRODUCTION_URL: 'https://metrics.example.invalid',
+  const script = `set -e\nfunction gcloud() { if [[ "$1" == "firestore" ]]; then echo FIRESTORE_NATIVE; elif [[ -n "$DISABLED_SECRET" && "$*" == *"--secret=$DISABLED_SECRET "* ]]; then echo DISABLED; else echo ENABLED; fi; }\n${block}\nprintf '%s\\n' "$PLG_ENV_SUFFIX" "$PLG_SECRET_SUFFIX" "\${REMOVE_SECRET_ARGS[*]}"`;
+  const invoke = (workspace: boolean, sender: boolean, delivery: boolean, subscriptions = false, google = false, feedback = false,
+    options: { hostedUat?: boolean; project?: string; disabledSecret?: string } = {}) => execFileSync(bash, ['-c', script], {
+    encoding: 'utf8', env: { ...process.env, PROJECT_ID: options.project ?? 'hushh-ai-prod', PRODUCTION_URL: 'https://metrics.example.invalid',
       ONE_PLG_CONFIGURED: String(workspace), ONE_PLG_SENDER_CONFIGURED: String(sender), ONE_PLG_DELIVERY_CONFIGURED: String(delivery), ONE_PLG_AUDIENCE_CONFIGURED: 'false', ONE_PLG_SUBSCRIPTIONS_CONFIGURED: String(subscriptions),
-      ONE_PLG_GOOGLE_MAIL_CONFIGURED: String(google), ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED: String(feedback) },
+      ONE_PLG_GOOGLE_MAIL_CONFIGURED: String(google), ONE_PLG_GOOGLE_FEEDBACK_CONFIGURED: String(feedback),
+      ONE_PLG_HOSTED_UAT_VIEW_CONFIGURED: String(options.hostedUat ?? false), DISABLED_SECRET: options.disabledSecret ?? '' },
   });
   const disabled = invoke(false, false, false);
   expect(disabled).toContain('|PLG_ENABLED=false|PLG_DELIVERY_ENABLED=false|');
   expect(disabled).toContain('PLG_ONE_SUBSCRIPTION_ENABLED=false|PLG_ONE_SUBSCRIPTION_URL=');
+  expect(disabled).toContain('PLG_UAT_VIEW_ENABLED=false|PLG_UAT_AUDIENCE_ENABLED=false|PLG_UAT_EVIDENCE_ENABLED=false|PLG_UAT_IDENTITY_MODE=');
+  expect(disabled).toContain('--remove-secrets=PLG_UAT_SOURCE_SECRET,PLG_UAT_AUDIENCE_SECRET');
   const identity = invoke(true, true, false);
   expect(identity).toContain('PLG_DELIVERY_ENABLED=false');
   expect(identity).toContain('PLG_EMAIL_FROM=metrics-one-plg-email-from:latest');
@@ -53,4 +57,13 @@ it('emits explicit disabled PLG runtime flags and binds sender independently fro
   expect(google).toContain('PLG_GOOGLE_MAIL_CAMPAIGNS_ENABLED=true');
   expect(google).toContain('--remove-secrets=PLG_RESEND_API_KEY,PLG_RESEND_WEBHOOK_SECRET');
   expect(google).not.toContain('PLG_RESEND_API_KEY=');
+  const hostedUat = invoke(true, true, true, true, true, true, { hostedUat: true });
+  expect(hostedUat).toContain('PLG_UAT_VIEW_ENABLED=true|PLG_UAT_AUDIENCE_ENABLED=true|PLG_UAT_EVIDENCE_ENABLED=true|PLG_UAT_IDENTITY_MODE=live-signed');
+  expect(hostedUat).toContain('PLG_UAT_SOURCE_SECRET=metrics-one-plg-uat-source-secret:latest,PLG_UAT_AUDIENCE_SECRET=metrics-one-plg-uat-audience-secret:latest');
+  expect(hostedUat).toContain('PLG_ONE_SOURCE_URL=https://api.hushh.ai/api/one/plg/snapshot|PLG_DELIVERY_ENABLED=true');
+  expect(() => invoke(false, false, false, false, false, false, { hostedUat: true })).toThrow();
+  expect(() => invoke(true, false, false, false, false, false, { hostedUat: true, project: 'hushh-pda-uat' })).toThrow();
+  for (const disabledSecret of ['metrics-one-plg-uat-source-secret', 'metrics-one-plg-uat-audience-secret']) {
+    expect(() => invoke(true, false, false, false, false, false, { hostedUat: true, disabledSecret })).toThrow();
+  }
 });
