@@ -37,6 +37,7 @@ locals {
     "metrics-one-plg-signing-secret", "metrics-one-plg-source-secret",
     "metrics-one-plg-sync-secret", "metrics-one-plg-cycle-secret",
     "metrics-one-plg-audience-secret", "metrics-one-plg-subscription-secret",
+    "metrics-one-plg-uat-source-secret", "metrics-one-plg-uat-audience-secret",
     "metrics-one-plg-admin-emails", "metrics-one-plg-operator-emails",
     "metrics-one-plg-email-from", "metrics-one-plg-reply-to",
     "metrics-one-plg-google-mail",

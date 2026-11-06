@@ -20,6 +20,15 @@ One UAT routes must already be deployed and explicitly activated. These keys
 must be bound through Secret Manager; they must differ from Production source,
 directory, subscription, worker, cycle and signing credentials and each other.
 
+The hosted Matrix workflow owns this switch. After One UAT is deployed and its
+signed read routes are verified, provision the two dedicated Secret Manager
+containers from `infra/one-plg` and load the matching UAT owner and directory
+keys into `metrics-one-plg-uat-source-secret` and
+`metrics-one-plg-uat-audience-secret` in `hushh-ai-prod`. Set the Matrix
+repository variable `ONE_PLG_HOSTED_UAT_VIEW_CONFIGURED=true` and use the
+existing zero-traffic candidate and promotion process. Clearing the variable
+disables all three view flags and removes both UAT mounts on the next release.
+
 Requests use only fixed `https://api.uat.hushh.ai` routes and UAT HMAC purposes.
 Redirects, Production payloads and asserted delivery authority are refused.
 The owner view derives an email hash from the verified session and rechecks
