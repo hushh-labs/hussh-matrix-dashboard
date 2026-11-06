@@ -33,6 +33,8 @@ import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushh
 import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
+import { guardedBigQuery, guardedBigQueryDryRun } from './src/server/bigquery-cost-control';
+import type { Query } from '@google-cloud/bigquery';
 import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
 import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort, withCustomerCohort, requireCurrentCustomerCohort } from './src/server/one-customer-cohort';
 import { oneAppScope, readOneAppEnvironments } from './src/server/one-app-scope';
@@ -67,7 +69,7 @@ const BQ_PROD_PROJECT = process.env.BQ_PROD_PROJECT || 'hushh-pda';
 const BQ_PROD_DATASET = process.env.BQ_PROD_DATASET || 'analytics_public';
 const BQ_PROD_VIEW = process.env.BQ_PROD_VIEW || 'kai_public_dashboard_feed';
 
-const BQ_JOB_PROJECT = process.env.BQ_JOB_PROJECT || 'hushh-pda';
+const BQ_JOB_PROJECT = process.env.BQ_JOB_PROJECT || 'hushh-ai-prod';
 const BQ_CLI_FALLBACK = process.env.BQ_CLI_FALLBACK !== 'false';
 const DEFAULT_HUSHHTECH_ENDPOINT =
   'https://hushhtech.com/api/metrics/summary';
@@ -234,25 +236,18 @@ const HUSHHTECH_SUPABASE_PROJECT_REF =
 const HUSHHTECH_SUPABASE_ACCESS_TOKEN =
   process.env.HUSHHTECH_SUPABASE_ACCESS_TOKEN || '';
 const MAX_HUSHH_AI_RANGE_DAYS = 90;
-const HUSHH_AI_LIVE_REFRESH_SECONDS = Math.max(
-  10,
-  Math.min(parseInt(process.env.HUSHH_AI_LIVE_REFRESH_SECONDS || '30', 10) || 30, 300),
-);
 
 // Keep upstream analytics calls from being repeated by every browser refresh.
 // Clients still receive `no-store`; this is a short-lived, aggregate-only
 // process cache keyed by the complete URL, including the selected date range.
 const analyticsQueryContext = new AsyncLocalStorage<{ refresh: boolean }>();
-const bigQueryClients = new Map<string, import('@google-cloud/bigquery').BigQuery>();
-const queryCache = new AggregateCache<BigQueryFeedResult>({ freshMs: 30_000, maxAgeMs: 30_000, maxEntries: 128 });
+const queryCache = new AggregateCache<BigQueryFeedResult>({ maxAgeMs: 30 * 60_000, maxEntries: 128 });
 
 async function bigQueryClient(projectId: string) {
-  const existing = bigQueryClients.get(projectId);
-  if (existing) return existing;
-  const { BigQuery } = await import('@google-cloud/bigquery');
-  const client = bigQueryClients.get(projectId) ?? new BigQuery({ projectId });
-  bigQueryClients.set(projectId, client);
-  return client;
+  return {
+    query: (request: Query) => guardedBigQuery(projectId, request),
+    createQueryJob: (request: Query) => guardedBigQueryDryRun(projectId, request),
+  };
 }
 
 const PUBLIC_OMIT_KEYS = new Set([
@@ -458,85 +453,25 @@ interface DataResult<T> {
   error: string | null;
 }
 
-async function queryBigQueryWithCli(
-  projectId: string,
-  dataset: string,
-  view: string,
-  range?: HushhAiDateRange,
-): Promise<Record<string, unknown>[]> {
-  const queryJobProject = BQ_JOB_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || projectId;
-  const dateFilter = range
-    ? `WHERE metric_date IS NULL OR DATE(metric_date) BETWEEN DATE(${sqlStringLiteral(range.startDate)}) AND DATE(${sqlStringLiteral(range.endDate)})`
-    : '';
-  const query = `
-    SELECT *
-    FROM \`${projectId}.${dataset}.${view}\`
-    ${dateFilter}
-    ORDER BY metric_group, metric_name, metric_date
-  `;
-  const { stdout } = await execFileAsync(
-    'bq',
-    [
-      `--project_id=${queryJobProject}`,
-      'query',
-      '--use_legacy_sql=false',
-      '--format=json',
-      '--max_rows=10000',
-      query,
-    ],
-    { timeout: 60_000, maxBuffer: 20 * 1024 * 1024 },
-  );
-  return JSON.parse(stdout) as Record<string, unknown>[];
-}
-
-async function queryBigQuerySqlWithCli(
-  queryJobProject: string,
-  query: string,
-): Promise<Record<string, unknown>[]> {
-  const { stdout } = await execFileAsync(
-    'bq',
-    [
-      `--project_id=${queryJobProject}`,
-      'query',
-      '--use_legacy_sql=false',
-      '--format=json',
-      '--max_rows=10000',
-      query,
-    ],
-    { timeout: 60_000, maxBuffer: 20 * 1024 * 1024 },
-  );
-  return JSON.parse(stdout) as Record<string, unknown>[];
-}
-
-async function queryBigQuerySqlUncached(queryJobProject: string, query: string, bounded = false): Promise<BigQueryFeedResult> {
+async function queryBigQuerySqlUncached(queryJobProject: string, query: string): Promise<BigQueryFeedResult> {
   try {
     const bq = await bigQueryClient(queryJobProject);
-    const [rows] = await bq.query({ query, location: 'US', ...(bounded ? { maximumBytesBilled: '1000000000', jobTimeoutMs: 30_000 } : {}) });
+    const [rows] = await bq.query({ query });
     return { rows: rows as Record<string, unknown>[], error: null };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('BigQuery SQL query failed:', message);
-    if (BQ_CLI_FALLBACK && !bounded) {
-      try {
-        const rows = await queryBigQuerySqlWithCli(queryJobProject, query);
-        return { rows, error: null };
-      } catch (cliErr: unknown) {
-        const cliMessage = cliErr instanceof Error ? cliErr.message : String(cliErr);
-        console.error('bq CLI SQL fallback failed:', cliMessage);
-        return { rows: [], error: `${message}; bq CLI fallback failed: ${cliMessage}` };
-      }
-    }
     return { rows: [], error: message };
   }
 }
 
-async function queryBigQuerySql(queryJobProject: string, query: string, bounded = false): Promise<BigQueryFeedResult> {
-  const key = `${queryJobProject}:${bounded}:${crypto.createHash('sha256').update(query).digest('hex')}`;
+async function queryBigQuerySql(queryJobProject: string, query: string): Promise<BigQueryFeedResult> {
+  const key = `${queryJobProject}:${crypto.createHash('sha256').update(query).digest('hex')}`;
   // A manual refresh reads upstream again rather than renewing old query results.
-  if (analyticsQueryContext.getStore()?.refresh) return queryBigQuerySqlUncached(queryJobProject, query, bounded);
+  if (analyticsQueryContext.getStore()?.refresh) return queryBigQuerySqlUncached(queryJobProject, query);
   try {
     const result = await queryCache.read(key, async () => {
-      const value = await queryBigQuerySqlUncached(queryJobProject, query, bounded);
+      const value = await queryBigQuerySqlUncached(queryJobProject, query);
       if (value.error) throw value;
       return value;
     });
@@ -593,16 +528,6 @@ async function queryBigQuery(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`BigQuery query failed for ${projectId}.${dataset}.${view}:`, message);
-    if (BQ_CLI_FALLBACK) {
-      try {
-        const rows = await queryBigQueryWithCli(projectId, dataset, view, range);
-        return scoped(rows);
-      } catch (cliErr: unknown) {
-        const cliMessage = cliErr instanceof Error ? cliErr.message : String(cliErr);
-        console.error(`bq CLI fallback failed for ${projectId}.${dataset}.${view}:`, cliMessage);
-        return { rows: [], error: `${message}; bq CLI fallback failed: ${cliMessage}` };
-      }
-    }
     return { rows: [], error: message };
   }
 }
@@ -2365,7 +2290,7 @@ const oneRegisteredAccountsInflight = new Map<
 >();
 
 const oneRegistrationTotalsCache = new AggregateCache<OneRegistrationTotals>({
-  freshMs: ONE_FIREBASE_AUTH_CACHE_TTL_MS, maxAgeMs: ONE_FIREBASE_AUTH_CACHE_TTL_MS, maxEntries: 64,
+  maxAgeMs: ONE_FIREBASE_AUTH_CACHE_TTL_MS, maxEntries: 64,
 });
 
 async function fetchOneRegistrationTotals(range: HushhAiDateRange): Promise<DataResult<OneRegistrationTotals>> {
@@ -4645,8 +4570,8 @@ function buildKaiFreshness(
   const feedStatus = buildKaiFeedStatus(productionRows);
   const ga4Available = Boolean(productionGa4?.available);
   return {
-    mode: 'polling',
-    refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
+    mode: 'manual',
+    refreshIntervalSeconds: 0,
     fetchedAt,
     sources: [
       {
@@ -4694,8 +4619,8 @@ function buildHushhAiFreshness(
     ? 'live'
     : String(productEvents?.status ?? 'waiting');
   return {
-    mode: 'polling',
-    refreshIntervalSeconds: HUSHH_AI_LIVE_REFRESH_SECONDS,
+    mode: 'manual',
+    refreshIntervalSeconds: 0,
     fetchedAt,
     sources: [
       {
@@ -5780,8 +5705,7 @@ function needsCustomerScope(pathname: string, environment?: unknown) {
 }
 
 function registerAnalyticsRoutes(app: express.Express): void {
-  const snapshots = new AggregateCache<{ status: number; body: unknown }>({ freshMs: 60_000, maxAgeMs: 10 * 60_000, maxEntries: 100 });
-  const handlers = new Map<string, express.RequestHandler>();
+  const snapshots = new AggregateCache<{ status: number; body: unknown }>({ maxAgeMs: 30 * 60_000, maxEntries: 100 });
   const capture = (handler: express.RequestHandler, req: express.Request, refresh = false) => new Promise<{ status: number; body: unknown }>((resolve, reject) => {
     let status = 200;
     const response = {
@@ -5794,7 +5718,6 @@ function registerAnalyticsRoutes(app: express.Express): void {
   });
   const api = {
     get(paths: string | string[], handler: express.RequestHandler) {
-      for (const path of Array.isArray(paths) ? paths : [paths]) handlers.set(path, handler);
       app.get(paths, async (req, res) => {
         try {
           if (req.path === '/api/analytics/all' && typeof req.query.view === 'string' && !['one', 'growth', 'apps', 'overview', 'platforms'].includes(req.query.view)) {
@@ -5841,49 +5764,6 @@ function registerAnalyticsRoutes(app: express.Express): void {
       res.status(503).json({ state: 'unavailable', error: 'Referral rankings are temporarily unavailable.' });
     }
   });
-  if (process.env.K_SERVICE && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
-    const refreshTimer = setInterval(() => { void snapshots.refreshActive(); }, 30_000);
-    refreshTimer.unref();
-    // Start after routes are registered. Only the selected aggregate is fetched.
-    let warming = false;
-    const warm = async () => {
-      if (warming) return;
-      warming = true;
-      try {
-      const warmPaths: string[] = [];
-      for (const days of [30, 7, 14, 90]) {
-        const range = trailingDateRange(days);
-        const one = new URLSearchParams({ one_start_date: range.startDate, one_end_date: range.endDate });
-        for (const view of ['one', 'growth', 'apps']) warmPaths.push(`/api/analytics/all?view=${view}&${one}`);
-        if (days !== 14) {
-          const period = founderPresetRange(days as 7 | 30 | 90);
-          warmPaths.push(`/api/analytics/founder?start_date=${period.startDate}&end_date=${period.endDate}`);
-        }
-      }
-      for (const kaiDays of [7, 14, 30, 90]) for (const hushhDays of [7, 14, 30, 90]) {
-        const kai = trailingDateRange(kaiDays), hushh = trailingDateRange(hushhDays);
-        const query = new URLSearchParams({ view: 'overview', kai_start_date: kai.startDate, kai_end_date: kai.endDate, hushh_ai_start_date: hushh.startDate, hushh_ai_end_date: hushh.endDate });
-        warmPaths.push('/api/analytics/all?' + query);
-      }
-      warmPaths.push('/api/analytics/growth/compare');
-      for (const url of warmPaths) {
-        const parsed = new URL(url, 'http://analytics.internal');
-        const handler = handlers.get(parsed.pathname);
-        if (!handler) continue;
-        const req = { query: Object.fromEntries(parsed.searchParams) } as unknown as express.Request;
-        try {
-          const cohort = needsCustomerScope(parsed.pathname, req.query.environment) ? await readCustomerCohort() : null;
-          const load = () => capture(handler, req);
-          await snapshots.warm(`${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(url)}`, cohort ? () => withCustomerCohort(cohort.cacheKey, load) : load);
-        } catch { /* Source state stays explicit. */ }
-      }
-      } finally { warming = false; }
-    };
-    const warmTimer = setTimeout(() => { void warm(); }, 0);
-    warmTimer.unref();
-    const presetTimer = setInterval(() => { void warm(); }, 5 * 60_000);
-    presetTimer.unref();
-  }
   api.get('/api/analytics/founder', async (req, res) => {
     const periods = founderPeriods(req.query as Record<string, unknown>);
     if (!periods) {

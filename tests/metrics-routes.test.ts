@@ -9,7 +9,10 @@ vi.mock('../src/server/one-customer-cohort', async (original) => ({
   ...await original<typeof import('../src/server/one-customer-cohort')>(),
   readCustomerCohort: membership,
 }));
-vi.mock('@google-cloud/bigquery', () => ({ BigQuery: class { query = query; } }));
+vi.mock('../src/server/bigquery-cost-control', () => ({
+  guardedBigQuery: (_project: string, options: unknown) => query(options),
+  guardedBigQueryDryRun: vi.fn(async () => { throw new Error('no estimate'); }),
+}));
 const secret = 'test-only-cache-session-secret-with-thirty-two-characters';
 const app = createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
 const cookie = `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email: 'metrics-qa@hushh.ai', exp: Math.floor(Date.now()/1000) + 3600 }), secret))}`;
@@ -42,12 +45,13 @@ describe('authenticated aggregate snapshots', () => {
     const denied = await request(app).get('/api/analytics/one/android?end_date=2026-10-05&start_date=2026-09-28');
     expect(denied.status).toBe(401); expect(denied.headers['x-metrics-cache']).toBeUndefined();
   });
-  it('returns the existing dated snapshot while an explicit refresh runs', async () => {
+  it('waits for explicit refresh without background polling', async () => {
     const url = '/api/analytics/one/android?start_date=2026-09-27&end_date=2026-10-04';
     const first = await request(app).get(url).set('Cookie', cookie);
     const next = await request(app).get(url).set('Cookie', cookie).set('X-Metrics-Refresh', '1');
-    expect(next.status).toBe(200); expect(next.headers['x-metrics-refreshing']).toBe('1');
-    expect(next.headers['x-metrics-updated-at']).toBe(first.headers['x-metrics-updated-at']);
+    expect(first.status).toBe(200); expect(next.status).toBe(200);
+    expect(next.headers['x-metrics-refreshing']).toBe('0');
+    expect(next.headers['x-metrics-cache']).toBe('REFRESHED');
   });
   it('rejects unsupported scope without caching a client error', async () => {
     for (let attempt = 0; attempt < 2; attempt++) {

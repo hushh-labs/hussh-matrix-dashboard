@@ -57,7 +57,8 @@ env:
 jobs:
   deploy:
     name: Build, deploy, and verify production
-    if: ${{ github.event_name == 'push' || inputs.target_environment == 'production' }}
+    # Default closed: only an explicit operator decision may release the incident hold.
+    if: ${{ vars.METRICS_DEPLOYMENT_HOLD == 'false' && (github.event_name == 'push' || inputs.target_environment == 'production') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -597,7 +598,7 @@ jobs:
 
   deploy-nonproduction:
     name: Deploy verified Matrix Dev/UAT runtime
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_environment == 'dev' || inputs.target_environment == 'uat') }}
+    if: ${{ vars.METRICS_DEPLOYMENT_HOLD == 'false' && github.event_name == 'workflow_dispatch' && (inputs.target_environment == 'dev' || inputs.target_environment == 'uat') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: matrix-${{ inputs.target_environment }}

@@ -88,8 +88,8 @@ jobs:
             await new Promise(resolve => setTimeout(resolve, 250));
           }
           NODE
-          npx vitest run tests/plg.test.ts tests/plg-account-storage.test.ts \
-            -t 'normalized Firestore storage|account Firestore integration|explicit account storage migration' --maxWorkers=1 \
+          npx vitest run tests/plg.test.ts tests/plg-account-storage.test.ts tests/bigquery-budget-firestore.test.ts \
+            -t 'normalized Firestore storage|account Firestore integration|explicit account storage migration|native Firestore query budget' --maxWorkers=1 \
             --reporter=json --outputFile="${RUNNER_TEMP}/plg-storage-results.json"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -101,7 +101,10 @@ jobs:
           const accounts = report.testResults.flatMap(file => file.assertionResults)
             .filter(test => /account Firestore integration|explicit account storage migration/.test(test.fullName));
           assert(accounts.length >= 24 && accounts.every(test => test.status === 'passed'), 'Every account storage, reporting, fair-cycle, permission fence and migration case must run and pass.');
-          console.log(`${cases.length + accounts.length} native Firestore storage cases passed on isolated demo projects.`);
+          const budget = report.testResults.flatMap(file => file.assertionResults)
+            .filter(test => test.fullName.includes('native Firestore query budget'));
+          assert(budget.length === 1 && budget.every(test => test.status === 'passed'), 'The real atomic query budget must run and pass.');
+          console.log(`${cases.length + accounts.length + budget.length} native Firestore cases passed on isolated demo projects.`);
           NODE
   verify-plg-infrastructure:
     runs-on: ubuntu-latest
