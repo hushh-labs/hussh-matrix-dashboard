@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { UatActivityContent, type UatActivityEvidence } from '../src/components/PlgUatActivity';
+import { PlgAudiencePanel } from '../src/components/PlgAudiencePanel';
+import { PlgUatWorkspace } from '../src/components/PlgUatWorkspace';
 
 const evidence: UatActivityEvidence = {
   environment: 'uat', checkedAt: '2026-10-31T08:00:00Z', deliveryAuthorized: false,
@@ -12,6 +14,36 @@ const evidence: UatActivityEvidence = {
 };
 
 describe('UAT activity view', () => {
+  it('does not invent a One-only agent list before the UAT catalog connects', () => {
+    const html = renderToStaticMarkup(<PlgUatWorkspace />);
+    const selector = html.match(/<select\b[^>]*>[\s\S]*?<\/select>/)?.[0];
+    expect(selector).toContain('disabled=""');
+    expect(selector).toContain('Loading agents');
+    expect(selector).not.toContain('value="agent_one"');
+    expect(html).not.toContain('No matching accounts');
+  });
+
+  it('offers every available public agent from the connected catalog', () => {
+    const agents: typeof evidence.catalog.agents = [
+      ...evidence.catalog.agents,
+      { id: 'agent_email', label: 'Email', public: true, available: true },
+      { id: 'agent_calendar', label: 'Calendar', public: true, available: true },
+      { id: 'agent_documents', label: 'Documents', public: true, available: true },
+      { id: 'agent_files', label: 'Files', public: true, available: false },
+      { id: 'agent_internal', label: 'Internal stage', public: false, available: true },
+    ];
+    const html = renderToStaticMarkup(<PlgAudiencePanel
+      state={{ contacts: [], catalog: { ...evidence.catalog, agents } }}
+      load={async () => { throw new Error('Server rendering must not request user data'); }}
+      openContact={() => undefined} />);
+    const selector = html.match(/<select\b[^>]*>[\s\S]*?<\/select>/)?.[0];
+    expect(selector).not.toContain('disabled=""');
+    for (const agent of agents.filter(a => a.public && a.available))
+      expect(selector).toContain(`value="${agent.id}"`);
+    expect(selector).not.toContain('value="agent_files"');
+    expect(selector).not.toContain('value="agent_internal"');
+  });
+
   it('labels observed counts without claiming successful execution or email delivery', () => {
     const html = renderToStaticMarkup(<UatActivityContent evidence={evidence} />);
     expect(html).toContain('UAT');
