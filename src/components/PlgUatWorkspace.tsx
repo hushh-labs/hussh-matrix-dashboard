@@ -8,8 +8,10 @@ export function PlgUatWorkspace() {
   const load = useCallback(async (filters: PlgAudienceFilters, signal: AbortSignal): Promise<PlgAudiencePage> => {
     const response = await fetch('/api/plg/uat/audience', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
       signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(filters) });
+    if (!response.ok)
+      throw new Error('UAT users and agent activity are unavailable. Filters cannot return results until the UAT connection is ready.');
     const page = await response.json();
-    if (!response.ok || page.environment !== 'uat' || page.version !== 2 ||
+    if (page.environment !== 'uat' || page.version !== 2 ||
       page.customerReporting !== false || page.deliveryAuthorized !== false)
       throw new Error('UAT activity is unavailable. No activity or email outcome was inferred.');
     return page;

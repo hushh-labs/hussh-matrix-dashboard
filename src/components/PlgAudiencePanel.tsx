@@ -81,6 +81,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
   const resultCoverage = data ? outcomeCoverage(data) : null;
   const selectableAgents = catalog?.agents.filter((agent) =>
     includeTechnicalAgents || (agent.public && agent.available) || agent.id === filters.agentId);
+  const catalogReady = Boolean(selectableAgents?.length);
   return <section className="min-w-0 space-y-5" aria-label="Agent people">
     <div className={cn(dashboardCard, 'p-5 sm:p-6')}>
       <h3 className="text-lg font-semibold text-ink">Users and agent drop-offs</h3>
@@ -88,26 +89,28 @@ export function PlgAudiencePanel({ state, load, openContact }: {
       <p className="mt-2 text-xs leading-5 text-muted">{data?.environment === 'uat'
         ? 'UAT registered accounts include team and test accounts. These records are separate from Production.'
         : data?.environment === 'production' ? 'Production account counts exclude confirmed staff, test and reviewer accounts.' : 'The connected environment is shown when the directory loads.'} Accounts are distinct; they are not proven unique people.</p>
+      {error && <p role="alert" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">{error}</p>}
+      {!catalogReady && !error && <p role="status" className="mt-4 text-sm text-muted">Loading the connected agent catalog. Agent and user filters will be available when it loads.</p>}
       <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="grid gap-1.5 text-xs font-semibold text-muted">Agent<select className={control} value={filters.agentId} onChange={(e) => change({ agentId: e.target.value as PlgAudienceFilters['agentId'] })}>
-          {!catalog?.agents.some((a) => a.id === 'agent_one') && <option value="agent_one">One</option>}
+        <label className="grid gap-1.5 text-xs font-semibold text-muted">Agent<select className={control} disabled={!catalogReady} value={catalogReady ? filters.agentId : ''} onChange={(e) => change({ agentId: e.target.value as PlgAudienceFilters['agentId'] })}>
+          {!catalogReady && <option value="">{error ? 'Agents unavailable' : 'Loading agents…'}</option>}
           {selectableAgents?.map((a) => <option key={a.id} value={a.id}>{a.label}{a.public ? a.available ? '' : ' (unavailable)' : ' (internal)'}</option>)}
         </select></label>
-        <label className="grid gap-1.5 text-xs font-semibold text-muted">Task status<select className={control} value={filters.segment} onChange={(e) => change({ segment: e.target.value as PlgAudienceFilters['segment'] })}>
+        <label className="grid gap-1.5 text-xs font-semibold text-muted">Task status<select className={control} disabled={!catalogReady} value={filters.segment} onChange={(e) => change({ segment: e.target.value as PlgAudienceFilters['segment'] })}>
           <option value="all">All registered contacts</option><option value="possible_incomplete">Possible incomplete attempts</option>
           <option value="failed">Observed failures</option><option value="blocked">Blocked attempts</option><option value="cancelled">Cancelled attempts</option>
           <option value="returned">Return observations</option><option value="verified">Verified value observed</option>
           <option value="unknown">Unknown or partial evidence</option><option value="in_progress">Recent starts</option>
         </select></label>
-        <label className="grid gap-1.5 text-xs font-semibold text-muted">Search name, email or phone<input className={control} value={filters.query} maxLength={100} onChange={(e) => change({ query: e.target.value })} placeholder="Name, email or +country code" /></label>
+        <label className="grid gap-1.5 text-xs font-semibold text-muted">Search name, email or phone<input className={control} disabled={!catalogReady} value={filters.query} maxLength={100} onChange={(e) => change({ query: e.target.value })} placeholder="Name, email or +country code" /></label>
         {filters.segment === 'possible_incomplete' && <label className="grid gap-1.5 text-xs font-semibold text-muted">Time since start<select className={control} value={filters.graceMinutes} onChange={(e) => change({ graceMinutes: Number(e.target.value) })}>
           <option value={15}>15 minutes</option><option value={60}>1 hour</option><option value={240}>4 hours</option><option value={1440}>24 hours</option>
         </select></label>}
-        <button className={cn(button, 'sm:col-span-2 lg:col-span-1')} disabled={busy} type="submit">{busy ? 'Loading people…' : 'Apply filters'}</button>
+        <button className={cn(button, 'sm:col-span-2 lg:col-span-1')} disabled={busy} type="submit">{busy ? 'Loading people…' : !catalogReady && error ? 'Retry connection' : 'Apply filters'}</button>
         {busy && <button className={button} type="button" onClick={pause}>Pause search</button>}
         <button className={button} type="button" disabled={busy} onClick={() => change(defaults)}>Reset filters</button>
       </form>
-      <label className="mt-4 flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={includeTechnicalAgents} onChange={(e) => setIncludeTechnicalAgents(e.target.checked)} />Include internal and unavailable agents</label>
+      <label className="mt-4 flex items-center gap-2 text-xs text-muted"><input type="checkbox" disabled={!catalogReady} checked={includeTechnicalAgents} onChange={(e) => setIncludeTechnicalAgents(e.target.checked)} />Include internal and unavailable agents</label>
       {dirty && <p role="status" className="mt-4 text-sm font-medium text-ink">Updating results…</p>}
       {selectedAgent && (selectedAgent.outcome ? selectedAgent.outcome.status !== 'supported' :
         !['agent_personal_information', 'agent_email'].includes(selectedAgent.id)) && <div role="status" className="mt-4 rounded-xl border border-stroke bg-canvas p-4 text-sm text-ink">
@@ -116,7 +119,6 @@ export function PlgAudiencePanel({ state, load, openContact }: {
       <details className="mt-4 text-xs leading-5 text-muted"><summary className="cursor-pointer font-medium text-ink">How to read activity and completions</summary><p className="mt-2">A return means an execution was observed. A verified completion requires the agent's specific saved or provider-confirmed result. Possible incomplete means a start has no matching finish after the selected interval; it may still be running or missing telemetry. App and server observations can overlap, so their counts are not unique attempts. One's execution counts cover One itself, while its supported completion count combines distinct domain outcomes.</p>
         {selectedAgent?.outcome && <p className="mt-2"><strong>Completion definition for {selectedAgent.label}:</strong> {selectedAgent.outcome.label}. {selectedAgent.outcome.reason}</p>}
       </details>
-      {error && <p role="alert" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">{error}</p>}
       {busy && <p role="status" className="mt-4 text-sm text-muted">{scanned ? `Searching more accounts… ${scanned} checked so far.` : 'Loading registered accounts…'}</p>}
       {paused && <p role="status" className="mt-4 text-sm text-muted">Search paused. {data?.nextCursor ? 'Continue with the next source page below.' : 'Apply filters to start again.'}</p>}
     </div>
