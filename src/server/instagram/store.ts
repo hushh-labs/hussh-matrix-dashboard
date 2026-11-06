@@ -1,4 +1,5 @@
-import { BigQuery } from '@google-cloud/bigquery';
+import type { BigQuery, Query } from '@google-cloud/bigquery';
+import { guardedBigQuery } from '../bigquery-cost-control';
 import { createHash } from 'node:crypto';
 import type { AccountProfile, InstagramMedia, MediaInventory, MediaObservation, MediaInsightName, ReachObservation, AccountInsightName, AccountWindowDays, InsightStatus } from './client';
 
@@ -68,7 +69,7 @@ export class BigQueryInstagramStore implements InstagramStore {
   constructor(project = process.env.INSTAGRAM_BQ_PROJECT || 'hushh-ai-prod', dataset = process.env.INSTAGRAM_BQ_DATASET || 'instagram_analytics', jobProject = process.env.BQ_JOB_PROJECT || project, bigquery?: Pick<BigQuery, 'query'>) {
     if (![project, dataset, jobProject].every((id) => /^[a-zA-Z][a-zA-Z0-9_-]{2,62}$/.test(id))) throw new Error('Invalid Instagram BigQuery identifier');
     this.prefix = `\`${project}.${dataset}`;
-    this.bq = bigquery || new BigQuery({ projectId: jobProject });
+    this.bq = bigquery || { query: (request: unknown) => guardedBigQuery(jobProject, request as Query) } as Pick<BigQuery, 'query'>;
   }
   private table(name: string): string { return `${this.prefix}.${name}\``; }
   private async query(query: string, params: Record<string, unknown> = {}): Promise<any[]> {

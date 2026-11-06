@@ -3,7 +3,7 @@ export interface MetricsSnapshot<T> { data: T; fetchedAt: number; updatedAt: str
 const values = new Map<string, MetricsSnapshot<unknown>>();
 const pending = new Map<string, Promise<MetricsSnapshot<unknown>>>();
 const MAX_ENTRIES = 48;
-const MAX_AGE_MS = 10 * 60_000;
+const MAX_AGE_MS = 30 * 60_000;
 
 let generation = 0;
 export function clearMetricsCache() { generation++; values.clear(); pending.clear(); }
@@ -14,9 +14,9 @@ export function peekMetrics<T>(url: string | null): MetricsSnapshot<T> | null {
   return hit as MetricsSnapshot<T>;
 }
 
-export async function readMetrics<T>(url: string, options: { refresh?: boolean; network?: boolean } = {}): Promise<MetricsSnapshot<T>> {
+export async function readMetrics<T>(url: string, options: { refresh?: boolean } = {}): Promise<MetricsSnapshot<T>> {
   const existing = peekMetrics<T>(url);
-  if (!options.refresh && !options.network && existing && Date.now() - existing.fetchedAt < 30_000) return existing;
+  if (!options.refresh && existing) return existing;
   const running = pending.get(url);
   if (running) return running as Promise<MetricsSnapshot<T>>;
   const requestGeneration = generation;
@@ -41,12 +41,4 @@ export async function readMetrics<T>(url: string, options: { refresh?: boolean; 
   })().finally(() => { if (pending.get(url) === request) pending.delete(url); });
   pending.set(url, request);
   return request;
-}
-
-export async function prefetchMetrics(urls: string[]) {
-  // A single worker avoids a burst of expensive queries on older deployments.
-  for (const url of urls) {
-    if (peekMetrics(url)) continue;
-    try { await readMetrics(url); } catch { /* An optional prefetch must not block the page. */ }
-  }
 }

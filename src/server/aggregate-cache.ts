@@ -1,12 +1,11 @@
-/** Bounded aggregate snapshots. Auth remains outside this cache. */
+/** Request-driven aggregate snapshots. Auth remains outside this cache. */
 export class AggregateCache<T> {
-  private entries = new Map<string, { value: T; at: number; usedAt: number; load: () => Promise<T> }>();
+  private entries = new Map<string, { value: T; at: number }>();
   private pending = new Map<string, Promise<{ value: T; at: number }>>();
   private retryAt = new Map<string, number>();
-  private refreshing = false;
 
   constructor(private options: {
-    freshMs: number; maxAgeMs: number; maxEntries: number; now?: () => number;
+    maxAgeMs: number; maxEntries: number; now?: () => number;
   }) {}
 
   private now() { return this.options.now?.() ?? Date.now(); }
@@ -26,7 +25,7 @@ export class AggregateCache<T> {
         }
       }
       this.entries.delete(key);
-      this.entries.set(key, { value, at, usedAt: previous?.usedAt ?? at, load: loader });
+      this.entries.set(key, { value, at });
       this.retryAt.delete(key);
       return { value, at };
     }).catch(error => {
@@ -41,45 +40,23 @@ export class AggregateCache<T> {
   async read(key: string, loader: () => Promise<T>, force = false) {
     const now = this.now();
     const hit = this.entries.get(key);
-    if (hit && now - hit.at <= this.options.maxAgeMs) {
-      hit.usedAt = now;
-      hit.load = loader;
+    if (!force && hit && now - hit.at <= this.options.maxAgeMs) {
       this.entries.delete(key);
       this.entries.set(key, hit);
-      if ((force || now - hit.at >= this.options.freshMs) && (this.retryAt.get(key) ?? 0) <= now) {
-        void this.load(key, loader).catch(() => {});
-      }
-      return { value: hit.value, at: hit.at, state: this.pending.has(key) ? 'REFRESHING' : 'HIT', refreshing: this.pending.has(key), refreshError: (this.retryAt.get(key) ?? 0) > now };
+      return { ...hit, state: 'HIT', refreshing: false, refreshError: (this.retryAt.get(key) ?? 0) > now };
     }
     const joined = this.pending.has(key);
-    const result = await this.load(key, loader);
-    return { ...result, state: joined ? 'COALESCED' : 'MISS', refreshing: false, refreshError: false };
-  }
-
-  async refreshActive() {
-    if (this.refreshing) return;
-    this.refreshing = true;
     try {
-    const now = this.now();
-    const due = [...this.entries.entries()].filter(([key, entry]) =>
-      now - entry.usedAt <= 120_000 && now - entry.at >= this.options.freshMs
-      && !this.pending.has(key) && (this.retryAt.get(key) ?? 0) <= now,
-    );
-    // Avoid multiplying dozens of warehouse jobs for every active range at once.
-    let cursor = 0;
-    await Promise.all([0, 1].map(async () => {
-      while (cursor < due.length) {
-        const [key, entry] = due[cursor++];
-        try { await this.load(key, entry.load); } catch { /* Preserve the dated snapshot. */ }
+      const result = await this.load(key, loader);
+      return { ...result, state: joined ? 'COALESCED' : force ? 'REFRESHED' : 'MISS', refreshing: false, refreshError: false };
+    } catch (error) {
+      // Explicit refresh waits for the result. Keep a valid dated snapshot on
+      // failure; never schedule a retry or start work behind a cache hit.
+      if (hit && this.now() - hit.at <= this.options.maxAgeMs) {
+        return { ...hit, state: 'HIT', refreshing: false, refreshError: true };
       }
-    }));
-    } finally { this.refreshing = false; }
-  }
-
-  async warm(key: string, loader: () => Promise<T>) {
-    const hit = this.entries.get(key);
-    if (hit) hit.usedAt = this.now();
-    if (!hit || this.now() - hit.at >= this.options.freshMs) await this.load(key, loader);
+      throw error;
+    }
   }
 
   get size() { return this.entries.size; }

@@ -818,8 +818,8 @@ function buildFreshnessFromSourceCards(
 ): ProductFreshness | null {
   if (!cards?.length) return null;
   return {
-    mode: 'polling',
-    refreshIntervalSeconds: 30,
+    mode: 'manual',
+    refreshIntervalSeconds: 0,
     fetchedAt,
     sources: cards.map((card) => ({
       key: `${title}_${card.key}`,

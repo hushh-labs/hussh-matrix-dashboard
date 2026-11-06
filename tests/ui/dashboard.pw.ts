@@ -26,6 +26,28 @@ async function assertFits(page: Page) {
   }
 }
 
+test('idle reports do not poll or prefetch; Refresh requests only the selected report', async ({ page }) => {
+  await page.clock.install();
+  await mockDashboard(page);
+  const requests: Array<{ url: string; refresh: string | undefined }> = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.startsWith('/api/analytics/')) {
+      requests.push({ url: request.url(), refresh: request.headers()['x-metrics-refresh'] });
+    }
+  });
+  await page.goto('/');
+  await expect(page.locator('.founder-kpi')).toHaveCount(4);
+  expect(requests).toHaveLength(1);
+  expect(new URL(requests[0].url).pathname).toBe('/api/analytics/founder');
+  await page.clock.fastForward(20 * 60_000);
+  expect(requests).toHaveLength(1);
+  await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toEqual({ url: requests[0].url, refresh: '1' });
+  await page.clock.fastForward(10 * 60_000);
+  expect(requests).toHaveLength(2);
+});
+
 test('overview stays focused and One reports reveal one subject at a time', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await mockDashboard(page); await page.goto('/');
