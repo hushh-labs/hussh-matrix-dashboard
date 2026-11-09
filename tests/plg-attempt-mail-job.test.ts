@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { attemptMailJobAuthority, verifyAttemptMailJobIdentity, runAttemptMailJob } from '../src/server/plg/attempt-mail-job';
+import { attemptEmailMessage } from '../src/server/plg/attempt-email-worker';
+import type { AttemptGrant } from '../src/server/plg/attempt-email-source';
 
 const config = (lane = 'dev'): NodeJS.ProcessEnv => ({
   PLG_ATTEMPT_MAIL_JOB_ENABLED: 'true', PLG_ATTEMPT_ENVIRONMENT: lane,
@@ -63,5 +65,49 @@ describe('private attempt mail job', () => {
       expect(transport).toHaveBeenCalledTimes(1);
       expect(String(transport.mock.calls[0][0])).toContain('metadata.google.internal/computeMetadata/v1/project/project-id');
     } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+describe('activity email copy', () => {
+  const grant: AttemptGrant = {
+    id: '00000000-0000-4000-8000-000000000001', claimId: '00000000-0000-4000-8000-000000000002',
+    permissionGeneration: '00000000-0000-4000-8000-000000000003', to: 'owner@example.test',
+    agentId: 'agent_personal_information', agentLabel: 'Memory Agent',
+    actionId: 'pkm.prepare_capture', actionLabel: 'Review <sample> & notes',
+    phase: 'returned', observedAt: '2026-11-10T07:42:01.444Z', source: 'client_reported',
+    unsubscribeUrl: 'https://api.uat.hushh.ai/api/one/plg/attempt-email/unsubscribe?token=opaque',
+  };
+
+  it.each([
+    ['returned', 'Activity update', 'recorded a response from your agent'],
+    ['failed', 'Attempt couldn’t finish', 'before trying again'],
+    ['cancelled', 'Attempt cancelled', 'recorded a cancellation'],
+    ['blocked', 'Action needs attention', 'could not continue'],
+  ] as const)('renders useful customer copy for %s and keeps the UAT links', (phase, title, detail) => {
+    const { delivery, message } = attemptEmailMessage({ ...grant, phase }, 'uat');
+    expect(delivery).toEqual({ id: grant.id, subject: `Memory Agent: ${title}` });
+    const prose = message.text.split('\n\nOpen One:')[0];
+    expect(prose).toContain(grant.actionLabel);
+    expect(prose).toContain('UTC');
+    expect(prose).toContain(detail);
+    expect(prose).toContain('turned on Activity emails in One');
+    expect(prose).not.toMatch(/\b(?:UAT|test|testing)\b/i);
+    expect(message.html.replace(/<[^>]*>/g, '')).not.toMatch(/\b(?:UAT|test|testing)\b/i);
+    expect(message.html).toContain('Review &lt;sample&gt; &amp; notes');
+    expect(message.html).toContain('href="https://uat.one.hussh.ai"');
+    expect(message.text).toContain('Open One: https://uat.one.hussh.ai');
+    expect(message.text).toContain('https://uat.one.hussh.ai/one/profile/account');
+    expect(message.headers).toEqual({ 'List-Unsubscribe': `<${grant.unsubscribeUrl}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
+  });
+
+  it.each([
+    ['dev', '[DEV] Memory Agent: a response was reported', 'https://dev.one.hussh.ai'],
+    ['production', 'Memory Agent: a response was reported', 'https://one.hussh.ai'],
+  ] as const)('preserves existing %s copy and routing', (environment, subject, origin) => {
+    const result = attemptEmailMessage(grant, environment);
+    expect(result.delivery.subject).toBe(subject);
+    expect(result.message.text).toContain(`Reported at ${grant.observedAt}`);
+    expect(result.message.text).toContain(`${origin}/one/profile/account`);
   });
 });
