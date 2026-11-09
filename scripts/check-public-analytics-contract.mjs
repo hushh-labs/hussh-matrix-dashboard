@@ -3,6 +3,7 @@ import { oneAccountSummaryIssues } from "../src/server/one-account-scope.mjs";
 import { registrationTotalsIssues } from "../src/server/one-registration-totals.mjs";
 
 const args = process.argv.slice(2);
+const bigQueryOff = args.includes('--bigquery-off');
 const valueAfter = (flag, fallback) => {
   const index = args.indexOf(flag);
   if (index >= 0 && args[index + 1]) return args[index + 1];
@@ -236,7 +237,13 @@ async function fetchJson(path, maxBytes) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
   try {
-    const response = await fetch(`${baseUrl}${path}?${query}`, { signal: controller.signal });
+    const url = new URL(`${baseUrl}${path}`);
+    if (path !== '/api/health') url.search = query.toString();
+    if (bigQueryOff && path === '/api/analytics/all') url.searchParams.set('view', 'one');
+    const response = await fetch(url, { signal: controller.signal, redirect: bigQueryOff ? 'error' : 'follow' });
+    if (bigQueryOff && !/\bno-store\b/.test(response.headers.get('cache-control') || '')) {
+      throw new Error(`${path} must remain private and uncached`);
+    }
     const text = await response.text();
     if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}`);
     if (Buffer.byteLength(text) > maxBytes) throw new Error(`${path} payload ${Buffer.byteLength(text)} bytes exceeds ${maxBytes}`);
@@ -248,16 +255,29 @@ async function fetchJson(path, maxBytes) {
 
 const checks = [];
 const failures = [];
-for (const spec of [
+if (bigQueryOff) {
+  try {
+    const { data } = await fetchJson('/api/health', 16_384);
+    if (data?.status !== 'ok') throw new Error('Expected healthy authenticated dashboard');
+    checks.push({ endpoint: '/api/health' });
+  } catch (error) {
+    failures.push(`/api/health: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+const routes = [
   { path: '/api/analytics/one', maxBytes: maxOneBytes },
   { path: '/api/analytics/one/app', maxBytes: maxOneBytes },
   { path: '/api/analytics/all', maxBytes: maxAllBytes },
-]) {
+];
+for (const spec of bigQueryOff ? routes.slice(-1) : routes) {
   try {
     const result = await fetchJson(spec.path, spec.maxBytes);
     const findings = [];
     inspect(result.data, '$', findings);
     const one = spec.path === '/api/analytics/all' ? result.data?.one?.data : result.data?.data;
+    if (bigQueryOff && (one?.production?.available !== false || one?.uat?.available !== false)) {
+      findings.push('Expected explicit unavailable warehouse summaries for production and UAT');
+    }
     assertOneSummary(one?.production, `${spec.path}.production`, 'one.hushh.ai', findings, 'production');
     assertOneSummary(one?.uat, `${spec.path}.uat`, 'uat.one.hushh.ai', findings, 'uat');
     if (one?.registrations) findings.push(...registrationTotalsIssues(one.registrations).map(issue => `${spec.path}.registrations: ${issue}`));

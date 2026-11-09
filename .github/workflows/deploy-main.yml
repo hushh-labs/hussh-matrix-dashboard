@@ -137,8 +137,12 @@ jobs:
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
-        with:
-          install_components: bq
+
+      - name: Refuse a BigQuery-enabled production template
+        run: |
+          set -euo pipefail
+          gcloud run services describe "${SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --format=json \
+            | node scripts/check-release-bigquery-off.mjs
 
       - name: Build container image
         run: |
@@ -372,10 +376,11 @@ jobs:
               process.stdin.on("end", () => {
                 const service = JSON.parse(input);
                 const candidate = (service.status?.traffic ?? [])
-                  .find((entry) => entry.tag === "release-candidate");
+                  .find((entry) => entry.tag === "release-candidate"
+                    && entry.revisionName === process.argv[1] && !entry.percent);
                 if (candidate?.url) process.stdout.write(candidate.url);
               });
-            ')"
+            ' "${CANDIDATE_REVISION}")"
           if [[ -z "${CANDIDATE_URL}" ]]; then
             echo "The tagged, zero-traffic candidate URL is unavailable."
             exit 1
@@ -400,6 +405,7 @@ jobs:
             'GEMINI_METRICS_CHAT_MODEL',
             'METRICS_CHAT_REQUEST_TIMEOUT_MS',
             'METRICS_CHAT_CONTEXT_CACHE_SECONDS',
+            'METRICS_BIGQUERY_ENABLED',
             'GOOGLE_CLIENT_ID',
             'GOOGLE_REDIRECT_URI',
             'ALLOWED_EMAIL_DOMAINS',
@@ -525,9 +531,13 @@ jobs:
           console.log(`Latest ready revision: ${service.status?.latestReadyRevisionName || 'unknown'}`);
           NODE
 
-      # Anonymous API probes must no longer expect public 200 responses after
-      # Google sign-in is enforced. Check the access boundary, then independently
-      # audit the source export without bypassing the live sign-in requirement.
+      - name: Verify BigQuery is off on the exact candidate before HTTP probes
+        run: |
+          set -euo pipefail
+          gcloud run revisions describe "${CANDIDATE_REVISION}" --project="${PROJECT_ID}" --region="${REGION}" --format=json \
+            | node scripts/check-release-bigquery-off.mjs "${IMAGE}"
+
+      # Verify anonymous access and OAuth configuration without running source audits.
       - name: Verify production Google sign-in boundary
         env:
           METRICS_DASHBOARD_URL: ${{ env.CANDIDATE_URL }}
@@ -535,43 +545,14 @@ jobs:
 
       # Build/deploy and verification can outlive the GitHub OIDC assertion.
       # Renew the same identity at each phase; never extend credential lifetime.
-      - name: Refresh cloud authentication for core API checks
+      - name: Refresh cloud authentication for signed API checks
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
-      - name: Verify authenticated product APIs
-        run: bash scripts/run-release-api-phase.sh core
-
-      - name: Refresh cloud authentication for customer KPI checks
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-
-      - name: Verify customer KPI reconciliations
-        run: bash scripts/run-release-api-phase.sh customers
-
-      - name: Refresh cloud authentication for aggregate contracts
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-
-      - name: Verify aggregate and historical contracts
-        run: bash scripts/run-release-api-phase.sh contracts
-
-      - name: Refresh cloud authentication for source audit
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-
-      - name: Reconcile One source data without dashboard access
-        env:
-          BQ_JOB_PROJECT: ${{ env.PROJECT_ID }}
-        run: node scripts/check-one-metrics-reconciliation.mjs --skip-dashboard
+      - name: Verify authenticated dashboard with BigQuery disabled
+        run: bash scripts/run-release-api-phase.sh bigquery-off
 
       - name: Confirm live traffic was not changed
         run: |
