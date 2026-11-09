@@ -25,7 +25,7 @@ export function attemptEmailMessage(grant: AttemptGrant, environment: AttemptEnv
   const body = copy
     ? `${grant.actionLabel}\nRecorded ${new Intl.DateTimeFormat('en', {
       dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
-    }).format(observedAt)} UTC\n\n${copy.detail}\n\n` +
+    }).format(observedAt)} UTC\n\n${copy.detail} For actions in a connected service, check that service to confirm the result.\n\n` +
       'You’re receiving this because you turned on Activity emails in One.'
     : `${grant.agentLabel}\n${grant.actionLabel}\n${outcome}\nReported at ${observedAt.toISOString()}\n\n` +
       'You chose an email for each reported attempt. This receipt reflects an application report; it does not confirm an external action succeeded. Prompts, arguments and results are not included.';

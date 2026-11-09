@@ -565,7 +565,8 @@ describe('Opted-in owner attempt delivery through the existing mail transport', 
     const bodies = [...mime.matchAll(/Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)\r\n--/g)]
       .map(m => Buffer.from(m[1].replace(/\s/g, ''), 'base64').toString()).join('\n');
     expect(bodies).toContain('Ask a question');
-    expect(bodies).toContain('does not confirm an external action succeeded');
+    expect(bodies).toContain(environment === 'uat' ? 'check that service to confirm the result' :
+      'does not confirm an external action succeeded');
     expect(bodies).toContain(`https://${environment}.one.hussh.ai`);
     expect(bodies).not.toContain('must never leak');
     expect(f.settlements[0]).toMatchObject({ providerId: 'attemptAccepted123', notSubmitted: false });
