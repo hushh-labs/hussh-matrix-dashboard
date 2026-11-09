@@ -96,13 +96,22 @@ CI's existing native Firestore job additionally runs
 It tests atomic contention, idempotent reservations, restart persistence and UTC
 rollover against an isolated demo database.
 
-Only after owner authorization: review the saved report, replace expensive source
-queries, confirm no inherited IAM bypasses, verify the database-scoped ledger role,
-and wire an explicitly approved enable flag through Secret Manager under the
-repository's runtime-config rules. Deploy and verify the exact reviewed revision
-through the canonical release workflow while preserving the stop controls until
-the approved restart. Releasing workflow, query access and scaling controls are
-separate deliberate operator actions, never automatic effects of this PR.
+An authorized dashboard restart uses the canonical BigQuery-off production
+release. Its pre-build and candidate checks reject an enabled or secret-backed
+query flag. Anonymous OAuth checks and signed dashboard health and aggregate
+checks still gate promotion. The production release does not invoke standalone
+warehouse reconciliation scripts, which use the deploy identity and fall outside
+the runtime query budget.
+
+Keep ingestion schedules paused and the dashboard's query-job grant removed for
+this release. Cloud Run's manual zero scaling still permits requests to revisions
+reachable only through traffic tags. Remove the candidate tag after promotion
+or after a failed release while the service is held. Verify the serving split
+and scaling before changing either.
+
+Restoring query access is a separate decision. Review expensive queries, confirm
+effective IAM, verify the database-scoped ledger role and agree to bounded
+reporting and reconciliation budgets before restoring access.
 
 References: [BigQuery cost controls](https://docs.cloud.google.com/bigquery/docs/best-practices-costs),
 [script job options](https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/Job#scriptoptions),

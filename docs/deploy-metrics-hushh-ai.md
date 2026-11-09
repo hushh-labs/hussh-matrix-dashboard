@@ -90,25 +90,18 @@ The workflow gates deployment with `npm ci`, `npm run lint`,
 `npm run build`, `git diff --check`, and a tracked-file secret pattern scan.
 It builds a commit-SHA-tagged image, deploys `hushh-matrix-dashboard` at 0%
 traffic, verifies runtime env vars are Secret Manager-backed, and runs
-anonymous auth-boundary and signed-session product/KPI checks against the
+anonymous auth-boundary and signed-session dashboard checks against the
 tagged candidate. A signed QA session proves the dashboard API contract, not
 the Google authorization-code callback.
 
-Production KPI reconciliation also requires the private signed customer-cohort
-authority (`PLG_ONE_AUDIENCE_URL` and `PLG_ONE_AUDIENCE_SECRET`). Its membership
-filters expected GA4 events before aggregation, including iOS history and
-platform comparisons. Missing or incomplete membership fails verification;
-UAT keeps its separate surface. iOS and platform probes default to the latest
-finalized daily export so cached dashboard counts are compared with a stable
-source; an explicit `--end` remains available. The `--skip-dashboard` source audit still
-describes full capture diagnostics and does not assert customer adoption.
-
-Verification refreshes the same GitHub OIDC cloud identity before core APIs,
-customer KPI comparisons, aggregate/historical contracts and the source audit.
-Build/deploy time must not consume a verification phase's short-lived assertion.
-`scripts/run-release-api-phase.sh` retains every protected check and creates a
-fresh in-memory QA session per group. No credential lifetime or IAM grant is
-expanded; QA cookies and audience secrets are not persisted between shell phases.
+Production releases use BigQuery-off verification. The workflow checks the
+existing service template before the build and the exact candidate revision
+before HTTP probes. Both must leave `METRICS_BIGQUERY_ENABLED` unset or set it to
+the literal `false`. The workflow renews the same GitHub OIDC identity before
+creating an in-memory QA session. The signed probe verifies private health and
+aggregate responses, with warehouse-backed summaries explicitly unavailable.
+Source reconciliation scripts remain separate operator tools and require a
+reviewed query budget before use. See [BigQuery containment](./bigquery-cost-containment.md).
 
 Before deploying, it snapshots the complete Cloud Run serving traffic split.
 The zero-traffic workflow never writes a serving allocation, including after a
@@ -130,10 +123,9 @@ checks fail. Record the verified revision and image. The five personal Gmail
 accounts are authorized by the server allowlist, not by the published External
 Google consent screen alone.
 
-The workflow runs `test:prod:auth` anonymously and the metrics-flow, Hushh AI,
-One, location, KPI, public-contract, and reconciliation probes with a
-short-lived signed QA cookie against its tagged candidate URL. Repeat the
-auth-boundary probe on the custom domain after traffic promotion, then perform
+The workflow runs `test:prod:auth` anonymously and the BigQuery-off dashboard
+contract with a short-lived signed QA cookie against its tagged candidate URL.
+Repeat the auth-boundary probe on the custom domain after traffic promotion, then perform
 the interactive approved-account Google login and inspect the authenticated
 dashboard. Do not mistake a synthetic cookie for a successful OAuth callback.
 
