@@ -6,18 +6,35 @@ import { renderPlgEmailHtml } from './email-layout';
 import type { AttemptEnvironment, AttemptGrant, OneAttemptEmails } from './attempt-email-source';
 import type { AttemptMailControl } from './attempt-email-control';
 
+const uatActivityCopy = {
+  returned: { title: 'Activity update', detail: 'One recorded a response from your agent. Open One to review it.' },
+  failed: { title: 'Attempt couldn’t finish', detail: 'One recorded a failure. Review what happened in One before trying again.' },
+  cancelled: { title: 'Attempt cancelled', detail: 'One recorded a cancellation. Open One when you’re ready to start again.' },
+  blocked: { title: 'Action needs attention', detail: 'One recorded that this attempt could not continue. Open One to see what needs your attention.' },
+} satisfies Record<AttemptGrant['phase'], { title: string; detail: string }>;
+
 /** Fixed metadata only. There is no freeform body, address, CC or BCC input. */
 export function attemptEmailMessage(grant: AttemptGrant, environment: AttemptEnvironment) {
   const outcome = { returned: 'A response was reported', failed: 'A failure was reported',
     cancelled: 'Cancellation was reported', blocked: 'The attempt was reported as blocked' }[grant.phase];
-  const subject = `${environment === 'production' ? '' : `[${environment.toUpperCase()}] `}${grant.agentLabel}: ${outcome.toLowerCase()}`;
-  const body = `${grant.agentLabel}\n${grant.actionLabel}\n${outcome}\nReported at ${new Date(grant.observedAt).toISOString()}\n\n` +
-    'You chose an email for each reported attempt. This receipt reflects an application report; it does not confirm an external action succeeded. Prompts, arguments and results are not included.';
+  const copy = environment === 'uat' ? uatActivityCopy[grant.phase] : null;
+  const subject = copy
+    ? `${grant.agentLabel}: ${copy.title}`
+    : `${environment === 'dev' ? '[DEV] ' : ''}${grant.agentLabel}: ${outcome.toLowerCase()}`;
+  const observedAt = new Date(grant.observedAt);
+  const body = copy
+    ? `${grant.actionLabel}\nRecorded ${new Intl.DateTimeFormat('en', {
+      dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
+    }).format(observedAt)} UTC\n\n${copy.detail} For actions in a connected service, check that service to confirm the result.\n\n` +
+      'You’re receiving this because you turned on Activity emails in One.'
+    : `${grant.agentLabel}\n${grant.actionLabel}\n${outcome}\nReported at ${observedAt.toISOString()}\n\n` +
+      'You chose an email for each reported attempt. This receipt reflects an application report; it does not confirm an external action succeeded. Prompts, arguments and results are not included.';
   const origin = { dev: 'https://dev.one.hussh.ai', uat: 'https://uat.one.hussh.ai', production: 'https://one.hussh.ai' }[environment];
   const manage = `${origin}/one/profile/account`;
   return { delivery: { id: grant.id, subject }, message: {
-    text: `${subject}\n\n${body}\n\nActivity email preferences: ${manage}\nStop these emails: ${grant.unsubscribeUrl}`,
-    html: renderPlgEmailHtml({ subject, body, ctaLabel: 'Open your private agent', ctaUrl: origin,
+    text: `${subject}\n\n${body}\n\n${copy ? `Open One: ${origin}\n` : ''}` +
+      `Activity email preferences: ${manage}\nStop these emails: ${grant.unsubscribeUrl}`,
+    html: renderPlgEmailHtml({ subject, body, ctaLabel: copy ? 'Open One' : 'Open your private agent', ctaUrl: origin,
       preferences: { manage, unsubscribe: grant.unsubscribeUrl } }),
     headers: { 'List-Unsubscribe': `<${grant.unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
   } };
