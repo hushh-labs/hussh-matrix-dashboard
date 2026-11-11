@@ -13,6 +13,20 @@ const uatActivityCopy = {
   blocked: { title: 'Action needs attention', detail: 'One recorded that this attempt could not continue. Open One to see what needs your attention.' },
 } satisfies Record<AttemptGrant['phase'], { title: string; detail: string }>;
 
+// One's signed-in agent pages. Route by catalog ID so neither the action nor
+// the recipient's metadata can supply a URL or a private resource identifier.
+const uatActivityDestinations = new Map<string, readonly [label: string, path: string]>([
+  ['agent_calendar', ['Open Calendar', '/one/calendar']],
+  ['agent_documents', ['Open document requests', '/one/consent?tab=requests']],
+  ['agent_email', ['Open Mail', '/one/gmail']],
+  ['agent_kai', ['Open Finance', '/one/kai?tab=market']],
+  ['agent_kyc', ['Open Identity', '/one/email']],
+  ['agent_location', ['Open Location', '/one/location']],
+  ['agent_nav', ['Open Consent', '/one/consent']],
+  ['agent_one', ['Open Agent One', '/']],
+  ['agent_personal_information', ['Open Memory', '/one/pkm']],
+]);
+
 /** Fixed metadata only. There is no freeform body, address, CC or BCC input. */
 export function attemptEmailMessage(grant: AttemptGrant, environment: AttemptEnvironment) {
   const outcome = { returned: 'A response was reported', failed: 'A failure was reported',
@@ -31,10 +45,14 @@ export function attemptEmailMessage(grant: AttemptGrant, environment: AttemptEnv
       'You chose an email for each reported attempt. This receipt reflects an application report; it does not confirm an external action succeeded. Prompts, arguments and results are not included.';
   const origin = { dev: 'https://dev.one.hussh.ai', uat: 'https://uat.one.hussh.ai', production: 'https://one.hussh.ai' }[environment];
   const manage = `${origin}/one/profile/account`;
+  const [ctaLabel, path] = copy
+    ? uatActivityDestinations.get(grant.agentId) ?? ['Open One', '/one']
+    : ['Open your private agent', ''];
+  const ctaUrl = `${origin}${path}`;
   return { delivery: { id: grant.id, subject }, message: {
-    text: `${subject}\n\n${body}\n\n${copy ? `Open One: ${origin}\n` : ''}` +
+    text: `${subject}\n\n${body}\n\n${copy ? `${ctaLabel}: ${ctaUrl}\n` : ''}` +
       `Activity email preferences: ${manage}\nStop these emails: ${grant.unsubscribeUrl}`,
-    html: renderPlgEmailHtml({ subject, body, ctaLabel: copy ? 'Open One' : 'Open your private agent', ctaUrl: origin,
+    html: renderPlgEmailHtml({ subject, body, ctaLabel, ctaUrl,
       preferences: { manage, unsubscribe: grant.unsubscribeUrl } }),
     headers: { 'List-Unsubscribe': `<${grant.unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
   } };
