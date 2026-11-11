@@ -16,7 +16,7 @@ import { renderPlgEmailHtml } from '../src/server/plg/email-layout';
 import { renderPlgTestPreview } from '../src/server/plg/test-preview';
 import { createHmac } from 'node:crypto';
 import { OneAttemptEmails } from '../src/server/plg/attempt-email-source';
-import { AttemptMailControl } from '../src/server/plg/attempt-email-control';
+import { AttemptMailControl, AttemptMailCycleBusy } from '../src/server/plg/attempt-email-control';
 import { runAttemptEmailCycle } from '../src/server/plg/attempt-email-worker';
 import { registerAttemptEmailRoute } from '../src/server/plg/attempt-email-routes';
 
@@ -615,8 +615,11 @@ describe('Opted-in owner attempt delivery through the existing mail transport', 
   it('shares disconnection authority and excludes another running cycle', async () => {
     const f = attemptFixture();
     await f.scoped.acquire('active', Date.now());
-    await expect(runAttemptEmailCycle(f.source, f.sender, f.scoped)).rejects.toThrow('already running');
+    const active = structuredClone(control.state.attemptEmail?.uat?.cycle);
+    await expect(runAttemptEmailCycle(f.source, f.sender, f.scoped)).rejects.toBeInstanceOf(AttemptMailCycleBusy);
+    expect(control.state.attemptEmail?.uat?.cycle).toEqual(active);
     expect(f.sourceFetch).not.toHaveBeenCalled();
+    expect(f.provider).not.toHaveBeenCalled();
     await f.scoped.transaction(state => { ++state.generation; delete state.connection; });
     expect(control.state.connection).toBeUndefined();
     expect(control.state.feedback?.cursor).toBe('production-cursor');

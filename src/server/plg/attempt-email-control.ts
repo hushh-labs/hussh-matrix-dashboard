@@ -2,6 +2,10 @@ import { PlgError } from './engine';
 import type { AttemptAcknowledgement, AttemptEnvironment } from './attempt-email-source';
 import type { MailControl, MailControlStore } from './google-mail-store';
 
+export class AttemptMailCycleBusy extends PlgError {
+  constructor() { super(409, 'An attempt email cycle is already running.'); }
+}
+
 /** Same mailbox pacing and connection; separate lane feedback and worker lease. */
 export class AttemptMailControl implements MailControlStore {
   constructor(private root: MailControlStore, readonly environment: AttemptEnvironment) {}
@@ -53,7 +57,7 @@ export class AttemptMailControl implements MailControlStore {
     await this.root.transaction(state => {
       state.attemptEmail ??= {};
       const lane = state.attemptEmail[this.environment] ??= {};
-      if (lane.cycle && lane.cycle.until > now) throw new PlgError(409, 'An attempt email cycle is already running.');
+      if (lane.cycle && lane.cycle.until > now) throw new AttemptMailCycleBusy();
       lane.cycle = { id, until: now + 240_000 };
     });
   }
