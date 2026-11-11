@@ -86,7 +86,7 @@ describe('activity email copy', () => {
   ] as const)('renders useful customer copy for %s and keeps the UAT links', (phase, title, detail) => {
     const { delivery, message } = attemptEmailMessage({ ...grant, phase }, 'uat');
     expect(delivery).toEqual({ id: grant.id, subject: `Memory Agent: ${title}` });
-    const prose = message.text.split('\n\nOpen One:')[0];
+    const prose = message.text.split('\n\nOpen Memory:')[0];
     expect(prose).toContain(grant.actionLabel);
     expect(prose).toContain('UTC');
     expect(prose).toContain(detail);
@@ -94,11 +94,32 @@ describe('activity email copy', () => {
     expect(prose).not.toMatch(/\b(?:UAT|test|testing)\b/i);
     expect(message.html.replace(/<[^>]*>/g, '')).not.toMatch(/\b(?:UAT|test|testing)\b/i);
     expect(message.html).toContain('Review &lt;sample&gt; &amp; notes');
-    expect(message.html).toContain('href="https://uat.one.hussh.ai"');
-    expect(message.text).toContain('Open One: https://uat.one.hussh.ai');
+    expect(message.html).toContain('href="https://uat.one.hussh.ai/one/pkm"');
+    expect(message.text).toContain('Open Memory: https://uat.one.hussh.ai/one/pkm');
     expect(message.text).toContain('https://uat.one.hussh.ai/one/profile/account');
     expect(message.headers).toEqual({ 'List-Unsubscribe': `<${grant.unsubscribeUrl}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
+  });
+
+  it.each([
+    ['agent_calendar', 'Open Calendar', '/one/calendar'],
+    ['agent_documents', 'Open document requests', '/one/consent?tab=requests'],
+    ['agent_email', 'Open Mail', '/one/gmail'],
+    ['agent_kai', 'Open Finance', '/one/kai?tab=market'],
+    ['agent_kyc', 'Open Identity', '/one/email'],
+    ['agent_location', 'Open Location', '/one/location'],
+    ['agent_nav', 'Open Consent', '/one/consent'],
+    ['agent_one', 'Open Agent One', '/'],
+    ['agent_personal_information', 'Open Memory', '/one/pkm'],
+    ['__proto__', 'Open One', '/one'],
+  ])('links %s receipts to the fixed UAT destination', (agentId, label, path) => {
+    const { message } = attemptEmailMessage({
+      ...grant, agentId, actionId: 'unknown.action', actionLabel: 'Review activity',
+    }, 'uat');
+    const destination = `https://uat.one.hussh.ai${path}`;
+    expect(message.text).toContain(`${label}: ${destination}\n`);
+    expect(message.html).toContain(`href="${destination}"`);
+    expect(message.html).toContain(`>${label}</a>`);
   });
 
   it.each([
