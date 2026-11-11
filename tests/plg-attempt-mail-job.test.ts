@@ -13,6 +13,35 @@ const config = (lane = 'dev'): NodeJS.ProcessEnv => ({
 });
 
 describe('private attempt mail job', () => {
+  it.each(['overlap', 'failure', 'uncertain'] as const)('reports the correct process result for %s', async outcome => {
+    vi.resetModules();
+    const { AttemptMailCycleBusy } = await import('../src/server/plg/attempt-email-control');
+    vi.doMock('../src/server/plg/attempt-mail-job', () => ({ runAttemptMailJob: async () => {
+      if (outcome === 'overlap') throw new AttemptMailCycleBusy();
+      if (outcome === 'failure') throw new Error('synthetic transport failure');
+      return { accepted: 0, uncertain: 1, deferred: false };
+    } }));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const argv = process.argv, exitCode = process.exitCode;
+    try {
+      process.argv = ['node', 'plg-attempt-mail-job.ts'];
+      process.exitCode = undefined;
+      await import('../scripts/plg-attempt-mail-job');
+      expect(process.exitCode).toBe(outcome === 'overlap' ? undefined : 1);
+      if (outcome === 'overlap') expect(log).toHaveBeenCalledExactlyOnceWith(
+        JSON.stringify({ status: 'skipped', reason: 'cycle_already_running' }));
+      if (outcome === 'failure') expect(error).toHaveBeenCalledExactlyOnceWith(
+        'Private attempt mail job did not confirm completion.');
+    } finally {
+      process.argv = argv;
+      process.exitCode = exitCode;
+      log.mockRestore();
+      error.mockRestore();
+      vi.doUnmock('../src/server/plg/attempt-mail-job');
+    }
+  });
+
   it.each(['dev', 'uat'])('pins %s to its own source and the shared mailbox identity', async lane => {
     const authority = attemptMailJobAuthority(config(lane));
     expect(authority).toMatchObject({ lane, project: 'hushh-ai-prod', database: 'one-plg-production',
