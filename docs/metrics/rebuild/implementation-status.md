@@ -31,6 +31,10 @@ continues.
 - Byte/entry-bounded immutable body cache, checked behind current authority and
   publication identity on every read; runtime requires explicit bounds.
 - One aggregate-source contract adapter and GA4 whole-period report adapter.
+  GA4 requires an explicitly reviewed website stream/hostname scope, filters
+  platform to web and rejects legacy property-wide bindings. Stream/host changes
+  invalidate the source generation. This prevents mixing app streams into website
+  totals; live provider compatibility/count reconciliation is still required.
   Both reserve a durable source-call receipt before I/O. No raw provider payload,
   owner directory or private content persists. Recovery before a journal exists
   can admit the first source call through the current fence. An admitted uncertain
@@ -112,3 +116,4 @@ do not certify native IAM, queues, source accuracy or live behavior.
 
 Implementation is in progress. This is not Ready for QA or a live-data acceptance.
 Detailed runtime/source contract: [collector integration](./collector-integration.md).
+Current source evidence: [14 November inspection](./source-verification-20261114.md).

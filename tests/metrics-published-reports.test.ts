@@ -217,7 +217,8 @@ for (const mode of ['memory', ...(emulator ? ['firestore'] : [])]) {
       const intent = await reader.request(gaRequest, access);
       const c = (await worker.claim(intent.jobId!, digest('ga-worker')))!; let calls = 0;
       const source = new Ga4AcquisitionSource(store, { sourceGeneration: control.sourceGeneration,
-        timeoutMs: 1000, maxResponseBytes: 20_000 }, { propertyId: '123456', timezone: gaRequest.timezone, informationWatermark: now },
+        timeoutMs: 1000, maxResponseBytes: 20_000 }, { propertyId: '123456', timezone: gaRequest.timezone,
+          streamId: '987654321', hostnames: ['www.hushh.ai'], informationWatermark: now },
       async (url, options) => {
         calls++; expect(url).toBe('https://analyticsdata.googleapis.com/v1beta/properties/123456:runReport');
         expect(options.body).not.toHaveProperty('dimensions');

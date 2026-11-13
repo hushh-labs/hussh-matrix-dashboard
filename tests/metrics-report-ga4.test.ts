@@ -1,18 +1,64 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { digest } from '../src/server/reports/contracts';
-import { Ga4AcquisitionSource } from '../src/server/reports/sources';
+import { sourceBindingGeneration, validateSourceBinding } from '../src/server/reports/bindings';
+import { Ga4AcquisitionSource, type AggregateFetch } from '../src/server/reports/sources';
 import { collectionFixture } from './helpers/metrics-collection-fixture';
 
 const header = { metadata: { timeZone: 'UTC' }, metricHeaders: ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })) };
+const website = { streamId: '987654321', hostnames: ['hushh.ai', 'www.hushh.ai'] };
 async function gaFixture(data: unknown) {
   const f = collectionFixture(); await f.initialize(); await f.put('controls', 'hushhai.acquisition', f.control);
   const request = { ...f.request, reportId: 'hushhai.acquisition' }, id = (await f.reports.request(request, f.access)).jobId!;
   const job = (await f.worker.claim(id, digest('ga-worker')))!.job;
+  const fetch = vi.fn<AggregateFetch>(async () => Response.json(data));
   const source = new Ga4AcquisitionSource(f.store, { sourceGeneration: f.control.sourceGeneration, timeoutMs: 1000, maxResponseBytes: 20_000 },
-    { propertyId: '123456', timezone: 'UTC', informationWatermark: null }, async () => Response.json(data), f.clock);
-  return { ...f, request, job, source };
+    { ...website, propertyId: '123456', timezone: 'UTC', informationWatermark: null }, fetch, f.clock);
+  return { ...f, request, job, source, fetch };
 }
 describe('GA4 report values and honest freshness', () => {
+  it('counts only the approved website stream and hosts in a mixed app/web property', async () => {
+    const f = await gaFixture({ ...header, rowCount: 0 });
+    await f.source.submit(f.job); await f.source.recover(f.job);
+    expect(f.fetch).toHaveBeenCalledTimes(1);
+    expect(f.fetch.mock.calls[0][1].body).toMatchObject({
+      dimensionFilter: { andGroup: { expressions: [
+        { filter: { fieldName: 'streamId', stringFilter: { matchType: 'EXACT', value: website.streamId, caseSensitive: true } } },
+        { filter: { fieldName: 'platform', stringFilter: { matchType: 'EXACT', value: 'web', caseSensitive: true } } },
+        { filter: { fieldName: 'hostName', inListFilter: { values: website.hostnames, caseSensitive: false } } },
+      ] } },
+    });
+    expect(f.fetch.mock.calls[0][1].body).not.toHaveProperty('dimensions');
+  });
+  it('rejects property-wide and off-site scopes before a source call', () => {
+    const f = collectionFixture(), fetch = vi.fn<AggregateFetch>();
+    const config = { ...website, propertyId: '123456', timezone: 'UTC', informationWatermark: null };
+    for (const bad of [
+      { ...config, streamId: undefined }, { ...config, streamId: 'G-MEASUREMENT' },
+      { ...config, hostnames: undefined }, { ...config, hostnames: [] },
+      { ...config, hostnames: ['uat.hushh.ai'] }, { ...config, hostnames: ['hushh.ai.evil.invalid'] },
+      { ...config, hostnames: ['https://hushh.ai/'] }, { ...config, hostnames: ['hushh.ai', 'hushh.ai'] },
+      { ...config, hostnames: ['www.hushh.ai', 'hushh.ai'] },
+    ]) expect(() => new Ga4AcquisitionSource(f.store,
+      { sourceGeneration: f.control.sourceGeneration, timeoutMs: 1000, maxResponseBytes: 20_000 },
+      bad as typeof config, fetch, f.clock)).toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('requires reviewed website scope in the binding and invalidates changed scope', async () => {
+    const f = await gaFixture({ ...header, rowCount: 0 });
+    const { environment: _environment, secretVersion: _key, kind: _kind, ...common } = f.binding as
+      typeof f.binding & { environment: string; secretVersion: string };
+    const content = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC', ...website };
+    const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };
+    const job = { ...f.job, control: { ...f.job.control, sourceGeneration: binding.sourceGeneration } };
+    expect(validateSourceBinding(binding, job)).toEqual(binding);
+    for (const bad of [{ ...binding, streamId: '987654322' }, { ...binding, hostnames: ['www.hushh.ai'] }]) {
+      expect(sourceBindingGeneration(bad)).not.toBe(binding.sourceGeneration);
+      expect(() => validateSourceBinding(bad, job)).toThrow();
+    }
+    const { streamId: _stream, hostnames: _hosts, ...unscoped } = binding;
+    const legacy = { ...unscoped, sourceGeneration: sourceBindingGeneration(unscoped) };
+    expect(() => validateSourceBinding(legacy, { ...job, control: { ...job.control, sourceGeneration: legacy.sourceGeneration } })).toThrow();
+  });
   it('preserves actual counts without inventing a completeness watermark and reuses publication', async () => {
     const f = await gaFixture({ ...header, rowCount: 1, rows: [{ metricValues: ['5', '3', '4', '1'].map(value => ({ value })) }] });
     const result = (await f.source.submit(f.job))!; await f.worker.publish(f.job, result);

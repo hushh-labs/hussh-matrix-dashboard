@@ -4,6 +4,7 @@ import type { AggregateReportSource } from './collector';
 import { reportPath, type ReportStore } from './store';
 import { providerRetryAfter, SourceRequestFailure } from './source-errors';
 import { withinDeadline } from './deadline';
+import { hasGa4WebsiteScope, type Ga4WebsiteScope } from './bindings';
 
 type SourceCall = { binding: string; state: 'reserved' | 'completed'; result: AggregateResult | null };
 type SourcePolicy = { sourceGeneration: string; timeoutMs: number; maxResponseBytes: number };
@@ -81,12 +82,12 @@ abstract class JournaledSource implements AggregateReportSource {
 }
 
 export class Ga4AcquisitionSource extends JournaledSource {
-  constructor(store: ReportStore, policy: SourcePolicy, private config: {
+  constructor(store: ReportStore, policy: SourcePolicy, private config: Ga4WebsiteScope & {
     propertyId: string; timezone: string; informationWatermark: number | null;
   }, private fetch: AggregateFetch, now?: () => number) {
     super(store, policy, now);
-    if (!/^\d{3,20}$/.test(config.propertyId)) throw new ReportError('invalid');
-    this.config = { ...config, timezone: reportingTimezone(config.timezone) };
+    if (!/^\d{3,20}$/.test(config.propertyId) || !hasGa4WebsiteScope(config)) throw new ReportError('invalid');
+    this.config = { ...config, hostnames: [...config.hostnames], timezone: reportingTimezone(config.timezone) };
   }
   protected binding(job: ReportJob) { return digest([job.key, this.config, this.policy.sourceGeneration]); }
   protected async collect(job: ReportJob): Promise<AggregateResult> {
@@ -95,6 +96,11 @@ export class Ga4AcquisitionSource extends JournaledSource {
     const data = await this.boundedJson(await this.fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${this.config.propertyId}:runReport`, {
       body: { dateRanges: [{ startDate: job.request.startDate, endDate: job.request.endDate }],
         metrics: [{ name: 'sessions' }, { name: 'activeUsers' }, { name: 'engagedSessions' }, { name: 'keyEvents' }],
+        dimensionFilter: { andGroup: { expressions: [
+          { filter: { fieldName: 'streamId', stringFilter: { matchType: 'EXACT', value: this.config.streamId, caseSensitive: true } } },
+          { filter: { fieldName: 'platform', stringFilter: { matchType: 'EXACT', value: 'web', caseSensitive: true } } },
+          { filter: { fieldName: 'hostName', inListFilter: { values: this.config.hostnames, caseSensitive: false } } },
+        ] } },
         returnPropertyQuota: true, limit: '1' }, signal,
     }), signal);
     let propertyTimezone: string;

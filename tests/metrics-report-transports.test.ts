@@ -5,9 +5,35 @@ import { providerRetryAfter } from '../src/server/reports/source-errors';
 import { collectorSourceFactory } from '../src/server/reports/source-factory';
 import { collectionFixture } from './helpers/metrics-collection-fixture';
 import { digest } from '../src/server/reports/contracts';
+import { sourceBindingGeneration } from '../src/server/reports/bindings';
 
 describe('collector-only bounded native transports', () => {
   const signal = () => AbortSignal.timeout(1000);
+  it('carries the approved website scope through the factory and reuses its journal', async () => {
+    const f = collectionFixture(); await f.initialize();
+    const content = { approved: true, enabled: true, reportId: 'hushhai.acquisition' as const, revision: 1,
+      scopeDigest: f.access.scopeDigest, reconciliationDigest: digest('website-reconciliation-fixture'),
+      coverageFrom: '2026-11-01', timeoutMs: 1000, maxResponseBytes: 20_000,
+      kind: 'ga4' as const, propertyId: '123456', timezone: 'UTC', streamId: '987654321', hostnames: ['www.hushh.ai'] };
+    const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };
+    await f.put('controls', content.reportId, { ...f.control, sourceGeneration: binding.sourceGeneration });
+    const request = { ...f.request, reportId: content.reportId };
+    const job = (await f.worker.claim((await f.reports.request(request, f.access)).jobId!, digest('website-worker')))!.job;
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ metadata: { timeZone: 'UTC' }, rowCount: 0,
+      metricHeaders: ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })) }));
+    const credentials = vi.fn(async () => ({ Authorization: 'Bearer synthetic' }));
+    const google = (url: string) => googleAggregateFetch(url, credentials, fetcher);
+    const source = await collectorSourceFactory(f.store, { google, now: f.clock })(job, binding, signal());
+    expect(credentials).not.toHaveBeenCalled();
+    await source.submit(job); await source.recover(job);
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(credentials).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetcher.mock.calls[0][1]!.body as string);
+    expect(body.dimensionFilter.andGroup.expressions).toEqual([
+      { filter: { fieldName: 'streamId', stringFilter: { matchType: 'EXACT', value: binding.streamId, caseSensitive: true } } },
+      { filter: { fieldName: 'platform', stringFilter: { matchType: 'EXACT', value: 'web', caseSensitive: true } } },
+      { filter: { fieldName: 'hostName', inListFilter: { values: ['www.hushh.ai'], caseSensitive: false } } },
+    ]);
+  });
   it('rejects endpoint changes before looking up credentials and never follows redirects', async () => {
     const credentials = vi.fn(async (_audience: 'analytics' | 'cloud', _signal: AbortSignal) => ({ Authorization: 'Bearer synthetic' })), fetcher = vi.fn<typeof fetch>(async () => Response.json({}));
     const endpoint = 'https://analyticsdata.googleapis.com/v1beta/properties/123456:runReport';

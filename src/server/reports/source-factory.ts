@@ -13,7 +13,8 @@ export function collectorSourceFactory(store: ReportStore, options: {
     if (binding.kind === 'ga4') {
       const transport = (options.google ?? googleAggregateFetch)(`https://analyticsdata.googleapis.com/v1beta/properties/${binding.propertyId}:runReport`);
       const fetch: AggregateFetch = (url, request) => transport(url, { ...request, signal: AbortSignal.any([signal, request.signal]) });
-      return new Ga4AcquisitionSource(store, policy, { propertyId: binding.propertyId, timezone: binding.timezone, informationWatermark: null }, fetch, options.now);
+      return new Ga4AcquisitionSource(store, policy, { propertyId: binding.propertyId, timezone: binding.timezone,
+        streamId: binding.streamId, hostnames: binding.hostnames, informationWatermark: null }, fetch, options.now);
     }
     // Retrieve the pinned key lazily, only if the journal admits network work.
     const fetch: AggregateFetch = async (url, request) => {

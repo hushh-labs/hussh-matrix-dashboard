@@ -1,7 +1,8 @@
 # Reporting collector integration and activation evidence
 
-This is implementation evidence for draft #186, stacked on the frozen #185
-definitions/policy packet. It is not approval to activate collection or replace
+This is implementation evidence for draft #186, targeting Main after the approved
+#185 foundation proposal merged at `de0ad8142ba427ea4acbd74dd1893a8b3ea3a8dd`.
+Proposal acceptance is not approval to activate collection or replace
 the serving application. Existing BigQuery containment and budget reservations,
 paused refresh jobs, deployment hold and the independent PLG worker are retained.
 
@@ -58,7 +59,12 @@ capacity keeps that lane closed. No production numerical policy is seeded.
 Source bindings require explicit approval, enablement, report/scope, revision,
 coverage start, reconciliation evidence digest, bounded transport settings and
 source generation derived from that exact content. Changes invalidate reuse.
-GA4 additionally pins property/timezone; One pins environment and a numbered
+GA4 additionally pins property/timezone, one numeric website stream and a
+canonical, explicit subset of `hushh.ai` / `www.hushh.ai` hostnames. Its request
+ANDs the exact stream, `platform=web` and approved hosts; property-wide app
+traffic and other hosts cannot enter website totals. A missing scope is rejected
+before provider access. Scope changes alter source generation, invalidating old
+publications/receipts rather than relabelling them. One pins environment and a numbered
 `metrics-one-aggregate-source-{environment}` Secret Manager version. Existing PLG
 signing keys, BCC senders and owner exports are not used.
 
@@ -120,7 +126,13 @@ synthetic providers. The existing native Firestore qualification additionally
 checks collection, circuit, separate capacity and bounded maintenance. Neither
 is live-source, native IAM/task queue or real user-session acceptance.
 
-Remaining before activation: Kushal's #185 definitions/operating-policy review;
+The [14 November source inspection](./source-verification-20261114.md) matched
+the website stream to existing config in the authorized Analytics UI and found
+inactive collection. UI configuration is not source-count reconciliation or
+effective collector identity proof.
+
+Remaining before activation: accepted metric definitions and measured operating policy
+following #185's proposal-only approval;
 real One aggregate backend and fixed-period reconciliation; verified GA4
 property, timezone, configured key events and period reconciliation; measured
 team workload/cost limits; native IAM/queue and signed-session qualification;
