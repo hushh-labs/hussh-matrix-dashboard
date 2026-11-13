@@ -8,7 +8,9 @@ BigQuery is disabled. Preserve #179/#180: native maximum 100 MiB per statement,
 100 reserved statements and 10 GiB worst-case reserved bytes per UTC day,
 with at most eight statements per request. The inherited wrapper allows two
 active and 32 waiting invocations **per wrapper instance in one process**, with
-a 30-second native job/statement timeout. Its counters and waiting queue are
+a 30-second native job/statement timeout setting. This is not proof of a hard
+end-to-end invocation deadline or of cancellation of uncertain provider work.
+Its counters and waiting queue are
 process-local, not a deployment-wide concurrency or durable queue limit.
 These are inherited containment ceilings, not approved targets or permission to
 execute. Earlier operator 70 MiB diagnostic approvals were individual queries,
@@ -68,7 +70,9 @@ production-build measurement.
 | Retention | Reference-aware cleanup; unresolved jobs/reservations and active publications protected | Recovery/reproducibility need, privacy, measured storage and consumer inventory |
 | Observability | Bounded labels and complete paid-work receipts; omit personal data, tokens and raw keys | Cost/lag/queue/reconciliation alerts and evidence that telemetry does not inflate adoption |
 
-Before review, collection admission stays default closed. Local tests use explicit
+Until definitions, measured operating limits and runtime acceptance are approved,
+collection admission stays default closed. A submitted review, including a
+changes-requested review, does not authorize activation. Local tests use explicit
 test policies, never production defaults. Existing Firestore can host derived
 reports, but named databases are billable and a namespace is not an IAM boundary.
 Verify database-level identity separation or a private constrained reader before
