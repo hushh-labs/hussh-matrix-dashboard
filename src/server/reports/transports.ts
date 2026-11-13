@@ -1,12 +1,13 @@
 import { createHmac } from 'node:crypto';
-import { GoogleAuth } from 'google-auth-library';
+import { GoogleAuth, Impersonated } from 'google-auth-library';
 import { ReportError } from './contracts';
 import { SourceRequestFailure } from './source-errors';
 import type { AggregateFetch } from './sources';
 import type { TaskApiRequest } from './dispatch';
 import { withinDeadline } from './deadline';
+import { isAnalyticsReader } from './bindings';
 
-type CredentialHeaders = (audience: 'analytics' | 'cloud', signal: AbortSignal) => Promise<Record<string, string>>;
+export type CredentialHeaders = (audience: 'analytics' | 'cloud', signal: AbortSignal) => Promise<Record<string, string>>;
 export function adcCredentialHeaders(): CredentialHeaders {
   const clients = new Map<string, Promise<Awaited<ReturnType<GoogleAuth['getClient']>>>>();
   return async (audience, signal) => {
@@ -20,6 +21,32 @@ export function adcCredentialHeaders(): CredentialHeaders {
       signal.throwIfAborted();
       return Object.fromEntries(headers.entries());
     } catch { clients.delete(scope); signal.throwIfAborted(); throw new SourceRequestFailure('configuration'); }
+  };
+}
+
+type ReaderClient = { getRequestHeaders(): Promise<{ entries(): IterableIterator<[string, string]> }> };
+type ReaderClientFactory = (principal: string) => Promise<ReaderClient>;
+const nativeReaderClient: ReaderClientFactory = async principal => {
+  const sourceClient = await new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] }).getClient();
+  return new Impersonated({ sourceClient, targetPrincipal: principal,
+    targetScopes: ['https://www.googleapis.com/auth/analytics.readonly'], lifetime: 300 });
+};
+/** Collector-only, explicit reader delegation. No key, endpoint or delegate-chain
+ * override; a refusal never falls back to the broader runtime identity. */
+export function analyticsReaderCredentialHeaders(principal: string,
+  create: ReaderClientFactory = nativeReaderClient): CredentialHeaders {
+  if (!isAnalyticsReader(principal)) throw new ReportError('invalid');
+  let pending: Promise<ReaderClient> | undefined;
+  return async (audience, signal) => {
+    if (audience !== 'analytics') throw new ReportError('invalid');
+    signal.throwIfAborted();
+    try {
+      const client = await withinDeadline(pending ??= create(principal), signal);
+      const entries = await withinDeadline(client.getRequestHeaders(), signal); signal.throwIfAborted();
+      const authorization = [...entries.entries()].find(([key]) => key.toLowerCase() === 'authorization')?.[1];
+      if (typeof authorization !== 'string' || !/^Bearer [A-Za-z0-9._~+/-]+=*$/.test(authorization)) throw new SourceRequestFailure('configuration');
+      return { Authorization: authorization };
+    } catch { pending = undefined; signal.throwIfAborted(); throw new SourceRequestFailure('configuration'); }
   };
 }
 

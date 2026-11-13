@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { boundedText, cloudTasksRequest, googleAggregateFetch, readAggregateSecret, signedOneAggregateFetch } from '../src/server/reports/transports';
+import { analyticsReaderCredentialHeaders, boundedText, cloudTasksRequest, googleAggregateFetch, readAggregateSecret, signedOneAggregateFetch,
+  type CredentialHeaders } from '../src/server/reports/transports';
 import { providerRetryAfter } from '../src/server/reports/source-errors';
 import { collectorSourceFactory } from '../src/server/reports/source-factory';
 import { collectionFixture } from './helpers/metrics-collection-fixture';
@@ -14,7 +15,8 @@ describe('collector-only bounded native transports', () => {
     const content = { approved: true, enabled: true, reportId: 'hushhai.acquisition' as const, revision: 1,
       scopeDigest: f.access.scopeDigest, reconciliationDigest: digest('website-reconciliation-fixture'),
       coverageFrom: '2026-11-01', timeoutMs: 1000, maxResponseBytes: 20_000,
-      kind: 'ga4' as const, propertyId: '123456', timezone: 'UTC', streamId: '987654321', hostnames: ['www.hushh.ai'] };
+      kind: 'ga4' as const, propertyId: '123456', timezone: 'UTC', streamId: '987654321', hostnames: ['www.hushh.ai'],
+      readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com' };
     const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };
     await f.put('controls', content.reportId, { ...f.control, sourceGeneration: binding.sourceGeneration });
     const request = { ...f.request, reportId: content.reportId };
@@ -22,9 +24,11 @@ describe('collector-only bounded native transports', () => {
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({ metadata: { timeZone: 'UTC' }, rowCount: 0,
       metricHeaders: ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'].map(name => ({ name })) }));
     const credentials = vi.fn(async () => ({ Authorization: 'Bearer synthetic' }));
-    const google = (url: string) => googleAggregateFetch(url, credentials, fetcher);
-    const source = await collectorSourceFactory(f.store, { google, now: f.clock })(job, binding, signal());
+    const google = vi.fn((url: string, reader?: CredentialHeaders) => googleAggregateFetch(url, reader ?? credentials, fetcher));
+    const analyticsReader = vi.fn((_principal: string) => credentials);
+    const source = await collectorSourceFactory(f.store, { google, analyticsReader, now: f.clock })(job, binding, signal());
     expect(credentials).not.toHaveBeenCalled();
+    expect(analyticsReader).toHaveBeenCalledExactlyOnceWith(binding.readerServiceAccount);
     await source.submit(job); await source.recover(job);
     expect(fetcher).toHaveBeenCalledTimes(1); expect(credentials).toHaveBeenCalledTimes(1);
     const body = JSON.parse(fetcher.mock.calls[0][1]!.body as string);
@@ -33,6 +37,31 @@ describe('collector-only bounded native transports', () => {
       { filter: { fieldName: 'platform', stringFilter: { matchType: 'EXACT', value: 'web', caseSensitive: true } } },
       { filter: { fieldName: 'hostName', inListFilter: { values: ['www.hushh.ai'], caseSensitive: false } } },
     ]);
+  });
+  it('delegates only to the approved reader lazily and never falls back after denial', async () => {
+    const principal = 'analytics-reader@demo-metrics.iam.gserviceaccount.com';
+    const headers = vi.fn(async () => new Headers({ authorization: 'Bearer synthetic-reader-token',
+      'x-private-source-header': 'must-not-forward' }));
+    const create = vi.fn(async (_principal: string) => ({ getRequestHeaders: headers }));
+    const credentials = analyticsReaderCredentialHeaders(principal, create);
+    expect(create).not.toHaveBeenCalled();
+    await expect(credentials('cloud', signal())).rejects.toMatchObject({ code: 'invalid' });
+    expect(create).not.toHaveBeenCalled();
+    expect(await credentials('analytics', signal())).toEqual({ Authorization: 'Bearer synthetic-reader-token' });
+    expect(create).toHaveBeenCalledExactlyOnceWith(principal);
+    await credentials('analytics', signal()); expect(create).toHaveBeenCalledTimes(1);
+    const fetcher = vi.fn<typeof fetch>();
+    const denied = analyticsReaderCredentialHeaders(principal, async () => { throw new Error('Private provider credential detail'); });
+    const endpoint = 'https://analyticsdata.googleapis.com/v1beta/properties/123456:runReport';
+    await expect(googleAggregateFetch(endpoint, denied, fetcher)(endpoint, { body: {}, signal: signal() }))
+      .rejects.toMatchObject({ kind: 'configuration', message: 'Metrics report unavailable.' });
+    expect(fetcher).not.toHaveBeenCalled();
+    for (const bad of ['staff@example.invalid', principal + '\n', 'https://identity.example.invalid']) {
+      expect(() => analyticsReaderCredentialHeaders(bad, create)).toThrow();
+    }
+    // The existing documented default-compute reader is a native service account.
+    expect(() => analyticsReaderCredentialHeaders('123456789012-compute@developer.gserviceaccount.com', create)).not.toThrow();
+    expect(create).toHaveBeenCalledTimes(1);
   });
   it('rejects endpoint changes before looking up credentials and never follows redirects', async () => {
     const credentials = vi.fn(async (_audience: 'analytics' | 'cloud', _signal: AbortSignal) => ({ Authorization: 'Bearer synthetic' })), fetcher = vi.fn<typeof fetch>(async () => Response.json({}));

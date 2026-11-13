@@ -35,6 +35,9 @@ continues.
   platform to web and rejects legacy property-wide bindings. Stream/host changes
   invalidate the source generation. This prevents mixing app streams into website
   totals; live provider compatibility/count reconciliation is still required.
+  The GA4 credential path separately pins a reviewed native reader identity,
+  uses short-lived read-only impersonation after source admission and refuses
+  silent direct-identity fallback. No IAM or property access grant was added.
   Both reserve a durable source-call receipt before I/O. No raw provider payload,
   owner directory or private content persists. Recovery before a journal exists
   can admit the first source call through the current fence. An admitted uncertain

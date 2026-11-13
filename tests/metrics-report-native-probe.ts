@@ -72,7 +72,8 @@ export async function verifyNativeReportStorage(db: Firestore) {
   const gaRequest = { ...request, reportId: 'hushhai.acquisition' as const };
   const content = { approved: true, enabled: true, reportId: gaRequest.reportId, revision: 1, scopeDigest: access.scopeDigest,
     reconciliationDigest: digest('native-reconciliation-fixture'), coverageFrom: '2026-11-01', timeoutMs: 500, maxResponseBytes: 20_000,
-    kind: 'ga4', propertyId: '123456', timezone: 'UTC', streamId: '987654321', hostnames: ['www.hushh.ai'] };
+    kind: 'ga4', propertyId: '123456', timezone: 'UTC', streamId: '987654321', hostnames: ['www.hushh.ai'],
+    readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com' };
   const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };
   await db.doc(reportPath('controls', gaRequest.reportId)).set({ ...control, sourceGeneration: binding.sourceGeneration });
   await db.doc(reportPath('sources', gaRequest.reportId)).set(binding);

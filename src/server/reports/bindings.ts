@@ -1,6 +1,11 @@
 import { digest, reportDefinitions, reportingTimezone, ReportError, type ReportId, type ReportJob } from './contracts';
 
 export type Ga4WebsiteScope = { streamId: string; hostnames: string[] };
+export function isAnalyticsReader(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 254 && !/\s/.test(value)
+    && (/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,61}[a-z0-9]\.iam\.gserviceaccount\.com$/.test(value)
+      || /^[1-9]\d{5,20}-compute@developer\.gserviceaccount\.com$/.test(value));
+}
 /** This report is the production website, never the property's app streams,
  * preview hosts or arbitrary domains. Canonical order makes scope identity stable. */
 export function hasGa4WebsiteScope(value: Ga4WebsiteScope) {
@@ -13,7 +18,7 @@ export function hasGa4WebsiteScope(value: Ga4WebsiteScope) {
 type BindingBase = { approved: boolean; enabled: boolean; reportId: ReportId; revision: number; sourceGeneration: string;
   scopeDigest: string; reconciliationDigest: string; coverageFrom: string; timeoutMs: number; maxResponseBytes: number };
 export type ReportSourceBinding = BindingBase & (
-  { kind: 'ga4'; propertyId: string; timezone: string } & Ga4WebsiteScope
+  { kind: 'ga4'; propertyId: string; timezone: string; readerServiceAccount: string } & Ga4WebsiteScope
   | { kind: 'one'; environment: 'production' | 'uat'; secretVersion: string }
 );
 export function sourceBindingGeneration(binding: unknown) {
@@ -26,7 +31,7 @@ export function validateSourceBinding(value: unknown, job: ReportJob): ReportSou
   const b = value as ReportSourceBinding;
   const common = ['approved', 'enabled', 'reportId', 'revision', 'sourceGeneration', 'scopeDigest', 'reconciliationDigest',
     'coverageFrom', 'timeoutMs', 'maxResponseBytes', 'kind'];
-  if (Object.keys(b).sort().join() !== [...common, ...(b.kind === 'ga4' ? ['propertyId', 'timezone', 'streamId', 'hostnames'] : ['environment', 'secretVersion'])].sort().join()
+  if (Object.keys(b).sort().join() !== [...common, ...(b.kind === 'ga4' ? ['propertyId', 'timezone', 'streamId', 'hostnames', 'readerServiceAccount'] : ['environment', 'secretVersion'])].sort().join()
     || b.approved !== true || b.enabled !== true || !Object.hasOwn(reportDefinitions, b.reportId)
     || b.reportId !== job.request.reportId || b.scopeDigest !== job.control.scopeDigest
     || b.sourceGeneration !== job.control.sourceGeneration || b.sourceGeneration !== sourceBindingGeneration(b)
@@ -38,7 +43,8 @@ export function validateSourceBinding(value: unknown, job: ReportJob): ReportSou
     || job.request.startDate < b.coverageFrom) throw new ReportError('unavailable');
   if (b.kind === 'ga4') {
     if (b.reportId !== 'hushhai.acquisition' || !/^\d{3,20}$/.test(b.propertyId)
-      || !hasGa4WebsiteScope(b) || reportingTimezone(b.timezone) !== job.request.timezone) throw new ReportError('unavailable');
+      || !hasGa4WebsiteScope(b) || !isAnalyticsReader(b.readerServiceAccount)
+      || reportingTimezone(b.timezone) !== job.request.timezone) throw new ReportError('unavailable');
   } else if (b.kind === 'one') {
     if (b.reportId !== 'one.adoption' || !['production', 'uat'].includes(b.environment)
       || !/^projects\/[a-z][a-z0-9-]{4,61}[a-z0-9]\/secrets\/metrics-one-aggregate-source-(production|uat)\/versions\/[1-9]\d*$/.test(b.secretVersion)

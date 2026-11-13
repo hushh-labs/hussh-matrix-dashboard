@@ -47,17 +47,24 @@ describe('GA4 report values and honest freshness', () => {
     const f = await gaFixture({ ...header, rowCount: 0 });
     const { environment: _environment, secretVersion: _key, kind: _kind, ...common } = f.binding as
       typeof f.binding & { environment: string; secretVersion: string };
-    const content = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC', ...website };
+    const content = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC',
+      readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com', ...website };
     const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };
     const job = { ...f.job, control: { ...f.job.control, sourceGeneration: binding.sourceGeneration } };
     expect(validateSourceBinding(binding, job)).toEqual(binding);
-    for (const bad of [{ ...binding, streamId: '987654322' }, { ...binding, hostnames: ['www.hushh.ai'] }]) {
+    for (const bad of [{ ...binding, streamId: '987654322' }, { ...binding, hostnames: ['www.hushh.ai'] },
+      { ...binding, readerServiceAccount: 'another-reader@demo-metrics.iam.gserviceaccount.com' }]) {
       expect(sourceBindingGeneration(bad)).not.toBe(binding.sourceGeneration);
       expect(() => validateSourceBinding(bad, job)).toThrow();
     }
     const { streamId: _stream, hostnames: _hosts, ...unscoped } = binding;
     const legacy = { ...unscoped, sourceGeneration: sourceBindingGeneration(unscoped) };
     expect(() => validateSourceBinding(legacy, { ...job, control: { ...job.control, sourceGeneration: legacy.sourceGeneration } })).toThrow();
+    for (const readerServiceAccount of [undefined, 'staff@example.invalid', 'https://credentials.example.invalid/',
+      'analytics-reader@demo-metrics.iam.gserviceaccount.com\n']) {
+      const bad = { ...binding, readerServiceAccount }; bad.sourceGeneration = sourceBindingGeneration(bad);
+      expect(() => validateSourceBinding(bad, { ...job, control: { ...job.control, sourceGeneration: bad.sourceGeneration } })).toThrow();
+    }
   });
   it('preserves actual counts without inventing a completeness watermark and reuses publication', async () => {
     const f = await gaFixture({ ...header, rowCount: 1, rows: [{ metricValues: ['5', '3', '4', '1'].map(value => ({ value })) }] });
