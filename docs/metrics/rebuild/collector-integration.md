@@ -60,10 +60,15 @@ Source bindings require explicit approval, enablement, report/scope, revision,
 coverage start, reconciliation evidence digest, bounded transport settings and
 source generation derived from that exact content. Changes invalidate reuse.
 GA4 additionally pins property/timezone, its approved `readerServiceAccount`, one numeric website stream and a
-canonical, explicit subset of `hushh.ai` / `www.hushh.ai` hostnames. Its request
+canonical, explicit subset of the original `hushh.ai` / `www.hushh.ai` and
+redirected `hussh.si` / `www.hussh.si` hostnames. The owner requests one website
+report spanning both domains. Its request
 ANDs the exact stream, `platform=web` and approved hosts; property-wide app
 traffic and other hosts cannot enter website totals. A missing scope is rejected
-before provider access. Reader/scope changes alter source generation, invalidating old
+before provider access. The entire host set uses one whole-period provider
+aggregate, never a sum of per-domain distinct users. This requires verified
+common property/stream and provider identity semantics; unrelated property
+totals cannot be merged to simulate cross-domain deduplication. Reader/scope changes alter source generation, invalidating old
 publications/receipts rather than relabelling them. The collector lazily uses native
 Google impersonation for that exact reader with only `analytics.readonly` and a
 five-minute token lifetime. It does not accept user credentials, key files,

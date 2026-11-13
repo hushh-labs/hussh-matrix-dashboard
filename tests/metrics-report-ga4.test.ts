@@ -38,10 +38,46 @@ describe('GA4 report values and honest freshness', () => {
       { ...config, hostnames: ['uat.hushh.ai'] }, { ...config, hostnames: ['hushh.ai.evil.invalid'] },
       { ...config, hostnames: ['https://hushh.ai/'] }, { ...config, hostnames: ['hushh.ai', 'hushh.ai'] },
       { ...config, hostnames: ['www.hushh.ai', 'hushh.ai'] },
+      { ...config, hostnames: ['www.hussh.si.evil.invalid'] }, { ...config, hostnames: ['*.hussh.si'] },
+      { ...config, hostnames: ['www.hussh.si', 'www.hussh.si'] },
     ]) expect(() => new Ga4AcquisitionSource(f.store,
       { sourceGeneration: f.control.sourceGeneration, timeoutMs: 1000, maxResponseBytes: 20_000 },
       bad as typeof config, fetch, f.clock)).toThrow();
     expect(fetch).not.toHaveBeenCalled();
+  });
+  it('uses one whole-period provider total across the original and redirected website domains', async () => {
+    const f = await gaFixture({ ...header, rowCount: 0 });
+    const hostnames = ['hushh.ai', 'hussh.si', 'www.hushh.ai', 'www.hussh.si'];
+    const fetch = vi.fn<AggregateFetch>(async () => Response.json({ ...header, rowCount: 1,
+      rows: [{ metricValues: ['7', '4', '5', '1'].map(value => ({ value })) }] }));
+    const source = new Ga4AcquisitionSource(f.store, { sourceGeneration: f.control.sourceGeneration, timeoutMs: 1000, maxResponseBytes: 20_000 },
+      { ...website, hostnames, propertyId: '123456', timezone: 'UTC', informationWatermark: null }, fetch, f.clock);
+    const result = (await source.submit(f.job))!; await source.recover(f.job);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result.metrics.activeUsers.value).toBe(4); expect(result.metrics.sessions.value).toBe(7);
+    expect(fetch.mock.calls[0][1].body).toMatchObject({
+      dateRanges: [{ startDate: f.request.startDate, endDate: f.request.endDate }],
+      dimensionFilter: { andGroup: { expressions: [
+        { filter: { fieldName: 'streamId', stringFilter: { value: website.streamId } } },
+        { filter: { fieldName: 'platform', stringFilter: { value: 'web' } } },
+        { filter: { fieldName: 'hostName', inListFilter: { values: hostnames } } },
+      ] } },
+    });
+    expect(fetch.mock.calls[0][1].body).not.toHaveProperty('dimensions');
+  });
+  it('binds a reviewed combined-domain scope to a new source generation without relabelling old reports', async () => {
+    const f = await gaFixture({ ...header, rowCount: 0 });
+    const { environment: _environment, secretVersion: _key, ...common } = f.binding as typeof f.binding & { environment: string; secretVersion: string };
+    const old = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC',
+      readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com', ...website };
+    old.sourceGeneration = sourceBindingGeneration(old);
+    const combined = { ...old, hostnames: ['hushh.ai', 'hussh.si', 'www.hushh.ai', 'www.hussh.si'] };
+    combined.sourceGeneration = sourceBindingGeneration(combined);
+    const oldJob = { ...f.job, control: { ...f.job.control, sourceGeneration: old.sourceGeneration } };
+    expect(validateSourceBinding(old, oldJob)).toEqual(old);
+    expect(combined.sourceGeneration).not.toBe(old.sourceGeneration);
+    expect(() => validateSourceBinding(combined, oldJob)).toThrow();
+    expect(validateSourceBinding(combined, { ...oldJob, control: { ...oldJob.control, sourceGeneration: combined.sourceGeneration } })).toEqual(combined);
   });
   it('requires reviewed website scope in the binding and invalidates changed scope', async () => {
     const f = await gaFixture({ ...header, rowCount: 0 });

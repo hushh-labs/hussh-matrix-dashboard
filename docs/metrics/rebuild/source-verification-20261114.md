@@ -61,11 +61,20 @@ with no literal GA4 measurement ID or Tag Manager ID found. No script ran.
 Tags loaded dynamically or subject to consent remain unverified; absence from
 static HTML does not establish absence at runtime.
 
-This is a current source-mapping discrepancy: the approved-binding candidate
-only accepts historical `hushh.ai` / `www.hushh.ai` hosts. It would exclude
+This is a current source-mapping discrepancy: the earlier binding candidate
+only accepted historical `hushh.ai` / `www.hushh.ai` hosts. It would exclude
 `www.hussh.si` even if that site's runtime sends events to the old property.
-Whether that destination is part of this report, which property/stream receives
-its events and how to separate its history need explicit scope/source review.
+The owner confirmed that both domains belong in **one website report** because
+the redirect is intentional. The held application now permits explicit reviewed
+subsets of those two domains, including their apex/www forms. One whole-period
+provider calculation covers the host set; daily/domain distincts are not summed.
+New scope changes source generation and cannot relabel existing publications.
+
+This product-scope decision does not verify which property/stream receives the
+destination's events, cross-domain identity/consent configuration or useful
+reference counts. The combined binding must remain off until those checks and
+reconciliation pass. If the domains use different properties, their distinct
+user totals cannot be added into a purported deduplicated website population.
 No hostname, stream, emitter, redirect or Analytics configuration was changed.
 This does not prove the cause of every missing dashboard measurement.
 
@@ -81,8 +90,8 @@ hosts together, while retaining whole-period distinct-user calculation. Unscoped
 bindings fail closed; changed stream/hosts change source generation. This is an
 application correction, not an activated binding or accepted reconciliation.
 
-Still required: reporting identity and current website-domain/stream mapping; approved website
-scope/metric definitions; fixed-period request with the exact same filters and
+Still required: reporting identity and current website-domain/stream mapping; accepted
+metric definitions; fixed-period request with the exact same filters and
 independent reference counts; quality/lag/empty-state verification; working
 collector identity; measured operating limits and native runtime/release proof.
 Recent missing collection must be diagnosed before claiming current traffic is

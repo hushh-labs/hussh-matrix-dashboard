@@ -40,9 +40,10 @@ application head `9510cba79cb2b7c0eaa6d56b831d1e513800c32d`.
   API, including exact `Etc/GMT` timezone. One fixed-period report returned no
   metric columns/rows; no counts are accepted from it. See
   [source evidence](./source-verification-20261114.md).
-- Current `www.hushh.ai` redirects to `www.hussh.si`. Its source/property mapping
-  and reporting scope need review; the old host filter must not be silently
-  broadened or historical data relabelled as the new domain.
+- Current `www.hushh.ai` redirects to `www.hussh.si`. The owner wants both in one
+  website report. The held host allowlist supports that explicit reviewed scope;
+  common source/property/identity and reconciliation still need verification.
+  Historical publications retain their original source-generation identity.
 - HushhTech public summary, its database aggregate, Monitoring, Search Console,
   App Store Connect and Instagram remain separate source verifications. A
   configured environment variable is not accepted source authority or freshness.

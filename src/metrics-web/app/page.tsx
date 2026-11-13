@@ -21,7 +21,7 @@ export default async function ReportsPage({ searchParams }: {
   return <><p className="eyebrow">Team reporting</p><h1>Product performance</h1>
     <p className="intro">Explore adoption and website engagement with clear definitions and source coverage.</p>
     <form className="filters" method="get"><label>Report<select name="report" aria-label="Report" defaultValue={reportId}>
-      <option value="one.adoption">One adoption</option><option value="hushhai.acquisition">hushh.ai acquisition</option>
+      <option value="one.adoption">One adoption</option><option value="hushhai.acquisition">Website acquisition</option>
     </select></label><label>From<input type="date" name="startDate" required defaultValue={typeof request.startDate === 'string' ? request.startDate : yesterday} /></label>
     <label>Through<input type="date" name="endDate" required defaultValue={typeof request.endDate === 'string' ? request.endDate : yesterday} /></label>
     <label>Reporting timezone<input name="timezone" required defaultValue={typeof request.timezone === 'string' ? request.timezone : 'UTC'} /></label>

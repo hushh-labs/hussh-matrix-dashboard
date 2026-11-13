@@ -6,12 +6,13 @@ export function isAnalyticsReader(value: unknown): value is string {
     && (/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,61}[a-z0-9]\.iam\.gserviceaccount\.com$/.test(value)
       || /^[1-9]\d{5,20}-compute@developer\.gserviceaccount\.com$/.test(value));
 }
-/** This report is the production website, never the property's app streams,
- * preview hosts or arbitrary domains. Canonical order makes scope identity stable. */
+/** One website report covers its original and redirected domains, never app
+ * streams, previews or arbitrary hosts. Every subset still needs source review;
+ * canonical order makes scope identity stable. No source binding is inferred. */
 export function hasGa4WebsiteScope(value: Ga4WebsiteScope) {
   return typeof value.streamId === 'string' && /^\d{3,20}$/.test(value.streamId)
-    && Array.isArray(value.hostnames) && value.hostnames.length >= 1 && value.hostnames.length <= 2
-    && value.hostnames.every(host => ['hushh.ai', 'www.hushh.ai'].includes(host))
+    && Array.isArray(value.hostnames) && value.hostnames.length >= 1 && value.hostnames.length <= 4
+    && value.hostnames.every(host => ['hushh.ai', 'hussh.si', 'www.hushh.ai', 'www.hussh.si'].includes(host))
     && new Set(value.hostnames).size === value.hostnames.length
     && value.hostnames.join() === [...value.hostnames].sort().join();
 }
