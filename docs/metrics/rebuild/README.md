@@ -1,11 +1,24 @@
 # Metrics reporting rebuild
 
 Tracking: [#184](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184).
-Owner: Neelesh Meena. Technical lead: Kushal Trivedi.
+Owner: [Neelesh Meena](https://github.com/DamriaNeelesh).
+Technical lead: [Kushal Trivedi](https://github.com/kushaltrivedi5).
 
 This is the review packet for definitions and collection policy. It does not
 authorize collection, warehouse access, retirement of PLG, or release of the
 incident hold. Definition review and runtime acceptance remain outstanding.
+
+## Ownership and human-review status
+
+This packet uses assisted drafting. Neelesh is responsible for reviewing, editing
+and validating its reasoning and approving decisions within his authority; that
+human approval has not been recorded. Assignment, a signed commit and automated
+checks do not establish it. Kushal requested documentation corrections on
+foundation head `bbc2fc31e99410a3c27c20e282cd048e903ff602` in
+[review 5890330790](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/185#pullrequestreview-5890330790).
+The revised packet needs re-review. Metric definitions, measured operating limits
+and live collection acceptance remain pending. Draft #186's checks are separate
+implementation evidence and do not approve this packet.
 
 Read in order:
 
