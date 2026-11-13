@@ -75,6 +75,9 @@ describe('GA4 report values and honest freshness', () => {
     f.advance(f.control.staleMs + 1); expect((await f.reports.read(f.request, f.access)).report).toBeNull();
   });
   it.each([
+    // Actual fixed-period source inspection returned metadata/quota only. It
+    // does not establish explicit empty metric columns or authorize fake zeros.
+    { metadata: { timeZone: 'Etc/GMT', currencyCode: 'USD' }, propertyQuota: { tokensPerDay: { consumed: 1 } } },
     { ...header, rowCount: 1 }, { ...header, rows: [{ metricValues: [{ value: '5' }] }] },
     { ...header, rowCount: -1 }, { ...header, rowCount: 0, rows: [{ metricValues: [] }] },
     { ...header, rows: [{ metricValues: [{ value: '5' }, {}, {}, {}] }] },

@@ -30,6 +30,10 @@ Read in order:
 1. [Metric catalog](./metric-catalog.md): questions, populations and reconciliation.
 2. [System and compatibility map](./system-map.md): existing consumers and cutover.
 3. [Operating policy](./operating-policy.md): enforced containment and measurements.
+4. [Restoration coverage](./restoration-coverage.md): every existing section,
+   original source boundary and remaining handoff/acceptance.
+5. [Offline workload evidence](./workload-measurement-20261114.md): modeled
+   repeated reads, operation counts and recovery; native costs remain unmeasured.
 
 ## Evidence baseline
 

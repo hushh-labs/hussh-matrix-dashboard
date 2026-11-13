@@ -133,15 +133,18 @@ synthetic providers. The existing native Firestore qualification additionally
 checks collection, circuit, separate capacity and bounded maintenance. Neither
 is live-source, native IAM/task queue or real user-session acceptance.
 
-The [14 November source inspection](./source-verification-20261114.md) matched
-the website stream to existing config in the authorized Analytics UI and found
-inactive collection. UI configuration is not source-count reconciliation or
-effective collector identity proof.
+The [14 November source inspection](./source-verification-20261114.md) verified
+the existing property/website stream and exact `Etc/GMT` timezone through Admin
+API. The one fixed-period Data API response lacked metric columns/rows and is
+not accepted counts. The old website also redirects to a different domain,
+whose source/scope is unverified. None establishes effective collector access.
+The [offline workload](./workload-measurement-20261114.md) measures logical
+operations, cache reuse and recovery with synthetic data, not native costs.
 
 Remaining before activation: accepted metric definitions and measured operating policy
 following #185's proposal-only approval;
-real One aggregate backend and fixed-period reconciliation; verified GA4
-property, timezone, configured key events and period reconciliation; measured
+real One aggregate backend and fixed-period reconciliation; accepted GA4
+domain/stream/reporting identity, key-event definitions and period reconciliation; measured
 team workload/cost limits; native IAM/queue and signed-session qualification;
 Linux container and PLG/OAuth/compatibility routing handoff; exact-source release,
 zero-traffic acceptance and rollback. Broader HushhTech, retention, reliability

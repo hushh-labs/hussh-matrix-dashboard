@@ -101,8 +101,9 @@ do not certify native IAM, queues, source accuracy or live behavior.
    review. No activation defaults or production policy are seeded.
 2. Authoritative One aggregate endpoint and independent fixed-period source
    reconciliation. `/api/one/metrics/adoption` is proposed, not deployed. GA4
-   needs verified property/timezone, configured key events and independent
-   reconciliation. Where no source watermark exists, freshness stays unknown.
+   has verified existing property/stream/timezone metadata, but needs current
+   domain mapping, reporting identity, accepted key-event definitions and
+   independent counts. Where no source watermark exists, freshness stays unknown.
 3. Complete optional native suite and actual Linux container qualification. The
    representative native reporting probe has passed in the existing Linux CI.
 4. Actual native transport/worker/queue wiring and accepted numerical policy.
@@ -120,3 +121,4 @@ do not certify native IAM, queues, source accuracy or live behavior.
 Implementation is in progress. This is not Ready for QA or a live-data acceptance.
 Detailed runtime/source contract: [collector integration](./collector-integration.md).
 Current source evidence: [14 November inspection](./source-verification-20261114.md).
+Modeled operation/recovery measurements: [offline workload](./workload-measurement-20261114.md).
