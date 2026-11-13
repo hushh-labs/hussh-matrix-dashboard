@@ -54,13 +54,26 @@ period. No client polling, prefetch or page render starts collection.
 status. `MetricsReportWorker` fences claims/publication and retains capacity on
 uncertainty. `collectReport` makes source calls outside Firestore transactions.
 The One/GA4 adapters use a durable source-call receipt before I/O. Lost source
-acknowledgements stay delayed; redelivery recovers a stored receipt and never
-silently repeats a provider call. The One aggregate endpoint is a proposed
+acknowledgements stay delayed. Recovery with no journal can admit the first call
+through the current worker fence; an existing uncertain journal cannot cause a
+repeat call. The One aggregate endpoint is a proposed
 backend contract, **not a deployed endpoint**. No existing private owner export
 is used as a substitute. GA4 requires a verified timezone and information
 watermark; a fresh fetch alone cannot establish source freshness.
 
-Task dispatch, scheduled/custom fairness, source circuit/backoff, reference-aware
-cleanup, approved policy values and live reconciliation are not yet implemented
-or accepted. There is no collector entrypoint or active cloud schedule. The
+The durable enqueue bridge now reserves a deterministic task identity, fences
+competing dispatchers and bounds lookup recovery. Missing native tasks remain
+uncertain because completed/exhausted tasks can also be absent. Credential and
+configuration failures require attention; they do not become retry storms.
+Its separate `policy/dispatch` must explicitly be approved/enabled. The fixed
+Cloud Tasks adapter uses a job-only body and pins the native API, worker audience
+and invoker identity. No queue or cloud identity is provisioned. The caller of
+this private bridge must supply the approved native transport; web rendering
+cannot import it. Queue uncertainty appears as delayed progress, with queue wait
+separate from worker elapsed time; status tells callers to stop polling for
+attention/terminal states.
+
+Scheduled/custom fairness, source circuit/backoff, reference-aware cleanup,
+approved policy values, live transport wiring and reconciliation are not yet
+implemented or accepted. There is no collector entrypoint or active cloud schedule. The
 production build and synthetic tests establish local plumbing only.

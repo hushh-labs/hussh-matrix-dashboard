@@ -4,29 +4,11 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { digest, reportKey, validateRequest, type AggregateResult, type ReportAccess, type ReportControl,
   type ReportingPolicy, type ReportJob, type ReportRequest } from '../src/server/reports/contracts';
 import { MetricsReports, MetricsReportWorker } from '../src/server/reports/service';
-import { FirestoreReportStore, reportPath as path, type ReportStore, type ReportTransaction } from '../src/server/reports/store';
+import { FirestoreReportStore, reportPath as path, type ReportStore } from '../src/server/reports/store';
 import { collectReport } from '../src/server/reports/collector';
 import { ReportBodyCache } from '../src/server/reports/body-cache';
 import { Ga4AcquisitionSource, OneAdoptionSource } from '../src/server/reports/sources';
-
-/** Serialized test store also rejects Firestore's read-after-write anti-pattern. */
-class MemoryStore implements ReportStore {
-  data = new Map<string, unknown>();
-  private tail: Promise<unknown> = Promise.resolve();
-  transaction<T>(fn: (tx: ReportTransaction) => Promise<T>): Promise<T> {
-    const operation = this.tail.then(async () => {
-      const next = structuredClone(this.data); let wrote = false;
-      const result = await fn({
-        get: async <V>(key: string) => { if (wrote) throw new Error('Read after write'); return structuredClone(next.get(key) ?? null) as V | null; },
-        create: (key, value) => { if (next.has(key)) throw new Error('Already exists'); wrote = true; next.set(key, structuredClone(value)); },
-        set: (key, value) => { wrote = true; next.set(key, structuredClone(value)); },
-      });
-      this.data = next; return result;
-    });
-    this.tail = operation.catch(() => undefined);
-    return operation;
-  }
-}
+import { MemoryReportStore as MemoryStore } from './helpers/metrics-report-memory-store';
 
 const access: ReportAccess = { subjectHash: digest('staff-fixture'), scopeDigest: digest('authorized-scope-fixture') };
 const request: ReportRequest = { reportId: 'one.adoption', startDate: '2026-11-10', endDate: '2026-11-11', timezone: 'UTC' };
@@ -100,6 +82,17 @@ for (const mode of ['memory', ...(emulator ? ['firestore'] : [])]) {
       expect(await store.transaction(tx => tx.get(path('capacity', 'custom')))).toEqual({ active: 1 });
       const next = (await worker.claim(first.job.id, digest('recovery')))!;
       expect(next.recoverOnly).toBe(true); expect(next.job.providerJobId).toBe(first.job.providerJobId);
+    });
+    it('keeps queue wait separate from worker elapsed time and stops terminal polling', async () => {
+      const intent = await reader.request(request, access);
+      now += 300;
+      const c = (await worker.claim(intent.jobId!, digest('timed-worker')))!;
+      now += 200;
+      await worker.publish(c.job, aggregate(c.job, now));
+      let progress = await reader.status(c.job.id, access);
+      expect(progress.queueWaitMs).toBe(300); expect(progress.executionMs).toBe(200); expect(progress.retryAfterMs).toBe(0);
+      now += 5000; progress = await reader.status(c.job.id, access);
+      expect(progress.queueWaitMs).toBe(300); expect(progress.executionMs).toBe(200);
     });
     it('does not resubmit provider work after lost acknowledgement', async () => {
       const intent = await reader.request(request, access); let submits = 0, recoveries = 0;
@@ -203,6 +196,20 @@ for (const mode of ['memory', ...(emulator ? ['firestore'] : [])]) {
       now += policy.leaseMs + 1;
       await expect(source.submit(c.job)).rejects.toMatchObject({ code: 'stale_worker' });
       expect(calls).toBe(0);
+    });
+    it('resumes an interruption before source admission exactly once', async () => {
+      const first = await claim(); let calls = 0;
+      now += policy.leaseMs + 1;
+      const recovery = (await worker.claim(first.job.id, digest('recover-before-source')))!;
+      const source = new OneAdoptionSource(store, { sourceGeneration: control.sourceGeneration,
+        timeoutMs: 1000, maxResponseBytes: 20_000 }, 'uat', async () => {
+        calls++; return Response.json(aggregate(recovery.job, now));
+      }, () => now);
+      const result = await source.recover(recovery.job);
+      expect(result?.metrics.activeAccounts.value).toBe(2);
+      await expect(source.submit(first.job)).rejects.toMatchObject({ code: 'stale_worker' });
+      expect(await source.recover(recovery.job)).toEqual(result);
+      expect(calls).toBe(1);
     });
     it('preserves GA4 whole-period semantics, property timezone and thresholding coverage', async () => {
       await put('controls', 'hushhai.acquisition', control);

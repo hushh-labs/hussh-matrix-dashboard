@@ -15,7 +15,8 @@ export type ReportingPolicy = { approved: boolean; computeEnabled: boolean; quot
   maxPeriodDays: number; leaseMs: number; jobLifetimeMs: number; maxSnapshotBytes: number };
 export type JobStatus = 'accepted' | 'running' | 'completed' | 'delayed' | 'failed' | 'invalidated';
 export type ReportJob = { id: string; key: string; request: ReportRequest; control: ReportControl;
-  status: JobStatus; acceptedAt: number; expiresAt: number; fence: number; leaseUntil: number;
+  status: JobStatus; acceptedAt: number; startedAt: number | null; completedAt: number | null;
+  expiresAt: number; fence: number; leaseUntil: number;
   workerHash: string | null; providerJobId: string; dispatchIntent: true; sourceStarted: boolean };
 export type MetricValue = { value: number | null; coverage: 'available' | 'partial' | 'provisional' | 'untracked' | 'unavailable';
   unit: 'account' | 'outcome' | 'session' | 'provider_user' | 'key_event'; basis: 'exact' | 'provider_defined' };

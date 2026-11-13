@@ -76,7 +76,8 @@ export class MetricsReports {
       if (!Number.isSafeInteger(head.sequence) || head.sequence < 0) throw new ReportError('unavailable');
       const sequence = head.sequence + 1, id = digest([c.key, sequence]);
       const job: ReportJob = { id, key: c.key, request: c.request, control: c.control, status: 'accepted',
-        acceptedAt: now, expiresAt: now + c.policy.jobLifetimeMs, fence: 0, leaseUntil: 0,
+        acceptedAt: now, startedAt: null, completedAt: null,
+        expiresAt: now + c.policy.jobLifetimeMs, fence: 0, leaseUntil: 0,
         workerHash: null, providerJobId: `metrics_report_${id}`, dispatchIntent: true, sourceStarted: false };
       charge();
       tx.create(path('jobs', id), job);
@@ -98,9 +99,15 @@ export class MetricsReports {
       const charge = await this.quota(tx, access, policy, 'status', now);
       if (job.control.scopeDigest !== access.scopeDigest) throw new ReportError('unauthorized');
       const control = await tx.get<ReportControl>(path('controls', job.request.reportId));
+      const dispatch = await tx.get<{ state: string }>(path('dispatches', jobId));
       charge();
-      return { state: digest(control) === digest(job.control) ? job.status : 'invalidated' as const,
-        jobId, acceptedAt: job.acceptedAt, retryAfterMs: policy.leaseMs };
+      const needsAttention = job.status === 'accepted' && dispatch?.state === 'blocked';
+      const state = digest(control) !== digest(job.control) ? 'invalidated' as const
+        : job.status === 'accepted' && ['uncertain', 'blocked'].includes(dispatch?.state ?? '') ? 'delayed' as const : job.status;
+      return { state, jobId, acceptedAt: job.acceptedAt, needsAttention,
+        queueWaitMs: Math.max(0, (job.startedAt ?? now) - job.acceptedAt),
+        executionMs: job.startedAt === null ? 0 : Math.max(0, (job.completedAt ?? now) - job.startedAt),
+        retryAfterMs: ['completed', 'failed', 'invalidated'].includes(state) || needsAttention ? 0 : policy.leaseMs };
     });
   }
 }
@@ -131,7 +138,7 @@ export class MetricsReportWorker {
       }
       if (digest(control) !== digest(job.control)) throw new ReportError('unavailable');
       const claimed: ReportJob = { ...job, status: 'running', fence: job.fence + 1,
-        leaseUntil: now + policy.leaseMs, workerHash, sourceStarted: true };
+        leaseUntil: now + policy.leaseMs, workerHash, sourceStarted: true, startedAt: job.startedAt ?? now };
       tx.set(path('jobs', jobId), claimed);
       return { job: claimed, recoverOnly: job.sourceStarted };
     });
@@ -155,7 +162,7 @@ export class MetricsReportWorker {
         control: current.control, result, computedAt: now, publishedAt: now };
       tx.create(path('snapshots', claim.id), publication);
       tx.set(path('heads', claim.key), { ...head, activeJob: null, publication: claim.id });
-      tx.set(path('jobs', claim.id), { ...current, status: 'completed', leaseUntil: 0 });
+      tx.set(path('jobs', claim.id), { ...current, status: 'completed', leaseUntil: 0, completedAt: now });
       tx.set(path('capacity', 'custom'), { active: slots.active - 1 });
       return claim.id;
     });

@@ -17,7 +17,7 @@ describe('Metrics web source boundary', () => {
         if (!clause?.name && clause?.namedBindings && ts.isNamedImports(clause.namedBindings)
           && clause.namedBindings.elements.every(e => e.isTypeOnly)) continue;
         const name = statement.moduleSpecifier.text;
-        expect(name).not.toMatch(/bigquery|genai|google-auth|reports\/(sources|collector)|plg|one-customer-cohort/);
+        expect(name).not.toMatch(/bigquery|genai|google-auth|reports\/(sources|collector|dispatch)|plg|one-customer-cohort/);
         if (name.startsWith('.')) {
           const base = path.resolve(path.dirname(file), name);
           const target = [base, base + '.ts', base + '.tsx'].find(p => fs.existsSync(p) && fs.statSync(p).isFile());

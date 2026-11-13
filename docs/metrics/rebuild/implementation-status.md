@@ -15,12 +15,17 @@
 - Fenced worker claims/publication, expiry of unstarted work, recovery-only
   handling of uncertain work and stable provider identities. No refund/release
   of unsettled work on timeout or lease expiry.
+- Durable task enqueue bridge with deterministic identity, dispatch leases,
+  bounded native lookup, delayed/attention states and queue/execution timings.
+  Missing queue tasks never authorize replacement. A separate approved dispatch
+  policy is required; native transport and cloud wiring remain held.
 - Optional byte/entry-bounded immutable body cache, checked behind current
   report authority and publication identity on every read.
 - One aggregate-source contract adapter and GA4 whole-period report adapter.
   Both reserve a durable source-call receipt before I/O. No raw provider payload,
-  owner directory or private content persists. Interrupted reads never silently
-  become a second provider request.
+  owner directory or private content persists. Recovery before a journal exists
+  can admit the first source call through the current fence. An admitted uncertain
+  call never becomes a second provider request.
 - Existing `npm run build` qualifies legacy and Next.js builds. Existing UI
   command checks the standalone application alongside the legacy UI. Source
   layout falls within the existing CI path filter; workflow files are unchanged.
@@ -52,7 +57,9 @@ reporting probe now runs inside the existing localhost-only budget qualification
 coalescing across instances, lease recovery, stale-worker rejection, publication,
 source invalidation and retained uncertain capacity. It also asserts that reporting
 cannot change inherited budget counters/reservations. Hosted evidence for that
-expanded probe is required; the earlier unchanged storage pass does not cover it.
+expanded probe passed in CI 43393680334 on `701ad5cf`. The next extension adds
+durable dispatch-acknowledgement recovery to that same native probe; its new
+current-head CI receipt is required separately.
 
 ## Remaining before collection or release
 
@@ -62,8 +69,9 @@ expanded probe is required; the earlier unchanged storage pass does not cover it
    reconciliation. `/api/one/metrics/adoption` is proposed, not deployed. GA4
    needs verified property/timezone and an independently justified information
    watermark. Successful checks alone cannot establish source freshness.
-3. Native Firestore concurrency evidence and actual Linux container qualification.
-4. Durable task dispatch, scheduled/custom fairness, bounded polling/progress,
+3. Complete optional native suite and actual Linux container qualification. The
+   representative native reporting probe has passed in the existing Linux CI.
+4. Live task transport/worker wiring, scheduled/custom fairness, bounded polling UI,
    shared circuit/backoff and reference-aware cleanup. Admitted intent is durable;
    no collector entrypoint or scheduler has been activated.
 5. Reader/admission/worker IAM and operational routing handoff. Firestore

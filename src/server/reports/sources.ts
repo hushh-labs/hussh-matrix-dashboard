@@ -50,11 +50,12 @@ abstract class JournaledSource implements AggregateReportSource {
   }
   async recover(job: ReportJob) {
     if (job.control.sourceGeneration !== this.policy.sourceGeneration) throw new ReportError('invalid');
-    return this.store.transaction(async tx => {
-      const receipt = await tx.get<SourceCall>(reportPath('sourceReceipts', job.id));
-      if (!receipt || receipt.binding !== this.binding(job)) return null;
-      return receipt.state === 'completed' ? receipt.result : null;
-    });
+    const receipt = await this.store.transaction(tx => tx.get<SourceCall>(reportPath('sourceReceipts', job.id)));
+    // With no journal, no source call was admitted. The same fenced reservation
+    // path safely admits the first call and rejects a late obsolete worker.
+    if (!receipt) return this.submit(job);
+    if (receipt.binding !== this.binding(job)) return null;
+    return receipt.state === 'completed' ? receipt.result : null;
   }
   protected async boundedJson(response: Response) {
     if (!response.ok || response.redirected || !response.headers.get('content-type')?.includes('application/json')) throw new ReportError('unavailable');

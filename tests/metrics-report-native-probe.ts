@@ -3,6 +3,7 @@ import type { Firestore } from '@google-cloud/firestore';
 import { digest, type AggregateResult, type ReportingPolicy, type ReportControl } from '../src/server/reports/contracts';
 import { FirestoreReportStore, reportPath } from '../src/server/reports/store';
 import { MetricsReports, MetricsReportWorker } from '../src/server/reports/service';
+import { MetricsReportDispatch, type DispatchPolicy, type ReportTaskQueue } from '../src/server/reports/dispatch';
 
 /** Runs inside the existing localhost-only native budget/storage qualification.
  * Derived reporting must not modify its inherited warehouse reservations. */
@@ -48,4 +49,16 @@ export async function verifyNativeReportStorage(db: Firestore) {
   const uncertain = (await worker.claim(next.jobId!, digest('native-uncertain')))!;
   await worker.uncertain(uncertain.job);
   assert.equal((await db.doc(reportPath('capacity', 'custom')).get()).data()?.active, 1);
+  const dispatchPolicy: DispatchPolicy = { approved: true, enabled: true, leaseMs: 1000, lookupDelayMs: 1000, maxLookups: 2 };
+  await db.doc(reportPath('policy', 'dispatch')).set(dispatchPolicy);
+  const toQueue = await readers[0].request({ ...request, startDate: '2026-11-10' }, access);
+  let creates = 0, lookups = 0;
+  const queue: ReportTaskQueue = { taskName: id => `fixture/tasks/${id}`,
+    create: async () => { creates++; throw new Error('Synthetic missing acknowledgement'); },
+    lookup: async () => { lookups++; return 'present'; } };
+  await new MetricsReportDispatch(store, queue, () => now).deliver(toQueue.jobId!, digest('native-dispatch'));
+  assert.equal((await readers[0].status(toQueue.jobId!, access)).state, 'delayed');
+  now += dispatchPolicy.lookupDelayMs;
+  const dispatched = await new MetricsReportDispatch(restarted, queue, () => now).deliver(toQueue.jobId!, digest('native-dispatch-recovery'));
+  assert.equal(dispatched.state, 'queued'); assert.equal(creates, 1); assert.equal(lookups, 1);
 }
