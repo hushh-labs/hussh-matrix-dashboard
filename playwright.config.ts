@@ -10,6 +10,13 @@ export default defineConfig({
   workers: process.env.CI ? 2 : 3, timeout: 60_000,
   expect: { timeout: 15_000 }, reporter: [['list'], ['html', { open: 'never' }]],
   use: { baseURL, browserName: 'chromium', trace: 'retain-on-failure', screenshot: 'only-on-failure', reducedMotion: 'reduce' },
-  webServer: { command: `node node_modules/vite/bin/vite.js --port ${port} --host 127.0.0.1 --strictPort`, url: baseURL,
-    reuseExistingServer: !process.env.CI && !process.env.PLAYWRIGHT_PORT },
+  webServer: [
+    { command: `node node_modules/vite/bin/vite.js --port ${port} --host 127.0.0.1 --strictPort`, url: baseURL,
+      reuseExistingServer: !process.env.CI && !process.env.PLAYWRIGHT_PORT },
+    { command: 'npm --prefix src/metrics-web start', url: 'http://127.0.0.1:3200', reuseExistingServer: false,
+      env: { SESSION_SECRET: 'local-metrics-build-check-'.repeat(3), ALLOWED_EMAIL_DOMAINS: 'example.invalid',
+        ALLOWED_EMAILS: '', METRICS_SCOPE_DIGEST: 'a'.repeat(64), METRICS_REPORTING_PROJECT: '',
+        METRICS_REPORTING_DATABASE: '', METRICS_WEB_ORIGIN: 'http://127.0.0.1:3200',
+        METRICS_BIGQUERY_ENABLED: 'false', NEXT_TELEMETRY_DISABLED: '1' } },
+  ],
 });
