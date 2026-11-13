@@ -1,7 +1,9 @@
-import { digest, ReportError, validatePolicy, type AggregateResult, type MetricValue, type ReportJob,
+import { digest, ReportError, reportingTimezone, validatePolicy, type AggregateResult, type MetricValue, type ReportJob,
   type ReportControl, type ReportingPolicy } from './contracts';
 import type { AggregateReportSource } from './collector';
 import { reportPath, type ReportStore } from './store';
+import { providerRetryAfter, SourceRequestFailure } from './source-errors';
+import { withinDeadline } from './deadline';
 
 type SourceCall = { binding: string; state: 'reserved' | 'completed'; result: AggregateResult | null };
 type SourcePolicy = { sourceGeneration: string; timeoutMs: number; maxResponseBytes: number };
@@ -57,20 +59,23 @@ abstract class JournaledSource implements AggregateReportSource {
     if (receipt.binding !== this.binding(job)) return null;
     return receipt.state === 'completed' ? receipt.result : null;
   }
-  protected async boundedJson(response: Response) {
-    if (!response.ok || response.redirected || !response.headers.get('content-type')?.includes('application/json')) throw new ReportError('unavailable');
-    if (Number(response.headers.get('content-length')) > this.policy.maxResponseBytes) throw new ReportError('unavailable');
+  protected async boundedJson(response: Response, signal: AbortSignal) {
+    if (!response.ok) throw new SourceRequestFailure([400, 401, 403, 404, 422].includes(response.status) ? 'configuration' : 'transient',
+      providerRetryAfter(response.headers.get('retry-after'), this.now()));
+    if (response.redirected || !response.headers.get('content-type')?.includes('application/json')) throw new SourceRequestFailure('configuration');
+    if (Number(response.headers.get('content-length')) > this.policy.maxResponseBytes) throw new SourceRequestFailure('configuration');
     const stream = response.body?.getReader();
-    if (!stream) throw new ReportError('unavailable');
+    if (!stream) throw new SourceRequestFailure('configuration');
     let bytes = 0, body = ''; const decoder = new TextDecoder();
     try {
       while (true) {
-        const part = await stream.read(); if (part.done) break;
+        const part = await withinDeadline(stream.read(), signal); if (part.done) break;
         bytes += part.value.byteLength;
-        if (bytes > this.policy.maxResponseBytes) throw new ReportError('unavailable');
+        if (bytes > this.policy.maxResponseBytes) throw new SourceRequestFailure('configuration');
         body += decoder.decode(part.value, { stream: true });
       }
-      return JSON.parse(body + decoder.decode());
+      try { return JSON.parse(body + decoder.decode()); }
+      catch { throw new SourceRequestFailure('configuration'); }
     } finally { await stream.cancel(); }
   }
 }
@@ -81,6 +86,7 @@ export class Ga4AcquisitionSource extends JournaledSource {
   }, private fetch: AggregateFetch, now?: () => number) {
     super(store, policy, now);
     if (!/^\d{3,20}$/.test(config.propertyId)) throw new ReportError('invalid');
+    this.config = { ...config, timezone: reportingTimezone(config.timezone) };
   }
   protected binding(job: ReportJob) { return digest([job.key, this.config, this.policy.sourceGeneration]); }
   protected async collect(job: ReportJob): Promise<AggregateResult> {
@@ -90,24 +96,29 @@ export class Ga4AcquisitionSource extends JournaledSource {
       body: { dateRanges: [{ startDate: job.request.startDate, endDate: job.request.endDate }],
         metrics: [{ name: 'sessions' }, { name: 'activeUsers' }, { name: 'engagedSessions' }, { name: 'keyEvents' }],
         returnPropertyQuota: true, limit: '1' }, signal,
-    }));
-    if (data.metadata?.timeZone !== this.config.timezone || !Array.isArray(data.metricHeaders)
+    }), signal);
+    let propertyTimezone: string;
+    try { propertyTimezone = reportingTimezone(data?.metadata?.timeZone); }
+    catch { throw new SourceRequestFailure('configuration'); }
+    if (propertyTimezone !== this.config.timezone || !Array.isArray(data.metricHeaders)
       || data.metricHeaders.map((v: { name?: string }) => v.name).join() !== 'sessions,activeUsers,engagedSessions,keyEvents'
       || (data.rows && (!Array.isArray(data.rows) || data.rows.length > 1))
-      || (data.rowCount !== undefined && (!Number.isSafeInteger(data.rowCount) || data.rowCount > 1))) throw new ReportError('unavailable');
+      || (data.rowCount !== undefined && (!Number.isSafeInteger(data.rowCount) || data.rowCount < 0 || data.rowCount > 1))
+      || data.rowCount === 0 && data.rows?.length) throw new SourceRequestFailure('configuration');
     const partial = !!(data.metadata.subjectToThresholding || data.metadata.dataLossFromOtherRow || data.metadata.samplingMetadatas?.length);
     // GA4 does not supply an export watermark in runReport. Unknown freshness
     // remains explicit until a separately verified source watermark exists.
     const metrics: Record<string, MetricValue> = {};
     const names = ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'];
     const values = data.rows?.[0]?.metricValues;
-    if (values && (!Array.isArray(values) || values.length !== names.length)) throw new ReportError('unavailable');
+    if ((data.rows?.length === 1 && (!Array.isArray(values) || values.length !== names.length))
+      || data.rowCount > 0 && !data.rows?.length) throw new SourceRequestFailure('configuration');
     names.forEach((name, index) => {
       const raw = values?.[index]?.value;
-      if (raw !== undefined && (typeof raw !== 'string' || !/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)))) throw new ReportError('unavailable');
+      if (values && (typeof raw !== 'string' || !/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)))) throw new SourceRequestFailure('configuration');
       const unknown = this.config.informationWatermark === null;
-      metrics[name] = { value: unknown ? null : raw === undefined ? 0 : Number(raw),
-        coverage: unknown ? 'unavailable' : partial ? 'partial' : 'available',
+      metrics[name] = { value: raw === undefined ? 0 : Number(raw),
+        coverage: unknown || partial ? 'partial' : 'available',
         unit: name === 'activeUsers' ? 'provider_user' : name === 'keyEvents' ? 'key_event' : 'session', basis: 'provider_defined' };
     });
     return { metrics, sourceCheckedAt: this.now(), sourceWatermark: this.config.informationWatermark,
@@ -128,10 +139,11 @@ export class OneAdoptionSource extends JournaledSource {
   protected async collect(job: ReportJob): Promise<AggregateResult> {
     if (job.request.reportId !== 'one.adoption') throw new ReportError('invalid');
     const origin = this.environment === 'production' ? 'https://api.hushh.ai' : 'https://api.uat.hushh.ai';
+    const signal = AbortSignal.timeout(this.policy.timeoutMs);
     return await this.boundedJson(await this.fetch(`${origin}/api/one/metrics/adoption`, {
       body: { period: { startDate: job.request.startDate, endDate: job.request.endDate, timezone: job.request.timezone },
         definitionVersion: job.control.definitionVersion, sourceGeneration: job.control.sourceGeneration, scopeDigest: job.control.scopeDigest },
-      signal: AbortSignal.timeout(this.policy.timeoutMs),
-    })) as AggregateResult;
+      signal,
+    }), signal) as AggregateResult;
   }
 }

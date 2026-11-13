@@ -6,7 +6,7 @@ const config: NextConfig = {
   outputFileTracingRoot: path.resolve(process.cwd(), '../..'),
   poweredByHeader: false,
   experimental: { cpus: 1 },
-  serverExternalPackages: ['@google-cloud/firestore'],
+  serverExternalPackages: ['google-auth-library'],
   async headers() {
     return [{ source: '/:path*', headers: [
       { key: 'Cache-Control', value: 'private, no-store, max-age=0' },

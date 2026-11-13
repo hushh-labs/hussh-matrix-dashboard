@@ -12,11 +12,14 @@ export type ReportControl = { enabled: boolean; revision: number; sourceGenerati
   scopeDigest: string; definitionVersion: string; freshnessMs: number; staleMs: number };
 export type ReportingPolicy = { approved: boolean; computeEnabled: boolean; quotaWindowMs: number;
   readRequests: number; statusRequests: number; computeRequests: number; customCapacity: number;
+  scheduledCapacity: number; customPerSubjectCapacity: number;
   maxPeriodDays: number; leaseMs: number; jobLifetimeMs: number; maxSnapshotBytes: number };
 export type JobStatus = 'accepted' | 'running' | 'completed' | 'delayed' | 'failed' | 'invalidated';
 export type ReportJob = { id: string; key: string; request: ReportRequest; control: ReportControl;
+  lane: 'custom' | 'scheduled'; requesterHash: string;
   status: JobStatus; acceptedAt: number; startedAt: number | null; completedAt: number | null;
   expiresAt: number; fence: number; leaseUntil: number;
+  nextAttemptAt: number; needsAttention: boolean;
   workerHash: string | null; providerJobId: string; dispatchIntent: true; sourceStarted: boolean };
 export type MetricValue = { value: number | null; coverage: 'available' | 'partial' | 'provisional' | 'untracked' | 'unavailable';
   unit: 'account' | 'outcome' | 'session' | 'provider_user' | 'key_event'; basis: 'exact' | 'provider_defined' };
@@ -41,9 +44,9 @@ export function validateAccess(access: ReportAccess) {
 export function validatePolicy(value: ReportingPolicy | null): ReportingPolicy {
   if (!value || value.approved !== true || typeof value.computeEnabled !== 'boolean'
     || Object.keys(value).sort().join() !== ['approved', 'computeEnabled', 'quotaWindowMs', 'readRequests',
-      'statusRequests', 'computeRequests', 'customCapacity', 'maxPeriodDays', 'leaseMs', 'jobLifetimeMs', 'maxSnapshotBytes'].sort().join()
+      'statusRequests', 'computeRequests', 'customCapacity', 'scheduledCapacity', 'customPerSubjectCapacity', 'maxPeriodDays', 'leaseMs', 'jobLifetimeMs', 'maxSnapshotBytes'].sort().join()
     || Object.entries(value).some(([key, v]) => !['approved', 'computeEnabled'].includes(key)
-      && (!Number.isSafeInteger(v) || Number(v) <= 0))
+      && (!Number.isSafeInteger(v) || (key === 'scheduledCapacity' ? Number(v) < 0 : Number(v) <= 0)))
     || value.leaseMs > value.jobLifetimeMs || value.maxSnapshotBytes > 900_000) throw new ReportError('unavailable');
   return value;
 }
@@ -66,11 +69,13 @@ export function validateRequest(value: unknown, maxDays: number): ReportRequest 
       || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) throw new ReportError('invalid');
   }
   const days = (Date.parse(r.endDate) - Date.parse(r.startDate)) / 86_400_000 + 1;
-  if (days <= 0 || days > maxDays || typeof r.timezone !== 'string' || r.timezone.length > 64) throw new ReportError('invalid');
-  let timezone: string;
-  try { timezone = new Intl.DateTimeFormat('en', { timeZone: r.timezone }).resolvedOptions().timeZone; }
+  if (days <= 0 || days > maxDays) throw new ReportError('invalid');
+  return { reportId: r.reportId, startDate: r.startDate, endDate: r.endDate, timezone: reportingTimezone(r.timezone) };
+}
+export function reportingTimezone(value: string) {
+  if (typeof value !== 'string' || value.length > 64 || !value) throw new ReportError('invalid');
+  try { return new Intl.DateTimeFormat('en', { timeZone: value }).resolvedOptions().timeZone; }
   catch { throw new ReportError('invalid'); }
-  return { reportId: r.reportId, startDate: r.startDate, endDate: r.endDate, timezone };
 }
 export const reportKey = (request: ReportRequest, control: ReportControl) => digest([
   request.reportId, request.startDate, request.endDate, request.timezone,
@@ -98,7 +103,8 @@ export function validateAggregate(result: AggregateResult, job: ReportJob, now: 
       || !['available', 'partial', 'provisional', 'untracked', 'unavailable'].includes(metric.coverage)
       || (['unavailable', 'untracked'].includes(metric.coverage) ? metric.value !== null
         : !Number.isSafeInteger(metric.value) || Number(metric.value) < 0)
-      || (metric.value !== null && result.sourceWatermark === null)) throw new ReportError('invalid');
+      || (metric.value !== null && result.sourceWatermark === null
+        && (metric.basis !== 'provider_defined' || !['partial', 'provisional'].includes(metric.coverage)))) throw new ReportError('invalid');
   }
   if (Buffer.byteLength(JSON.stringify(result)) > maxBytes) throw new ReportError('invalid');
 }

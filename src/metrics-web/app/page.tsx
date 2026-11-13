@@ -28,7 +28,7 @@ export default async function ReportsPage({ searchParams }: {
     <button type="submit">Apply</button></form>
     {!view?.report ? <section className="empty" role="status"><h2>Report unavailable</h2>
       <p>There is no verified publication for this selection. Try another period or check back after collection completes.</p></section> :
-      <><div className="report-meta"><span>{view.state === 'stale' ? 'Older source information' : 'Published report'}</span>
+      <><div className="report-meta"><span>{view.state === 'unknown_freshness' ? 'Source freshness unknown' : view.state === 'stale' ? 'Older source information' : 'Published report'}</span>
         <span>{view.report.request.startDate} – {view.report.request.endDate} · {view.report.request.timezone}</span></div>
       <section className="cards" aria-label="Report metrics">{(Object.entries(view.report.result.metrics) as [string, MetricValue][]).map(([key, metric]) =>
         <article key={key}><h2>{({ activeAccounts: 'Active accounts', confirmedOutcomes: 'Confirmed outcomes', sessions: 'Sessions', activeUsers: 'Active users', engagedSessions: 'Engaged sessions', keyEvents: 'Key events' } as Record<string, string>)[key]}</h2>

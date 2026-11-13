@@ -48,41 +48,57 @@ export class MetricsReports {
         || !Number.isSafeInteger(report.publishedAt) || report.publishedAt > now || report.computedAt > report.publishedAt) throw new ReportError('unavailable');
       validateAggregate(report.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
       const watermark = report.result.sourceWatermark;
-      const age = watermark === null ? Infinity : now - watermark;
+      // Publication age limits retention of provider reports with unknown source
+      // freshness. It never establishes an information watermark.
+      const age = watermark === null ? now - report.publishedAt : now - watermark;
       if (age > c.control.staleMs) return { state: 'unavailable' as const, report: null };
       this.cache?.put(cacheKey!, report);
+      if (watermark === null) return { state: 'unknown_freshness' as const, report };
       return { state: age > c.control.freshnessMs ? 'stale' as const : 'completed' as const, report };
     });
   }
 
   async request(input: unknown, access: ReportAccess) {
+    return this.admit(input, access, 'custom');
+  }
+  /** Internal scheduler identity only; this method is not exposed to web callers. */
+  async requestScheduled(input: unknown, access: ReportAccess) {
+    return this.admit(input, access, 'scheduled');
+  }
+  private async admit(input: unknown, access: ReportAccess, lane: ReportJob['lane']) {
     const now = this.now();
     return this.store.transaction(async tx => {
       const c = await this.context(tx, input, access);
       const head = await tx.get<Head>(path('heads', c.key)) ?? { sequence: 0, activeJob: null, publication: null };
       const publication = head.publication ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
       const active = head.activeJob ? await tx.get<ReportJob>(path('jobs', head.activeJob)) : null;
-      const slots = await tx.get<Capacity>(path('capacity', 'custom')) ?? { active: 0 };
+      const slots = await tx.get<Capacity>(path('capacity', lane)) ?? { active: 0 };
+      const subjectSlot = path('subjectCapacity', digest([lane, access.subjectHash]));
+      const subject = await tx.get<Capacity>(subjectSlot) ?? { active: 0 };
       const charge = await this.quota(tx, access, c.policy, 'compute', now);
-      if (publication && publication.key === c.key && publication.result.sourceWatermark !== null
-        && now - publication.result.sourceWatermark <= c.control.freshnessMs) {
+      if (publication && publication.key === c.key
+        && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
         charge(); return { state: 'completed' as const, reportId: publication.id, jobId: null };
       }
       if (active && ['accepted', 'running', 'delayed'].includes(active.status)) {
         charge(); return { state: active.status, reportId: null, jobId: active.id };
       }
       if (!c.policy.computeEnabled) throw new ReportError('unavailable');
-      if (!Number.isSafeInteger(slots.active) || slots.active < 0 || slots.active >= c.policy.customCapacity) throw new ReportError('capacity');
+      if (!Number.isSafeInteger(slots.active) || slots.active < 0 || slots.active >= c.policy[`${lane}Capacity`]
+        || !Number.isSafeInteger(subject.active) || subject.active < 0
+        || lane === 'custom' && subject.active >= c.policy.customPerSubjectCapacity) throw new ReportError('capacity');
       if (!Number.isSafeInteger(head.sequence) || head.sequence < 0) throw new ReportError('unavailable');
       const sequence = head.sequence + 1, id = digest([c.key, sequence]);
-      const job: ReportJob = { id, key: c.key, request: c.request, control: c.control, status: 'accepted',
+      const job: ReportJob = { id, key: c.key, request: c.request, control: c.control, status: 'accepted', lane, requesterHash: access.subjectHash,
         acceptedAt: now, startedAt: null, completedAt: null,
         expiresAt: now + c.policy.jobLifetimeMs, fence: 0, leaseUntil: 0,
+        nextAttemptAt: 0, needsAttention: false,
         workerHash: null, providerJobId: `metrics_report_${id}`, dispatchIntent: true, sourceStarted: false };
       charge();
       tx.create(path('jobs', id), job);
       tx.set(path('heads', c.key), { ...head, sequence, activeJob: id });
-      tx.set(path('capacity', 'custom'), { active: slots.active + 1 });
+      tx.set(path('capacity', lane), { active: slots.active + 1 });
+      tx.set(subjectSlot, { active: subject.active + 1 });
       return { state: 'accepted' as const, reportId: null, jobId: id };
     });
   }
@@ -101,13 +117,14 @@ export class MetricsReports {
       const control = await tx.get<ReportControl>(path('controls', job.request.reportId));
       const dispatch = await tx.get<{ state: string }>(path('dispatches', jobId));
       charge();
-      const needsAttention = job.status === 'accepted' && dispatch?.state === 'blocked';
+      const needsAttention = job.needsAttention || job.status === 'accepted' && dispatch?.state === 'blocked';
       const state = digest(control) !== digest(job.control) ? 'invalidated' as const
         : job.status === 'accepted' && ['uncertain', 'blocked'].includes(dispatch?.state ?? '') ? 'delayed' as const : job.status;
       return { state, jobId, acceptedAt: job.acceptedAt, needsAttention,
         queueWaitMs: Math.max(0, (job.startedAt ?? now) - job.acceptedAt),
         executionMs: job.startedAt === null ? 0 : Math.max(0, (job.completedAt ?? now) - job.startedAt),
-        retryAfterMs: ['completed', 'failed', 'invalidated'].includes(state) || needsAttention ? 0 : policy.leaseMs };
+        retryAfterMs: ['completed', 'failed', 'invalidated'].includes(state) || needsAttention ? 0
+          : Math.max(policy.leaseMs, job.nextAttemptAt - now) };
     });
   }
 }
@@ -124,16 +141,21 @@ export class MetricsReportWorker {
       if (!job) throw new ReportError('unavailable');
       const control = await tx.get<ReportControl>(path('controls', job.request.reportId));
       if (!policy.computeEnabled) throw new ReportError('unavailable');
-      if (['completed', 'failed', 'invalidated'].includes(job.status) || job.leaseUntil > now) return null;
+      if (['completed', 'failed', 'invalidated'].includes(job.status) || job.leaseUntil > now
+        || job.needsAttention || job.nextAttemptAt > now) return null;
       // Expired unstarted work is never dispatched. Uncertain work needs recovery,
       // even after expiry; lease expiry cannot release its capacity/reservation.
       if (!job.sourceStarted && (job.expiresAt <= now || digest(control) !== digest(job.control))) {
         const head = await tx.get<Head>(path('heads', job.key));
-        const slots = await tx.get<Capacity>(path('capacity', 'custom'));
-        if (head?.activeJob !== job.id || !slots || !Number.isSafeInteger(slots.active) || slots.active < 1) throw new ReportError('unavailable');
+        const slots = await tx.get<Capacity>(path('capacity', job.lane));
+        const subjectSlot = path('subjectCapacity', digest([job.lane, job.requesterHash]));
+        const subject = await tx.get<Capacity>(subjectSlot);
+        if (head?.activeJob !== job.id || !slots || !Number.isSafeInteger(slots.active) || slots.active < 1
+          || !subject || !Number.isSafeInteger(subject.active) || subject.active < 1) throw new ReportError('unavailable');
         tx.set(path('heads', job.key), { ...head, activeJob: null });
-        tx.set(path('jobs', job.id), { ...job, status: 'invalidated' });
-        tx.set(path('capacity', 'custom'), { active: slots.active - 1 });
+        tx.set(path('jobs', job.id), { ...job, status: 'invalidated', completedAt: now });
+        tx.set(path('capacity', job.lane), { active: slots.active - 1 });
+        tx.set(subjectSlot, { active: subject.active - 1 });
         return null;
       }
       if (digest(control) !== digest(job.control)) throw new ReportError('unavailable');
@@ -151,29 +173,52 @@ export class MetricsReportWorker {
       const current = await tx.get<ReportJob>(path('jobs', claim.id));
       const control = await tx.get<ReportControl>(path('controls', claim.request.reportId));
       const head = await tx.get<Head>(path('heads', claim.key));
-      const slots = await tx.get<Capacity>(path('capacity', 'custom'));
+      const slots = await tx.get<Capacity>(path('capacity', claim.lane));
+      const subjectSlot = path('subjectCapacity', digest([claim.lane, claim.requesterHash]));
+      const subject = await tx.get<Capacity>(subjectSlot);
       if (current?.status === 'completed' && head?.publication === claim.id) return claim.id;
       if (!policy.computeEnabled || !current || current.status !== 'running' || current.fence !== claim.fence
         || current.workerHash !== claim.workerHash || current.leaseUntil <= now
         || digest(current.control) !== digest(control) || digest(current.request) !== digest(claim.request)
-        || head?.activeJob !== claim.id || !slots || !Number.isSafeInteger(slots.active) || slots.active < 1) throw new ReportError('stale_worker');
+        || current.lane !== claim.lane || current.requesterHash !== claim.requesterHash
+        || head?.activeJob !== claim.id || !slots || !Number.isSafeInteger(slots.active) || slots.active < 1
+        || !subject || !Number.isSafeInteger(subject.active) || subject.active < 1) throw new ReportError('stale_worker');
       validateAggregate(result, current, now, policy.maxSnapshotBytes);
       const publication: PublishedReport = { id: claim.id, key: claim.key, request: current.request,
         control: current.control, result, computedAt: now, publishedAt: now };
       tx.create(path('snapshots', claim.id), publication);
       tx.set(path('heads', claim.key), { ...head, activeJob: null, publication: claim.id });
       tx.set(path('jobs', claim.id), { ...current, status: 'completed', leaseUntil: 0, completedAt: now });
-      tx.set(path('capacity', 'custom'), { active: slots.active - 1 });
+      tx.set(path('capacity', claim.lane), { active: slots.active - 1 });
+      tx.set(subjectSlot, { active: subject.active - 1 });
       return claim.id;
     });
   }
 
   async uncertain(claim: ReportJob) {
+    return this.defer(claim, 0, false);
+  }
+  async defer(claim: ReportJob, retryAt: number, needsAttention: boolean) {
+    if (!Number.isSafeInteger(retryAt) || retryAt < 0) throw new ReportError('invalid');
     return this.store.transaction(async tx => {
       const job = await tx.get<ReportJob>(path('jobs', claim.id));
       if (!job || job.status !== 'running' || job.fence !== claim.fence || job.workerHash !== claim.workerHash) throw new ReportError('stale_worker');
-      tx.set(path('jobs', claim.id), { ...job, status: 'delayed', leaseUntil: 0 });
+      tx.set(path('jobs', claim.id), { ...job, status: 'delayed', leaseUntil: 0, nextAttemptAt: retryAt, needsAttention });
       // Do not free capacity, reset providerJobId or refund paid-work reservations.
+    });
+  }
+  async inspect(jobId: string) {
+    if (!/^[a-f0-9]{64}$/.test(jobId)) throw new ReportError('invalid');
+    return this.store.transaction(tx => tx.get<ReportJob>(path('jobs', jobId)));
+  }
+  async stopRecovery(jobId: string) {
+    const now = this.now();
+    if (!/^[a-f0-9]{64}$/.test(jobId)) throw new ReportError('invalid');
+    return this.store.transaction(async tx => {
+      const job = await tx.get<ReportJob>(path('jobs', jobId));
+      if (!job || ['completed', 'failed', 'invalidated'].includes(job.status) || job.leaseUntil > now) return false;
+      tx.set(path('jobs', jobId), { ...job, status: 'delayed', leaseUntil: 0, nextAttemptAt: 0, needsAttention: true });
+      return true; // Capacity and every source/budget receipt remain retained.
     });
   }
 }

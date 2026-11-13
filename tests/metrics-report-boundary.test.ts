@@ -17,7 +17,8 @@ describe('Metrics web source boundary', () => {
         if (!clause?.name && clause?.namedBindings && ts.isNamedImports(clause.namedBindings)
           && clause.namedBindings.elements.every(e => e.isTypeOnly)) continue;
         const name = statement.moduleSpecifier.text;
-        expect(name).not.toMatch(/bigquery|genai|google-auth|reports\/(sources|collector|dispatch)|plg|one-customer-cohort/);
+        expect(name).not.toMatch(/bigquery|genai|firestore|reports\/(sources|collector|dispatch|transports|store|service|lifecycle|worker-runtime)|plg|one-customer-cohort/);
+        if (name === 'google-auth-library') expect(file).toBe(path.join(root, 'src/server/reports/web-client.ts'));
         if (name.startsWith('.')) {
           const base = path.resolve(path.dirname(file), name);
           const target = [base, base + '.ts', base + '.tsx'].find(p => fs.existsSync(p) && fs.statSync(p).isFile());
@@ -26,6 +27,7 @@ describe('Metrics web source boundary', () => {
         }
       }
       expect(source).not.toMatch(/NEXT_PUBLIC_.*(?:SECRET|TOKEN)|after\s*\(|setInterval\s*\(/);
+      if (file.endsWith('web-client.ts')) expect(source).not.toMatch(/analytics\.readonly|cloud-platform|getClient\s*\(/);
     }
     inspect(path.join(root, 'src/metrics-web/app/page.tsx'));
     inspect(path.join(root, 'src/metrics-web/app/api/report-jobs/route.ts'));

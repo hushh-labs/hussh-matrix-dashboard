@@ -9,6 +9,7 @@
     "build:metrics": "npm --prefix src/metrics-web ci --no-audit --no-fund && npm --prefix src/metrics-web run build",
     "preview": "vite preview",
     "start": "tsx server.ts",
+    "metrics:collector": "tsx scripts/metrics-collector.ts",
     "test": "vitest run",
     "test:metrics:environment-fixtures": "node scripts/check-one-environment-fixtures.mjs",
     "test:metrics:feed-scope": "node scripts/render-one-feed-scope.mjs",

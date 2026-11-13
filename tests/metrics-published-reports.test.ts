@@ -16,7 +16,7 @@ const control: ReportControl = { enabled: true, revision: 1, sourceGeneration: d
   scopeDigest: access.scopeDigest, definitionVersion: '1', freshnessMs: 10_000, staleMs: 20_000 };
 // Explicit test policy; these numbers are not activation defaults.
 const policy: ReportingPolicy = { approved: true, computeEnabled: true, quotaWindowMs: 60_000,
-  readRequests: 100, statusRequests: 20, computeRequests: 10, customCapacity: 2,
+  readRequests: 100, statusRequests: 20, computeRequests: 10, customCapacity: 2, customPerSubjectCapacity: 2, scheduledCapacity: 1,
   maxPeriodDays: 30, leaseMs: 1000, jobLifetimeMs: 60_000, maxSnapshotBytes: 20_000 };
 function aggregate(job: ReportJob, now: number): AggregateResult {
   return { metrics: {

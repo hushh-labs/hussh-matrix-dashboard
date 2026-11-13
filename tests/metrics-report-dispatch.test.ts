@@ -11,7 +11,7 @@ const control: ReportControl = { enabled: true, revision: 1, sourceGeneration: d
   definitionVersion: '1', freshnessMs: 1000, staleMs: 2000 };
 // Test-only policies; no production activation values are supplied.
 const reporting: ReportingPolicy = { approved: true, computeEnabled: true, quotaWindowMs: 60_000,
-  readRequests: 10, computeRequests: 10, statusRequests: 10, customCapacity: 2,
+  readRequests: 10, computeRequests: 10, statusRequests: 10, customCapacity: 2, customPerSubjectCapacity: 2, scheduledCapacity: 1,
   maxPeriodDays: 30, leaseMs: 1000, jobLifetimeMs: 30_000, maxSnapshotBytes: 20_000 };
 const dispatchPolicy: DispatchPolicy = { approved: true, enabled: true, leaseMs: 100, lookupDelayMs: 200, maxLookups: 2 };
 

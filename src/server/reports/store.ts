@@ -2,6 +2,7 @@ export interface ReportTransaction {
   get<T>(path: string): Promise<T | null>;
   create(path: string, value: unknown): void;
   set(path: string, value: unknown): void;
+  delete(path: string): void;
 }
 export interface ReportStore { transaction<T>(fn: (tx: ReportTransaction) => Promise<T>): Promise<T> }
 export const reportPath = (collection: string, id: string) => `metricsReporting/v1/${collection}/${id}`;
@@ -13,6 +14,7 @@ export interface FirestoreReportDriver<Reference> {
     get(ref: Reference): Promise<{ exists: boolean; data(): unknown }>;
     create(ref: Reference, value: Record<string, unknown>): unknown;
     set(ref: Reference, value: Record<string, unknown>): unknown;
+    delete(ref: Reference): unknown;
   }) => Promise<T>): Promise<T>;
 }
 export class FirestoreReportStore<Reference> implements ReportStore {
@@ -25,6 +27,7 @@ export class FirestoreReportStore<Reference> implements ReportStore {
       },
       create: (path, value) => { tx.create(this.db.doc(path), value as Record<string, unknown>); },
       set: (path, value) => { tx.set(this.db.doc(path), value as Record<string, unknown>); },
+      delete: path => { tx.delete(this.db.doc(path)); },
     }));
   }
 }
