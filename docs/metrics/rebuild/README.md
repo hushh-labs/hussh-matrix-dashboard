@@ -1,11 +1,29 @@
 # Metrics reporting rebuild
 
 Tracking: [#184](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184).
-Owner: Neelesh Meena. Technical lead: Kushal Trivedi.
+Owner: [Neelesh Meena](https://github.com/DamriaNeelesh).
+Technical lead: [Kushal Trivedi](https://github.com/kushaltrivedi5).
 
 This is the review packet for definitions and collection policy. It does not
 authorize collection, warehouse access, retirement of PLG, or release of the
 incident hold. Definition review and runtime acceptance remain outstanding.
+
+## Ownership and human-review status
+
+This packet uses assisted drafting. Neelesh is responsible for reviewing, editing
+and validating its reasoning and approving decisions within his authority; that
+human approval has not been recorded. Assignment, a signed commit and automated
+checks do not establish it. Kushal requested documentation corrections on
+foundation head `bbc2fc31e99410a3c27c20e282cd048e903ff602` in
+[review 5890330790](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/185#pullrequestreview-5890330790).
+Kushal approved the revised proposal packet at
+`e41d134ac88a70c173aae92fd570d8ebeebbdaa3` in
+[review 5895936005](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/185#pullrequestreview-5895936005).
+PR #185 merged into Main as `de0ad8142ba427ea4acbd74dd1893a8b3ea3a8dd`.
+That approval accepts the proposal packet only: metric/source reconciliation,
+measured operating limits and runtime acceptance remain pending. Collection
+activation and deployment need separate acceptance; the cost hold stays active.
+Draft #186's checks are separate implementation evidence, not those approvals.
 
 Read in order:
 
@@ -40,7 +58,7 @@ Current event emitters still need source- and release-specific verification.
 
 | Phase | State | Required exit |
 | --- | --- | --- |
-| Definitions, map and policy | Proposed for review | Lead accepts definitions and measurement-based operating limits |
+| Definitions, map and policy | Proposal packet approved; metric/operating acceptance pending | Lead accepts definitions and measurement-based operating limits |
 | Metrics identity | Pending | New application says Metrics; compatibility references inventoried |
 | One and website reporting slice | Pending | Reconciled sources → immutable publication → authenticated Next.js view |
 | Remaining reports | Pending | Every metric has approved definition, coverage and freshness |

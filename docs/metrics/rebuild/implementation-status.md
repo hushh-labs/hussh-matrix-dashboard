@@ -2,6 +2,13 @@
 
 13 November 2026. Foundation review packet: PR #185.
 
+Kushal approved the foundation proposal packet at `e41d134`; #185 merged into
+Main at `de0ad8142ba427ea4acbd74dd1893a8b3ea3a8dd`. This is documentation/proposal
+acceptance only. The approved review explicitly keeps metric/source
+reconciliation, measured operating limits, runtime, collection and deployment
+acceptance pending. The incident hold is retained while this implementation
+continues.
+
 ## Implemented locally
 
 - Independently runnable Metrics Next.js 16.4.6 App Router application, exact
@@ -75,8 +82,11 @@ cannot change inherited budget counters/reservations. Hosted evidence for that
 expanded probe passed in CI 43393680334 on `701ad5cf`. Dispatch recovery passed
 in CI 43410691679 on `b2af31d`. The collector increment adds journaled collection,
 honest GA4 freshness, shared circuit, separate capacity and bounded maintenance.
-Its exact-head hosted receipt is required separately; local mocks do not certify
-native IAM, queues, source accuracy or live behavior.
+That increment passed all three jobs in CI43419122723 at `ab185b0`: 735 tests,
+68 browser cases, both builds and the existing 44-case native storage lane with
+the extended awaited reporting probe. This is exact-head historical evidence;
+new heads retain their own qualification record. Local mocks and native storage
+do not certify native IAM, queues, source accuracy or live behavior.
 
 ## Remaining before collection or release
 
