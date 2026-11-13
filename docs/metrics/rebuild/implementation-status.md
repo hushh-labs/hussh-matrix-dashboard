@@ -47,9 +47,12 @@ An attempted checksum-pinned local Firestore emulator download/launch was
 rejected by automatic approval review before execution. No alternate launch was
 attempted. `METRICS_REPORTS_EMULATOR_TESTS=true` with an explicit localhost
 `FIRESTORE_EMULATOR_HOST` enables the same transaction suite against the native
-adapter, but those cases are currently unverified. The current hosted emulator
-lane does not collect this new suite; this gap must be resolved explicitly
-without claiming its existing PLG storage pass as Metrics storage evidence.
+adapter, but that complete suite is currently unverified. A representative native
+reporting probe now runs inside the existing localhost-only budget qualification:
+coalescing across instances, lease recovery, stale-worker rejection, publication,
+source invalidation and retained uncertain capacity. It also asserts that reporting
+cannot change inherited budget counters/reservations. Hosted evidence for that
+expanded probe is required; the earlier unchanged storage pass does not cover it.
 
 ## Remaining before collection or release
 
