@@ -8,8 +8,10 @@
   dependency lock, standalone candidate container and Metrics branding.
 - Separate report read, computation-admission and status routes. Existing signed
   Google session compatibility with current domain/email authorization checks.
-- Explicit reporting database configuration with no PLG fallback. Missing
-  configuration or publication renders unavailable; no seeded or fixture data.
+- Private audience-bound web → reporting-service client. The web process has no
+  Firestore/source SDK or provider credentials; the private service verifies
+  signatures and exact operation roles. Missing config/publication renders
+  unavailable. Explicit reporting database has no PLG fallback.
 - Transactional request quotas, durable enqueue intent, cross-instance job
   coalescing, capacity, immutable snapshots and atomic publication pointers.
 - Fenced worker claims/publication, expiry of unstarted work, recovery-only
@@ -19,13 +21,25 @@
   bounded native lookup, delayed/attention states and queue/execution timings.
   Missing queue tasks never authorize replacement. A separate approved dispatch
   policy is required; native transport and cloud wiring remain held.
-- Optional byte/entry-bounded immutable body cache, checked behind current
-  report authority and publication identity on every read.
+- Byte/entry-bounded immutable body cache, checked behind current authority and
+  publication identity on every read; runtime requires explicit bounds.
 - One aggregate-source contract adapter and GA4 whole-period report adapter.
   Both reserve a durable source-call receipt before I/O. No raw provider payload,
   owner directory or private content persists. Recovery before a journal exists
   can admit the first source call through the current fence. An admitted uncertain
   call never becomes a second provider request.
+- Held collector entrypoint and fixed native ADC/Secret Manager/One/GA4/task
+  transports, with byte/deadline limits and purpose-pinned numbered keys.
+  Configuration validation requires no source or database access.
+- Shared source circuit, provider Retry-After, jitter, fenced probe and attention
+  on credential/schema failure. Recovery attempts and polling are bounded.
+- Separate scheduled/custom capacity, per-staff custom capacity and cross-lane
+  coalescing. Explicit bounded maintenance reconciles durable intent and safely
+  prunes old superseded artifacts/quota buckets, protecting active publications,
+  uncertain work, inherited reservations and permanent head sequences.
+- GA4 actual values without a completeness watermark display partial coverage
+  and unknown source freshness. Malformed output cannot become zero. Equivalent
+  timezone aliases are normalized; source periods do not silently become UTC.
 - Existing `npm run build` qualifies legacy and Next.js builds. Existing UI
   command checks the standalone application alongside the legacy UI. Source
   layout falls within the existing CI path filter; workflow files are unchanged.
@@ -41,12 +55,13 @@ generation changes, strict aggregate payloads, session revocation/expiry, cache
 bounds and the absence of source imports from the web graph. Local production
 build checks the authenticated unavailable view and API privacy behavior.
 
-Replacement build measured 926,034 bytes across 24 static asset files and
-61,147,007 bytes across 2,758 standalone files on Windows. These are artifact
-sizes, not cold-start latency, process memory, selected-page transfer size or a
-Linux container image measurement. New application production-dependency audit
-reported zero vulnerabilities after pinning Firestore 9.4.1. Legacy root
-dependency versions were preserved.
+Current Windows build measured 926,034 bytes across 24 static files and
+50,005,210 bytes across 2,148 standalone files, versus the earlier 61,147,007-byte
+artifact. These are local artifact sizes, not reclaimed cloud storage, latency,
+memory or recurring savings. The web lock removes Firestore and uses exact
+Google invocation-auth dependency 10.6.2; production-dependency audit is clean.
+Legacy root dependencies are preserved. Exact current CI evidence is recorded on
+#186 and in the operator checkpoint.
 
 An attempted checksum-pinned local Firestore emulator download/launch was
 rejected by automatic approval review before execution. No alternate launch was
@@ -57,9 +72,11 @@ reporting probe now runs inside the existing localhost-only budget qualification
 coalescing across instances, lease recovery, stale-worker rejection, publication,
 source invalidation and retained uncertain capacity. It also asserts that reporting
 cannot change inherited budget counters/reservations. Hosted evidence for that
-expanded probe passed in CI 43393680334 on `701ad5cf`. The next extension adds
-durable dispatch-acknowledgement recovery to that same native probe; its new
-current-head CI receipt is required separately.
+expanded probe passed in CI 43393680334 on `701ad5cf`. Dispatch recovery passed
+in CI 43410691679 on `b2af31d`. The collector increment adds journaled collection,
+honest GA4 freshness, shared circuit, separate capacity and bounded maintenance.
+Its exact-head hosted receipt is required separately; local mocks do not certify
+native IAM, queues, source accuracy or live behavior.
 
 ## Remaining before collection or release
 
@@ -67,15 +84,16 @@ current-head CI receipt is required separately.
    review. No activation defaults or production policy are seeded.
 2. Authoritative One aggregate endpoint and independent fixed-period source
    reconciliation. `/api/one/metrics/adoption` is proposed, not deployed. GA4
-   needs verified property/timezone and an independently justified information
-   watermark. Successful checks alone cannot establish source freshness.
+   needs verified property/timezone, configured key events and independent
+   reconciliation. Where no source watermark exists, freshness stays unknown.
 3. Complete optional native suite and actual Linux container qualification. The
    representative native reporting probe has passed in the existing Linux CI.
-4. Live task transport/worker wiring, scheduled/custom fairness, bounded polling UI,
-   shared circuit/backoff and reference-aware cleanup. Admitted intent is durable;
-   no collector entrypoint or scheduler has been activated.
-5. Reader/admission/worker IAM and operational routing handoff. Firestore
-   collection names are not IAM isolation. The current sign-in link uses the
+4. Actual native transport/worker/queue wiring and accepted numerical policy.
+   Collector, fair capacity, source circuit and reference-aware maintenance are
+   implemented default-closed. No collector or scheduler has been activated.
+5. Reader/admission/worker IAM and operational routing handoff. The private
+   invocation boundary requires native signed-identity checks and database-level
+   grants before release. The current sign-in link uses the
    existing hosted flow; standalone OAuth callback acceptance is not established.
 6. Additional HushhTech, acquisition, retention, reliability and cost reports;
    measured team workload, agreed performance/freshness/cost objectives and alerts.
@@ -83,3 +101,4 @@ current-head CI receipt is required separately.
    serving behavior and rollback. Keep BigQuery and the incident hold in place.
 
 Implementation is in progress. This is not Ready for QA or a live-data acceptance.
+Detailed runtime/source contract: [collector integration](./collector-integration.md).
