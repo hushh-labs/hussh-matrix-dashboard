@@ -440,7 +440,7 @@ export function OneLocationAnalyticsPanel({
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Devices using Location" value={locationCapability?.devices ?? null} detail="Different app or browser IDs with recorded Location use in this period" icon={MapPin} />
-        <StatCard label="Sharing confirmed" value={byKey.get('live_sharing')?.successes ?? null} detail="Successful confirmation records, including Check-In shares. Views are separate." icon={Radio} waiting={!selectedOne.locationBehaviorAvailable} />
+        <StatCard label="Confirmed shares" value={byKey.get('live_sharing')?.successes ?? null} detail="Sharing confirmation events with a success result, including Check-In shares. All recorded outcomes are listed below." icon={Radio} waiting={!selectedOne.locationBehaviorAvailable} />
         <StatCard
           label="Location requests fulfilled"
           value={requestFulfilled?.successes ?? null}

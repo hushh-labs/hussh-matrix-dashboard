@@ -1,8 +1,9 @@
 import { conservativeBillingBound } from './bigquery-billing-bound';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { BigQuery, Query } from '@google-cloud/bigquery';
 import type { Firestore } from '@google-cloud/firestore';
-import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, currentClosedComposition, RESTORATION_LIMITS, HISTORICAL_LIMITS, type RestorationGrant } from './legacy-restoration';
+import { currentClosedMeasurement } from './closed-measurement';
+import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, currentClosedComposition, ClosedJobMissingError, freezeRestorationSql, RESTORATION_LIMITS, HISTORICAL_LIMITS, type RestorationGrant } from './legacy-restoration';
 
 // These ceilings cannot be raised through request options or environment variables.
 export const BIGQUERY_COST_LIMITS = Object.freeze({
@@ -382,7 +383,33 @@ export async function guardedBigQuery(project: string, request: Query): Promise<
     if (composition) {
       if (process.env.METRICS_BIGQUERY_ENABLED !== 'true') throw new BigQueryCostControlError();
       if (project !== BIGQUERY_COST_LIMITS.project || typeof request.query !== 'string' || countBudgetedStatements(request.query) !== 1) throw new BigQueryCostControlError();
-      const grant = await composition.store.closedJob(request);
+      let grant: Awaited<ReturnType<typeof composition.store.closedJob>>;
+      try { grant = await composition.store.closedJob(request); }
+      catch (error) {
+        const scope = currentClosedMeasurement();
+        if (scope && error instanceof ClosedJobMissingError && error.plannedBytes === undefined
+          && await scope.measurement.claim(scope.report, error.planHash)) {
+          let outcome: { processed: number; bound: number; referenceDigest: string; minimumUnits: number } | null = null;
+          try {
+            const descriptor = await composition.store.closedDescriptor();
+            const frozenQuery = freezeRestorationSql(request.query, descriptor.asOf);
+            const client = await nativeClient();
+            const [job] = await client.createQueryJob({ query: frozenQuery, dryRun: true, useLegacySql: false,
+              useQueryCache: true, location: 'US', maximumBytesBilled: String(RESTORATION_LIMITS.bytesPerJob),
+              jobTimeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
+            const stats = job.metadata.statistics?.query, raw = job.metadata.statistics?.totalBytesProcessed;
+            if (stats?.statementType !== 'SELECT' || !['PRECISE', 'UPPER_BOUND'].includes(String(stats?.totalBytesProcessedAccuracy ?? ''))
+              || typeof raw !== 'string' || !/^\d+$/.test(raw)) throw new BigQueryCostControlError('No safe native estimate.');
+            const processed = Number(raw), refs = stats?.referencedTables ?? [];
+            const bound = await conservativeBillingBound(processed, refs, nativeTableCatalog), unit = 10 * 1024 ** 2;
+            const minimumUnits = Math.max(0, (bound - Math.ceil(processed / unit) * unit) / unit);
+            if (bound > RESTORATION_LIMITS.bytesPerJob) throw new BigQueryCostControlError('The measured query exceeds the per-job ceiling.');
+            outcome = { processed, bound, minimumUnits,
+              referenceDigest: createHash('sha256').update(JSON.stringify(refs)).digest('hex') };
+          } finally { await scope.measurement.finish(error.planHash, outcome); }
+        }
+        throw error;
+      }
       const client = await nativeClient(), job = client.job(grant.id, { location: 'US' });
       const [metadata] = await job.getMetadata();
       const query = metadata.configuration?.query;

@@ -185,3 +185,22 @@ Current eligibility is checked before and after composition and again when
 reading the publication. Removals, policy changes, uncertain creation dates and
 missing witnesses hold the report; no roster is stored in the snapshot. The
 live traversal does not prove an independent permission epoch.
+
+## Free measurement of missing completed inputs
+
+A separate, operator-only measurement record may bind a fixed set of original
+report URLs and previously observed missing plan hashes to the closed producer.
+Only hashes without an original conservative plan are eligible for a native dry
+run. Each eligible hash receives one durable pending intent before the dry run;
+a pending, failed or completed intent is never replayed automatically. The
+fixed count and expiry bound the work. No paid job, budget reservation, source
+SQL or member roster is written by this path.
+
+The native estimate must be a single SELECT with safe precision. A bounded live
+catalog adds a conservative 10 MiB minimum for every matching physical table,
+including all matches to a wildcard; unsupported references and per-job bounds
+hold the estimate. Results retain only processed bytes, conservative bound,
+minimum units, a digest of native references and observation time. Known older
+plan bounds remain historical measurements, and result-dependent branches not
+observed by this pass remain unknown. These measurements do not authorize or
+create a continuation allowance.

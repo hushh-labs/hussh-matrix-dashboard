@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Firestore } from '@google-cloud/firestore';
 import type { Query } from '@google-cloud/bigquery';
-import { withClosedComposition, type LegacyRestoration } from '../src/server/legacy-restoration';
+import { withClosedComposition, ClosedJobMissingError, type LegacyRestoration } from '../src/server/legacy-restoration';
+import { withClosedMeasurement, type ClosedMeasurement } from '../src/server/closed-measurement';
 import { BIGQUERY_COST_LIMITS as limits, BigQueryCostControlError, countBudgetedStatements,
   createGuardedBigQuery, FirestoreQueryBudgetStore, guardedBigQuery, guardedBigQueryDryRun,
   type QueryBudgetReservation } from '../src/server/bigquery-cost-control';
@@ -130,6 +131,26 @@ describe('BigQuery execution boundary', () => {
     getMetadata.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 404 }));
     await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('missing');
     expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
+  it('measures an approved missing completed query once with a native dry run and never submits it', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const hash = 'e'.repeat(64), store = { closedDescriptor: async () => ({ asOf: '2026-11-14T00:00:00.000Z' }), closedJob: async () => { throw new ClosedJobMissingError(hash, undefined); } } as unknown as LegacyRestoration;
+    const claim = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false), finish = vi.fn(async () => {});
+    const measurement = { claim, finish } as unknown as ClosedMeasurement;
+    sdk.createQueryJob.mockResolvedValue([{ metadata: { statistics: { totalBytesProcessed: '0', query: { statementType: 'SELECT', totalBytesProcessedAccuracy: 'PRECISE', referencedTables: [] } } } }]);
+    const run = () => withClosedMeasurement(measurement, '/api/analytics/all?view=one', () => withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' })));
+    await expect(run()).rejects.toThrow('reservation unavailable'); await expect(run()).rejects.toThrow('reservation unavailable');
+    expect(sdk.createQueryJob).toHaveBeenCalledTimes(1);
+    expect(sdk.createQueryJob.mock.calls[0][0]).toMatchObject({ query: 'SELECT 7', dryRun: true, useLegacySql: false });
+    expect(finish).toHaveBeenCalledWith(hash, expect.objectContaining({ processed: 0, bound: 10 * 1024 ** 2 }));
+    expect(sdk.job).not.toHaveBeenCalled();
+  });
+  it('never measures a missing query whose original conservative plan already exists', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const store = { closedJob: async () => { throw new ClosedJobMissingError('e'.repeat(64), 50 * 1024 ** 2); } } as unknown as LegacyRestoration;
+    const claim = vi.fn(), measurement = { claim } as unknown as ClosedMeasurement;
+    await expect(withClosedMeasurement(measurement, '/api/analytics/all?view=one', () => withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' })))).rejects.toThrow('reservation unavailable');
+    expect(claim).not.toHaveBeenCalled(); expect(sdk.createQueryJob).not.toHaveBeenCalled();
   });
   it('recovers a lost restoration submission through the exact native ID without another paid job', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');

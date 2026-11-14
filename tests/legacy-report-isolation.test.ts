@@ -65,6 +65,12 @@ function source() {
 }
 
 describe('legacy report source isolation', () => {
+  it('rejects a closed-job measurement from ordinary viewers before source work', async () => {
+    source(); const server = app();
+    const result = await request(server).get('/api/analytics/founder?start_date=2026-11-11&end_date=2026-11-11')
+      .set('Cookie', cookie()).set('X-Metrics-Measure-Closed', '1');
+    expect(result.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
+  });
   it('rejects composition from ordinary viewers before loading source data', async () => {
     source(); const server = app();
     const result = await request(server).get('/api/analytics/founder?start_date=2026-11-11&end_date=2026-11-11')
