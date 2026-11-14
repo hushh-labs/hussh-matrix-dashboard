@@ -403,9 +403,12 @@ test('separates Google permission and sending state from an enabled scheduler an
   await expect(panel).toContainText('Waiting for the first account with recorded email permission');
   await expect(panel).toContainText('Google bounce checks: Read permission granted');
   await page.setViewportSize({ width: 390, height: 844 });
+  // Wait for the responsive media-query state, not a button visible in both
+  // layouts. A real persistent overflow must still fail within the normal bound.
+  await expect(page.locator('#dashboard-navigation')).toHaveAttribute('aria-hidden', 'true');
   await expect(panel.getByRole('button', { name: 'Pause automatic follow-ups' })).toBeVisible();
   await expect(page.locator('vite-error-overlay')).toHaveCount(0);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath('google-empty-cohort-mobile.png'), fullPage: true });
   expect(state.contacts).toHaveLength(0);
   expect(state.deliveries).toHaveLength(0);
