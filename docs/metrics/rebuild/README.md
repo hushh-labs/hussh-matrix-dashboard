@@ -16,15 +16,24 @@ human approval has not been recorded. Assignment, a signed commit and automated
 checks do not establish it. Kushal requested documentation corrections on
 foundation head `bbc2fc31e99410a3c27c20e282cd048e903ff602` in
 [review 5890330790](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/185#pullrequestreview-5890330790).
-The revised packet needs re-review. Metric definitions, measured operating limits
-and live collection acceptance remain pending. Draft #186's checks are separate
-implementation evidence and do not approve this packet.
+Kushal approved the revised proposal packet at
+`e41d134ac88a70c173aae92fd570d8ebeebbdaa3` in
+[review 5895936005](https://github.com/hushh-labs/hussh-matrix-dashboard/pull/185#pullrequestreview-5895936005).
+PR #185 merged into Main as `de0ad8142ba427ea4acbd74dd1893a8b3ea3a8dd`.
+That approval accepts the proposal packet only: metric/source reconciliation,
+measured operating limits and runtime acceptance remain pending. Collection
+activation and deployment need separate acceptance; the cost hold stays active.
+Draft #186's checks are separate implementation evidence, not those approvals.
 
 Read in order:
 
 1. [Metric catalog](./metric-catalog.md): questions, populations and reconciliation.
 2. [System and compatibility map](./system-map.md): existing consumers and cutover.
 3. [Operating policy](./operating-policy.md): enforced containment and measurements.
+4. [Restoration coverage](./restoration-coverage.md): every existing section,
+   original source boundary and remaining handoff/acceptance.
+5. [Offline workload evidence](./workload-measurement-20261114.md): modeled
+   repeated reads, operation counts and recovery; native costs remain unmeasured.
 
 ## Evidence baseline
 
@@ -53,7 +62,7 @@ Current event emitters still need source- and release-specific verification.
 
 | Phase | State | Required exit |
 | --- | --- | --- |
-| Definitions, map and policy | Proposed for review | Lead accepts definitions and measurement-based operating limits |
+| Definitions, map and policy | Proposal packet approved; metric/operating acceptance pending | Lead accepts definitions and measurement-based operating limits |
 | Metrics identity | Pending | New application says Metrics; compatibility references inventoried |
 | One and website reporting slice | Pending | Reconciled sources → immutable publication → authenticated Next.js view |
 | Remaining reports | Pending | Every metric has approved definition, coverage and freshness |

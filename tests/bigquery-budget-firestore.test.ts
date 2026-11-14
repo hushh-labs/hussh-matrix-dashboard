@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Firestore } from '@google-cloud/firestore';
 import { describe, expect, it } from 'vitest';
 import { BIGQUERY_COST_LIMITS as limits, FirestoreQueryBudgetStore } from '../src/server/bigquery-cost-control';
+import { verifyNativeReportStorage } from './metrics-report-native-probe';
 
 const emulator = process.env.PLG_STORAGE_EMULATOR_TESTS === 'true';
 if (emulator && !/^127\.0\.0\.1:\d{2,5}$/.test(process.env.FIRESTORE_EMULATOR_HOST ?? '')) {
@@ -25,6 +26,11 @@ describe.skipIf(!emulator)('native Firestore query budget', () => {
       expect((await ref.collection('reservations').get()).size).toBe(2);
       await restarted.reserve({ ...accepted, day: '2026-11-08' });
       expect((await db.doc('metricsQueryBudgetDays/2026-11-08').get()).data()?.statements).toBe(1);
+      // Same database, separate namespaces: recovery/publication cannot reset or
+      // consume the inherited warehouse budget. Uses only the local emulator.
+      await verifyNativeReportStorage(db);
+      expect((await ref.get()).data()).toEqual({ policyVersion: 1, bytes: 100 * limits.bytesPerStatement, statements: 100 });
+      expect((await ref.collection('reservations').get()).size).toBe(2);
     } finally { await db.terminate(); }
   }, 30_000);
 });
