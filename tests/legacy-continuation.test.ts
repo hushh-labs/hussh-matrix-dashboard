@@ -125,13 +125,14 @@ describe('cumulative continuation', () => {
   it('keeps comparison witnesses internal and invalidates changed current membership', async () => {
     const f = fixture(), rows = [{ analyticsUserId: 'c'.repeat(32), registeredAt: '2026-11-01T00:00:00Z' }], policyRevision = 'a'.repeat(64);
     const cacheKey = createHash('sha256').update(JSON.stringify([policyRevision, rows])).digest('hex');
-    const cohort = { policyRevision, rows, cacheKey, asOf: '2026-11-14T23:55:00Z', expiresAt: start + 600000 };
+    const cohort = { policyRevision, rows, cacheKey, asOf: '2026-11-14T23:55:00Z', expiresAt: Date.now() + 600000 };
     const job = { id: `metrics_${id}_${'b'.repeat(64)}`, endedAt: start - 1 };
     await f.store.save(report, `${cacheKey}:${report}`, { status: 200, body: { count: 1 } }, [job], cohort); f.doc.phase = 'closed';
     expect(await f.store.read(report, cohort)).not.toHaveProperty('witness');
     expect((await f.store.readForComparison(report, cohort))?.witness?.rowsHash).toBe(cacheKey);
     const changed = { ...cohort, rows: [], cacheKey: createHash('sha256').update(JSON.stringify([policyRevision, []])).digest('hex') };
     expect(await f.store.readForComparison(report, changed)).toBeNull();
+    await expect(f.store.readForComparison(report, { ...cohort, expiresAt: Date.now() - 1 })).rejects.toThrow();
   });
   it('resolves only an existing closed-continuation reservation for read-only composition', async () => {
     const f = fixture(), request = { query: 'SELECT 1' }, grant = await f.scope(() => f.store.admit(request, 1));
