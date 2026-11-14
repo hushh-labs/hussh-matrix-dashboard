@@ -11,6 +11,7 @@ import * as audienceSource from '../src/server/plg/one-audience';
 import * as evidenceSource from '../src/server/plg/one-source';
 import { PLG_SYNC_REQUEST_TIMEOUT_MS } from '../src/lib/plg-budgets.mjs';
 import { workProfileWorkspaceMember } from '../src/server/plg/workspace-access';
+import { forwardMetricsCompatibility, retainedMetricsOrigin } from '../src/server/reports/compatibility';
 
 const secret = 'test-plg-signing-secret-more-than-32-characters';
 const config: PlgRuntime = {
@@ -466,6 +467,18 @@ describe('Private PLG API boundaries', () => {
         : `https://one.hussh.ai/email/unsubscribe/${oldToken}`);
       expect(response.headers['cache-control']).toBe('no-store');
       expect(response.headers['referrer-policy']).toBe('no-referrer');
+      const proxied = await forwardMetricsCompatibility(new Request('https://metrics.hussh.ai' + path), {
+        approved: true, legacyOrigin: retainedMetricsOrigin, webNativeOrigin: 'https://metrics-report-web-demo-uc.a.run.app',
+        publicOrigin: 'https://metrics.hussh.ai', timeoutMs: 1000, maxRequestBytes: 4096, maxResponseBytes: 4096,
+      }, async target => {
+        const url = new URL(String(target)), result = await request(server).get(url.pathname + url.search);
+        return new Response(result.text, { status: result.status, headers: {
+          location: result.headers.location, 'referrer-policy': result.headers['referrer-policy'],
+        } });
+      });
+      expect(proxied.status).toBe(303); expect(proxied.headers.get('location')).toBe(response.headers.location);
+      expect(proxied.headers.get('referrer-policy')).toBe('no-referrer');
+      expect(proxied.headers.get('cache-control')).toContain('private, no-store');
       expect(await store.read()).toEqual(snapshot);
       const invalid = await request(server).get(path + 'tampered');
       expect(invalid.status).toBe(400);

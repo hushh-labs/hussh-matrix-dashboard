@@ -23,12 +23,7 @@ export class MetricsCollection {
   }
   async collect(jobId: string, workerHash: string) {
     const p = await this.store.transaction(async tx => validateCollectionPolicy(await tx.get<CollectionPolicy>(reportPath('policy', 'collection'))));
-    const existing = await this.worker.inspect(jobId);
-    if (!existing) throw new ReportError('unavailable');
-    if (existing.fence >= p.maxClaims) {
-      await this.worker.stopRecovery(jobId); return this.progress(jobId);
-    }
-    const claimed = await this.worker.claim(jobId, workerHash);
+    const claimed = await this.worker.claim(jobId, workerHash, p.maxClaims);
     if (!claimed) return this.progress(jobId);
     const job = claimed.job;
     let ticket: CircuitTicket | undefined;
@@ -60,13 +55,15 @@ export class MetricsCollection {
       await this.worker.publish(job, result);
       return this.progress(jobId);
     } catch (error) {
+      const quota = error instanceof SourceRequestFailure && error.kind === 'quota';
       const configuration = error instanceof SourceRequestFailure && error.kind === 'configuration'
         || error instanceof ReportError && error.code === 'invalid';
       if (ticket) {
-        try { await this.circuit.complete(ticket, configuration ? 'configuration' : 'transient',
+        try { await this.circuit.complete(ticket, configuration ? 'configuration' : quota ? 'quota' : 'transient',
           error instanceof SourceRequestFailure ? error.retryAfterMs : 0); } catch { /* preserve original job uncertainty */ }
       }
-      const retryAt = error instanceof SourceCircuitClosed ? error.retryAt : this.now() + p.retryDelayMs;
+      const retryAt = error instanceof SourceCircuitClosed ? error.retryAt
+        : this.now() + (quota ? Math.max(1, error.retryAfterMs) : p.retryDelayMs);
       const attention = configuration || error instanceof SourceCircuitClosed && error.needsAttention || job.fence >= p.maxClaims;
       try { await this.worker.defer(job, attention ? 0 : retryAt, attention); }
       catch { /* Another lease or completed publication owns the authoritative state. */ }

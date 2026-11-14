@@ -132,30 +132,60 @@ export class MetricsReports {
 /** Worker methods are not exported through the reader's HTTP routes. */
 export class MetricsReportWorker {
   constructor(private store: ReportStore, private now: () => number = Date.now) {}
-  async claim(jobId: string, workerHash: string) {
-    if (!/^[a-f0-9]{64}$/.test(jobId) || !/^[a-f0-9]{64}$/.test(workerHash)) throw new ReportError('invalid');
+  private async invalidate(tx: ReportTransaction, job: ReportJob, now: number, workerHash: string) {
+    const head = await tx.get<Head>(path('heads', job.key));
+    const slots = await tx.get<Capacity>(path('capacity', job.lane));
+    const subjectSlot = path('subjectCapacity', digest([job.lane, job.requesterHash]));
+    const subject = await tx.get<Capacity>(subjectSlot);
+    if (head?.activeJob !== job.id || !slots || !Number.isSafeInteger(slots.active) || slots.active < 1
+      || !subject || !Number.isSafeInteger(subject.active) || subject.active < 1) throw new ReportError('unavailable');
+    tx.set(path('heads', job.key), { ...head, activeJob: null });
+    tx.set(path('jobs', job.id), { ...job, status: 'invalidated', completedAt: now, fence: job.fence + 1,
+      workerHash, leaseUntil: 0, nextAttemptAt: 0, needsAttention: false });
+    tx.set(path('capacity', job.lane), { active: slots.active - 1 });
+    tx.set(subjectSlot, { active: subject.active - 1 });
+    // Source/budget receipts remain immutable evidence of consumed or uncertain work.
+  }
+  async claim(jobId: string, workerHash: string, maxClaims?: number) {
+    if (!/^[a-f0-9]{64}$/.test(jobId) || !/^[a-f0-9]{64}$/.test(workerHash)
+      || maxClaims !== undefined && (!Number.isSafeInteger(maxClaims) || maxClaims < 1)) throw new ReportError('invalid');
     const now = this.now();
     return this.store.transaction(async tx => {
       const policy = validatePolicy(await tx.get<ReportingPolicy>(path('policy', 'current')));
       const job = await tx.get<ReportJob>(path('jobs', jobId));
       if (!job) throw new ReportError('unavailable');
       const control = await tx.get<ReportControl>(path('controls', job.request.reportId));
+      if (['completed', 'failed', 'invalidated'].includes(job.status) || job.leaseUntil > now) return null;
+      if (job.sourceStarted && digest(control) !== digest(job.control)) {
+        // A completed journal is a known outcome of the frozen source, even if
+        // current publication authority has changed. Settle it without invoking
+        // a new source factory or publishing obsolete information. Unknown work
+        // keeps capacity and an explicit attention flag; absence is not proof.
+        const receipt = await tx.get<{ binding: string; state: string; result: AggregateResult | null }>(path('sourceReceipts', job.id));
+        let settled = false;
+        try {
+          if (!receipt || Object.keys(receipt).sort().join() !== 'binding,result,state' || receipt.state !== 'completed'
+            || !/^[a-f0-9]{64}$/.test(receipt.binding) || !receipt.result) throw new ReportError('unavailable');
+          validateAggregate(receipt.result, job, now, 900_000);
+          settled = true;
+        } catch { /* Malformed or uncertain evidence never releases capacity. */ }
+        if (settled) await this.invalidate(tx, job, now, workerHash);
+        else if (job.status !== 'delayed' || !job.needsAttention || job.leaseUntil !== 0 || job.nextAttemptAt !== 0) {
+          tx.set(path('jobs', job.id), { ...job, status: 'delayed', fence: job.fence + 1, workerHash,
+            leaseUntil: 0, nextAttemptAt: 0, needsAttention: true });
+        }
+        return null;
+      }
       if (!policy.computeEnabled) throw new ReportError('unavailable');
-      if (['completed', 'failed', 'invalidated'].includes(job.status) || job.leaseUntil > now
-        || job.needsAttention || job.nextAttemptAt > now) return null;
+      if (job.needsAttention || job.nextAttemptAt > now) return null;
       // Expired unstarted work is never dispatched. Uncertain work needs recovery,
       // even after expiry; lease expiry cannot release its capacity/reservation.
       if (!job.sourceStarted && (job.expiresAt <= now || digest(control) !== digest(job.control))) {
-        const head = await tx.get<Head>(path('heads', job.key));
-        const slots = await tx.get<Capacity>(path('capacity', job.lane));
-        const subjectSlot = path('subjectCapacity', digest([job.lane, job.requesterHash]));
-        const subject = await tx.get<Capacity>(subjectSlot);
-        if (head?.activeJob !== job.id || !slots || !Number.isSafeInteger(slots.active) || slots.active < 1
-          || !subject || !Number.isSafeInteger(subject.active) || subject.active < 1) throw new ReportError('unavailable');
-        tx.set(path('heads', job.key), { ...head, activeJob: null });
-        tx.set(path('jobs', job.id), { ...job, status: 'invalidated', completedAt: now });
-        tx.set(path('capacity', job.lane), { active: slots.active - 1 });
-        tx.set(subjectSlot, { active: subject.active - 1 });
+        await this.invalidate(tx, job, now, workerHash);
+        return null;
+      }
+      if (maxClaims !== undefined && job.fence >= maxClaims) {
+        tx.set(path('jobs', job.id), { ...job, status: 'delayed', leaseUntil: 0, nextAttemptAt: 0, needsAttention: true });
         return null;
       }
       if (digest(control) !== digest(job.control)) throw new ReportError('unavailable');
