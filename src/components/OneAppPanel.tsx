@@ -1248,7 +1248,7 @@ export function OneAppPanel({
   onLocationRouteChange: (route: LocationAnalyticsRoute) => void;
   environment?: 'production' | 'uat';
   onEnvironmentChange?: (environment: 'production' | 'uat') => void;
-  onHealthRequested?: () => void;
+  onHealthRequested?: (requested: boolean) => void;
   /**
    * Owned by Dashboard so the range state lives with every other product's,
    * and rendered here so it sits with the numbers it governs.
@@ -1371,7 +1371,7 @@ export function OneAppPanel({
       <section>
         {filterHeader}
 
-        <ReportTabs label="One app report" value={view} onChange={next => { setView(next); if (next === 'health') onHealthRequested?.(); }} options={[
+        <ReportTabs label="One app report" value={view} onChange={next => { setView(next); onHealthRequested?.(next === 'health'); }} options={[
           { value: 'summary', label: 'Summary' }, { value: 'features', label: 'Features' },
           { value: 'retention', label: 'Retention' }, { value: 'health', label: 'App health' },
         ]} />

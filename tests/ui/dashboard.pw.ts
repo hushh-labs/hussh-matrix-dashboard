@@ -68,6 +68,27 @@ test('One reads only the selected environment and loads health only on request',
   await expect.poll(() => urls.length).toBe(3);
   expect(urls[2].searchParams.get('include_health')).toBe('1');
   expect(urls[2].searchParams.get('environment')).toBe('uat');
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect.poll(() => urls.length).toBeGreaterThan(3);
+  expect(urls.at(-1)!.searchParams.has('include_health')).toBe(false);
+  await page.getByRole('button', { name: 'App health', exact: true }).click();
+  await page.getByRole('button', { name: '90 days', exact: true }).click();
+  await navigate(page, 'One Location');
+  const beforeLocationRefresh = urls.length;
+  await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect.poll(() => urls.length).toBeGreaterThan(beforeLocationRefresh);
+  expect(urls.at(-1)!.searchParams.has('include_health')).toBe(false);
+});
+
+test('Location footer reports an unavailable selected source', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: {
+    ...allAnalytics, one: { platform: 'One', data: { production: null, uat: null } },
+  } }));
+  await page.goto('/location-analytics/production');
+  await expect(page.getByText('Production analytics are unavailable.')).toBeVisible();
+  await expect(page.getByText('Metrics temporarily unavailable · details below')).toBeVisible();
 });
 
 test('UAT Location deep links and agent drilldowns keep the selected source', async ({ page }) => {

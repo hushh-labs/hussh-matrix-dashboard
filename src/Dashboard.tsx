@@ -1189,7 +1189,7 @@ export default function Dashboard() {
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
   const scope = ['one', 'growth', 'apps', 'overview', 'platforms'].includes(activeTab) ? activeTab as 'one' | 'growth' | 'apps' | 'overview' | 'platforms' : null;
   const overviewScope = scope === 'overview' || scope === 'platforms';
-  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one', oneEnvironment: locationRoute?.environment ?? oneEnvironment, includeOneHealth: oneHealthRequested,
+  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one', oneEnvironment: locationRoute?.environment ?? oneEnvironment, includeOneHealth: oneHealthRequested && !locationRoute,
     ...(overviewScope ? { kaiStartDate: kaiRange.startDate, kaiEndDate: kaiRange.endDate, hushhAiStartDate: hushhAiRange.startDate, hushhAiEndDate: hushhAiRange.endDate }
       : { oneStartDate: range.startDate, oneEndDate: range.endDate }) });
   const resource = useMetricsResource<AllAnalyticsResponse>(scope ? buildAnalyticsUrl(rangeOptions()) : null, {
@@ -1207,6 +1207,7 @@ export default function Dashboard() {
   const loadCompare = () => setCompareRefreshKey(key => key + 1);
 
   const changeDashboardTab = useCallback((tab: DashboardTab) => {
+    if (tab !== 'one') setOneHealthRequested(false);
     const path = tab === 'referrals' ? referralsPath : tab === 'plg' ? '/plg' : '/';
     if (locationRoute || window.location.pathname !== path) {
       window.history.pushState({ dashboardTab: tab }, '', path);
@@ -1230,6 +1231,7 @@ export default function Dashboard() {
   }, []);
 
   const openLocationAnalytics = useCallback(() => {
+    setOneHealthRequested(false);
     window.history.replaceState({ ...window.history.state, dashboardTab: 'one' }, '', window.location.href);
     changeLocationRoute({ environment: oneEnvironment, tab: 'overview' });
   }, [changeLocationRoute, oneEnvironment]);
@@ -1251,6 +1253,7 @@ export default function Dashboard() {
   useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
       const route = parseLocationAnalyticsPath(window.location.pathname);
+      setOneHealthRequested(false);
       setLocationRoute(route);
       setActiveTab(route ? 'one' : window.location.pathname === '/plg' ? 'plg' : isReferralsPath(window.location.pathname) ? 'referrals' : (isDashboardTab(event.state?.dashboardTab) ? event.state.dashboardTab : 'briefing'));
       window.scrollTo({ top: 0 });
@@ -1319,13 +1322,16 @@ export default function Dashboard() {
   const hushhTechRangeLabel = data?.hushhTech?.window
     ? `${data.hushhTech.window.startDate} to ${data.hushhTech.window.endDate}`
     : 'Selected range';
+  const selectedLocation = locationRoute?.environment === 'uat' ? data?.oneUat : data?.one;
+  const locationUnavailable = Boolean(locationRoute && (!selectedLocation?.available || !selectedLocation.locationAnalytics));
+  const locationPartial = Boolean(locationRoute && selectedLocation?.available && selectedLocation.locationAnalytics && !selectedLocation.locationBehaviorAvailable);
   const statusText = activeTab === 'plg' ? 'Private PLG workspace · verified product progress' : activeTab === 'instagram'
     ? 'Instagram reporting · stored observations'
     : activeTab === 'referrals'
     ? 'Referral rankings'
     : activeTab === 'briefing'
     ? 'One production · completed reporting days'
-    : loading ? 'Loading the selected period' : usingMock ? 'Metrics temporarily unavailable · details below' : isRefreshing ? 'Refreshing selected metrics' : 'Metrics ready · dates shown on each report';
+    : loading ? 'Loading the selected period' : usingMock || locationUnavailable ? 'Metrics temporarily unavailable · details below' : locationPartial ? 'Some location metrics are unavailable · details below' : isRefreshing ? 'Refreshing selected metrics' : 'Metrics ready · dates shown on each report';
   const closeMetricDetail = useCallback(() => setMetricDetail(null), []);
 
   const ga4SummaryRows = () => {
@@ -1760,7 +1766,7 @@ export default function Dashboard() {
             loading={loading}
             environment={oneEnvironment}
             onEnvironmentChange={setOneEnvironment}
-            onHealthRequested={() => setOneHealthRequested(true)}
+            onHealthRequested={setOneHealthRequested}
             one={data?.one ?? null}
             oneUat={data?.oneUat ?? null}
             registrations={data?.oneRegistrations ?? null}

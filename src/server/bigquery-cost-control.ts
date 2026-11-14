@@ -213,7 +213,9 @@ export function createGuardedBigQuery(options: {
             || restoration.bytes > HISTORICAL_LIMITS.bytesPerJob) throw new BigQueryCostControlError();
           perStatement = restoration.bytes;
         }
-        if (estimatedBytes > perStatement * statements) {
+        // A reuse grant can only read the exact previously reserved completed job;
+        // today's larger table-floor estimate does not change that job's cost.
+        if (!restoration?.reuse && estimatedBytes > perStatement * statements) {
           throw new BigQueryCostControlError('This report exceeds the query scan limit. Choose a shorter period.');
         }
       }
