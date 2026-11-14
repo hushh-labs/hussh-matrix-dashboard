@@ -1,6 +1,7 @@
 import { Ga4AcquisitionSource, OneAdoptionSource, WebsiteActivitySource, type AggregateFetch } from './sources';
 import { analyticsReaderCredentialHeaders, googleAggregateFetch, readAggregateSecret, readWebsiteAggregateSecret,
-  signedOneAggregateFetch, signedWebsiteAggregateFetch } from './transports';
+  signedOneAggregateFetch, signedWebsiteAggregateFetch, monitoringAggregateFetch } from './transports';
+import { MetricsMonitoringSource, metricsMonitoringUrl } from './monitoring';
 import type { SourceFactory } from './lifecycle';
 import type { ReportStore } from './store';
 
@@ -9,10 +10,15 @@ export function collectorSourceFactory(store: ReportStore, options: {
   google?: typeof googleAggregateFetch; analyticsReader?: typeof analyticsReaderCredentialHeaders;
   secret?: typeof readAggregateSecret; one?: typeof signedOneAggregateFetch;
   websiteSecret?: typeof readWebsiteAggregateSecret; website?: typeof signedWebsiteAggregateFetch;
+  monitoring?: typeof monitoringAggregateFetch;
   now?: () => number;
 } = {}): SourceFactory {
   return async (_job, binding, signal) => {
     const policy = { sourceGeneration: binding.sourceGeneration, timeoutMs: binding.timeoutMs, maxResponseBytes: binding.maxResponseBytes };
+    if (binding.kind === 'monitoring') {
+      const transport = (options.monitoring ?? monitoringAggregateFetch)(metricsMonitoringUrl(_job));
+      return new MetricsMonitoringSource(store, policy, (url, request) => transport(url, { ...request, signal: AbortSignal.any([signal, request.signal]) }), options.now);
+    }
     if (binding.kind === 'ga4') {
       const credentials = (options.analyticsReader ?? analyticsReaderCredentialHeaders)(binding.readerServiceAccount);
       const transport = (options.google ?? googleAggregateFetch)(`https://analyticsdata.googleapis.com/v1beta/properties/${binding.propertyId}:runReport`, credentials);

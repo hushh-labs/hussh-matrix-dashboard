@@ -4,6 +4,7 @@ export const reportDefinitions = {
   'one.adoption': { version: '1', product: 'one', metrics: ['activeAccounts', 'confirmedOutcomes'] },
   'hushhai.acquisition': { version: '1', product: 'hushhai', metrics: ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'] },
   'hushhai.activity': { version: '1', product: 'hushhai', maxPeriodDays: 7, metrics: ['pageViews', 'searchSubmissions', 'searchCompletions', 'searchFailures', 'ctaClicks'] },
+  'metrics.reliability': { version: '1', product: 'metrics', maxPeriodDays: 7, metrics: ['requestCount', 'serverErrorCount', 'serverErrorRatio', 'p95LatencyMs'] },
 } as const;
 export type ReportId = keyof typeof reportDefinitions;
 export type ReportPeriod = { startDate: string; endDate: string; timezone: string };
@@ -23,7 +24,7 @@ export type ReportJob = { id: string; key: string; request: ReportRequest; contr
   nextAttemptAt: number; needsAttention: boolean;
   workerHash: string | null; providerJobId: string; dispatchIntent: true; sourceStarted: boolean };
 export type MetricValue = { value: number | null; coverage: 'available' | 'partial' | 'provisional' | 'untracked' | 'unavailable';
-  unit: 'account' | 'outcome' | 'session' | 'provider_user' | 'key_event' | 'event'; basis: 'exact' | 'provider_defined' | 'source_recorded' };
+  unit: 'account' | 'outcome' | 'session' | 'provider_user' | 'key_event' | 'event' | 'request' | 'ratio' | 'millisecond'; basis: 'exact' | 'provider_defined' | 'source_recorded' };
 export type AggregateResult = { metrics: Record<string, MetricValue>; sourceCheckedAt: number;
   sourceWatermark: number | null; sourceGeneration: string; scopeDigest: string; definitionVersion: string;
   period: ReportPeriod; reconciled: boolean };
@@ -99,16 +100,25 @@ export function validateAggregate(result: AggregateResult, job: ReportJob, now: 
   if (!result.metrics || Object.keys(result.metrics).sort().join() !== [...expected].sort().join()) throw new ReportError('invalid');
   const units: Record<string, MetricValue['unit']> = { activeAccounts: 'account', confirmedOutcomes: 'outcome',
     sessions: 'session', activeUsers: 'provider_user', engagedSessions: 'session', keyEvents: 'key_event',
-    pageViews: 'event', searchSubmissions: 'event', searchCompletions: 'event', searchFailures: 'event', ctaClicks: 'event' };
+    pageViews: 'event', searchSubmissions: 'event', searchCompletions: 'event', searchFailures: 'event', ctaClicks: 'event',
+    requestCount: 'request', serverErrorCount: 'request', serverErrorRatio: 'ratio', p95LatencyMs: 'millisecond' };
   const basis = request.reportId === 'one.adoption' ? 'exact' : request.reportId === 'hushhai.activity' ? 'source_recorded' : 'provider_defined';
   for (const [name, metric] of Object.entries(result.metrics)) {
     if (!metric || Object.keys(metric).sort().join() !== 'basis,coverage,unit,value'
       || metric.unit !== units[name] || metric.basis !== basis
       || !['available', 'partial', 'provisional', 'untracked', 'unavailable'].includes(metric.coverage)
       || (['unavailable', 'untracked'].includes(metric.coverage) ? metric.value !== null
-        : !Number.isSafeInteger(metric.value) || Number(metric.value) < 0)
+        : metric.unit === 'ratio' ? typeof metric.value !== 'number' || !Number.isFinite(metric.value) || metric.value < 0 || metric.value > 1
+          : metric.unit === 'millisecond' ? typeof metric.value !== 'number' || !Number.isFinite(metric.value) || metric.value < 0
+            : !Number.isSafeInteger(metric.value) || Number(metric.value) < 0)
       || (metric.value !== null && result.sourceWatermark === null
         && (!['provider_defined', 'source_recorded'].includes(metric.basis) || !['partial', 'provisional'].includes(metric.coverage)))) throw new ReportError('invalid');
+  }
+  if (request.reportId === 'metrics.reliability') {
+    const { requestCount, serverErrorCount, serverErrorRatio } = result.metrics;
+    if (serverErrorCount.value !== null && (requestCount.value === null || serverErrorCount.value > requestCount.value)
+      || serverErrorRatio.value !== null && (requestCount.value === null || requestCount.value <= 0 || serverErrorCount.value === null
+        || serverErrorRatio.value !== serverErrorCount.value / requestCount.value)) throw new ReportError('invalid');
   }
   if (Buffer.byteLength(JSON.stringify(result)) > maxBytes) throw new ReportError('invalid');
 }

@@ -52,6 +52,13 @@ UTC definition, reconciliation, budget and activation requirements are in the
 This addition is proposed; it does not change the previously reviewed GA4
 definition or establish marketing-only coverage for a backend-wide source.
 
+The held `metrics.reliability` candidate is a narrow first slice of
+`products.reliability`, pinned to the existing Metrics hosting service. It sums
+validated native HTTP request/5xx buckets; partial coverage cannot establish a
+complete error denominator or uptime. Ratios and latency remain unavailable.
+See [scope, recovery, cost controls and remaining acceptance](./metrics-reliability.md).
+This is not One/HushhTech reliability or a permission to activate collection.
+
 The current Metrics production cohort adapter enumerates hashed membership rows
 from `/api/one/plg/customer-cohort`; the registration path also traverses Firebase
 accounts. The new web reader must not reuse either path. Request narrow aggregate
