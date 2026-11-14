@@ -147,6 +147,16 @@ synthetic providers. The existing native Firestore qualification additionally
 checks collection, circuit, separate capacity and bounded maintenance. Neither
 is live-source, native IAM/task queue or real user-session acceptance.
 
+The compatibility suite now drives the **existing Express OAuth callback** with
+stubbed Google token exchange, consumes its real signed/URI-encoded Set-Cookie
+through the Metrics session verifier, and checks both legacy authentication and
+the opaque reporting identity. Current allowlist removal, expiry and the existing
+browser logout cookie are checked together. This verifies the local protocol
+handoff rather than only a separately recreated cookie fixture. It does not
+establish live Google authorization, a shared-domain proxy/callback cutover or
+global revocation of an already copied stateless cookie. No legacy auth behavior
+was changed; native routing and real-browser acceptance remain required.
+
 The [14 November source inspection](./source-verification-20261114.md) verified
 the existing property/website stream and exact `Etc/GMT` timezone through Admin
 API. The one fixed-period Data API response uses a default-omitted empty

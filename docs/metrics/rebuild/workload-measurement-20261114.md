@@ -77,3 +77,27 @@ No benchmark threshold is set from this single sample.
 No numerical production targets, recurring savings, zero-hosting-cost claim or
 collection approval follows from these modeled measurements. Existing holds,
 reservations and paused refresh schedules remain in force.
+
+## Separate observed legacy-service baseline
+
+A bounded read of existing Cloud Monitoring `run.googleapis.com/request_count`
+for `hushh-matrix-dashboard` in `us-central1` covers 13 November07:49:51UTC through
+14 November07:49:51UTC. Native hourly SUM alignment and cross-series SUM returned
+one series with 20 present buckets, 84 observed requests, maximum returned hour19,
+and no continuation. Missing buckets remain unknown. This includes all monitored
+legacy requests, not verified staff, report reads or the replacement runtime.
+It cannot validate the modeled25staff scenario, source workload, billed cost,
+native p95 or a production numerical limit.
+
+The initial bounded call used pageSize1 and was rejected as incomplete. Google's
+[native API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.timeSeries/list)
+defines FULL-view page size in **points**, not time series. The failed receipt
+was retained; one corrected, bounded page for the exact same interval used
+pageSize30. No warehouse query, custom telemetry, schedule or cloud resource was
+created. Receipt: `metrics-native-request-baseline-recovery-20261114.json`.
+
+Actual container qualification is still open: the local Docker context points
+to Docker Desktop's native Linux pipe, but that engine is unavailable. No daemon
+was started, image pulled or cloud build dispatched. The successful hosted Linux
+Vite/Next production builds and browser checks are separate from an actual
+candidate-container/native-runtime acceptance.

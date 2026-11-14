@@ -7,6 +7,8 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
+import { reportingSession } from '../src/server/reports/session';
+import { digest } from '../src/server/reports/contracts';
 import {
   createApp,
   validateConfig,
@@ -14,6 +16,7 @@ import {
   sanitizeReturnTo,
   sanitizePrompt,
   signCookie,
+  parseCookies,
   unsignCookie,
   type AppConfig,
 } from '../server';
@@ -222,6 +225,34 @@ describe('Google OAuth 2.0 & Domain Protection Layer', () => {
       expect(sessionCookie).toContain('SameSite=Lax');
       expect(sessionCookie).toContain('Secure'); // Assert Secure flag on X-Forwarded-Proto: https
       expect(sessionCookie).toContain('Max-Age=28800'); // Assert exp ~8 hours
+    });
+
+    it('hands the actual OAuth cookie to Metrics and honors expiry, current access and browser logout', async () => {
+      const { pkceCookie, state, nonce } = await initiateOAuth();
+      mockVerifyIdTokenImpl = async () => ({
+        getPayload: () => ({ email: 'staff@hushh.ai', hd: 'hushh.ai', email_verified: true, nonce }),
+      });
+      const callback = await request(app)
+        .get(`/auth/callback?code=mock_code_123&state=${state}`)
+        .set('Cookie', [pkceCookie]).set('X-Forwarded-Proto', 'https');
+      expect(callback.status).toBe(302);
+      const setCookie = getSetCookies(callback).find(value => value.startsWith('hussh_matrix_session='))!;
+      const cookiePair = setCookie.split(';')[0];
+      const cookie = parseCookies(cookiePair).hussh_matrix_session;
+      const env = { SESSION_SECRET: testConfig.sessionSecret, METRICS_SCOPE_DIGEST: digest('oauth-reporting-handoff'),
+        ALLOWED_EMAIL_DOMAINS: testConfig.allowedDomains.join(','), ALLOWED_EMAILS: testConfig.allowedEmails.join(',') };
+      const access = reportingSession(cookie, env)!;
+      expect(Object.keys(access).sort()).toEqual(['scopeDigest', 'subjectHash']);
+      expect(access.scopeDigest).toBe(env.METRICS_SCOPE_DIGEST);
+      expect(JSON.stringify(access)).not.toContain('staff@hushh.ai');
+      expect((await request(app).get('/api/auth/me').set('Cookie', cookiePair)).status).toBe(200);
+      expect(reportingSession(cookie, { ...env, ALLOWED_EMAIL_DOMAINS: '', ALLOWED_EMAILS: '' })).toBeNull();
+      expect(reportingSession(cookie, env, Date.now() + 8 * 3600_000 + 1000)).toBeNull();
+      const logout = await request(app).post('/api/auth/logout').set('Cookie', cookiePair);
+      expect(logout.status).toBe(200);
+      const cleared = getSetCookies(logout).find(value => value.startsWith('hussh_matrix_session='))!;
+      expect(cleared).toContain('Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+      expect(reportingSession(parseCookies(cleared.split(';')[0]).hussh_matrix_session, env)).toBeNull();
     });
 
     it('allows whitelisted Gmail account and performs case-insensitive email matching', async () => {
