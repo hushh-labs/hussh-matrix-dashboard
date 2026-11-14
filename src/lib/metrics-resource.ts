@@ -1,5 +1,5 @@
 /** Session-only browser cache; never persist private dashboard responses. */
-export interface MetricsSnapshot<T> { data: T; fetchedAt: number; updatedAt: string | null; cohortAsOf?: string | null; observedAt?: string | null; computedAt?: string | null; warehouseFrom?: string | null; warehouseThrough?: string | null; refreshing: boolean; refreshError: boolean }
+export interface MetricsSnapshot<T> { data: T; fetchedAt: number; updatedAt: string | null; headerUpdatedAt?: string | null; cohortAsOf?: string | null; observedAt?: string | null; computedAt?: string | null; warehouseFrom?: string | null; warehouseThrough?: string | null; cacheState?: string | null; refreshing: boolean; refreshError: boolean }
 const values = new Map<string, MetricsSnapshot<unknown>>();
 const pending = new Map<string, Promise<MetricsSnapshot<unknown>>>();
 const MAX_ENTRIES = 48;
@@ -31,11 +31,13 @@ export async function readMetrics<T>(url: string, options: { refresh?: boolean }
       throw new Error('Metrics temporarily unavailable');
     }
     const data = await response.json();
-    const snapshot: MetricsSnapshot<T> = { data, fetchedAt: Date.now(),
-      updatedAt: response.headers.get('X-Metrics-Updated-At') || data.generatedAt || data.fetchedAt || null,
+    const headerUpdatedAt = response.headers.get('X-Metrics-Updated-At');
+    const snapshot: MetricsSnapshot<T> = { data, fetchedAt: Date.now(), headerUpdatedAt,
+      updatedAt: headerUpdatedAt || data.generatedAt || data.fetchedAt || null,
       cohortAsOf: response.headers.get('X-Metrics-Cohort-As-Of'), observedAt: response.headers.get('X-Metrics-Observed-At'),
       computedAt: response.headers.get('X-Metrics-Computed-At'),
       warehouseFrom: response.headers.get('X-Metrics-Warehouse-From'), warehouseThrough: response.headers.get('X-Metrics-Warehouse-Through'),
+      cacheState: response.headers.get('X-Metrics-Cache'),
       refreshing: response.headers.get('X-Metrics-Refreshing') === '1', refreshError: response.headers.get('X-Metrics-Refresh-Error') === '1' };
     if (requestGeneration !== generation) throw new Error('Session changed');
     while (values.size >= MAX_ENTRIES && !values.has(url)) values.delete(values.keys().next().value!);

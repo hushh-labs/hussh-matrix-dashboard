@@ -18,6 +18,16 @@ import { decodeWorkspacePage, encodeWorkspacePages } from '../../src/server/plg/
 const automationRuntime = { enabled: true, deliveryEnabled: false, origin: 'https://metrics.example.invalid',
   admins: new Set<string>(), operators: new Set<string>(), signingSecret: 'test-only-key-over-32-characters-long',
   webhookSecret: '', apiKey: '', from: 'Neelesh Meena <i-neelesh@hushh.ai>', replyTo: 'i-neelesh@hushh.ai' };
+const usageAsOf = '2026-11-14T21:34:55.606Z';
+const usageHeaders = { 'X-Metrics-Cache': 'RESTORED', 'X-Metrics-Updated-At': usageAsOf };
+
+function usagePublication(url: string) {
+  const query = new URL(url).searchParams, startDate = query.get('one_start_date')!, endDate = query.get('one_end_date')!;
+  const range = { startDate, endDate, days: (Date.parse(endDate) - Date.parse(startDate)) / 86_400_000 + 1 };
+  const production = { ...one, range, identifiedUsers: { ...one.identifiedUsers, selectedRange: { ...one.identifiedUsers.selectedRange, ...range } },
+    registeredAccounts: { ...one.registeredAccounts, startDate, endDate } };
+  return { one: { data: { production, uat: null }, error: null }, fetchedAt: new Date().toISOString() };
+}
 
 async function mockPlg(page: Page, denied = false, withAgents = false,
   audience?: (input: PlgAudienceFilters, result: PlgAudiencePage) => PlgAudiencePage | Promise<PlgAudiencePage>, mailOwner = false,
@@ -28,6 +38,9 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
       outcome: { status: 'supported', proof: 'calendar.provider_effect.v1', label: 'Provider-confirmed Calendar change', reason: 'Retained positive evidence only.' } }],
     actions: [{ id: 'calendar.event.create', label: 'Create event', agentId: 'agent_calendar', kind: 'action', proof: 'client_reported' }] });
   await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: usageAsOf,
+    user: { email: 'qa@example.invalid', name: 'QA reviewer', domainAuthorized: true } } }));
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: usagePublication(route.request().url()), headers: usageHeaders }));
   await page.route('**/api/plg/**', async (route) => {
     if (denied)
       return route.fulfill({ status: 403, json: { error: 'This action requires PLG workspace access.' } });
@@ -709,7 +722,7 @@ test('keeps app-wide accounts and devices separate from the campaign cohort and 
   await mockPlg(page);
   const reads: string[] = [];
   page.on('request', (request) => {
-    if (new URL(request.url()).pathname === '/api/analytics/one/app') reads.push(request.url());
+    if (new URL(request.url()).pathname === '/api/analytics/all') reads.push(request.url());
   });
   await page.goto('/plg');
   expect(reads).toHaveLength(0);
@@ -727,17 +740,17 @@ test('keeps app-wide accounts and devices separate from the campaign cohort and 
   expect((Date.parse(query.get('one_end_date')!) - Date.parse(query.get('one_start_date')!)) / 86400000 + 1).toBe(7);
   await expect(usage).not.toHaveAttribute('aria-busy', 'true');
   await mkdir('.codex/artifacts/plg', { recursive: true });
-  await page.screenshot({ path: '.codex/artifacts/plg/app-usage-1440.png', fullPage: true });
+  await usage.screenshot({ path: '.codex/artifacts/plg/app-usage-1440.png' });
 });
 
 test('shows query failure as unavailable while preserving a healthy selected-range account read', async ({ page }) => {
   await mockPlg(page);
-  await page.route('**/api/analytics/one/app?*', (route) => route.fulfill({ json: {
-    environment: 'production',
-    data: { production: { ...one, activeUsers: { ...one.activeUsers, available: false, dau: 0, wau: 0, mau: 0 },
-      identifiedUsers: { ...one.identifiedUsers, activityAvailable: false, dau: 0, wau: 0, mau: 0 } }, uat: null },
-    error: 'Sanitized aggregate read failure', fetchedAt: new Date().toISOString(),
-  } }));
+  await page.route('**/api/analytics/all?*', (route) => {
+    const body = usagePublication(route.request().url()), production = body.one.data.production;
+    return route.fulfill({ headers: usageHeaders, json: { ...body, one: { data: { production: { ...production,
+      activeUsers: { ...production.activeUsers, available: false, dau: 0, wau: 0, mau: 0 },
+      identifiedUsers: { ...production.identifiedUsers, activityAvailable: false, dau: 0, wau: 0, mau: 0 } }, uat: null }, error: 'Sanitized aggregate read failure' } } });
+  });
   await page.goto('/plg');
   await page.getByRole('tab', { name: 'Results', exact: true }).click();
   const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
@@ -749,15 +762,67 @@ test('shows query failure as unavailable while preserving a healthy selected-ran
 
 test('withholds app aggregates when a response mixes UAT into a production-only request', async ({ page }) => {
   await mockPlg(page);
-  await page.route('**/api/analytics/one/app?*', (route) => route.fulfill({ json: {
-    environment: 'production', data: { production: one, uat: one }, error: null,
-  } }));
+  await page.route('**/api/analytics/all?*', (route) => {
+    const body = usagePublication(route.request().url());
+    return route.fulfill({ headers: usageHeaders, json: { ...body, one: { ...body.one, data: { ...body.one.data, uat: one } } } });
+  });
   await page.goto('/plg');
   await page.getByRole('tab', { name: 'Results', exact: true }).click();
   const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
   await expect(usage).toContainText('Production aggregates are unavailable. No zero is inferred.');
   await expect(usage.getByText('8,420', { exact: true })).toHaveCount(0);
   await expect(usage.getByText('1,284', { exact: true })).toHaveCount(0);
+});
+
+test('does not request or display PLG usage without a valid dated publication anchor', async ({ page }) => {
+  await mockPlg(page); let anchor: string | undefined;
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: anchor,
+    user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));
+  const reads: string[] = []; page.on('request', req => { if (new URL(req.url()).pathname === '/api/analytics/all') reads.push(req.url()); });
+  for (const value of [undefined, 'invalid']) {
+    anchor = value; await page.goto('/plg'); await page.getByRole('tab', { name: 'Results', exact: true }).click();
+    const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+    await expect(usage).toContainText('Production aggregates are unavailable. No zero is inferred.');
+    await expect(usage).toContainText('Requested dates: unavailable');
+    await expect(usage.getByText('8,420', { exact: true })).toHaveCount(0);
+  }
+  expect(reads).toHaveLength(0);
+});
+
+test('does not treat a body timestamp as a publication provenance header', async ({ page }) => {
+  await mockPlg(page);
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ headers: { 'X-Metrics-Cache': 'RESTORED' },
+    json: { ...usagePublication(route.request().url()), fetchedAt: usageAsOf } }));
+  await page.goto('/plg'); await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage).toContainText('Production aggregates are unavailable. No zero is inferred.');
+  await expect(usage.getByText('8,420', { exact: true })).toHaveCount(0);
+});
+
+test('uses the dated production publication for PLG usage and rejects mismatched provenance or period', async ({ page }) => {
+  await mockPlg(page);
+  const asOf = '2026-11-14T21:34:55.606Z'; let corrupt: 'none' | 'period' | 'provenance' = 'none';
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true,
+    publicationAsOf: asOf, user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));
+  await page.route('**/api/analytics/all?*', route => {
+    const body = usagePublication(route.request().url());
+    if (corrupt === 'period') body.one.data.production.range.endDate = '2026-11-15';
+    return route.fulfill({ json: body, headers: { 'X-Metrics-Cache': corrupt === 'provenance' ? 'LIVE' : 'RESTORED', 'X-Metrics-Updated-At': asOf,
+      'X-Metrics-Observed-At': '2026-11-16T00:00:00.000Z' } });
+  });
+  const reads: string[] = []; page.on('request', req => { if (new URL(req.url()).pathname === '/api/analytics/all') reads.push(req.url()); });
+  await page.goto('/plg'); await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage.getByText('8,420', { exact: true })).toBeVisible();
+  expect(new URL(reads.at(-1)!).searchParams.get('one_end_date')).toBe('2026-11-14');
+  await expect(usage).toContainText('Requested dates: 2026-10-16 to 2026-11-14');
+  await expect(usage).toContainText('Retained data is more than 24 hours old');
+  corrupt = 'period'; await usage.getByLabel('Reporting period').selectOption('7');
+  await expect(usage).toContainText('Production aggregates are unavailable. No zero is inferred.');
+  await expect(usage.getByText('8,420', { exact: true })).toHaveCount(0);
+  corrupt = 'provenance'; await usage.getByLabel('Reporting period').selectOption('90');
+  await expect(usage).toContainText('Production aggregates are unavailable. No zero is inferred.');
+  await expect(usage.getByText('8,420', { exact: true })).toHaveCount(0);
 });
 
 for (const width of [320, 768, 1440])
