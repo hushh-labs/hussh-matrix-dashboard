@@ -13,6 +13,9 @@ vi.mock('../src/server/bigquery-cost-control', () => ({
   guardedBigQuery: (_project: string, options: unknown) => query(options),
   guardedBigQueryDryRun: vi.fn(async () => { throw new Error('no estimate'); }),
 }));
+vi.mock('google-auth-library', () => ({ GoogleAuth: class {
+  async getClient() { return { request: async () => ({ data: { users: [] } }) }; }
+} }));
 const secret = 'test-only-cache-session-secret-with-thirty-two-characters';
 const app = createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
 const cookie = `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email: 'metrics-qa@hushh.ai', exp: Math.floor(Date.now()/1000) + 3600 }), secret))}`;
@@ -33,6 +36,14 @@ describe('authenticated aggregate snapshots', () => {
       expect(denied.headers['x-metrics-cache']).toBeUndefined();
     }
     expect(membership).toHaveBeenCalledTimes(2);
+    query.mockClear(); membership.mockClear();
+    const selectedUat = await request(app).get('/api/analytics/all?view=one&environment=uat&include_health=1').set('Cookie', cookie);
+    expect(selectedUat.status).toBe(200);
+    expect(selectedUat.body.one.data.production).toBeNull();
+    expect(selectedUat.body.one.data.uat).toBeTruthy();
+    expect(selectedUat.body.kai.productionProduct.data.productionGa4).toBeNull();
+    expect(membership).not.toHaveBeenCalled();
+    for (const [options] of query.mock.calls) expect(options.query).not.toContain('hushh-pda.analytics_');
   });
   it('keeps cache hits private and checks authorization before returning a warmed snapshot', async () => {
     const first = await request(app).get('/api/analytics/one/android?start_date=2026-09-28&end_date=2026-10-05').set('Cookie', cookie);

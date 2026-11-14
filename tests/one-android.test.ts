@@ -122,10 +122,10 @@ it('refreshes platform rows through one cache owner while reusing bounded captur
     const uncached=vi.fn().mockResolvedValue({rows:[{...platform,events:3}],error:null});
     const nestedCache=vi.fn().mockResolvedValue({rows:[platform],error:null});
     const captureRead=vi.fn().mockResolvedValue({rows:[envelope],error:null});
-    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture',
+    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture','legacyRestoration',
       ts.transpile(seam,{target:ts.ScriptTarget.ES2022})+';return queryOnePlatformCapture;')(
         crypto,{getStore:()=>({refresh:false})},new AggregateCache({maxAgeMs:30000,maxEntries:128}),
-        uncached,nestedCache,async()=>({}),captureRead);
+        uncached,nestedCache,async()=>({}),captureRead,async()=>null);
     const first=unpackPlatformCapture(await read('project',queries));
     expect(first.platforms.rows[0].events).toBe(2);
     await vi.advanceTimersByTimeAsync(30001);

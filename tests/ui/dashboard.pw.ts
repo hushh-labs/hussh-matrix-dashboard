@@ -39,6 +39,10 @@ test('idle reports do not poll or prefetch; Refresh requests only the selected r
   await expect(page.locator('.founder-kpi')).toHaveCount(4);
   expect(requests).toHaveLength(1);
   expect(new URL(requests[0].url).pathname).toBe('/api/analytics/founder');
+  const period = new URL(requests[0].url).searchParams;
+  expect(period.get('start_date')).toBe(period.get('end_date'));
+  await expect(page.getByRole('group', { name: 'Overview reporting period', exact: true })
+    .getByRole('button', { name: 'Latest complete day', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.clock.fastForward(20 * 60_000);
   expect(requests).toHaveLength(1);
   await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
@@ -46,6 +50,44 @@ test('idle reports do not poll or prefetch; Refresh requests only the selected r
   expect(requests[1]).toEqual({ url: requests[0].url, refresh: '1' });
   await page.clock.fastForward(10 * 60_000);
   expect(requests).toHaveLength(2);
+});
+
+test('One reads only the selected environment and loads health only on request', async ({ page }) => {
+  await mockDashboard(page);
+  const urls: URL[] = [];
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/analytics/all') urls.push(new URL(request.url())); });
+  await page.goto('/'); await navigate(page, 'One app');
+  await expect.poll(() => urls.length).toBe(1);
+  expect(urls[0].searchParams.get('environment')).toBe('production');
+  expect(urls[0].searchParams.get('one_start_date')).toBe(urls[0].searchParams.get('one_end_date'));
+  expect(urls[0].searchParams.has('include_health')).toBe(false);
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
+  await expect.poll(() => urls.length).toBe(2);
+  expect(urls[1].searchParams.get('environment')).toBe('uat');
+  await page.getByRole('button', { name: 'App health', exact: true }).click();
+  await expect.poll(() => urls.length).toBe(3);
+  expect(urls[2].searchParams.get('include_health')).toBe('1');
+  expect(urls[2].searchParams.get('environment')).toBe('uat');
+});
+
+test('UAT Location deep links and agent drilldowns keep the selected source', async ({ page }) => {
+  await mockDashboard(page);
+  const urls: URL[] = [];
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/analytics/all') urls.push(new URL(request.url())); });
+  await page.goto('/location-analytics/uat/overview');
+  await expect(page.getByRole('heading', { name: 'One Location analytics', exact: true })).toBeVisible();
+  expect(urls.at(-1)!.searchParams.get('environment')).toBe('uat');
+  await page.getByRole('tab', { name: 'Production', exact: true }).click();
+  await expect.poll(() => urls.at(-1)?.searchParams.get('environment')).toBe('production');
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
+  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  await page.locator('.feature-directory > button').filter({ hasText: 'Memory' }).click();
+  await expect(page.getByRole('tab', { name: 'UAT / Test builds', exact: true })).toHaveAttribute('aria-selected', 'true');
+  const beforeCachedSwitch = urls.length;
+  await page.getByRole('tab', { name: 'Production', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Production', exact: true })).toHaveAttribute('aria-selected', 'true');
+  expect(urls.length).toBe(beforeCachedSwitch);
 });
 
 test('overview stays focused and One reports reveal one subject at a time', async ({ page }) => {
@@ -113,7 +155,7 @@ test('shared registry totals never replace the selected environment customer cou
   const active = page.getByRole('group', { name: 'Active signed-in accounts', exact: true });
   await expect(total).toContainText('375');
   await expect(total).toContainText('Verified production customer contacts');
-  await expect(fresh).toContainText('20');
+  await expect(fresh).toContainText('4');
   await expect(active).toContainText('1,284');
   await page.getByText('Daily, weekly & monthly counts', { exact: true }).click();
   await expect(page.getByText('All-One registered accounts', { exact: true }).locator('..').locator('..')).toContainText('8,420');

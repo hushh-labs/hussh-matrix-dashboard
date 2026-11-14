@@ -5,14 +5,19 @@ import { BIGQUERY_COST_LIMITS as limits, BigQueryCostControlError, countBudgeted
   createGuardedBigQuery, FirestoreQueryBudgetStore, guardedBigQuery, guardedBigQueryDryRun,
   type QueryBudgetReservation } from '../src/server/bigquery-cost-control';
 
-const sdk = vi.hoisted(() => ({ createQueryJob: vi.fn(async (_request: unknown): Promise<any[]> => [{ metadata: {} }]) }));
-vi.mock('@google-cloud/bigquery', () => ({ BigQuery: class { createQueryJob = sdk.createQueryJob; } }));
+const sdk = vi.hoisted(() => ({ createQueryJob: vi.fn(async (_request: unknown): Promise<any[]> => [{ metadata: {} }]), job: vi.fn() }));
+const restoration = vi.hoisted(() => ({ active: false, value: undefined as any }));
+vi.mock('../src/server/legacy-restoration', async original => ({
+  ...await original<typeof import('../src/server/legacy-restoration')>(),
+  legacyRestoration: async () => restoration.active ? restoration.value : null,
+}));
+vi.mock('@google-cloud/bigquery', () => ({ BigQuery: class { createQueryJob = sdk.createQueryJob; job = sdk.job; } }));
 vi.mock('@google-cloud/firestore', () => ({ Firestore: class {
   private database = new AtomicDatabase();
   doc = (path: string) => this.database.doc(path);
   runTransaction = (run: (transaction: any) => Promise<unknown>) => this.database.runTransaction(run);
 } }));
-afterEach(() => { vi.unstubAllEnvs(); sdk.createQueryJob.mockClear(); });
+afterEach(() => { vi.unstubAllEnvs(); sdk.createQueryJob.mockReset(); sdk.job.mockReset(); restoration.active = false; });
 
 /** Atomic test double. Real transaction contention is covered by the emulator suite. */
 class AtomicDatabase {
@@ -47,6 +52,70 @@ const reservation = (id: string, statements = 1): QueryBudgetReservation => ({
 });
 
 describe('BigQuery execution boundary', () => {
+  it('restores the normal capped script policy once a configured permit is closed or expired', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); restoration.active = true;
+    restoration.value = { prepare: async (value: Query) => value, admit: async () => undefined, isPreparing: async () => false };
+    const getQueryResults = vi.fn(async () => [[]]);
+    sdk.createQueryJob.mockImplementation(async (value: any) => value.dryRun
+      ? [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'UPDATE' } } } }]
+      : [{ getQueryResults }]);
+    await guardedBigQuery(project, { query: 'UPDATE `p.d.t` SET value=1' });
+    const paid = sdk.createQueryJob.mock.calls.find(([value]: any) => !value.dryRun)![0] as Query;
+    expect(paid.maximumBytesBilled).toBe(String(limits.bytesPerStatement));
+    expect(paid.jobId).not.toContain('restore_');
+  });
+  it('recovers a lost restoration submission through the exact native ID without another paid job', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const grant = { permitId: 'restore_1234567890abcdef', planHash: 'a'.repeat(64),
+      id: 'metrics_restore_1234567890abcdef_' + 'a'.repeat(64), bytes: 20 * 1024 ** 2 };
+    restoration.active = true;
+    restoration.value = { prepare: async (value: Query) => value, admit: async () => grant, isPreparing: async () => true, reserve: vi.fn(async () => {}) };
+    let exists = false; let conflict = false;
+    const getQueryResults = vi.fn(async () => [[{ value: 42 }], null]);
+    const getMetadata = vi.fn(async () => {
+      if (!exists) throw Object.assign(new Error('missing'), { code: 404 });
+      return [{ jobReference: { projectId: project, location: 'US' },
+        configuration: { query: { query: conflict ? 'SELECT 0' : 'SELECT 42', maximumBytesBilled: String(grant.bytes), useLegacySql: false } } }];
+    });
+    sdk.job.mockReturnValue({ getMetadata, getQueryResults });
+    sdk.createQueryJob.mockImplementation(async (value: any) => {
+      if (value.dryRun) return [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'SELECT' } } } }];
+      exists = true; throw Object.assign(new Error('acknowledgement lost'), { code: 503 });
+    });
+    await expect(guardedBigQuery(project, { query: 'SELECT 42' })).rejects.toThrow('acknowledgement lost');
+    expect(await guardedBigQuery(project, { query: 'SELECT 42' })).toEqual([[{ value: 42 }]]);
+    expect(sdk.createQueryJob.mock.calls.filter(([value]: any) => !value.dryRun)).toHaveLength(1);
+    expect(sdk.job).toHaveBeenCalledWith(grant.id, { location: 'US' });
+    conflict = true;
+    await expect(guardedBigQuery(project, { query: 'SELECT 42' })).rejects.toThrow();
+    expect(sdk.createQueryJob.mock.calls.filter(([value]: any) => !value.dryRun)).toHaveLength(1);
+    expect(getQueryResults).toHaveBeenCalledTimes(1);
+  });
+  it('rejects oversized, invalid and failed free estimates without consuming the daily allowance', async () => {
+    const reserve = vi.fn(); const execute = vi.fn();
+    for (const value of [limits.bytesPerStatement + 1, -1, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      const run = createGuardedBigQuery({ budget: { reserve }, execute, enabled: () => true, estimate: async () => value });
+      await expect(run(project, { query: 'SELECT 1' })).rejects.toThrow('scan limit');
+    }
+    const run = createGuardedBigQuery({ budget: { reserve }, execute, enabled: () => true,
+      estimate: async () => { throw new Error('provider unavailable'); } });
+    await expect(run(project, { query: 'SELECT 1' })).rejects.toThrow('estimated safely');
+    expect(reserve).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
+  });
+  it('still reserves the full native ceiling after a smaller estimate, and rechecks revocation', async () => {
+    const order: string[] = []; let enabled = true;
+    const reserve = vi.fn(async (_reservation: QueryBudgetReservation) => { order.push('reserve'); });
+    const execute = vi.fn(async (): Promise<[Record<string, unknown>[]]> => { order.push('execute'); return [[]]; });
+    const estimate = vi.fn(async () => { order.push('estimate'); return 1; });
+    const run = createGuardedBigQuery({ budget: { reserve }, execute, estimate, enabled: () => enabled });
+    await run(project, { query: 'SELECT @id', params: { id: 3 } });
+    expect(order).toEqual(['estimate', 'reserve', 'execute']);
+    expect(reserve.mock.calls[0][0]).toMatchObject({ bytes: limits.bytesPerStatement, statements: 1 });
+    expect(estimate).toHaveBeenCalledWith({ query: 'SELECT @id', params: { id: 3 }, types: undefined });
+    estimate.mockImplementationOnce(async () => { enabled = false; return 1; });
+    await expect(run(project, { query: 'SELECT 1' })).rejects.toThrow('paused');
+    expect(reserve).toHaveBeenCalledTimes(1); expect(execute).toHaveBeenCalledTimes(1);
+  });
   it('is disabled by default, without loading the SDK or contacting the budget store', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'false');
     await expect(guardedBigQuery(project, { query: 'SELECT 1' })).rejects.toThrow('paused');
@@ -129,10 +198,12 @@ describe('BigQuery execution boundary', () => {
   it('submits a stable capped native job and reads that job instead of issuing a second query', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
     const getQueryResults = vi.fn(async () => [[{ value: 7 }]]);
+    sdk.createQueryJob.mockResolvedValueOnce([{ metadata: { statistics: { totalBytesProcessed: '1' } } }]);
     sdk.createQueryJob.mockResolvedValueOnce([{ getQueryResults }]);
     expect(await guardedBigQuery(project, { query: 'SELECT 7', useQueryCache: false })).toEqual([[{ value: 7 }]]);
-    expect(sdk.createQueryJob).toHaveBeenCalledTimes(1);
-    expect(sdk.createQueryJob.mock.calls[0][0]).toMatchObject({ maximumBytesBilled: String(limits.bytesPerStatement),
+    expect(sdk.createQueryJob).toHaveBeenCalledTimes(2);
+    expect(sdk.createQueryJob.mock.calls[0][0]).toMatchObject({ dryRun: true, query: 'SELECT 7', maximumBytesBilled: String(limits.bytesPerStatement) });
+    expect(sdk.createQueryJob.mock.calls[1][0]).toMatchObject({ maximumBytesBilled: String(limits.bytesPerStatement),
       jobId: expect.stringMatching(/^metrics_/), useQueryCache: true, jobTimeoutMs: 30000 });
     expect(getQueryResults).toHaveBeenCalledExactlyOnceWith({ autoPaginate: true, timeoutMs: 30000 });
   });

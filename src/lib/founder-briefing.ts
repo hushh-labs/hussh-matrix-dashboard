@@ -126,6 +126,7 @@ export interface FounderBriefingData {
   previousPeriod: FounderPeriod;
   one: {
     available: boolean;
+    partial?: boolean;
     comparisonReady: boolean;
     interactionComparisonReady: boolean;
     identityObservedSince: string | null;

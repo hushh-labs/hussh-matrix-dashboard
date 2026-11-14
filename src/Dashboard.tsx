@@ -98,7 +98,7 @@ const PlgWorkspace = lazy(() => import('./components/PlgWorkspace').then(module 
 const formatAxisValue = (value: number) => (value >= 1000 ? `${value / 1000}k` : `${value}`);
 const oneDayMs = 86_400_000;
 
-type DatePreset = 7 | 14 | 30 | 90;
+type DatePreset = 1 | 7 | 14 | 30 | 90;
 function isDashboardTab(value: unknown): value is DashboardTab {
   return typeof value === 'string' && dashboardTabs.includes(value as DashboardTab);
 }
@@ -142,8 +142,7 @@ function toDateInputValue(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function rangeForPreset(days: DatePreset): HushhAiDateRangeState {
-  const now = new Date();
+function rangeForPreset(days: DatePreset, now = new Date()): HushhAiDateRangeState {
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const start = new Date(end.getTime() - (days - 1) * oneDayMs);
   return { preset: days, startDate: toDateInputValue(start), endDate: toDateInputValue(end) };
@@ -729,7 +728,7 @@ function DateRangeControl({
   useLayoutEffect(() => { setDraft(range); }, [range.startDate, range.endDate, range.preset]);
   const pending = draft.startDate !== range.startDate || draft.endDate !== range.endDate;
   const today = toDateInputValue(new Date());
-  const presets: DatePreset[] = [7, 14, 30, 90];
+  const presets: DatePreset[] = [1, 7, 14, 30, 90];
 
   return (
     <div
@@ -749,7 +748,7 @@ function DateRangeControl({
                 range.preset === days ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink',
               )}
             >
-              {days} days
+              {days === 1 ? 'Today' : `${days} days`}
             </button>
           ))}
         </div>
@@ -1178,17 +1177,18 @@ export default function Dashboard() {
   const [briefRefreshKey, setBriefRefreshKey] = useState(0);
   const [instagramRefreshKey, setInstagramRefreshKey] = useState(0);
   const [plgRefreshKey, setPlgRefreshKey] = useState(0);
-  const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
-  // 30 days by default: the One app's agent volumes are small enough that a
-  // 7-day window reads as noise rather than a trend.
-  const [oneRange, setOneRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(30));
-  const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7));
+  const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
+  // Open a bounded current-day report; larger periods require explicit choice.
+  const [oneRange, setOneRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
+  const [oneEnvironment, setOneEnvironment] = useState<'production' | 'uat'>(locationRoute?.environment ?? 'production');
+  const [oneHealthRequested, setOneHealthRequested] = useState(false);
+  const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
   const [refreshKey, setRefreshKey] = useState(0);
   const [compareRefreshKey, setCompareRefreshKey] = useState(0);
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
   const scope = ['one', 'growth', 'apps', 'overview', 'platforms'].includes(activeTab) ? activeTab as 'one' | 'growth' | 'apps' | 'overview' | 'platforms' : null;
   const overviewScope = scope === 'overview' || scope === 'platforms';
-  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one',
+  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one', oneEnvironment: locationRoute?.environment ?? oneEnvironment, includeOneHealth: oneHealthRequested,
     ...(overviewScope ? { kaiStartDate: kaiRange.startDate, kaiEndDate: kaiRange.endDate, hushhAiStartDate: hushhAiRange.startDate, hushhAiEndDate: hushhAiRange.endDate }
       : { oneStartDate: range.startDate, oneEndDate: range.endDate }) });
   const resource = useMetricsResource<AllAnalyticsResponse>(scope ? buildAnalyticsUrl(rangeOptions()) : null, {
@@ -1223,14 +1223,15 @@ export default function Dashboard() {
       window.history.pushState({ dashboardTab: 'one' }, '', path);
     }
     setLocationRoute(route);
+    setOneEnvironment(route.environment);
     setActiveTab('one');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   const openLocationAnalytics = useCallback(() => {
     window.history.replaceState({ ...window.history.state, dashboardTab: 'one' }, '', window.location.href);
-    changeLocationRoute({ environment: 'production', tab: 'overview' });
-  }, [changeLocationRoute]);
+    changeLocationRoute({ environment: oneEnvironment, tab: 'overview' });
+  }, [changeLocationRoute, oneEnvironment]);
 
   const closeLocationAnalytics = useCallback(() => {
     window.history.pushState({ dashboardTab: 'one' }, '', '/');
@@ -1722,7 +1723,7 @@ export default function Dashboard() {
         {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} loading={loading} refreshing={isRefreshing} error={usingMock} />}
         <Suspense fallback={<MetricsSkeleton label="Opening this metrics section" />} >
         {activeTab === 'briefing' ? (
-          <FounderBriefingPanel refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />
+          <FounderBriefingPanel publicationAsOf={user?.publicationAsOf} refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />
         ) : activeTab === 'instagram' ? (
           <InstagramPanel refreshKey={instagramRefreshKey} />
         ) : activeTab === 'referrals' ? (
@@ -1756,6 +1757,9 @@ export default function Dashboard() {
         ) : activeTab === 'one' ? (
           <OneAppPanel
             loading={loading}
+            environment={oneEnvironment}
+            onEnvironmentChange={setOneEnvironment}
+            onHealthRequested={() => setOneHealthRequested(true)}
             one={data?.one ?? null}
             oneUat={data?.oneUat ?? null}
             registrations={data?.oneRegistrations ?? null}

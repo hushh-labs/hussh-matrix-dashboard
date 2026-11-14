@@ -11,10 +11,16 @@ export function ReportTabs<T extends string>({ label, value, options, onChange }
   </div>;
 }
 
-export function ReportDetails({ title, hint, children }: { title: string; hint?: string; children: ReactNode; key?: string }) {
+export function ReportDetails({ title, hint, children, open, onOpenChange }: {
+  title: string; hint?: string; children: ReactNode; key?: string;
+  open?: boolean; onOpenChange?: (open: boolean) => void;
+}) {
   const [revealed, setRevealed] = useState(false);
-  return <details className="report-details" onToggle={event => { if (event.currentTarget.open) setRevealed(true); }}>
+  return <details className="report-details" open={open} onToggle={event => {
+    if (event.currentTarget.open) setRevealed(true);
+    onOpenChange?.(event.currentTarget.open);
+  }}>
     <summary><span><span>{title}</span>{hint && <small>{hint}</small>}</span><ChevronDown size={17} aria-hidden="true" /></summary>
-    <div className="report-details-content">{revealed && children}</div>
+    <div className="report-details-content">{(revealed || open) && children}</div>
   </details>;
 }

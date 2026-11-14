@@ -11,6 +11,7 @@ export interface AuthUser {
   picture?: string;
   sub?: string;
   domainAuthorized: boolean;
+  publicationAsOf?: string;
 }
 
 export interface AuthConfig {
@@ -38,6 +39,7 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
           name: user.name || user.email.split('@')[0],
           picture: user.picture,
           domainAuthorized: true,
+          publicationAsOf: typeof data.publicationAsOf === 'string' && Number.isFinite(Date.parse(data.publicationAsOf)) ? data.publicationAsOf : undefined,
         };
       }
     }

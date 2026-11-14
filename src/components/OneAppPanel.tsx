@@ -1232,6 +1232,9 @@ export function OneAppPanel({
   onOpenLocation,
   onCloseLocation,
   onLocationRouteChange,
+  environment: requestedEnvironment,
+  onEnvironmentChange,
+  onHealthRequested,
 }: {
   loading?: boolean;
   one: OneAppSummary | null;
@@ -1243,6 +1246,9 @@ export function OneAppPanel({
   onOpenLocation: () => void;
   onCloseLocation: () => void;
   onLocationRouteChange: (route: LocationAnalyticsRoute) => void;
+  environment?: 'production' | 'uat';
+  onEnvironmentChange?: (environment: 'production' | 'uat') => void;
+  onHealthRequested?: () => void;
   /**
    * Owned by Dashboard so the range state lives with every other product's,
    * and rendered here so it sits with the numbers it governs.
@@ -1251,7 +1257,12 @@ export function OneAppPanel({
 }) {
   const [view, setView] = useState<'summary' | 'features' | 'retention' | 'health'>('summary');
   const [selectedAgentCapability, setSelectedAgentCapability] = useState<string | null>(null);
-  const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const detailState = (key: string) => ({ open: expanded[key] ?? false,
+    onOpenChange: (open: boolean) => setExpanded(previous => previous[key] === open ? previous : { ...previous, [key]: open }) });
+  const [localEnvironment, setLocalEnvironment] = useState<'production' | 'uat'>('production');
+  const environment = requestedEnvironment ?? localEnvironment;
+  const setEnvironment = (next: 'production' | 'uat') => { setLocalEnvironment(next); onEnvironmentChange?.(next); };
 
   const activeData = (environment === 'production' ? one : oneUat) as OneAppSummary;
 
@@ -1320,6 +1331,8 @@ export function OneAppPanel({
     return (
       <AgentCapabilityAnalyticsPanel
         loading={loading}
+        environment={environment}
+        onEnvironmentChange={setEnvironment}
         capabilityKey={selectedAgentCapability}
         one={one}
         uat={oneUat}
@@ -1358,7 +1371,7 @@ export function OneAppPanel({
       <section>
         {filterHeader}
 
-        <ReportTabs label="One app report" value={view} onChange={setView} options={[
+        <ReportTabs label="One app report" value={view} onChange={next => { setView(next); if (next === 'health') onHealthRequested?.(); }} options={[
           { value: 'summary', label: 'Summary' }, { value: 'features', label: 'Features' },
           { value: 'retention', label: 'Retention' }, { value: 'health', label: 'App health' },
         ]} />
@@ -1374,11 +1387,11 @@ export function OneAppPanel({
           </div>
         </div>
         <OneAtAGlance one={activeData} registrations={registrations} />
-        <ReportDetails title="Activity by platform" hint="iOS, Android and web">
+        <ReportDetails title="Activity by platform" hint="iOS, Android and web" {...detailState('platforms')}>
           <PlatformsAtAGlance one={activeData} environment={environment} mainAnalytics={one} onViewMainAnalytics={() => setEnvironment('production')} />
         </ReportDetails>
 
-        <ReportDetails title="Daily, weekly & monthly counts" hint="Accounts and devices">
+        <ReportDetails title="Daily, weekly & monthly counts" hint="Accounts and devices" {...detailState('counts')}>
           <div className="mt-4 flex flex-col gap-4">
             <RegisteredUsers accounts={registrations} />
             <IosIdentifiedUsers one={activeData} />
@@ -1444,7 +1457,7 @@ export function OneAppPanel({
         </div>
       </Block>
 
-      <ReportDetails title="Compare daily feature activity">
+      <ReportDetails title="Compare daily feature activity" {...detailState('features')}>
       <DailyAgentActivity one={activeData} onOpenAgent={key => {
         if (key === 'location') onOpenLocation();
         else setSelectedAgentCapability(key);
@@ -1464,7 +1477,7 @@ export function OneAppPanel({
       </Block>
 
       </>}
-      <ReportDetails title="Definitions & data sources">
+      <ReportDetails title="Definitions & data sources" {...detailState('definitions')}>
           <div className="mt-3 grid gap-x-6 gap-y-2 md:grid-cols-2">
             <p><strong>Registered users:</strong> distinct One account records in Firebase. “New” means the account was created during the selected dates. This does not prove one account per human.</p>
             <p><strong>Active signed-in accounts:</strong> distinct account IDs attached to meaningful GA4 activity. One account counts once even after repeat visits or use on multiple devices. Activity without an account ID is excluded.</p>
