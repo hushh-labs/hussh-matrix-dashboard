@@ -15,7 +15,7 @@ export interface RestorationPermit {
   reservedBytes: number; reservedJobs: number;
   approvedPlanDigest?: string;
   previousPermitId?: string; previousSource?: string; previousReservedBytes?: number;
-  observations?: Record<string, { bytes: number; reports: string[] }>;
+  observations?: Record<string, { bytes: number; reports: string[]; queryDigest: string; cohortScope: string }>;
 }
 export interface RestorationGrant { permitId: string; planHash: string; id: string; bytes: number }
 const scope = new AsyncLocalStorage<{ key: string; failed: boolean }>();
@@ -55,6 +55,7 @@ export function validPermit(value: unknown, source: string, now: number): Restor
     || (p.observations !== undefined && (!p.observations || Array.isArray(p.observations)
       || Object.keys(p.observations).length > 500 || Object.entries(p.observations).some(([key, item]) =>
         !/^[a-f0-9]{64}$/.test(key) || !Number.isSafeInteger(item?.bytes) || item.bytes < 1 || item.bytes > 512 * 1024 ** 3
+        || !/^[a-f0-9]{64}$/.test(item.queryDigest ?? '') || !/^(?:[a-f0-9]{64})?$/.test(item.cohortScope ?? '')
         || !Array.isArray(item.reports) || item.reports.length > 32 || item.reports.some(report => typeof report !== 'string' || !report.startsWith('/api/analytics/') || report.length > 2048))))
     || (p.phase !== 'planning' && p.approvedPlanDigest !== restorationPlanDigest(p.plans))) throw fail();
   return p;
@@ -180,7 +181,9 @@ export class LegacyRestoration {
         if (!existing && Object.keys(observations).length >= 500) throw fail();
         const reports = [...new Set([...(existing?.reports ?? []), report])].sort();
         if (reports.length > 32) throw fail();
-        observations[planHash] = { bytes: Math.max(bytes, existing?.bytes ?? 0), reports };
+        const queryDigest = hash(request.query as string);
+        if (existing && (existing.queryDigest !== queryDigest || existing.cohortScope !== cohortScope)) throw fail();
+        observations[planHash] = { bytes: Math.max(bytes, existing?.bytes ?? 0), reports, queryDigest, cohortScope };
         if (Buffer.byteLength(JSON.stringify(observations)) > 700_000) throw fail();
         tx.update(ref, { observations });
       });

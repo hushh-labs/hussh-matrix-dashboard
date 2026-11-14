@@ -142,6 +142,7 @@ describe('finite initial restoration', () => {
     const observations = Object.values(f.db.values.get(nextPath).observations) as Array<{ bytes: number; reports: string[] }>;
     expect(observations).toHaveLength(1); expect(observations[0].bytes).toBeGreaterThan(5 * 1024 ** 3);
     expect(observations[0].reports).toEqual(['/api/analytics/founder?day=2026-11-05']);
+    expect(f.db.values.get(nextPath).observations[Object.keys(f.db.values.get(nextPath).observations)[0]].cohortScope).toBe('a'.repeat(64));
     expect(f.db.values.get(nextPath).reservedJobs).toBe(0); expect(f.db.values.get(nextPath).plans).toEqual({});
     await expect(diagnostic.reserve({ permitId: nextId, planHash: 'a'.repeat(64), id: 'anything', bytes: 1 })).rejects.toThrow('held');
     await expect(diagnostic.saveSnapshot('key', { status: 200, body: {} }, start)).rejects.toThrow('held');

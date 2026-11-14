@@ -115,3 +115,6 @@ cannot reserve, execute or publish and fails closed outside the planning phase.
 The observed sum is a lower bound when dependent branches cannot be reached or
 when estimates are unavailable; it is not authority to execute. Source identity,
 claim, original ledger and expiry remain unchanged.
+The diagnostic stores a digest of each frozen SQL statement and its existing
+cohort-scope hash, not the SQL or identity rows. These are used to compare
+against completed, metadata-verified earlier jobs before any replacement work.
