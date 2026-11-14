@@ -80,7 +80,7 @@ describe('BigQuery execution boundary', () => {
     });
     sdk.job.mockReturnValue({ getMetadata, getQueryResults: async () => [[{ value: 7 }], null] });
     sdk.createQueryJob.mockImplementation(async (value: any) => value.dryRun
-      ? [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'SELECT' } } } }]
+      ? [{ metadata: { statistics: { totalBytesProcessed: String(30 * 1024 ** 2), query: { statementType: 'SELECT' } } } }]
       : (() => { throw new Error('unexpected paid submission'); })());
     expect(await guardedBigQuery(project, { query: 'SELECT 7' })).toEqual([[{ value: 7 }]]);
     exists = false;
