@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 export const reportDefinitions = {
   'one.adoption': { version: '1', product: 'one', metrics: ['activeAccounts', 'confirmedOutcomes'] },
   'hushhai.acquisition': { version: '1', product: 'hushhai', metrics: ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'] },
+  'hushhai.activity': { version: '1', product: 'hushhai', maxPeriodDays: 7, metrics: ['pageViews', 'searchSubmissions', 'searchCompletions', 'searchFailures', 'ctaClicks'] },
 } as const;
 export type ReportId = keyof typeof reportDefinitions;
 export type ReportPeriod = { startDate: string; endDate: string; timezone: string };
@@ -22,7 +23,7 @@ export type ReportJob = { id: string; key: string; request: ReportRequest; contr
   nextAttemptAt: number; needsAttention: boolean;
   workerHash: string | null; providerJobId: string; dispatchIntent: true; sourceStarted: boolean };
 export type MetricValue = { value: number | null; coverage: 'available' | 'partial' | 'provisional' | 'untracked' | 'unavailable';
-  unit: 'account' | 'outcome' | 'session' | 'provider_user' | 'key_event'; basis: 'exact' | 'provider_defined' };
+  unit: 'account' | 'outcome' | 'session' | 'provider_user' | 'key_event' | 'event'; basis: 'exact' | 'provider_defined' | 'source_recorded' };
 export type AggregateResult = { metrics: Record<string, MetricValue>; sourceCheckedAt: number;
   sourceWatermark: number | null; sourceGeneration: string; scopeDigest: string; definitionVersion: string;
   period: ReportPeriod; reconciled: boolean };
@@ -69,7 +70,8 @@ export function validateRequest(value: unknown, maxDays: number): ReportRequest 
       || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) throw new ReportError('invalid');
   }
   const days = (Date.parse(r.endDate) - Date.parse(r.startDate)) / 86_400_000 + 1;
-  if (days <= 0 || days > maxDays) throw new ReportError('invalid');
+  const definition = reportDefinitions[r.reportId];
+  if (days <= 0 || days > Math.min(maxDays, 'maxPeriodDays' in definition ? definition.maxPeriodDays : maxDays)) throw new ReportError('invalid');
   return { reportId: r.reportId, startDate: r.startDate, endDate: r.endDate, timezone: reportingTimezone(r.timezone) };
 }
 export function reportingTimezone(value: string) {
@@ -96,15 +98,17 @@ export function validateAggregate(result: AggregateResult, job: ReportJob, now: 
   const expected = reportDefinitions[request.reportId].metrics;
   if (!result.metrics || Object.keys(result.metrics).sort().join() !== [...expected].sort().join()) throw new ReportError('invalid');
   const units: Record<string, MetricValue['unit']> = { activeAccounts: 'account', confirmedOutcomes: 'outcome',
-    sessions: 'session', activeUsers: 'provider_user', engagedSessions: 'session', keyEvents: 'key_event' };
+    sessions: 'session', activeUsers: 'provider_user', engagedSessions: 'session', keyEvents: 'key_event',
+    pageViews: 'event', searchSubmissions: 'event', searchCompletions: 'event', searchFailures: 'event', ctaClicks: 'event' };
+  const basis = request.reportId === 'one.adoption' ? 'exact' : request.reportId === 'hushhai.activity' ? 'source_recorded' : 'provider_defined';
   for (const [name, metric] of Object.entries(result.metrics)) {
     if (!metric || Object.keys(metric).sort().join() !== 'basis,coverage,unit,value'
-      || metric.unit !== units[name] || metric.basis !== (request.reportId === 'one.adoption' ? 'exact' : 'provider_defined')
+      || metric.unit !== units[name] || metric.basis !== basis
       || !['available', 'partial', 'provisional', 'untracked', 'unavailable'].includes(metric.coverage)
       || (['unavailable', 'untracked'].includes(metric.coverage) ? metric.value !== null
         : !Number.isSafeInteger(metric.value) || Number(metric.value) < 0)
       || (metric.value !== null && result.sourceWatermark === null
-        && (metric.basis !== 'provider_defined' || !['partial', 'provisional'].includes(metric.coverage)))) throw new ReportError('invalid');
+        && (!['provider_defined', 'source_recorded'].includes(metric.basis) || !['partial', 'provisional'].includes(metric.coverage)))) throw new ReportError('invalid');
   }
   if (Buffer.byteLength(JSON.stringify(result)) > maxBytes) throw new ReportError('invalid');
 }

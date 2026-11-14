@@ -1,5 +1,13 @@
 # Reporting implementation status
 
+Latest 14 November continuation: a separately defined warehouse-free website
+activity adapter, durable source-read budget and bounded explicit Refresh are
+implemented locally. See [definition, controls, evidence and activation gaps](./website-activity-and-refresh.md).
+The corresponding website source is default off in a separate local branch;
+neither it nor this application increment is live. Refresh is requested for
+the final rollout; old schedules remain paused until accepted source/policy and
+runtime qualification. Prior exact-head CI below does not certify newer source.
+
 13 November 2026. Foundation review packet: PR #185.
 
 Kushal approved the foundation proposal packet at `e41d134`; #185 merged into

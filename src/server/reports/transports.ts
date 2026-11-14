@@ -5,7 +5,7 @@ import { SourceRequestFailure } from './source-errors';
 import type { AggregateFetch } from './sources';
 import type { TaskApiRequest } from './dispatch';
 import { withinDeadline } from './deadline';
-import { isAnalyticsReader } from './bindings';
+import { isAnalyticsReader, websiteSourceOrigins } from './bindings';
 
 export type CredentialHeaders = (audience: 'analytics' | 'cloud', signal: AbortSignal) => Promise<Record<string, string>>;
 export function adcCredentialHeaders(): CredentialHeaders {
@@ -64,6 +64,15 @@ export function googleAggregateFetch(expectedUrl: string, credentials: Credentia
 export async function readAggregateSecret(version: string, signal: AbortSignal,
   credentials: CredentialHeaders = adcCredentialHeaders(), fetcher: typeof fetch = fetch) {
   if (!/^projects\/[a-z][a-z0-9-]{4,61}[a-z0-9]\/secrets\/metrics-one-aggregate-source-(production|uat)\/versions\/[1-9]\d*$/.test(version)) throw new ReportError('invalid');
+  return accessAggregateSecret(version, signal, credentials, fetcher);
+}
+export async function readWebsiteAggregateSecret(version: string, signal: AbortSignal,
+  credentials: CredentialHeaders = adcCredentialHeaders(), fetcher: typeof fetch = fetch) {
+  if (!/^projects\/hushh-ai-(prod|uat)\/secrets\/metrics-website-aggregate-source-(production|uat)\/versions\/[1-9]\d*$/.test(version)
+    || version.includes('/hushh-ai-prod/') !== version.includes('-source-production/')) throw new ReportError('invalid');
+  return accessAggregateSecret(version, signal, credentials, fetcher);
+}
+async function accessAggregateSecret(version: string, signal: AbortSignal, credentials: CredentialHeaders, fetcher: typeof fetch) {
   const response = await fetcher(`https://secretmanager.googleapis.com/v1/${version}:access`, {
     headers: await withinDeadline(credentials('cloud', signal), signal), signal, redirect: 'error',
   });
@@ -82,6 +91,19 @@ export function signedOneAggregateFetch(environment: 'production' | 'uat', secre
     if (url !== expected) throw new ReportError('invalid');
     const body = JSON.stringify(request.body), timestamp = String(now());
     const signature = createHmac('sha256', secret).update(`metrics-one-aggregate-v1:${timestamp}:${body}`).digest('hex');
+    return fetcher(url, { method: 'POST', body, signal: request.signal, redirect: 'error', headers: {
+      'Content-Type': 'application/json', 'X-Metrics-Timestamp': timestamp, 'X-Metrics-Signature': signature,
+    } });
+  };
+}
+export function signedWebsiteAggregateFetch(environment: 'production' | 'uat', secret: Uint8Array,
+  fetcher: typeof fetch = fetch, now: () => number = Date.now): AggregateFetch {
+  if (!Object.hasOwn(websiteSourceOrigins, environment) || secret.byteLength < 32 || secret.byteLength > 256) throw new ReportError('invalid');
+  const expected = `${websiteSourceOrigins[environment]}/api/metrics/website/activity`;
+  return async (url, request) => {
+    if (url !== expected) throw new ReportError('invalid');
+    const body = JSON.stringify(request.body), timestamp = String(now());
+    const signature = createHmac('sha256', secret).update(`metrics-website-aggregate-v1:${timestamp}:${body}`).digest('hex');
     return fetcher(url, { method: 'POST', body, signal: request.signal, redirect: 'error', headers: {
       'Content-Type': 'application/json', 'X-Metrics-Timestamp': timestamp, 'X-Metrics-Signature': signature,
     } });

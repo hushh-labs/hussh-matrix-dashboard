@@ -1,10 +1,10 @@
 import { digest, ReportError, reportingTimezone, validatePolicy, type AggregateResult, type MetricValue, type ReportJob,
   type ReportControl, type ReportingPolicy } from './contracts';
 import type { AggregateReportSource } from './collector';
-import { reportPath, type ReportStore } from './store';
+import { reportPath, type ReportStore, type ReportTransaction } from './store';
 import { providerRetryAfter, SourceRequestFailure } from './source-errors';
 import { withinDeadline } from './deadline';
-import { hasGa4WebsiteScope, type Ga4WebsiteScope } from './bindings';
+import { hasGa4WebsiteScope, websiteSourceOrigins, type Ga4WebsiteScope } from './bindings';
 
 type SourceCall = { binding: string; state: 'reserved' | 'completed'; result: AggregateResult | null };
 type SourcePolicy = { sourceGeneration: string; timeoutMs: number; maxResponseBytes: number };
@@ -21,6 +21,7 @@ abstract class JournaledSource implements AggregateReportSource {
   }
   protected abstract binding(job: ReportJob): string;
   protected abstract collect(job: ReportJob): Promise<AggregateResult>;
+  protected async sourceBudget(_tx: ReportTransaction, _job: ReportJob): Promise<() => void> { return () => {}; }
   async submit(job: ReportJob) {
     if (job.control.sourceGeneration !== this.policy.sourceGeneration) throw new ReportError('invalid');
     const ref = reportPath('sourceReceipts', job.id), binding = this.binding(job);
@@ -36,6 +37,8 @@ abstract class JournaledSource implements AggregateReportSource {
         if (current.binding !== binding) throw new ReportError('invalid');
         return { admitted: false, result: current.result };
       }
+      const reserve = await this.sourceBudget(tx, job);
+      reserve();
       tx.create(ref, { binding, state: 'reserved', result: null });
       return { admitted: true, result: null };
     });
@@ -161,6 +164,46 @@ export class OneAdoptionSource extends JournaledSource {
       body: { period: { startDate: job.request.startDate, endDate: job.request.endDate, timezone: job.request.timezone },
         definitionVersion: job.control.definitionVersion, sourceGeneration: job.control.sourceGeneration, scopeDigest: job.control.scopeDigest },
       signal,
+    }), signal) as AggregateResult;
+  }
+}
+
+/** Source-owned accepted-event counts. Keep these separate from GA4 identity,
+ * sessions, conversion definitions and confirmed One business outcomes. */
+export class WebsiteActivitySource extends JournaledSource {
+  constructor(store: ReportStore, policy: SourcePolicy, private environment: 'production' | 'uat',
+    private captureGeneration: string, private maxEventsPerDay: number, private fetch: AggregateFetch, now?: () => number) {
+    super(store, policy, now);
+    if (!Object.hasOwn(websiteSourceOrigins, environment) || !/^[a-f0-9]{64}$/.test(captureGeneration)
+      || !Number.isSafeInteger(maxEventsPerDay) || maxEventsPerDay < 1 || maxEventsPerDay > 1000) throw new ReportError('invalid');
+  }
+  protected binding(job: ReportJob) { return digest([job.key, this.environment, this.captureGeneration, this.maxEventsPerDay, this.policy.sourceGeneration]); }
+  protected async sourceBudget(tx: ReportTransaction, job: ReportJob) {
+    const policy = await tx.get<{ approved: boolean; dailyReadUnits: number }>(reportPath('policy', 'website-read-budget'));
+    if (!policy || Object.keys(policy).sort().join() !== 'approved,dailyReadUnits' || policy.approved !== true
+      || !Number.isSafeInteger(policy.dailyReadUnits) || policy.dailyReadUnits <= 0) throw new SourceRequestFailure('configuration');
+    // Include point lookups and the receipt-query sentinel. This is an
+    // engineering upper bound, not a native billing or currency estimate.
+    const days = (Date.parse(job.request.endDate) - Date.parse(job.request.startDate)) / 86_400_000 + 1;
+    const units = days * (this.maxEventsPerDay + 3);
+    if (!Number.isSafeInteger(units) || units <= 0 || days > 7) throw new ReportError('invalid');
+    const ref = reportPath('sourceReadBudgets', `website-${this.environment}-${new Date(this.now()).toISOString().slice(0, 10)}`);
+    const budget = await tx.get<{ used: number; limit: number }>(ref);
+    if (budget && (Object.keys(budget).sort().join() !== 'limit,used' || !Number.isSafeInteger(budget.used)
+      || !Number.isSafeInteger(budget.limit) || budget.used < 0 || budget.used > budget.limit)) throw new SourceRequestFailure('configuration');
+    const used = budget?.used ?? 0, limit = Math.min(budget?.limit ?? policy.dailyReadUnits, policy.dailyReadUnits);
+    if (units > limit - used) throw new SourceRequestFailure('configuration');
+    // No refund on timeout, schema failure or lost acknowledgement. The day key
+    // excludes generation, staff and job sequence, preventing quota resets.
+    return () => tx.set(ref, { used: used + units, limit });
+  }
+  protected async collect(job: ReportJob): Promise<AggregateResult> {
+    if (job.request.reportId !== 'hushhai.activity' || job.request.timezone !== 'UTC') throw new ReportError('invalid');
+    const signal = AbortSignal.timeout(this.policy.timeoutMs);
+    return await this.boundedJson(await this.fetch(`${websiteSourceOrigins[this.environment]}/api/metrics/website/activity`, {
+      body: { period: { startDate: job.request.startDate, endDate: job.request.endDate, timezone: job.request.timezone },
+        definitionVersion: job.control.definitionVersion, sourceGeneration: job.control.sourceGeneration,
+        scopeDigest: job.control.scopeDigest, captureGeneration: this.captureGeneration, maxEventsPerDay: this.maxEventsPerDay }, signal,
     }), signal) as AggregateResult;
   }
 }

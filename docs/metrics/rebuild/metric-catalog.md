@@ -45,6 +45,13 @@ establish that an API, source verification or approval already exists.
 
 ## Source gaps and required changes
 
+The separate `hushhai.activity` candidate counts five accepted source-event
+types, not GA4 sessions/users or business outcomes. Its scope, partial/provisional
+UTC definition, reconciliation, budget and activation requirements are in the
+[website activity and refresh review packet](./website-activity-and-refresh.md).
+This addition is proposed; it does not change the previously reviewed GA4
+definition or establish marketing-only coverage for a backend-wide source.
+
 The current Metrics production cohort adapter enumerates hashed membership rows
 from `/api/one/plg/customer-cohort`; the registration path also traverses Firebase
 accounts. The new web reader must not reuse either path. Request narrow aggregate

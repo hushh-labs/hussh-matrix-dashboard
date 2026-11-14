@@ -4,6 +4,7 @@ COPY src/metrics-web/package*.json ./
 RUN npm ci --no-audit --no-fund
 COPY src/metrics-web ./
 COPY src/server/reports /workspace/src/server/reports
+COPY src/lib/report-refresh.ts /workspace/src/lib/report-refresh.ts
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
