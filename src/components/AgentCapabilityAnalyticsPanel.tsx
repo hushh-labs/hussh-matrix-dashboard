@@ -62,6 +62,8 @@ interface AgentCapabilityAnalyticsPanelProps {
   rangeLabel: string;
   dateControl: ReactNode;
   onBack: () => void;
+  environment?: 'production' | 'uat';
+  onEnvironmentChange?: (environment: 'production' | 'uat') => void;
 }
 
 const capabilityMetadata: Record<
@@ -573,8 +575,12 @@ export function AgentCapabilityAnalyticsPanel({
   rangeLabel,
   dateControl,
   onBack,
+  environment: requestedEnvironment,
+  onEnvironmentChange,
 }: AgentCapabilityAnalyticsPanelProps) {
-  const [environment, setEnvironment] = useState<'production' | 'uat'>('production');
+  const [localEnvironment, setLocalEnvironment] = useState<'production' | 'uat'>('production');
+  const environment = requestedEnvironment ?? localEnvironment;
+  const setEnvironment = (next: 'production' | 'uat') => { setLocalEnvironment(next); onEnvironmentChange?.(next); };
 
   const activeSummary = environment === 'production' ? one : uat;
   const capability = activeSummary?.capabilities?.find((c) => c.key === capabilityKey);

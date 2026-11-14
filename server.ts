@@ -24,6 +24,7 @@ import { fileURLToPath } from 'url';
 import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromValue } from './src/lib/agent-product-routing';
 import type { ProductKey } from './src/lib/agent-product-routing';
 import { FOUNDER_EARLIEST_DATE, founderCustomRange, founderPresetRange } from './src/lib/founder-briefing';
+import { legacyRestoration, legacyReportFailed, withLegacyReportScope } from './src/server/legacy-restoration';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
@@ -2510,6 +2511,12 @@ function buildOneLocationFunnel(usersByStep: Map<string, number>): OneAppFunnelS
 const platformCaptureCache = new Map<string,{at:number;promise:Promise<BigQueryFeedResult>}>();
 let platformCaptureBudget = {at:0,attempts:0};
 async function queryOnePlatformCapture(projectId:string, queries:ReturnType<typeof onePlatformCaptureQueries>):Promise<BigQueryFeedResult> {
+  // Planning failures and the normal metadata-attempt budget cannot decide a
+  // different SQL branch when the sealed initial plan is later executed.
+  if (await (await legacyRestoration())?.isPreparing()) {
+    try { return await readPlatformCapture(await bigQueryClient(projectId), queries); }
+    catch { return { rows: [], error: 'One platform capture is unavailable.' }; }
+  }
   const key = `${projectId}:platform-capture:${crypto.createHash('sha256').update(queries.combined || queries.baseline).digest('hex')}`;
   const baseline = async (capture:unknown):Promise<BigQueryFeedResult> => {
     const platforms = await queryBigQuerySqlUncached(projectId,queries.baseline);
@@ -5392,7 +5399,7 @@ function founderPeriods(query: Record<string, unknown>): { current: HushhAiDateR
   if (Boolean(startValue) !== Boolean(endValue)) return null;
   const selected = startValue && endValue
     ? founderCustomRange(startValue, endValue)
-    : founderPresetRange(30);
+    : founderCustomRange(founderPresetRange(7).endDate, founderPresetRange(7).endDate);
   if (!selected) return null;
   const currentStart = parseUtcDate(selected.startDate) as Date;
   const currentEnd = parseUtcDate(selected.endDate) as Date;
@@ -5422,7 +5429,7 @@ async function fetchFounderBriefing(current: HushhAiDateRange, previous: HushhAi
   const capabilitySql = oneCapabilitySql();
   const currentSql = `BETWEEN DATE(${sqlStringLiteral(current.startDate)}) AND DATE(${sqlStringLiteral(current.endDate)})`;
   const previousSql = `BETWEEN DATE(${sqlStringLiteral(previous.startDate)}) AND DATE(${sqlStringLiteral(previous.endDate)})`;
-  const oneQuery = `
+  const historyQuery = `
     WITH events AS (
       SELECT PARSE_DATE('%Y%m%d', event_date) AS day,
         NULLIF(user_id, '') AS accountId,
@@ -5468,6 +5475,39 @@ ${capabilitySql.isDeliberate}
       FROM events
     )
     SELECT * FROM accounts CROSS JOIN coverage
+  `;
+
+  // Current-period activity does not require scanning every account's history.
+  // Historical first-seen and identity coverage remain a separate computation:
+  // a scan-limit failure there must not erase valid period activity.
+  const oneQuery = `
+    WITH events AS (
+      SELECT PARSE_DATE('%Y%m%d', event_date) AS day,
+        NULLIF(user_id, '') AS accountId,
+        IF(user_pseudo_id IS NULL, NULL, CONCAT(platform, ':', user_pseudo_id)) AS deviceKey,
+        platform, event_name,
+        (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'env') AS eventEnvironment,
+${capabilitySql.capability},
+${capabilitySql.isDeliberate}
+      FROM ${table}
+      WHERE ${boundedSuffix} AND ${surface} AND ${platformScope} AND ${meaningful}
+    )
+    SELECT
+      COUNT(DISTINCT IF(day ${currentSql}, accountId, NULL)) AS current_active,
+      COUNT(DISTINCT IF(day ${previousSql}, accountId, NULL)) AS previous_active,
+      COUNT(DISTINCT IF(day ${currentSql} AND event_name = 'one_location_activation_completed', accountId, NULL)) AS current_activated,
+      COUNT(DISTINCT IF(day ${previousSql} AND event_name = 'one_location_activation_completed', accountId, NULL)) AS previous_activated,
+      COUNT(DISTINCT IF(day ${currentSql} AND is_deliberate AND capability IS NOT NULL AND capability != 'onboarding', accountId, NULL)) AS current_agent_engaged,
+      COUNT(DISTINCT IF(day ${previousSql} AND is_deliberate AND capability IS NOT NULL AND capability != 'onboarding', accountId, NULL)) AS previous_agent_engaged,
+      COUNT(DISTINCT IF(day ${currentSql}, deviceKey, NULL)) AS current_devices,
+      COUNT(DISTINCT IF(day ${currentSql} AND accountId IS NOT NULL, deviceKey, NULL)) AS identified_devices,
+      COUNTIF(day ${currentSql} AND platform = 'ANDROID') AS current_android_events,
+      COUNTIF(day ${previousSql} AND platform = 'ANDROID') AS previous_android_events,
+      COUNTIF(day ${currentSql} AND platform = 'ANDROID' AND accountId IS NOT NULL) AS current_android_bound_events,
+      COUNTIF(day ${previousSql} AND platform = 'ANDROID' AND accountId IS NOT NULL) AS previous_android_bound_events,
+      CAST(MAX(IF(day ${currentSql}, day, NULL)) AS STRING) AS latest_event_date,
+      COUNTIF(day ${currentSql} AND platform = 'IOS' AND LOWER(eventEnvironment) = 'uat') AS mislabeled_native_events
+    FROM events
   `;
 
   const platformQuery = `
@@ -5542,21 +5582,25 @@ ${capabilitySql.isDeliberate}
   `;
 
   const promise = (async (): Promise<FounderBriefingData> => {
-    const [one, platformsResult, agentsResult, dailyResult, searchCurrent, searchPrevious] = await Promise.all([
+    const [one, history, platformsResult, agentsResult, dailyResult, searchCurrent, searchPrevious] = await Promise.all([
       queryBigQuerySql(BQ_JOB_PROJECT, oneQuery),
+      queryBigQuerySql(BQ_JOB_PROJECT, historyQuery),
       queryBigQuerySql(BQ_JOB_PROJECT, platformQuery),
       queryBigQuerySql(BQ_JOB_PROJECT, agentQuery),
       queryBigQuerySql(BQ_JOB_PROJECT, dailyQuery),
       fetchKaiProductionSearchConsole(current),
       fetchKaiProductionSearchConsole(previous),
     ]);
-    const oneAvailable = !one.error && one.rows.length > 0
-      && !platformsResult.error && !agentsResult.error && !dailyResult.error;
+    const oneAvailable = !one.error && one.rows.length > 0;
+    const historyAvailable = !history.error && history.rows.length > 0;
+    const platformsAvailable = !platformsResult.error;
+    const agentsAvailable = !agentsResult.error;
     const oneRow = one.rows[0] ?? {};
+    const historyRow = history.rows[0] ?? {};
     const currentDevices = toNumber(oneRow.current_devices);
-    const identityObservedSince = typeof oneRow.identity_observed_since === 'string'
-      ? oneRow.identity_observed_since : null;
-    const oneComparisonReady = oneAvailable && identityObservedSince !== null
+    const identityObservedSince = historyAvailable && typeof historyRow.identity_observed_since === 'string'
+      ? historyRow.identity_observed_since : null;
+    const oneComparisonReady = oneAvailable && historyAvailable && identityObservedSince !== null
       && identityObservedSince < previous.startDate
       && androidComparisonCoverage(oneRow.current_android_bound_events, oneRow.previous_android_bound_events, previous.startDate);
     // The public event catalogue has a bounded trustworthy history. A 90-day
@@ -5573,24 +5617,24 @@ ${capabilitySql.isDeliberate}
       const previousRow = platformRows.get(`previous:${key}`);
       const tracked = toNumber(currentRow?.tracked_identifiers);
       const previousTracked = toNumber(previousRow?.tracked_identifiers);
-      const androidHistory = typeof oneRow.android_identity_observed_since === 'string' && oneRow.android_identity_observed_since < previous.startDate;
+      const androidHistory = historyAvailable && typeof historyRow.android_identity_observed_since === 'string' && historyRow.android_identity_observed_since < previous.startDate;
       return {
         key,
         label: key === 'IOS' ? 'iOS app' : key === 'ANDROID' ? 'Android app' : 'Web app',
-        captureState: !oneAvailable ? 'unavailable' : currentRow ? 'observed' : 'waiting',
+        captureState: !platformsAvailable ? 'unavailable' : currentRow ? 'observed' : 'waiting',
         identifiedAccounts: {
-          current: oneAvailable && (key !== 'ANDROID' || toNumber(currentRow?.bound_identifiers) > 0) ? toNumber(currentRow?.identified_accounts) : null,
-          previous: oneComparisonReady && (key !== 'ANDROID' || (androidHistory && toNumber(previousRow?.bound_identifiers) > 0)) ? toNumber(previousRow?.identified_accounts) : null,
+          current: platformsAvailable && (key !== 'ANDROID' || toNumber(currentRow?.bound_identifiers) > 0) ? toNumber(currentRow?.identified_accounts) : null,
+          previous: platformsAvailable && oneComparisonReady && (key !== 'ANDROID' || (androidHistory && toNumber(previousRow?.bound_identifiers) > 0)) ? toNumber(previousRow?.identified_accounts) : null,
         },
-        identityCoverage: oneAvailable && tracked > 0 ? toNumber(currentRow?.bound_identifiers) / tracked : null,
-        trackedIdentifiers: oneAvailable ? tracked : null,
-        boundIdentifiers: oneAvailable ? toNumber(currentRow?.bound_identifiers) : null,
-        signInIdentifiers: oneAvailable ? toNumber(currentRow?.sign_in_identifiers) : null,
-        signedInBoundIdentifiers: oneAvailable ? toNumber(currentRow?.signed_in_bound_identifiers) : null,
-        previousTrackedIdentifiers: oneAvailable ? previousTracked : null,
-        previousBoundIdentifiers: oneAvailable ? toNumber(previousRow?.bound_identifiers) : null,
-        previousSignInIdentifiers: oneAvailable ? toNumber(previousRow?.sign_in_identifiers) : null,
-        previousSignedInBoundIdentifiers: oneAvailable ? toNumber(previousRow?.signed_in_bound_identifiers) : null,
+        identityCoverage: platformsAvailable && tracked > 0 ? toNumber(currentRow?.bound_identifiers) / tracked : null,
+        trackedIdentifiers: platformsAvailable ? tracked : null,
+        boundIdentifiers: platformsAvailable ? toNumber(currentRow?.bound_identifiers) : null,
+        signInIdentifiers: platformsAvailable ? toNumber(currentRow?.sign_in_identifiers) : null,
+        signedInBoundIdentifiers: platformsAvailable ? toNumber(currentRow?.signed_in_bound_identifiers) : null,
+        previousTrackedIdentifiers: platformsAvailable ? previousTracked : null,
+        previousBoundIdentifiers: platformsAvailable ? toNumber(previousRow?.bound_identifiers) : null,
+        previousSignInIdentifiers: platformsAvailable ? toNumber(previousRow?.sign_in_identifiers) : null,
+        previousSignedInBoundIdentifiers: platformsAvailable ? toNumber(previousRow?.signed_in_bound_identifiers) : null,
       };
     });
     const agents = ONE_CAPABILITIES.filter((spec) => spec.key !== 'onboarding').map((spec) => {
@@ -5603,39 +5647,39 @@ ${capabilitySql.isDeliberate}
         instrumented,
         note: spec.note ?? null,
         identifiedAccounts: {
-          current: oneAvailable && instrumented ? toNumber(currentRow?.identified_accounts) : null,
-          previous: oneComparisonReady && instrumented ? toNumber(previousRow?.identified_accounts) : null,
+          current: agentsAvailable && instrumented ? toNumber(currentRow?.identified_accounts) : null,
+          previous: agentsAvailable && oneComparisonReady && instrumented ? toNumber(previousRow?.identified_accounts) : null,
         },
         successfulAccounts: {
-          current: oneAvailable && instrumented ? toNumber(currentRow?.successful_accounts) : null,
-          previous: oneComparisonReady && instrumented ? toNumber(previousRow?.successful_accounts) : null,
+          current: agentsAvailable && instrumented ? toNumber(currentRow?.successful_accounts) : null,
+          previous: agentsAvailable && oneComparisonReady && instrumented ? toNumber(previousRow?.successful_accounts) : null,
         },
         interactions: {
-          current: oneAvailable && instrumented ? toNumber(currentRow?.interactions) : null,
-          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.interactions) : null,
+          current: agentsAvailable && instrumented ? toNumber(currentRow?.interactions) : null,
+          previous: agentsAvailable && interactionComparisonReady && instrumented ? toNumber(previousRow?.interactions) : null,
         },
         successes: {
-          current: oneAvailable && instrumented ? toNumber(currentRow?.successes) : null,
-          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.successes) : null,
+          current: agentsAvailable && instrumented ? toNumber(currentRow?.successes) : null,
+          previous: agentsAvailable && interactionComparisonReady && instrumented ? toNumber(previousRow?.successes) : null,
         },
         expectedErrors: {
-          current: oneAvailable && instrumented ? toNumber(currentRow?.expected_errors) : null,
-          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.expected_errors) : null,
+          current: agentsAvailable && instrumented ? toNumber(currentRow?.expected_errors) : null,
+          previous: agentsAvailable && interactionComparisonReady && instrumented ? toNumber(previousRow?.expected_errors) : null,
         },
         failures: {
-          current: oneAvailable && instrumented ? toNumber(currentRow?.failures) : null,
-          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.failures) : null,
+          current: agentsAvailable && instrumented ? toNumber(currentRow?.failures) : null,
+          previous: agentsAvailable && interactionComparisonReady && instrumented ? toNumber(previousRow?.failures) : null,
         },
         outcomeSignals: {
-          current: oneAvailable && instrumented ? toNumber(currentRow?.outcome_signals) : null,
-          previous: interactionComparisonReady && instrumented ? toNumber(previousRow?.outcome_signals) : null,
+          current: agentsAvailable && instrumented ? toNumber(currentRow?.outcome_signals) : null,
+          previous: agentsAvailable && interactionComparisonReady && instrumented ? toNumber(previousRow?.outcome_signals) : null,
         },
-        iosInteractions: oneAvailable && instrumented ? toNumber(currentRow?.ios_interactions) : null,
-        webInteractions: oneAvailable && instrumented ? toNumber(currentRow?.web_interactions) : null,
-        androidInteractions: oneAvailable && instrumented ? toNumber(currentRow?.android_interactions) : null,
+        iosInteractions: agentsAvailable && instrumented ? toNumber(currentRow?.ios_interactions) : null,
+        webInteractions: agentsAvailable && instrumented ? toNumber(currentRow?.web_interactions) : null,
+        androidInteractions: agentsAvailable && instrumented ? toNumber(currentRow?.android_interactions) : null,
       };
     });
-    const daily = dateSpine(current).map((day, index) => {
+    const daily = dailyResult.error ? [] : dateSpine(current).map((day, index) => {
       const today = dailyRows.get(day);
       const earlier = dailyRows.get(previousDates[index]);
       return {
@@ -5666,8 +5710,9 @@ ${capabilitySql.isDeliberate}
       previousPeriod: founderPeriod(previous),
       one: {
         available: oneAvailable,
+        partial: !oneAvailable || !historyAvailable || !platformsAvailable || !agentsAvailable || Boolean(dailyResult.error),
         activeAccounts: { current: oneAvailable ? toNumber(oneRow.current_active) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_active) : null },
-        firstObservedAccounts: { current: oneAvailable ? toNumber(oneRow.current_first_seen) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_first_seen) : null },
+        firstObservedAccounts: { current: historyAvailable ? toNumber(historyRow.current_first_seen) : null, previous: oneComparisonReady ? toNumber(historyRow.previous_first_seen) : null },
         activatedAccounts: { current: oneAvailable ? toNumber(oneRow.current_activated) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_activated) : null },
         agentEngagedAccounts: { current: oneAvailable ? toNumber(oneRow.current_agent_engaged) : null, previous: oneComparisonReady ? toNumber(oneRow.previous_agent_engaged) : null },
         comparisonReady: oneComparisonReady,
@@ -5699,8 +5744,8 @@ ${capabilitySql.isDeliberate}
 // API routes
 // ---------------------------------------------------------------------------
 
-function needsCustomerScope(pathname: string, environment?: unknown) {
-  if (pathname === '/api/analytics/one/app' && environment === 'uat') return false;
+function needsCustomerScope(pathname: string, environment?: unknown, view?: unknown) {
+  if ((pathname === '/api/analytics/one/app' || (pathname === '/api/analytics/all' && view === 'one')) && environment === 'uat') return false;
   return /^\/api\/analytics\/(?:all|founder|growth(?:\/|$)|(?:one|kai)(?:\/|$))/.test(pathname)
     && !/\/(?:uat|ga4|android)$/.test(pathname);
 }
@@ -5721,18 +5766,41 @@ function registerAnalyticsRoutes(app: express.Express): void {
     get(paths: string | string[], handler: express.RequestHandler) {
       app.get(paths, async (req, res) => {
         try {
+          const publishRestoration = req.get('X-Metrics-Restoration-Publish') === '1';
+          if (publishRestoration && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Initial report publication requires the trusted release probe.' }); return;
+          }
           if (req.path === '/api/analytics/all' && typeof req.query.view === 'string' && !['one', 'growth', 'apps', 'overview', 'platforms'].includes(req.query.view)) {
             res.status(400).json({ error: 'Choose a valid metrics section.' }); return;
           }
-          const refresh = req.get('X-Metrics-Refresh') === '1';
+          const refresh = publishRestoration || req.get('X-Metrics-Refresh') === '1';
           // Aggregate handlers need only query parameters; do not retain a session or cookie in cached loaders.
           const sourceRequest = { query: req.query } as express.Request;
-          const needsCustomers = needsCustomerScope(req.path, req.query.environment);
+          const needsCustomers = needsCustomerScope(req.path, req.query.environment, req.query.view);
           const cohort = needsCustomers ? await readCustomerCohort() : null;
           const key = `${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(req.originalUrl)}`;
           const load = () => capture(handler, sourceRequest, refresh);
-          const result = await snapshots.read(key, cohort ? () => withCustomerCohort(cohort.cacheKey, load) : load, refresh);
+          const restoration = await legacyRestoration();
+          if (publishRestoration && (!restoration || !await restoration.isActive())) {
+            res.status(409).json({ error: 'Initial report publication is not active.' }); return;
+          }
+          const retained = await restoration?.readSnapshot(key);
+          const useRetained = retained && (!refresh || !await restoration!.isActive());
+          const scopedLoad = () => withLegacyReportScope(key, async () => {
+              const value = await (cohort ? withCustomerCohort(cohort.cacheKey, load) : load());
+              if (publishRestoration && legacyReportFailed()) throw { status: 503, body: { error: 'Initial source computation is incomplete; no report was published.' } };
+              return value;
+            });
+          // Publication must never coalesce with an ordinary loader that did
+          // not check completion. Provider IDs still deduplicate paid work.
+          const result = useRetained ? { ...retained, state: 'RESTORED', refreshing: false, refreshError: refresh }
+            : publishRestoration ? { value: await scopedLoad(), at: Date.now(), state: 'REFRESHED', refreshing: false, refreshError: false }
+              : await snapshots.read(key, scopedLoad, refresh);
           if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
+          if (restoration && publishRestoration) {
+            if (result.refreshError) { res.status(503).json({ error: 'Initial refresh failed; no report was published.' }); return; }
+            await restoration.saveSnapshot(key, result.value, result.at);
+          }
           res.set('X-Metrics-Cache', result.state);
           res.set('X-Metrics-Updated-At', new Date(result.at).toISOString());
           res.set('X-Metrics-Refreshing', result.refreshing ? '1' : '0');
@@ -6899,9 +6967,11 @@ api.get('/api/analytics/all', async (req, res) => {
   if (!['one', 'growth', 'apps', 'overview', 'platforms'].includes(view)) { res.status(400).json({ error: 'Choose a valid metrics section.' }); return; }
   // The unscoped endpoint retains the complete external API contract.
   const complete = req.query.view === undefined;
+  const oneEnvironment = view === 'one' && typeof req.query.environment === 'string' ? req.query.environment : null;
+  if (oneEnvironment !== null && oneEnvironment !== 'production' && oneEnvironment !== 'uat') { res.status(400).json({ error: 'Choose a valid One environment.' }); return; }
   const appData = complete || ['one', 'growth', 'apps'].includes(view);
   const full = view === 'overview' || view === 'platforms';
-  const relatedHealth = full || view === 'one';
+  const relatedHealth = full || (view === 'one' && (oneEnvironment === null || (oneEnvironment === 'production' && req.query.include_health === '1')));
   const optional = async <T,>(enabled: boolean, loader: () => Promise<{ data: T | null; error: string | null }>) => enabled ? loader() : { data: null, error: null };
   const feed = async (project: string, dataset: string, table: string, range: HushhAiDateRange) => full ? queryBigQuery(project, dataset, table, range) : { rows: [], error: null };
   const hushhAiRange = parseHushhAiDateRange(req.query as Record<string, unknown>);
@@ -6938,8 +7008,8 @@ api.get('/api/analytics/all', async (req, res) => {
     optional(full, () => fetchHushhAiSearchConsole(hushhAiRange)),
     optional(full, () => fetchHushhAiGa4Summary(hushhAiRange)),
     optional(full, () => fetchHushhTechAnalytics(hushhTechRange)),
-    optional(appData, () => fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true)),
-    optional(appData, () => fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST, 'uat')),
+    optional(appData && oneEnvironment !== 'uat', () => fetchOneAppSummary(ONE_APP_GA4_PROJECT, ONE_APP_GA4_DATASET, oneRange, true)),
+    optional(appData && oneEnvironment !== 'production', () => fetchOneAppSummary(ONE_APP_UAT_GA4_PROJECT, ONE_APP_UAT_GA4_DATASET, oneRange, true, ONE_APP_UAT_HOST, 'uat')),
     optional(appData, () => fetchOneRegistrationTotals(oneRange)),
     optional(complete || view === 'growth', () => fetchGrowthSummary(oneRange)),
     optional(complete || view === 'apps', () => fetchAppStoreConnectSummary(appStoreConnectRange)),
@@ -9357,11 +9427,13 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
     res.status(405).json({ error: 'Method Not Allowed. Use POST /api/auth/logout.' });
   });
 
-  app.get('/api/auth/me', (req, res) => {
+  app.get('/api/auth/me', async (req, res) => {
     const user = (req as any).sessionUser as SessionUser | null;
     if (user) {
+      const publicationAsOf = await legacyRestoration().then(r => r?.publicationAsOf()).catch(() => null);
       res.json({
         authenticated: true,
+        ...(publicationAsOf ? { publicationAsOf } : {}),
         user: {
           email: user.email,
           name: user.name,

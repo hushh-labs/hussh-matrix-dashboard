@@ -100,15 +100,17 @@ function AgentRow({ agent }: { agent: FounderAgent; key?: string }) {
 type Selection = '7d' | '30d' | '90d' | 'month' | 'custom' | 'day';
 type ChartMode = 'accounts' | 'interactions';
 
-export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
+export function FounderBriefingPanel({ refreshKey, onExploreOne, publicationAsOf }: {
+  publicationAsOf?: string;
   refreshKey: number;
   onExploreOne: () => void;
 }) {
-  const [selection, setSelection] = useState<Selection>('30d');
-  const [period, setPeriod] = useState<FounderPeriod>(() => founderPresetRange(30));
-  const [draftMonth, setDraftMonth] = useState(() => founderLatestCompleteDate().slice(0, 7));
-  const [draftStart, setDraftStart] = useState(() => founderPresetRange(30).startDate);
-  const [draftEnd, setDraftEnd] = useState(() => founderPresetRange(30).endDate);
+  const initialDay = founderLatestCompleteDate(publicationAsOf ? new Date(publicationAsOf) : undefined);
+  const [selection, setSelection] = useState<Selection>('day');
+  const [period, setPeriod] = useState<FounderPeriod>(() => founderCustomRange(initialDay, initialDay)!);
+  const [draftMonth, setDraftMonth] = useState(() => initialDay.slice(0, 7));
+  const [draftStart, setDraftStart] = useState(initialDay);
+  const [draftEnd, setDraftEnd] = useState(initialDay);
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [chartMode, setChartMode] = useState<ChartMode>('accounts');
   const latestComplete = founderLatestCompleteDate();
@@ -153,19 +155,18 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
   }));
   const hasPreviousLine = chartData.some((point) => point.previous !== null);
 
-  const qualityWarning = webIdentityGap || webPreviousIdentityGap || lowCoverage || !brief?.one.available
+  const qualityWarning = webIdentityGap || webPreviousIdentityGap || lowCoverage || !brief?.one.available || brief.one.partial
     || !brief?.one.comparisonReady || !brief?.one.interactionComparisonReady || brief?.one.hasNativeEnvironmentConflict;
 
   return <main className="overview-report">
     <section className="overview-period" aria-label="Reporting period">
-      <span className="text-sm font-medium text-ink">Reporting period</span>
+      <span className="text-sm font-medium text-ink">Reporting period{publicationAsOf ? ` · saved ${publicationAsOf.slice(0, 10)} UTC` : ''}</span>
       <ReportTabs label="Overview reporting period" value={selection}
-        options={[{ value: '7d', label: '7 days' }, { value: '30d', label: '30 days' }, { value: '90d', label: '90 days' }]}
-        onChange={value => applyRange(founderPresetRange(Number(value.replace('d', '')) as 7 | 30 | 90), value)} />
+        options={[{ value: 'day', label: 'Latest complete day' }, { value: '7d', label: '7 days' }, { value: '30d', label: '30 days' }, { value: '90d', label: '90 days' }]}
+        onChange={value => applyRange(value === 'day' ? founderCustomRange(latestComplete, latestComplete) : founderPresetRange(Number(value.replace('d', '')) as 7 | 30 | 90), value)} />
       <details className="overview-more-dates">
         <summary><CalendarDays size={15} aria-hidden="true" />More dates</summary>
         <div className="overview-date-fields">
-          <button type="button" className="text-link" onClick={() => applyRange(founderCustomRange(latestComplete, latestComplete), 'day')}>Latest complete day</button>
           <SingleDayPicker label="Briefing specific day" value={period.days === 1 ? period.endDate : ''} min={FOUNDER_EARLIEST_DATE} max={latestComplete}
             onChange={day => applyRange(founderCustomRange(day, day), 'day')} />
           <div className="flex flex-wrap items-end gap-2">
@@ -200,7 +201,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne }: {
             <div className="report-section-heading"><h2 id="overview-trend-title">Activity over time</h2>
               <ReportTabs label="Trend measure" value={chartMode} options={[{ value: 'accounts', label: 'Accounts' }, { value: 'interactions', label: 'Feature actions' }]} onChange={setChartMode} />
             </div>
-            {brief.one.available ? <>
+            {brief.one.daily.length > 0 ? <>
               <div className="overview-chart" role="img" aria-label={`Daily ${chartMode === 'accounts' ? 'identified active accounts' : 'feature actions'} trend for ${rangeLabel(brief.period)}`}>
                 <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 640, height: 210 }}>
                   <AreaChart data={chartData} margin={{ top: 14, right: 8, left: -20, bottom: 0 }}>

@@ -60,6 +60,8 @@ export interface AllAnalyticsResponse {
 
 export interface FetchAllAnalyticsOptions {
   view?: 'one' | 'growth' | 'apps' | 'overview' | 'platforms';
+  oneEnvironment?: 'production' | 'uat';
+  includeOneHealth?: boolean;
   hushhAiStartDate?: string;
   hushhAiEndDate?: string;
   kaiStartDate?: string;
@@ -71,6 +73,8 @@ export interface FetchAllAnalyticsOptions {
 export function buildAnalyticsUrl(options?: FetchAllAnalyticsOptions): string {
   const params = new URLSearchParams();
   if (options?.view) params.set('view', options.view === 'platforms' ? 'overview' : options.view);
+  if (options?.view === 'one' && options.oneEnvironment) params.set('environment', options.oneEnvironment);
+  if (options?.view === 'one' && options.includeOneHealth) params.set('include_health', '1');
   if (options?.hushhAiStartDate) params.set('hushh_ai_start_date', options.hushhAiStartDate);
   if (options?.hushhAiEndDate) params.set('hushh_ai_end_date', options.hushhAiEndDate);
   if (options?.kaiStartDate) params.set('kai_start_date', options.kaiStartDate);
