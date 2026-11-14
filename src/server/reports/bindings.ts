@@ -5,6 +5,8 @@ export const websiteSourceOrigins = {
   production: 'https://hushh-search-console-api-yb3ojn3jxa-uc.a.run.app',
   uat: 'https://hushh-search-console-api-2hph5fpttq-uc.a.run.app',
 } as const;
+/** First reliability target has actual native serving evidence; no user override. */
+export const metricsMonitoringScope = { projectId: 'hushh-ai-prod', serviceName: 'hushh-matrix-dashboard', region: 'us-central1', environment: 'production' } as const;
 export function isAnalyticsReader(value: unknown): value is string {
   return typeof value === 'string' && value.length <= 254 && !/\s/.test(value)
     && (/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,61}[a-z0-9]\.iam\.gserviceaccount\.com$/.test(value)
@@ -26,6 +28,7 @@ export type ReportSourceBinding = BindingBase & (
   { kind: 'ga4'; propertyId: string; timezone: string; readerServiceAccount: string; coverageThrough: string } & Ga4WebsiteScope
   | { kind: 'one'; environment: 'production' | 'uat'; secretVersion: string }
   | { kind: 'website'; environment: 'production'; secretVersion: string; captureGeneration: string; coverageThrough: string; maxEventsPerDay: number }
+  | { kind: 'monitoring'; environment: 'production'; projectId: string; serviceName: string; region: string; coverageThrough: string }
 );
 export function sourceBindingGeneration(binding: unknown) {
   if (!binding || typeof binding !== 'object' || Array.isArray(binding)) throw new ReportError('invalid');
@@ -38,7 +41,8 @@ export function validateSourceBinding(value: unknown, job: ReportJob): ReportSou
   const common = ['approved', 'enabled', 'reportId', 'revision', 'sourceGeneration', 'scopeDigest', 'reconciliationDigest',
     'coverageFrom', 'timeoutMs', 'maxResponseBytes', 'kind'];
   const fields = b.kind === 'ga4' ? ['propertyId', 'timezone', 'streamId', 'hostnames', 'readerServiceAccount', 'coverageThrough']
-    : b.kind === 'website' ? ['environment', 'secretVersion', 'captureGeneration', 'coverageThrough', 'maxEventsPerDay'] : ['environment', 'secretVersion'];
+    : b.kind === 'website' ? ['environment', 'secretVersion', 'captureGeneration', 'coverageThrough', 'maxEventsPerDay']
+      : b.kind === 'monitoring' ? ['environment', 'projectId', 'serviceName', 'region', 'coverageThrough'] : ['environment', 'secretVersion'];
   if (Object.keys(b).sort().join() !== [...common, ...fields].sort().join()
     || b.approved !== true || b.enabled !== true || !Object.hasOwn(reportDefinitions, b.reportId)
     || b.reportId !== job.request.reportId || b.scopeDigest !== job.control.scopeDigest
@@ -58,6 +62,12 @@ export function validateSourceBinding(value: unknown, job: ReportJob): ReportSou
       || b.coverageThrough < b.coverageFrom || job.request.endDate > b.coverageThrough
       || !hasGa4WebsiteScope(b) || !isAnalyticsReader(b.readerServiceAccount)
       || reportingTimezone(b.timezone) !== job.request.timezone) throw new ReportError('unavailable');
+  } else if (b.kind === 'monitoring') {
+    if (b.reportId !== 'metrics.reliability' || job.request.timezone !== 'UTC'
+      || Object.entries(metricsMonitoringScope).some(([key, expected]) => (b as any)[key] !== expected)
+      || typeof b.coverageThrough !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.coverageThrough)
+      || !Number.isFinite(Date.parse(b.coverageThrough)) || new Date(b.coverageThrough).toISOString().slice(0, 10) !== b.coverageThrough
+      || b.coverageThrough < b.coverageFrom || job.request.endDate > b.coverageThrough) throw new ReportError('unavailable');
   } else if (b.kind === 'one') {
     if (b.reportId !== 'one.adoption' || !['production', 'uat'].includes(b.environment)
       || !/^projects\/[a-z][a-z0-9-]{4,61}[a-z0-9]\/secrets\/metrics-one-aggregate-source-(production|uat)\/versions\/[1-9]\d*$/.test(b.secretVersion)

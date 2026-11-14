@@ -7,12 +7,13 @@ import type { TaskApiRequest } from './dispatch';
 import { withinDeadline } from './deadline';
 import { isAnalyticsReader, websiteSourceOrigins } from './bindings';
 
-export type CredentialHeaders = (audience: 'analytics' | 'cloud', signal: AbortSignal) => Promise<Record<string, string>>;
+export type CredentialHeaders = (audience: 'analytics' | 'cloud' | 'monitoring', signal: AbortSignal) => Promise<Record<string, string>>;
 export function adcCredentialHeaders(): CredentialHeaders {
   const clients = new Map<string, Promise<Awaited<ReturnType<GoogleAuth['getClient']>>>>();
   return async (audience, signal) => {
     signal.throwIfAborted();
-    const scope = audience === 'analytics' ? 'https://www.googleapis.com/auth/analytics.readonly' : 'https://www.googleapis.com/auth/cloud-platform';
+    const scope = audience === 'analytics' ? 'https://www.googleapis.com/auth/analytics.readonly'
+      : audience === 'monitoring' ? 'https://www.googleapis.com/auth/monitoring.read' : 'https://www.googleapis.com/auth/cloud-platform';
     let pending = clients.get(scope);
     if (!pending) { pending = new GoogleAuth({ scopes: [scope] }).getClient(); clients.set(scope, pending); }
     try {
@@ -59,6 +60,18 @@ export function googleAggregateFetch(expectedUrl: string, credentials: Credentia
     const headers = await withinDeadline(credentials('analytics', request.signal), request.signal);
     return fetcher(url, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify(request.body), signal: request.signal, redirect: 'error' });
+  };
+}
+/** A single fixed native read, no redirects, gcloud fallback, warehouse or retry. */
+export function monitoringAggregateFetch(expectedUrl: string, credentials: CredentialHeaders = adcCredentialHeaders(), fetcher: typeof fetch = fetch): AggregateFetch {
+  const url = new URL(expectedUrl);
+  if (url.origin !== 'https://monitoring.googleapis.com' || url.pathname !== '/v3/projects/hushh-ai-prod/timeSeries'
+    || url.username || url.password || url.hash) throw new ReportError('invalid');
+  return async (target, request) => {
+    if (target !== expectedUrl || request.body !== null) throw new ReportError('invalid');
+    request.signal.throwIfAborted();
+    return fetcher(target, { method: 'GET', headers: await withinDeadline(credentials('monitoring', request.signal), request.signal),
+      signal: request.signal, redirect: 'error', cache: 'no-store' });
   };
 }
 export async function readAggregateSecret(version: string, signal: AbortSignal,

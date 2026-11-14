@@ -7,13 +7,14 @@ import { withinDeadline } from './deadline';
 import { hasGa4WebsiteScope, websiteSourceOrigins, type Ga4WebsiteScope } from './bindings';
 
 type SourceCall = { binding: string; state: 'reserved' | 'completed'; result: AggregateResult | null };
-type SourcePolicy = { sourceGeneration: string; timeoutMs: number; maxResponseBytes: number };
+export type SourcePolicy = { sourceGeneration: string; timeoutMs: number; maxResponseBytes: number };
 export type AggregateFetch = (url: string, options: { body: unknown; signal: AbortSignal }) => Promise<Response>;
+export type SourceBudgetReservation = (() => void) & { rejection?: SourceRequestFailure };
 
 /** Native read APIs do not have a recoverable query job. Reserve once before
  * I/O and persist validated aggregates. A lost acknowledgement stays uncertain;
  * redelivery never starts a second provider request. No raw response is stored. */
-abstract class JournaledSource implements AggregateReportSource {
+export abstract class JournaledSource implements AggregateReportSource {
   constructor(protected store: ReportStore, protected policy: SourcePolicy, protected now: () => number = Date.now) {
     if (!/^[a-f0-9]{64}$/.test(policy.sourceGeneration)
       || !Number.isSafeInteger(policy.timeoutMs) || policy.timeoutMs <= 0
@@ -21,7 +22,7 @@ abstract class JournaledSource implements AggregateReportSource {
   }
   protected abstract binding(job: ReportJob): string;
   protected abstract collect(job: ReportJob): Promise<AggregateResult>;
-  protected async sourceBudget(_tx: ReportTransaction, _job: ReportJob): Promise<() => void> { return () => {}; }
+  protected async sourceBudget(_tx: ReportTransaction, _job: ReportJob): Promise<SourceBudgetReservation> { return () => {}; }
   async submit(job: ReportJob) {
     if (job.control.sourceGeneration !== this.policy.sourceGeneration) throw new ReportError('invalid');
     const ref = reportPath('sourceReceipts', job.id), binding = this.binding(job);
@@ -39,9 +40,13 @@ abstract class JournaledSource implements AggregateReportSource {
       }
       const reserve = await this.sourceBudget(tx, job);
       reserve();
+      // Commit a stricter durable budget even on denial. Throwing inside the
+      // retriable transaction would roll that cap reduction back.
+      if (reserve.rejection) return { admitted: false, result: null, rejection: reserve.rejection };
       tx.create(ref, { binding, state: 'reserved', result: null });
       return { admitted: true, result: null };
     });
+    if ('rejection' in admission) throw admission.rejection;
     if (!admission.admitted) return admission.result;
     const result = await this.collect(job);
     // Validate before storing the receipt, as well as before publication.

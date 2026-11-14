@@ -30,6 +30,11 @@ test('production Metrics build protects APIs and renders honest unavailable repo
   await expect(page.getByLabel('Report', { exact: true })).toHaveValue('hushhai.acquisition');
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeDisabled();
   await expect(page.getByRole('option', { name: 'Website activity', exact: true })).toHaveAttribute('value', 'hushhai.activity');
+  await page.getByLabel('Report', { exact: true }).selectOption('metrics.reliability');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page).toHaveURL(/report=metrics.reliability/);
+  await expect(page.getByRole('heading', { name: 'Report unavailable' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeDisabled();
   expect(await page.content()).not.toContain('staff@example.invalid');
   const signed = await context.request.get(`${origin}/api/reports/one.adoption?startDate=2026-11-10&endDate=2026-11-11&timezone=UTC`);
   expect(signed.status()).toBe(503);

@@ -1,5 +1,13 @@
 # Reporting implementation status
 
+The later held `metrics.reliability` increment adds a bounded native Cloud
+Monitoring source for the existing Metrics hosting service. It preserves missing
+data as unknown, refuses incomplete/continued responses, and shares the existing
+durable source-call journal and explicit budget admission. No IAM, policy, source
+activation, schedule or serving change follows. Ratios/latency remain unavailable
+until their additional completeness/distribution evidence is established. See
+[the reliability contract](./metrics-reliability.md).
+
 Latest 14 November continuation: a separately defined warehouse-free website
 activity adapter, durable source-read budget and bounded explicit Refresh are
 implemented locally. See [definition, controls, evidence and activation gaps](./website-activity-and-refresh.md).
