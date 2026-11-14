@@ -1,4 +1,3 @@
-import { GoogleAuth } from 'google-auth-library';
 import { digest, ReportError, reportKey, validateAccess, validateAggregate, validateControl, validateRequest,
   type ReportAccess, type PublishedReport, type ReportJob } from './contracts';
 import type { MetricsReports } from './service';
@@ -6,6 +5,10 @@ import { withinDeadline } from './deadline';
 
 export type ReportWebConfig = { audience: string; timeoutMs: number; maxResponseBytes: number };
 export type ReportingIdentityHeaders = (audience: string, signal: AbortSignal) => Promise<Record<string, string>>;
+/** Supplied by each executable's own locked infrastructure-auth dependency. */
+export type ReportingInvocationAuth = { getIdTokenClient(audience: string): Promise<{
+  getRequestHeaders(): Promise<{ entries(): Iterable<[string, string]> }>;
+}> };
 export function validateReportWebConfig(c: ReportWebConfig) {
   let url: URL; try { url = new URL(c.audience); } catch { throw new ReportError('unavailable'); }
   if (Object.keys(c).sort().join() !== 'audience,maxResponseBytes,timeoutMs' || url.protocol !== 'https:'
@@ -15,9 +18,8 @@ export function validateReportWebConfig(c: ReportWebConfig) {
   return c;
 }
 /** Infrastructure invocation identity only. No source/warehouse scopes or keys. */
-export function reportingIdentityHeaders(): ReportingIdentityHeaders {
-  const auth = new GoogleAuth();
-  let client: ReturnType<GoogleAuth['getIdTokenClient']> | undefined, lastAudience: string | undefined;
+export function reportingIdentityHeaders(auth: ReportingInvocationAuth): ReportingIdentityHeaders {
+  let client: ReturnType<ReportingInvocationAuth['getIdTokenClient']> | undefined, lastAudience: string | undefined;
   return async (audience, signal) => {
     signal.throwIfAborted();
     if (!client || audience !== lastAudience) { client = auth.getIdTokenClient(audience); lastAudience = audience; }
@@ -34,8 +36,11 @@ const hash = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
 /** Private broker client. Browser rendering can read a publication but has no
  * datastore permission or source SDK; computation is a distinct explicit POST. */
 export class MetricsReportWebClient {
-  constructor(private config: ReportWebConfig, private identity: ReportingIdentityHeaders = reportingIdentityHeaders(),
-    private fetcher: typeof fetch = fetch, private now: () => number = Date.now) { validateReportWebConfig(config); }
+  constructor(private config: ReportWebConfig, private identity: ReportingIdentityHeaders,
+    private fetcher: typeof fetch = fetch, private now: () => number = Date.now) {
+    validateReportWebConfig(config);
+    if (typeof identity !== 'function') throw new ReportError('unavailable');
+  }
   private async call(operation: 'read' | 'request' | 'status', body: unknown, access: ReportAccess): Promise<unknown> {
     validateAccess(access); const signal = AbortSignal.timeout(this.config.timeoutMs);
     const response = await this.fetcher(`${this.config.audience}/internal/metrics/${operation}`, {

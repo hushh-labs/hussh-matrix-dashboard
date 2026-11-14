@@ -1,4 +1,5 @@
 import type { RequestHandler } from 'express';
+import { GoogleAuth } from 'google-auth-library';
 import { compatibilityConfig, retainedMetricsMethods, retainedMetricsOrigin } from './compatibility';
 import { withinDeadline } from './deadline';
 import { reportingIdentityHeaders, type ReportingIdentityHeaders } from './web-client';
@@ -9,6 +10,7 @@ const privateHeaders = { 'Cache-Control': 'private, no-store, max-age=0', Vary: 
   'Referrer-Policy': 'same-origin', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow, noarchive' };
 const failure = (status: number) => Response.json({ message: status === 404 ? 'Not found.'
   : status === 405 ? 'Method not allowed.' : 'This service is currently unavailable.' }, { status, headers: privateHeaders });
+const nativeIdentityHeaders = () => reportingIdentityHeaders(new GoogleAuth());
 function config(value: unknown): HostingConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).sort().join() !== 'approved,maxRequestBytes,maxResponseBytes,publicOrigin,timeoutMs,webNativeOrigin') throw new Error('Unavailable');
@@ -55,7 +57,7 @@ export async function forwardMetricsReportWeb(request: Request, rawConfig: unkno
       if (value !== null) { if (value.length > 8192) throw new Error('Unavailable'); headers.set(name, value); }
     }
     const body = request.method === 'POST' ? await bounded(request.body, c.maxRequestBytes, signal) : undefined;
-    const auth = new Headers(await withinDeadline((identity ?? reportingIdentityHeaders())(c.webNativeOrigin, signal), signal));
+    const auth = new Headers(await withinDeadline((identity ?? nativeIdentityHeaders())(c.webNativeOrigin, signal), signal));
     const token = auth.get('authorization');
     if (!token?.startsWith('Bearer ') || token.length > 16_384) throw new Error('Unavailable');
     headers.set('authorization', token); headers.set('accept-encoding', 'identity');
@@ -118,7 +120,7 @@ export function metricsHostingGateway(env: Record<string, string | undefined> = 
         }
         response = await forwardMetricsReportWeb(new Request(c.publicOrigin + req.originalUrl, {
           method: req.method, headers, body, signal: deadline.signal,
-        }), c, nativeIdentity ??= reportingIdentityHeaders(), fetcher);
+        }), c, nativeIdentity ??= nativeIdentityHeaders(), fetcher);
       }
     } catch { response = failure(503); }
     finally { if (timer) clearTimeout(timer); req.off('aborted', abort); res.off('close', close); }

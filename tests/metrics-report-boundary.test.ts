@@ -18,7 +18,9 @@ describe('Metrics web source boundary', () => {
           && clause.namedBindings.elements.every(e => e.isTypeOnly)) continue;
         const name = statement.moduleSpecifier.text;
         expect(name).not.toMatch(/bigquery|genai|firestore|reports\/(sources|collector|dispatch|transports|store|service|lifecycle|worker-runtime)|plg|one-customer-cohort/);
-        if (name === 'google-auth-library') expect(file).toBe(path.join(root, 'src/server/reports/web-client.ts'));
+        // Package imports must resolve inside the independently locked web
+        // application, not from a shared file relying on root dependency hoisting.
+        if (name === 'google-auth-library') expect(file).toBe(path.join(root, 'src/metrics-web/lib/runtime.ts'));
         if (name.startsWith('.')) {
           const base = path.resolve(path.dirname(file), name);
           const target = [base, base + '.ts', base + '.tsx'].find(p => fs.existsSync(p) && fs.statSync(p).isFile());

@@ -1,10 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import { digest, reportKey } from '../src/server/reports/contracts';
-import { MetricsReportWebClient } from '../src/server/reports/web-client';
+import { MetricsReportWebClient, reportingIdentityHeaders } from '../src/server/reports/web-client';
 import { collectionFixture } from './helpers/metrics-collection-fixture';
 
 const config = { audience: 'https://metrics-report-example.run.app', timeoutMs: 1000, maxResponseBytes: 20_000 };
 describe('source-free Metrics web broker client', () => {
+  it('requires an explicit invocation identity without an ambient SDK fallback', () => {
+    expect(() => new MetricsReportWebClient(config, undefined as never)).toThrow('Metrics report unavailable.');
+  });
+  it('caches only audience-specific infrastructure clients and refuses aborted identity work', async () => {
+    const headers = vi.fn(async () => new Headers({ authorization: 'Bearer synthetic-native-identity' }));
+    const auth = { getIdTokenClient: vi.fn(async () => ({ getRequestHeaders: headers })) };
+    const identity = reportingIdentityHeaders(auth), signal = new AbortController().signal;
+    await identity(config.audience, signal); await identity(config.audience, signal);
+    expect(auth.getIdTokenClient).toHaveBeenCalledTimes(1);
+    await identity('https://metrics-report-another.run.app', signal);
+    expect(auth.getIdTokenClient).toHaveBeenCalledTimes(2);
+    const stopped = new AbortController(); stopped.abort();
+    await expect(identity(config.audience, stopped.signal)).rejects.toThrow();
+    expect(auth.getIdTokenClient).toHaveBeenCalledTimes(2);
+  });
   it('uses only a fixed audience-scoped invocation identity and keeps GET rendering source-free', async () => {
     const f = collectionFixture(), identity = vi.fn(async (_audience: string, _signal: AbortSignal) => ({ Authorization: 'Bearer synthetic-invocation-token' }));
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({ state: 'unavailable', report: null }));
