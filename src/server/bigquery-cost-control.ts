@@ -184,7 +184,9 @@ export function createGuardedBigQuery(options: {
     let perStatement = Math.min(requestedBytes, BIGQUERY_COST_LIMITS.bytesPerStatement);
     let restoration: RestorationGrant | undefined;
     if (active >= BIGQUERY_COST_LIMITS.concurrentRequests) {
-      if (waiting.length >= BIGQUERY_COST_LIMITS.queuedRequests) {
+      // Diagnostics perform dry runs only and can queue a bounded whole report.
+      const queueLimit = legacyDiagnosticOnly() ? 128 : BIGQUERY_COST_LIMITS.queuedRequests;
+      if (waiting.length >= queueLimit) {
         throw new BigQueryCostControlError('Dashboard queries are busy. Try again later.');
       }
       await new Promise<void>(resolve => waiting.push(resolve));
