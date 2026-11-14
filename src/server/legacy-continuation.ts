@@ -211,6 +211,11 @@ export class LegacyContinuation {
     return computedAt;
   }
   async read(report: string, cohort: CustomerCohort | null) {
+    const value = await this.readForComparison(report, cohort); if (!value) return null;
+    const { witness: _witness, ...publication } = value; return publication;
+  }
+  /** Internal-only witness is used to compare two already-authorized publications. */
+  async readForComparison(report: string, cohort: CustomerCohort | null) {
     const { doc } = await this.permit(); if (doc.phase !== 'closed' || !doc.fixedReports.includes(report)) return null;
     const reportHash = hash(report), index = (await this.ref().collection('snapshotIndex').doc(reportHash).get()).data();
     if (!index || index.source !== this.source || index.reportHash !== reportHash || !Array.isArray(index.keys) || index.keys.length > RESTORATION_LIMITS.snapshots) return null;
@@ -229,7 +234,7 @@ export class LegacyContinuation {
       const value = JSON.parse(row.json); if (value?.status !== 200 || !value.body) continue;
       const times = row.jobs.map((job: JobProof) => job.endedAt as number);
       return { value, at: Date.parse(doc.dataAsOf), computedAt: row.computedAt, warehouseFrom: Math.min(...times), warehouseThrough: Math.max(...times),
-        ...(row.witness ? { cohortAsOf: row.witness.asOf as string } : {}) };
+        ...(row.witness ? { cohortAsOf: row.witness.asOf as string, witness: row.witness as CohortSnapshotWitness } : {}) };
     }
     return null;
   }

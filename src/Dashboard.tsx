@@ -1195,7 +1195,7 @@ export default function Dashboard() {
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
   const scope = ['one', 'growth', 'apps', 'overview', 'platforms'].includes(activeTab) ? activeTab as 'one' | 'growth' | 'apps' | 'overview' | 'platforms' : null;
   const overviewScope = scope === 'overview' || scope === 'platforms';
-  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one', oneEnvironment: locationRoute?.environment ?? oneEnvironment, includeOneHealth: oneHealthRequested && !locationRoute,
+  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one', oneEnvironment: locationRoute?.environment ?? oneEnvironment, includeOneHealth: oneHealthRequested && !locationRoute && !user?.publicationAsOf,
     ...(overviewScope ? { kaiStartDate: kaiRange.startDate, kaiEndDate: kaiRange.endDate, hushhAiStartDate: hushhAiRange.startDate, hushhAiEndDate: hushhAiRange.endDate }
       : { oneStartDate: range.startDate, oneEndDate: range.endDate }) });
   const resource = useMetricsResource<AllAnalyticsResponse>(scope ? buildAnalyticsUrl(rangeOptions()) : null, {
@@ -1766,6 +1766,8 @@ export default function Dashboard() {
             loading={compareLoading}
             error={compareError}
             onRetry={() => void loadCompare()}
+            retained={Boolean(user?.publicationAsOf)}
+            stale={comparison.stale}
           />
         ) : activeTab === 'one' ? (
           <OneAppPanel
@@ -1777,6 +1779,7 @@ export default function Dashboard() {
             oneUat={data?.oneUat ?? null}
             registrations={data?.oneRegistrations ?? null}
             healthMetrics={data?.oneHealthMetrics ?? []}
+            retained={Boolean(user?.publicationAsOf)}
             rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
             locationRoute={locationRoute}
             onOpenLocation={openLocationAnalytics}

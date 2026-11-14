@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { dashboardNavigation } from '../../src/lib/dashboard-navigation';
-import { allAnalytics, founder, mockDashboard, one } from './fixtures';
+import { allAnalytics, founder, growth, mockDashboard, one } from './fixtures';
 
 async function navigate(page: Page, label: string) {
   if (page.viewportSize()!.width < 1280) await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
@@ -25,6 +25,47 @@ async function assertFits(page: Page) {
     expect(await table.evaluate(element => Boolean(element.closest('.metrics-table-scroll'))), 'Wide tables need an internal scroll region').toBe(true);
   }
 }
+
+test('retained comparison shows exact 30 and 90 day windows and leaves all time unavailable', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
+  const asOf = '2026-11-14T21:34:55.606Z';
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: asOf,
+    user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));
+  await page.route('**/api/analytics/growth/compare', route => route.fulfill({ headers: { 'X-Metrics-Cache': 'RESTORED', 'X-Metrics-Updated-At': asOf, 'X-Metrics-Observed-At': '2026-11-16T00:00:00Z' }, json: {
+    publicationAsOf: asOf, fetchedAt: '2026-11-15T05:00:00Z', error: null, windows: [
+      { key: '30d', label: 'Last 30 days', range: { startDate: '2026-10-16', endDate: '2026-11-14', days: 30 }, data: growth, error: 'Other source freshness is not verified.', computedAt: '2026-11-15T00:36:46Z' },
+      { key: '90d', label: 'Last 90 days', range: { startDate: '2026-08-17', endDate: '2026-11-14', days: 90 }, data: growth, error: 'Other source freshness is not verified.', computedAt: '2026-11-15T00:33:59Z' },
+      { key: 'all', label: 'All time', range: { startDate: '2026-05-01', endDate: '2026-11-14', days: 198 }, data: null, error: 'All-time comparison is unavailable.' },
+    ] } }));
+  await page.goto('/'); await navigate(page, 'Compare periods');
+  await expect(page.getByText('2026-10-16 to 2026-11-14')).toBeVisible();
+  await expect(page.getByText('2026-08-17 to 2026-11-14')).toBeVisible();
+  await expect(page.getByText('All-time comparison is unavailable.')).toBeVisible();
+  await expect(page.getByText('All-time totals are unavailable; no estimate is inferred.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Retained reporting anchor 2026-11-14 21:34 UTC.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Retained data is more than 24 hours old.', { exact: false })).toBeVisible();
+});
+
+test('retained app health keeps the dated One report and labels separate provider data unavailable', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:34:55.606Z',
+    user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));
+  const requests: string[] = []; page.on('request', req => { if (new URL(req.url()).pathname.startsWith('/api/analytics/')) requests.push(req.url()); });
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: '90 days', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+  await page.getByRole('button', { name: 'App health', exact: true }).click();
+  await expect(page.getByText('The saved One report does not include Cloud Run monitoring. Live monitoring is unavailable here.')).toBeVisible();
+  await expect(page.getByText('Android provider history and Play reports are unavailable in this saved report.')).toBeVisible();
+  expect(requests.some(url => new URL(url).searchParams.has('include_health'))).toBe(false);
+  expect(requests.some(url => new URL(url).pathname === '/api/analytics/one/android')).toBe(false);
+  await page.getByRole('button', { name: 'Summary', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  await page.getByRole('button', { name: 'Open detailed Location analytics', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'One Location analytics', exact: true })).toBeVisible();
+  expect(requests.some(url => new URL(url).searchParams.has('include_health'))).toBe(false);
+});
 
 test('idle reports do not poll or prefetch; Refresh requests only the selected report', async ({ page }) => {
   await page.clock.install();

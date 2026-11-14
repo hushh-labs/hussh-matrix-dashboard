@@ -88,6 +88,35 @@ describe('legacy report source isolation', () => {
     const mismatch = await readPlgAnchor(); expect(mismatch.body.publicationAsOf).toBeNull();
     state.currentAsOf = null; const priorOnly = await readAuth(); expect(priorOnly.body.publicationAsOf).toBe(state.previousAsOf); expect((await readPlgAnchor()).body.publicationAsOf).toBeNull();
   });
+  it('compares only matching retained growth windows without exposing cohort proof or querying', async () => {
+    source(); state.phase = 'closed'; const asOf = '2026-11-14T21:34:55.606Z';
+    const witness = { policyRevision: 'a'.repeat(64), rowsHash: 'f'.repeat(64), asOf: '2026-11-14T21:53:15.758Z' };
+    state.continuation = { closedDescriptor: async () => ({ asOf }), readForComparison: async (key: string) => {
+      const startDate = key.includes('2026-10-16') ? '2026-10-16' : '2026-08-17', days = startDate === '2026-10-16' ? 30 : 90;
+      return { at: Date.parse(asOf), computedAt: Date.parse('2026-11-15T00:00:00Z'), witness,
+        value: { status: 200, body: { growth: { data: { range: { startDate, endDate: '2026-11-14', days }, aggregate: days } } } } };
+    } };
+    const server = app(), requestCompare = () => request(server).get('/api/analytics/growth/compare').set('Cookie', cookie());
+    const result = await requestCompare(); expect(result.status).toBe(200); expect(result.headers['x-metrics-cache']).toBe('RESTORED');
+    expect(result.body.windows.map((window: any) => window.data?.aggregate ?? null)).toEqual([30, 90, null]);
+    expect(result.body.windows[2].error).toBe('All-time comparison is unavailable.');
+    expect(JSON.stringify(result.body)).not.toContain(witness.rowsHash); expect(JSON.stringify(result.body)).not.toContain(witness.policyRevision);
+    expect(state.query).not.toHaveBeenCalled();
+    const original = state.continuation.readForComparison; state.continuation.readForComparison = async (key: string) => {
+      const value = await original(key); return key.includes('2026-08-17') ? { ...value, witness: { ...witness, rowsHash: 'e'.repeat(64) } } : value;
+    };
+    expect((await requestCompare()).status).toBe(503); expect(state.query).not.toHaveBeenCalled();
+    state.continuation.readForComparison = async (key: string) => {
+      const value = await original(key); return key.includes('2026-08-17') ? { ...value, witness: { ...witness, policyRevision: 'd'.repeat(64) } } : value;
+    };
+    expect((await requestCompare()).status).toBe(503); expect(state.query).not.toHaveBeenCalled();
+    state.continuation.readForComparison = async (key: string) => {
+      const value = await original(key); return key.includes('2026-08-17') ? { ...value, at: value.at - 1 } : value;
+    };
+    expect((await requestCompare()).status).toBe(503); expect(state.query).not.toHaveBeenCalled();
+    state.continuation.readForComparison = original; state.currentCohortFails = true;
+    expect((await requestCompare()).status).toBe(503); expect(state.query).not.toHaveBeenCalled();
+  });
   it('rejects closed-continuation composition from ordinary viewers before source work', async () => {
     source(); state.phase = 'closed';
     const result = await request(app()).get('/api/analytics/founder?start_date=2026-11-11&end_date=2026-11-11')
