@@ -32,8 +32,12 @@ Host/forwarded and spoofable Google infrastructure identity headers. Existing
 legacy handlers keep their current cookie, signature, role and origin authority;
 the new web process is not another PLG/consent/provider authority.
 
-Redirects are never followed server-side. Only the canonical Metrics origin or
-Google Accounts may be returned as destinations. Separate host-only Set-Cookie
+Redirects are never followed server-side. The canonical Metrics origin and
+Google Accounts remain allowed. Retained signed GET/HEAD preference links also
+allow only their exact existing One destinations, with the same unsubscribe
+token or exact account-preferences fragment; POST and unrelated destinations
+remain denied. The stricter retained `no-referrer` policy is preserved.
+Separate host-only Set-Cookie
 headers are preserved; domain-changing cookies refuse. Responses are private,
 no-store and vary on Cookie/Authorization; decoded bodies do not retain stale
 upstream encoding/length/cache headers. No source credentials enter this module.

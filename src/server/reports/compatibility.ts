@@ -18,7 +18,7 @@ export function compatibilityConfig(value: unknown): CompatibilityConfig {
   return c;
 }
 
-function methods(path: string): string[] | null {
+export function retainedMetricsMethods(path: string): string[] | null {
   if (path.length > 4096 || /%(?:2f|5c|2e|00)|\\/i.test(path)) return null;
   if (['/api/auth/google', '/api/auth/me', '/auth/callback', '/login', '/access-denied', '/favicon.ico'].includes(path)
     || /^\/assets\/[a-zA-Z0-9._~/-]+$/.test(path) || /^\/plg(?:\/[a-zA-Z0-9._~-]+)*\/?$/.test(path)) return ['GET', 'HEAD'];
@@ -63,7 +63,7 @@ async function boundedBody(stream: ReadableStream<Uint8Array> | null, limit: num
  * owns its new routes. Unknown/report/provider paths never reach the legacy app.
  * Legacy handlers retain their current auth/signature/origin authority. */
 export async function forwardMetricsCompatibility(request: Request, rawConfig: unknown, fetcher: typeof fetch = fetch) {
-  const url = new URL(request.url), allowed = methods(url.pathname);
+  const url = new URL(request.url), allowed = retainedMetricsMethods(url.pathname);
   if (!allowed || url.search.length > 8192) return failure(404);
   if (!allowed.includes(request.method)) return failure(405);
   let c: CompatibilityConfig;
