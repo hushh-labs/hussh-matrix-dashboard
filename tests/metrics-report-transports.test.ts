@@ -14,7 +14,7 @@ describe('collector-only bounded native transports', () => {
     const f = collectionFixture(); await f.initialize();
     const content = { approved: true, enabled: true, reportId: 'hushhai.acquisition' as const, revision: 1,
       scopeDigest: f.access.scopeDigest, reconciliationDigest: digest('website-reconciliation-fixture'),
-      coverageFrom: '2026-11-01', timeoutMs: 1000, maxResponseBytes: 20_000,
+      coverageFrom: '2026-11-01', coverageThrough: '2026-11-12', timeoutMs: 1000, maxResponseBytes: 20_000,
       kind: 'ga4' as const, propertyId: '123456', timezone: 'UTC', streamId: '987654321', hostnames: ['www.hushh.ai'],
       readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com' };
     const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };

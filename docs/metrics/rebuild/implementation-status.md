@@ -35,6 +35,8 @@ continues.
   platform to web and rejects legacy property-wide bindings. Stream/host changes
   invalidate the source generation. This prevents mixing app streams into website
   totals; live provider compatibility/count reconciliation is still required.
+  A reviewed closed date range is now required for GA4 collection; an old
+  coverage start cannot silently extend past a provider pause/emitter change.
   The GA4 credential path separately pins a reviewed native reader identity,
   uses short-lived read-only impersonation after source admission and refuses
   silent direct-identity fallback. No IAM or property access grant was added.
@@ -103,11 +105,15 @@ do not certify native IAM, queues, source accuracy or live behavior.
 
 1. Accepted metric definitions and measured operating policy from #184's lead
    review. No activation defaults or production policy are seeded.
-2. Authoritative One aggregate endpoint and independent fixed-period source
-   reconciliation. `/api/one/metrics/adoption` is proposed, not deployed. GA4
-   has verified existing property/stream/timezone metadata, but needs current
-   domain mapping, reporting identity, accepted key-event definitions and
-   independent counts. Where no source watermark exists, freshness stays unknown.
+2. One aggregate source #9516 is merged into Dev at `8201d101`, with exact-head
+   backend/native-database/merge-queue CI passed. It is not deployed or enabled;
+   independent fixed-period reconciliation and production capacity remain open.
+   The current website's public policy is first-party-only with GA4 paused.
+   Its audited product-event persistence uses BigQuery, not an established
+   warehouse-free aggregate. A source-owned decision/reconciliation is required;
+   first-party events cannot be relabelled GA4 sessions/users. The separately
+   observed website backend has telemetry enabled; actual writes/spend and its
+   serving source provenance remain unverified. Metrics containment is retained.
 3. Complete optional native suite and actual Linux container qualification. The
    representative native reporting probe has passed in the existing Linux CI.
 4. Actual native transport/worker/queue wiring and accepted numerical policy.

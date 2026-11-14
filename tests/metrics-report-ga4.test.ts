@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { digest } from '../src/server/reports/contracts';
 import { sourceBindingGeneration, validateSourceBinding } from '../src/server/reports/bindings';
+import { MetricsCollection } from '../src/server/reports/lifecycle';
 import { Ga4AcquisitionSource, type AggregateFetch } from '../src/server/reports/sources';
 import { collectionFixture } from './helpers/metrics-collection-fixture';
 
@@ -16,6 +17,43 @@ async function gaFixture(data: unknown) {
   return { ...f, request, job, source, fetch };
 }
 describe('GA4 report values and honest freshness', () => {
+  it('requires a reviewed GA4 coverage window instead of admitting dates after unknown collection', async () => {
+    const f = await gaFixture({ ...header, rowCount: 0 });
+    const { environment: _environment, secretVersion: _key, ...common } = f.binding as typeof f.binding & { environment: string; secretVersion: string };
+    const legacy = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC',
+      readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com', ...website };
+    legacy.sourceGeneration = sourceBindingGeneration(legacy);
+    const jobFor = (binding: { sourceGeneration: string }) => ({ ...f.job, control: { ...f.job.control, sourceGeneration: binding.sourceGeneration } });
+    expect(() => validateSourceBinding(legacy, jobFor(legacy))).toThrow();
+    const closed = { ...legacy, coverageThrough: f.request.endDate };
+    closed.sourceGeneration = sourceBindingGeneration(closed);
+    expect(validateSourceBinding(closed, jobFor(closed))).toEqual(closed);
+    for (const coverageThrough of [undefined, null, '', '2026-02-30', '2026-11-12T23:59:59Z', '2026-10-31', '2026-11-11']) {
+      const bad = { ...closed, coverageThrough }; bad.sourceGeneration = sourceBindingGeneration(bad);
+      expect(() => validateSourceBinding(bad, jobFor(bad))).toThrow();
+    }
+    expect(() => validateSourceBinding(closed, { ...jobFor(closed), request: { ...f.job.request, endDate: '2026-11-13' } })).toThrow();
+    const extended = { ...closed, coverageThrough: '2026-11-13' };
+    extended.sourceGeneration = sourceBindingGeneration(extended);
+    expect(extended.sourceGeneration).not.toBe(closed.sourceGeneration);
+    expect(() => validateSourceBinding(extended, jobFor(closed))).toThrow();
+    expect(f.fetch).not.toHaveBeenCalled();
+  });
+  it('stops an out-of-window GA4 job before credentials or provider work', async () => {
+    const f = collectionFixture(); await f.initialize();
+    const { environment: _environment, secretVersion: _key, ...common } = f.binding as typeof f.binding & { environment: string; secretVersion: string };
+    const content = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC',
+      coverageThrough: '2026-11-10', readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com', ...website };
+    const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };
+    await f.put('controls', content.reportId, { ...f.control, sourceGeneration: binding.sourceGeneration });
+    await f.put('sources', content.reportId, binding);
+    const id = (await f.reports.request({ ...f.request, reportId: content.reportId }, f.access)).jobId!;
+    const factory = vi.fn();
+    expect(await new MetricsCollection(f.store, factory, f.clock).collect(id, digest('outside-window')))
+      .toMatchObject({ state: 'delayed', needsAttention: true, retryAfterMs: 0 });
+    expect(factory).not.toHaveBeenCalled();
+    expect(await f.get('sourceReceipts', id)).toBeNull();
+  });
   it('counts only the approved website stream and hosts in a mixed app/web property', async () => {
     const f = await gaFixture({ ...header, rowCount: 0 });
     await f.source.submit(f.job); await f.source.recover(f.job);
@@ -68,7 +106,7 @@ describe('GA4 report values and honest freshness', () => {
   it('binds a reviewed combined-domain scope to a new source generation without relabelling old reports', async () => {
     const f = await gaFixture({ ...header, rowCount: 0 });
     const { environment: _environment, secretVersion: _key, ...common } = f.binding as typeof f.binding & { environment: string; secretVersion: string };
-    const old = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC',
+    const old = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC', coverageThrough: f.request.endDate,
       readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com', ...website };
     old.sourceGeneration = sourceBindingGeneration(old);
     const combined = { ...old, hostnames: ['hushh.ai', 'hussh.si', 'www.hushh.ai', 'www.hussh.si'] };
@@ -83,7 +121,7 @@ describe('GA4 report values and honest freshness', () => {
     const f = await gaFixture({ ...header, rowCount: 0 });
     const { environment: _environment, secretVersion: _key, kind: _kind, ...common } = f.binding as
       typeof f.binding & { environment: string; secretVersion: string };
-    const content = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC',
+    const content = { ...common, reportId: 'hushhai.acquisition', kind: 'ga4', propertyId: '123456', timezone: 'UTC', coverageThrough: f.request.endDate,
       readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com', ...website };
     const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };
     const job = { ...f.job, control: { ...f.job.control, sourceGeneration: binding.sourceGeneration } };

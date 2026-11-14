@@ -36,9 +36,12 @@ application head `9510cba79cb2b7c0eaa6d56b831d1e513800c32d`.
 - Keep the existing OAuth callback and session-cookie compatibility, private
   routes, source credentials, images and rollback anchors until each consumer's
   handoff is accepted. The Next.js web identity receives no source credentials.
-- Hushh.ai's property and website stream are now confirmed by read-only Admin
-  API, including exact `Etc/GMT` timezone. One fixed-period report returned no
-  metric columns/rows; no counts are accepted from it. See
+- Hushh.ai's historical property and website stream are confirmed by read-only
+  Admin API, including exact `Etc/GMT` timezone. The fixed-period native empty
+  provider result and independent empty UI corroboration do not prove zero real
+  visitors. Current website config is first-party-only with GA4 paused; its
+  audited product-event persistence is warehouse-backed, with no established
+  warehouse-free aggregate. The source decision is unresolved. See
   [source evidence](./source-verification-20261114.md).
 - Current `www.hushh.ai` redirects to `www.hussh.si`. The owner wants both in one
   website report. The held host allowlist supports that explicit reviewed scope;

@@ -59,7 +59,13 @@ capacity keeps that lane closed. No production numerical policy is seeded.
 Source bindings require explicit approval, enablement, report/scope, revision,
 coverage start, reconciliation evidence digest, bounded transport settings and
 source generation derived from that exact content. Changes invalidate reuse.
-GA4 additionally pins property/timezone, its approved `readerServiceAccount`, one numeric website stream and a
+GA4 additionally requires an inclusive reviewed `coverageThrough`. Requests must
+fit entirely within `coverageFrom`/`coverageThrough`; missing, invalid or
+out-of-range coverage refuses before credential/source construction. This is a
+reviewed period boundary, not an invented completeness watermark. Advancing it
+requires a new reconciled binding/generation. It prevents an old lower bound from
+silently extending past a provider pause or emitter change.
+GA4 also pins property/timezone, its approved `readerServiceAccount`, one numeric website stream and a
 canonical, explicit subset of the original `hushh.ai` / `www.hushh.ai` and
 redirected `hussh.si` / `www.hussh.si` hostnames. The owner requests one website
 report spanning both domains. Its request
@@ -93,7 +99,7 @@ nonempty thresholding/sampling/other-row loss stays partial. This API does not e
 watermark: actual provider values remain partial, with source freshness unknown.
 Publication time bounds display age but does not fabricate data freshness.
 
-The One adapter targets the **proposed, not deployed** narrow endpoint
+The One adapter targets the **Dev-merged, not deployed or enabled** narrow endpoint
 `POST /api/one/metrics/adoption` on the pinned environment origin. Its request
 contains only period, definition version, source generation and scope digest.
 It signs exact JSON bytes using HMAC-SHA256 over
@@ -146,8 +152,14 @@ the existing property/website stream and exact `Etc/GMT` timezone through Admin
 API. The one fixed-period Data API response uses a default-omitted empty
 ProtoJSON encoding; its source interpretation and regression correction are
 recorded there. It is not independent reconciliation or zero actual visitors.
-The old website also redirects to a different domain,
-whose source/scope is unverified. None establishes effective collector access.
+The website redirects to a different domain, whose observed current public
+policy is first-party-only with GA4 paused. The audited first-party product-event
+sink is warehouse-backed, with no established warehouse-free aggregate. This
+requires a reviewed source/definition decision, not reactivation of GA4 or
+BigQuery. The separately observed website backend telemetry flag is true;
+Metrics's own BigQuery-off switch does not control that application. Native
+source provenance, actual writes/cost and effective collector access remain
+unverified. See the source decision packet before activating any binding.
 The [offline workload](./workload-measurement-20261114.md) measures logical
 operations, cache reuse and recovery with synthetic data, not native costs.
 

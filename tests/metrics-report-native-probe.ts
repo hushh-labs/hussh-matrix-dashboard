@@ -71,7 +71,7 @@ export async function verifyNativeReportStorage(db: Firestore) {
   // Secret Manager, Cloud Tasks or warehouse endpoint is contacted here.
   const gaRequest = { ...request, reportId: 'hushhai.acquisition' as const };
   const content = { approved: true, enabled: true, reportId: gaRequest.reportId, revision: 1, scopeDigest: access.scopeDigest,
-    reconciliationDigest: digest('native-reconciliation-fixture'), coverageFrom: '2026-11-01', timeoutMs: 500, maxResponseBytes: 20_000,
+    reconciliationDigest: digest('native-reconciliation-fixture'), coverageFrom: '2026-11-01', coverageThrough: '2026-11-12', timeoutMs: 500, maxResponseBytes: 20_000,
     kind: 'ga4', propertyId: '123456', timezone: 'UTC', streamId: '987654321', hostnames: ['www.hushh.ai'],
     readerServiceAccount: 'analytics-reader@demo-metrics.iam.gserviceaccount.com' };
   const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };

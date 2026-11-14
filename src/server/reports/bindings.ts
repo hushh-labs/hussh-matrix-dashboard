@@ -19,7 +19,7 @@ export function hasGa4WebsiteScope(value: Ga4WebsiteScope) {
 type BindingBase = { approved: boolean; enabled: boolean; reportId: ReportId; revision: number; sourceGeneration: string;
   scopeDigest: string; reconciliationDigest: string; coverageFrom: string; timeoutMs: number; maxResponseBytes: number };
 export type ReportSourceBinding = BindingBase & (
-  { kind: 'ga4'; propertyId: string; timezone: string; readerServiceAccount: string } & Ga4WebsiteScope
+  { kind: 'ga4'; propertyId: string; timezone: string; readerServiceAccount: string; coverageThrough: string } & Ga4WebsiteScope
   | { kind: 'one'; environment: 'production' | 'uat'; secretVersion: string }
 );
 export function sourceBindingGeneration(binding: unknown) {
@@ -32,7 +32,7 @@ export function validateSourceBinding(value: unknown, job: ReportJob): ReportSou
   const b = value as ReportSourceBinding;
   const common = ['approved', 'enabled', 'reportId', 'revision', 'sourceGeneration', 'scopeDigest', 'reconciliationDigest',
     'coverageFrom', 'timeoutMs', 'maxResponseBytes', 'kind'];
-  if (Object.keys(b).sort().join() !== [...common, ...(b.kind === 'ga4' ? ['propertyId', 'timezone', 'streamId', 'hostnames', 'readerServiceAccount'] : ['environment', 'secretVersion'])].sort().join()
+  if (Object.keys(b).sort().join() !== [...common, ...(b.kind === 'ga4' ? ['propertyId', 'timezone', 'streamId', 'hostnames', 'readerServiceAccount', 'coverageThrough'] : ['environment', 'secretVersion'])].sort().join()
     || b.approved !== true || b.enabled !== true || !Object.hasOwn(reportDefinitions, b.reportId)
     || b.reportId !== job.request.reportId || b.scopeDigest !== job.control.scopeDigest
     || b.sourceGeneration !== job.control.sourceGeneration || b.sourceGeneration !== sourceBindingGeneration(b)
@@ -43,7 +43,12 @@ export function validateSourceBinding(value: unknown, job: ReportJob): ReportSou
     || !Number.isFinite(Date.parse(b.coverageFrom)) || new Date(b.coverageFrom).toISOString().slice(0, 10) !== b.coverageFrom
     || job.request.startDate < b.coverageFrom) throw new ReportError('unavailable');
   if (b.kind === 'ga4') {
+    // A reviewed lower bound is not evidence that collection continued after a
+    // provider was paused or its emitter changed. Never extrapolate that range.
     if (b.reportId !== 'hushhai.acquisition' || !/^\d{3,20}$/.test(b.propertyId)
+      || typeof b.coverageThrough !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.coverageThrough)
+      || !Number.isFinite(Date.parse(b.coverageThrough)) || new Date(b.coverageThrough).toISOString().slice(0, 10) !== b.coverageThrough
+      || b.coverageThrough < b.coverageFrom || job.request.endDate > b.coverageThrough
       || !hasGa4WebsiteScope(b) || !isAnalyticsReader(b.readerServiceAccount)
       || reportingTimezone(b.timezone) !== job.request.timezone) throw new ReportError('unavailable');
   } else if (b.kind === 'one') {
