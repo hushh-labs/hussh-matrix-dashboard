@@ -106,3 +106,15 @@ source data remains unavailable, and warehouse failures still block publication.
 The GA4 website reader binds processed reports to the verified stream and both
 approved domain families. Realtime is stream-wide because GA4 realtime does not
 provide a hostname dimension. Provider zero is not proof of zero actual visitors.
+
+A diagnostic-only revision may measure additional native dry-run estimates in
+an existing planning permit without changing its approved plans or spending its
+allowance. It records at most 500 distinct SQL bindings and their report URLs,
+with per-statement estimates capped at 512 GiB for dry runs only. This mode
+cannot reserve, execute or publish and fails closed outside the planning phase.
+The observed sum is a lower bound when dependent branches cannot be reached or
+when estimates are unavailable; it is not authority to execute. Source identity,
+claim, original ledger and expiry remain unchanged.
+The diagnostic stores a digest of each frozen SQL statement and its existing
+cohort-scope hash, not the SQL or identity rows. These are used to compare
+against completed, metadata-verified earlier jobs before any replacement work.

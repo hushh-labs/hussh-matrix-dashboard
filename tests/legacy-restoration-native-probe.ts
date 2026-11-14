@@ -45,6 +45,10 @@ export async function verifyNativeLegacyRestoration(db: Firestore) {
   await recoveryRef.create(recovery);
   const newer = [new LegacyRestoration(db, recoveryId, recoverySource, () => now, { id, source }),
     new LegacyRestoration(db, recoveryId, recoverySource, () => now, { id, source })];
+  const diagnostic = new LegacyRestoration(db, recoveryId, recoverySource, () => now, { id, source }, true);
+  await assert.rejects(scoped(() => diagnostic.admit({ query: 'SELECT 4' }, 5 * 1024 ** 3)), /Diagnostic estimate recorded/);
+  assert.equal(Object.keys((await recoveryRef.get()).data()!.observations).length, 1);
+  assert.equal((await recoveryRef.get()).data()!.reservedJobs, 0);
   await assert.rejects(scoped(() => newer[0].admit({ query: 'SELECT 3' }, 1)), /recorded/);
   const newPlans = (await recoveryRef.get()).data()!.plans;
   await recoveryRef.update({ phase: 'open', approvedPlanDigest: restorationPlanDigest(newPlans) });

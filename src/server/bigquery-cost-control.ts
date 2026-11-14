@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { BigQuery, Query } from '@google-cloud/bigquery';
 import type { Firestore } from '@google-cloud/firestore';
-import { legacyRestoration, noteLegacyQueryFailure, RESTORATION_LIMITS, type RestorationGrant } from './legacy-restoration';
+import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, RESTORATION_LIMITS, type RestorationGrant } from './legacy-restoration';
 
 // These ceilings cannot be raised through request options or environment variables.
 export const BIGQUERY_COST_LIMITS = Object.freeze({
@@ -184,7 +184,9 @@ export function createGuardedBigQuery(options: {
     let perStatement = Math.min(requestedBytes, BIGQUERY_COST_LIMITS.bytesPerStatement);
     let restoration: RestorationGrant | undefined;
     if (active >= BIGQUERY_COST_LIMITS.concurrentRequests) {
-      if (waiting.length >= BIGQUERY_COST_LIMITS.queuedRequests) {
+      // Diagnostics perform dry runs only and can queue a bounded whole report.
+      const queueLimit = legacyDiagnosticOnly() ? 128 : BIGQUERY_COST_LIMITS.queuedRequests;
+      if (waiting.length >= queueLimit) {
         throw new BigQueryCostControlError('Dashboard queries are busy. Try again later.');
       }
       await new Promise<void>(resolve => waiting.push(resolve));
@@ -212,6 +214,8 @@ export function createGuardedBigQuery(options: {
         }
       }
       if (!options.enabled()) throw new BigQueryCostControlError();
+      // Independent final fence: diagnostic revisions never reserve or submit a paid job.
+      if (legacyDiagnosticOnly()) throw new BigQueryCostControlError('Diagnostic mode cannot execute queries.');
       const id = restoration?.id ?? `metrics_${options.newId?.() ?? randomUUID().replaceAll('-', '_')}`;
       const day = (options.now?.() ?? new Date()).toISOString().slice(0, 10);
       try {
@@ -273,7 +277,7 @@ export async function guardedBigQueryDryRun(project: string, request: Query) {
   const prepared = restoration ? await restoration.prepare(request) : request;
   return client.createQueryJob({ query: prepared.query, dryRun: true,
     useLegacySql: false, location: 'US', useQueryCache: true,
-    maximumBytesBilled: String(preparing ? RESTORATION_LIMITS.bytesPerJob : BIGQUERY_COST_LIMITS.bytesPerStatement) });
+    maximumBytesBilled: String(legacyDiagnosticOnly() ? 512 * 1024 ** 3 : preparing ? RESTORATION_LIMITS.bytesPerJob : BIGQUERY_COST_LIMITS.bytesPerStatement) });
 }
 
 const executeGuardedBigQuery = createGuardedBigQuery({
@@ -288,7 +292,7 @@ const executeGuardedBigQuery = createGuardedBigQuery({
     const preparing = await restoration?.isPreparing();
     const [job] = await client.createQueryJob({ query: request.query, params: request.params, types: request.types,
       dryRun: true, useLegacySql: false, useQueryCache: true, location: 'US',
-      maximumBytesBilled: String(preparing ? RESTORATION_LIMITS.bytesPerJob : BIGQUERY_COST_LIMITS.bytesPerStatement),
+      maximumBytesBilled: String(legacyDiagnosticOnly() ? 512 * 1024 ** 3 : preparing ? RESTORATION_LIMITS.bytesPerJob : BIGQUERY_COST_LIMITS.bytesPerStatement),
       jobTimeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
     const value = job.metadata.statistics?.totalBytesProcessed;
     if (preparing && job.metadata.statistics?.query?.statementType !== 'SELECT') {

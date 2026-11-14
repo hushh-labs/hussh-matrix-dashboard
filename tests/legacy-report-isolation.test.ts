@@ -37,7 +37,7 @@ vi.mock('../src/server/one-customer-cohort', async original => {
 const secret = 'legacy-report-isolation-test-session-secret-long-enough';
 const cookie = (email = 'metrics-qa@hushh.ai') => `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email, exp: Math.floor(Date.now() / 1000) + 3600 }), secret))}`;
 const app = () => createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-afterEach(() => { vi.unstubAllGlobals(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.phase = 'none'; });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.phase = 'none'; });
 
 function source() {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('No external calls in route verification'); }));
@@ -132,6 +132,11 @@ describe('legacy report source isolation', () => {
     expect(changed.body.marker).toBeUndefined(); expect(state.query).toHaveBeenCalled();
     const publishDenied = await request(server).get(url).set('Cookie', cookie()).set('X-Metrics-Restoration-Publish', '1');
     expect(publishDenied.status).toBe(403);
+  });
+  it('restricts diagnostic planning to the release probe', async () => {
+    source(); vi.stubEnv('METRICS_LEGACY_DIAGNOSTIC_ONLY', '1');
+    const response = await request(app()).get('/api/analytics/founder?start_date=2026-11-05&end_date=2026-11-05').set('Cookie', cookie());
+    expect(response.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
   });
   it('reads a compatible original snapshot without relabeling its time or querying', async () => {
     source(); state.phase = 'planning';
