@@ -116,7 +116,7 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       <p role="status" className="mt-5 text-sm text-muted">
         {loading ? 'Loading Instagram report…' : message || (report ? stateCopy[report.state] : 'Instagram reporting is unavailable.')}
       </p>
-      {report?.source === 'direct_provider_publication' && <p className="mt-2 text-sm text-muted">Instagram account aggregates were collected from the provider at {report.sourceObservedAt || 'an unknown time'}. Requested windows are UTC; the provider did not supply its own boundary. Detailed media inventory is unavailable in this publication.</p>}
+      {report?.source === 'direct_provider_publication' && <p className="mt-2 text-sm text-muted">Instagram account aggregate collection ended at {report.sourceObservedAt || 'an unknown time'}. Requested windows are UTC; the provider did not supply its own boundary. Detailed media inventory is unavailable in this publication.</p>}
     </div>
     <ReportTabs label="Instagram report" value={view} onChange={setView} options={[
       { value: 'overview', label: 'Summary' }, { value: 'content', label: 'Posts & Reels' }, { value: 'campaign', label: 'Campaign links' },

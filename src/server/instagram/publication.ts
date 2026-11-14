@@ -39,7 +39,7 @@ export class InstagramPublication {
       const { since, until } = completedAccountWindow(days, new Date(claimedAt));
       const metrics: Record<string, unknown> = {};
       for (const name of ['reach', 'views', 'total_interactions', 'accounts_engaged'] as AccountInsightName[]) {
-        try { const value = await client.accountInsight(this.accountId, name, since, until); metrics[name] = value; results[`account.${days}.${name}`] = value.status; }
+        try { const value = await client.accountInsight(this.accountId, name, since, until); metrics[name] = { ...value, fetchedAt: new Date(this.now()).toISOString() }; results[`account.${days}.${name}`] = value.status; }
         catch { results[`account.${days}.${name}`] = 'unavailable'; }
       }
       windows[days] = { reach: metrics.reach ?? null, accountMetrics: metrics };
