@@ -31,6 +31,8 @@ export function collectionFixture() {
     definitionVersion: '1', reconciled: true });
   const initialize = async () => {
     await put('policy', 'current', policy); await put('controls', request.reportId, control); await put('sources', request.reportId, binding);
+    await put('policy', 'one-read-budget', { approved: true, dailyQueries: 100 });
+    await put('policy', 'ga4-read-budget', { approved: true, dailyQueries: 100 });
     await put('policy', 'collection', { approved: true, enabled: true, maxClaims: 3, retryDelayMs: 500 });
     await put('sourcePolicies', binding.sourceGeneration, { approved: true, failureThreshold: 2, baseBackoffMs: 1000, maxBackoffMs: 8000, probeLeaseMs: 1000 });
   };

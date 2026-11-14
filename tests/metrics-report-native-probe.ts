@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { Firestore } from '@google-cloud/firestore';
 import { digest, reportDefinitions, type AggregateResult, type ReportingPolicy, type ReportControl } from '../src/server/reports/contracts';
-import { FirestoreReportStore, reportPath } from '../src/server/reports/store';
+import { FirestoreReportStore, reportPath, type ReportStore } from '../src/server/reports/store';
 import { MetricsReports, MetricsReportWorker } from '../src/server/reports/service';
 import { MetricsReportDispatch, type DispatchPolicy, type ReportTaskQueue } from '../src/server/reports/dispatch';
 import { sourceBindingGeneration } from '../src/server/reports/bindings';
@@ -10,6 +10,7 @@ import { Ga4AcquisitionSource, OneAdoptionSource, WebsiteActivitySource } from '
 import { MetricsSourceCircuit } from '../src/server/reports/circuit';
 import { FirestoreReportMaintenanceStore } from '../src/server/reports/maintenance-store';
 import { MetricsReportMaintenance } from '../src/server/reports/maintenance';
+import { dailySourceReadBudget } from '../src/server/reports/read-budget';
 
 /** Runs inside the existing localhost-only native budget/storage qualification.
  * Derived reporting must not modify its inherited warehouse reservations. */
@@ -24,6 +25,8 @@ export async function verifyNativeReportStorage(db: Firestore) {
   const control: ReportControl = { enabled: true, revision: 1, sourceGeneration: digest('native-source'),
     scopeDigest: access.scopeDigest, definitionVersion: '1', freshnessMs: 10_000, staleMs: 20_000 };
   await db.doc(reportPath('policy', 'current')).set(policy);
+  await db.doc(reportPath('policy', 'one-read-budget')).set({ approved: true, dailyQueries: 100 });
+  await db.doc(reportPath('policy', 'ga4-read-budget')).set({ approved: true, dailyQueries: 100 });
   await db.doc(reportPath('controls', 'one.adoption')).set(control);
   const readers = [new MetricsReports(store, () => now), new MetricsReports(restarted, () => now)];
   const intents = await Promise.all(readers.map(reader => reader.request(request, access)));
@@ -155,4 +158,24 @@ export async function verifyNativeReportStorage(db: Firestore) {
   assert.equal(webCalls, 1);
   assert.deepEqual((await db.doc(reportPath('sourceReadBudgets', 'website-production-2026-11-13')).get()).data(), { used: 13, limit: 13 });
   assert.deepEqual((await db.doc(reportPath('sourceReadBudgets', 'website-production-2026-11-14')).get()).data(), { used: 13, limit: 13 });
+
+  // Two native clients share a source-wide allowance; a rejected cap reduction
+  // still commits and survives policy changes. Entirely local synthetic policy.
+  await db.doc(reportPath('policy', 'ga4-read-budget')).set({ approved: true, dailyQueries: 1 });
+  const reserve = (client: ReportStore) => client.transaction(async tx => {
+    const reservation = await dailySourceReadBudget(tx, {
+      policy: 'ga4-read-budget', identity: 'ga4-888888', units: 1,
+    }, now);
+    reservation(); return !reservation.rejection;
+  });
+  const admissions = await Promise.all([reserve(store), reserve(restarted)]);
+  assert.deepEqual(admissions.sort(), [false, true]);
+  const nativeBudget = db.doc(reportPath('sourceReadBudgets', 'ga4-888888-2026-11-14'));
+  assert.deepEqual((await nativeBudget.get()).data(), { used: 1, limit: 1 });
+  await nativeBudget.set({ used: 2, limit: 10 });
+  assert.equal(await reserve(restarted), false);
+  assert.deepEqual((await nativeBudget.get()).data(), { used: 2, limit: 1 });
+  await db.doc(reportPath('policy', 'ga4-read-budget')).set({ approved: true, dailyQueries: 10 });
+  assert.equal(await reserve(store), false);
+  assert.deepEqual((await nativeBudget.get()).data(), { used: 2, limit: 1 });
 }

@@ -56,6 +56,14 @@ read/status/compute quotas, separate scheduled/custom capacity and per-staff
 custom capacity, period/lease/job/aggregate size bounds. A zero scheduled
 capacity keeps that lane closed. No production numerical policy is seeded.
 
+Native source admission additionally requires an approved source-wide daily
+allowance: `one-read-budget` / `ga4-read-budget` / `monitoring-read-budget` use
+`{approved,dailyQueries}`; Website retains `{approved,dailyReadUnits}`. See the
+[operating policy](./operating-policy.md#required-replacement-publication-protocol)
+for stable identities, retained uncertain usage and non-resettable daily caps.
+Missing policy refuses before credentials/source I/O. These limits do not replace
+source reconciliation, per-request computation bounds or cost review.
+
 Source bindings require explicit approval, enablement, report/scope, revision,
 coverage start, reconciliation evidence digest, bounded transport settings and
 source generation derived from that exact content. Changes invalidate reuse.

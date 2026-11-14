@@ -5,6 +5,7 @@ import { reportPath, type ReportStore, type ReportTransaction } from './store';
 import { providerRetryAfter, SourceRequestFailure } from './source-errors';
 import { withinDeadline } from './deadline';
 import { hasGa4WebsiteScope, websiteSourceOrigins, type Ga4WebsiteScope } from './bindings';
+import { dailySourceReadBudget } from './read-budget';
 
 type SourceCall = { binding: string; state: 'reserved' | 'completed'; result: AggregateResult | null };
 export type SourcePolicy = { sourceGeneration: string; timeoutMs: number; maxResponseBytes: number };
@@ -94,10 +95,13 @@ export class Ga4AcquisitionSource extends JournaledSource {
     propertyId: string; timezone: string; informationWatermark: number | null;
   }, private fetch: AggregateFetch, now?: () => number) {
     super(store, policy, now);
-    if (!/^\d{3,20}$/.test(config.propertyId) || !hasGa4WebsiteScope(config)) throw new ReportError('invalid');
+    if (!/^[1-9]\d{2,19}$/.test(config.propertyId) || !hasGa4WebsiteScope(config)) throw new ReportError('invalid');
     this.config = { ...config, hostnames: [...config.hostnames], timezone: reportingTimezone(config.timezone) };
   }
   protected binding(job: ReportJob) { return digest([job.key, this.config, this.policy.sourceGeneration]); }
+  protected sourceBudget(tx: ReportTransaction) {
+    return dailySourceReadBudget(tx, { policy: 'ga4-read-budget', identity: `ga4-${this.config.propertyId}`, units: 1 }, this.now());
+  }
   protected async collect(job: ReportJob): Promise<AggregateResult> {
     if (job.request.reportId !== 'hushhai.acquisition' || job.request.timezone !== this.config.timezone) throw new ReportError('invalid');
     const signal = AbortSignal.timeout(this.policy.timeoutMs);
@@ -161,6 +165,9 @@ export class OneAdoptionSource extends JournaledSource {
     if (!['production', 'uat'].includes(environment)) throw new ReportError('invalid');
   }
   protected binding(job: ReportJob) { return digest([job.key, this.environment, this.policy.sourceGeneration]); }
+  protected sourceBudget(tx: ReportTransaction) {
+    return dailySourceReadBudget(tx, { policy: 'one-read-budget', identity: `one-adoption-${this.environment}`, units: 1 }, this.now());
+  }
   protected async collect(job: ReportJob): Promise<AggregateResult> {
     if (job.request.reportId !== 'one.adoption') throw new ReportError('invalid');
     const origin = this.environment === 'production' ? 'https://api.hushh.ai' : 'https://api.uat.hushh.ai';
@@ -184,24 +191,14 @@ export class WebsiteActivitySource extends JournaledSource {
   }
   protected binding(job: ReportJob) { return digest([job.key, this.environment, this.captureGeneration, this.maxEventsPerDay, this.policy.sourceGeneration]); }
   protected async sourceBudget(tx: ReportTransaction, job: ReportJob) {
-    const policy = await tx.get<{ approved: boolean; dailyReadUnits: number }>(reportPath('policy', 'website-read-budget'));
-    if (!policy || Object.keys(policy).sort().join() !== 'approved,dailyReadUnits' || policy.approved !== true
-      || !Number.isSafeInteger(policy.dailyReadUnits) || policy.dailyReadUnits <= 0) throw new SourceRequestFailure('configuration');
     // Include point lookups and the receipt-query sentinel. This is an
     // engineering upper bound, not a native billing or currency estimate.
     const days = (Date.parse(job.request.endDate) - Date.parse(job.request.startDate)) / 86_400_000 + 1;
     const units = days * (this.maxEventsPerDay + 3);
     if (!Number.isSafeInteger(units) || units <= 0 || days > 7) throw new ReportError('invalid');
-    const now = this.now(), day = new Date(now).toISOString().slice(0, 10);
-    const ref = reportPath('sourceReadBudgets', `website-${this.environment}-${day}`);
-    const budget = await tx.get<{ used: number; limit: number }>(ref);
-    if (budget && (Object.keys(budget).sort().join() !== 'limit,used' || !Number.isSafeInteger(budget.used)
-      || !Number.isSafeInteger(budget.limit) || budget.used < 0 || budget.used > budget.limit)) throw new SourceRequestFailure('configuration');
-    const used = budget?.used ?? 0, limit = Math.min(budget?.limit ?? policy.dailyReadUnits, policy.dailyReadUnits);
-    if (units > limit - used) throw new SourceRequestFailure('quota', Date.parse(day) + 86_400_000 - now);
     // No refund on timeout, schema failure or lost acknowledgement. The day key
     // excludes generation, staff and job sequence, preventing quota resets.
-    return () => tx.set(ref, { used: used + units, limit });
+    return dailySourceReadBudget(tx, { policy: 'website-read-budget', identity: `website-${this.environment}`, units }, this.now());
   }
   protected async collect(job: ReportJob): Promise<AggregateResult> {
     if (job.request.reportId !== 'hushhai.activity' || job.request.timezone !== 'UTC') throw new ReportError('invalid');

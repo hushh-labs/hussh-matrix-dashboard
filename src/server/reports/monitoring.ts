@@ -2,7 +2,8 @@ import { digest, ReportError, validateRequest, type AggregateResult, type Metric
 import { metricsMonitoringScope } from './bindings';
 import { JournaledSource, type AggregateFetch, type SourcePolicy } from './sources';
 import { SourceRequestFailure } from './source-errors';
-import { reportPath, type ReportStore, type ReportTransaction } from './store';
+import { type ReportStore, type ReportTransaction } from './store';
+import { dailySourceReadBudget } from './read-budget';
 
 const HOUR = 3_600_000;
 export function metricsMonitoringUrl(job: ReportJob) {
@@ -84,19 +85,8 @@ export function metricsMonitoringAggregate(data: any, job: ReportJob, checkedAt:
 export class MetricsMonitoringSource extends JournaledSource {
   constructor(store: ReportStore, policy: SourcePolicy, private fetch: AggregateFetch, now?: () => number) { super(store, policy, now); }
   protected binding(job: ReportJob) { return digest([job.key, metricsMonitoringScope, this.policy.sourceGeneration]); }
-  protected async sourceBudget(tx: ReportTransaction) {
-    const policy = await tx.get<{ approved: boolean; dailyQueries: number }>(reportPath('policy', 'monitoring-read-budget'));
-    if (!policy || Object.keys(policy).sort().join() !== 'approved,dailyQueries' || policy.approved !== true
-      || !Number.isSafeInteger(policy.dailyQueries) || policy.dailyQueries < 1 || policy.dailyQueries > 1000) return invalid();
-    const now = this.now(), day = new Date(now).toISOString().slice(0, 10);
-    const ref = reportPath('sourceReadBudgets', `monitoring-${digest(metricsMonitoringScope)}-${day}`);
-    const budget = await tx.get<{ used: number; limit: number }>(ref);
-    if (budget && (Object.keys(budget).sort().join() !== 'limit,used' || !Number.isSafeInteger(budget.used)
-      || !Number.isSafeInteger(budget.limit) || budget.limit < 1 || budget.used < 0)) return invalid();
-    const used = budget?.used ?? 0, limit = Math.min(budget?.limit ?? policy.dailyQueries, policy.dailyQueries);
-    if (used >= limit) return Object.assign(() => tx.set(ref, { used, limit }),
-      { rejection: new SourceRequestFailure('quota', Date.parse(day) + 86_400_000 - now) });
-    return () => tx.set(ref, { used: used + 1, limit });
+  protected sourceBudget(tx: ReportTransaction) {
+    return dailySourceReadBudget(tx, { policy: 'monitoring-read-budget', identity: `monitoring-${digest(metricsMonitoringScope)}`, units: 1 }, this.now());
   }
   protected async collect(job: ReportJob) {
     const url = metricsMonitoringUrl(job), signal = AbortSignal.timeout(this.policy.timeoutMs);
