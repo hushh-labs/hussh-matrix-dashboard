@@ -85,8 +85,11 @@ signing keys, BCC senders and owner exports are not used.
 GA4's adapter uses whole-period `runReport` metrics, no device-to-account join and
 no sum of daily distinct users. It validates property timezone, metric headers,
 row consistency and integer values. A valid empty provider report can mean
-zero; malformed/missing metric values cannot. Thresholding/sampling/other-row
-loss stays partial. This API does not establish an information-completeness
+zero provider-recorded results, including Google's default-omitted ProtoJSON
+encoding when the native kind, timezone and requested quota receipt establish
+that response. Missing headers with nonempty/inconsistent rows still refuse.
+An emptyReason or empty thresholded/sampled/lossy report remains unavailable;
+nonempty thresholding/sampling/other-row loss stays partial. This API does not establish an information-completeness
 watermark: actual provider values remain partial, with source freshness unknown.
 Publication time bounds display age but does not fabricate data freshness.
 
@@ -140,8 +143,10 @@ is live-source, native IAM/task queue or real user-session acceptance.
 
 The [14 November source inspection](./source-verification-20261114.md) verified
 the existing property/website stream and exact `Etc/GMT` timezone through Admin
-API. The one fixed-period Data API response lacked metric columns/rows and is
-not accepted counts. The old website also redirects to a different domain,
+API. The one fixed-period Data API response uses a default-omitted empty
+ProtoJSON encoding; its source interpretation and regression correction are
+recorded there. It is not independent reconciliation or zero actual visitors.
+The old website also redirects to a different domain,
 whose source/scope is unverified. None establishes effective collector access.
 The [offline workload](./workload-measurement-20261114.md) measures logical
 operations, cache reuse and recovery with synthetic data, not native costs.

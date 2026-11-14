@@ -48,10 +48,28 @@ ANDed website-stream/web-platform/production-host filters and limit one. Copying
 the rendered request editor confirmed the exact request. HTTP200 returned only
 metadata, quota and kind, without metric headers, rows or an explicit row count.
 The source timezone again matched `Etc/GMT`; the property quota reports one
-token consumed. This response is **not accepted as zero traffic or reconciled
-measurements**. The held adapter rejects it, and the regression preserves that
-behavior. No further metric report was repeated to force an answer. Effective
-collector delegation and an independent usable reference remain unverified.
+token consumed. The original receipt conservatively rejected counts because
+headers/rowCount were absent. Subsequent inspection of Google's actual
+[RunReportResponse proto](https://github.com/googleapis/googleapis/blob/master/google/analytics/data/v1beta/analytics_data_api.proto)
+and [ProtoJSON default-value rules](https://protobuf.dev/programming-guides/json/#presence-and-default-values)
+corrects that parser assumption: rowCount is an implicit-presence int32 and rows
+and metricHeaders are repeated fields; default zero/empty values can be omitted.
+
+The held adapter now accepts that native empty encoding only with the expected
+runReport kind, matching property timezone, the requested quota receipt and
+consistent empty rows/count/headers. Thresholding, sampling, other-row loss or
+an emptyReason cannot produce an invented empty result. A metadata object
+without the native response kind still refuses. Regression checks fail against
+the earlier parser and pass after the correction.
+
+This decodes **zero provider-recorded results for the exact requested scope**,
+with partial coverage and unknown information freshness. It does not prove zero
+real website visitors, correct emitter/property mapping or independent period
+reconciliation. The original raw-inspection receipt remains unchanged. No
+further metric report was repeated to force an answer. A subsequent read-only
+stream creation-time lookup stalled in Google account sign-in, so it supplies
+no new metadata or counts. Effective collector delegation, verified coverage
+dates and an independent usable reference remain unverified.
 
 The first bounded HTML inspection accepted no response. A subsequent native
 client exposed redirects rather than silently following them. Read-only HEAD
@@ -97,9 +115,31 @@ collector identity; measured operating limits and native runtime/release proof.
 Recent missing collection must be diagnosed before claiming current traffic is
 restored. UI access does not supply API credentials to the collector.
 
-The One aggregate remains proposed/not found in the audited Research default-main
-route tree at `0d77d258715a6e163044e38947ca97dcb5715004`. Capped private
-owner exports and live cohort traversal are not global adoption aggregates.
+The One aggregate was absent from the audited Research default-main route tree.
+[Research Dev PR #9516](https://github.com/hushh-labs/hushh-research/pull/9516)
+now proposes its product-owned implementation at
+`b885d43336bda4d5d3d74fc43802d709babf85a1`. It reads existing persisted
+successful-chat metadata and domain-owned effect proofs in one read-only
+business snapshot, with current identity/exclusion/deletion barriers. It never
+calls private owner exports or returns identifiers/content to Metrics.
+
+This is default-off candidate source, not a live accepted API. It inherits a
+50-candidate current-identity/lifecycle bound and seven retained days; overflow,
+active RLS, changed authority or limited outcomes refuse the entire result.
+Those conservative compatibility bounds are not reviewed production capacity.
+Retained-positive counts always have partial coverage. A database snapshot
+timestamp is not an ingestion/completeness watermark across devices/private
+agents. The dedicated generation/policy/reconciliation manifest must bind real
+reviewed receipts before enablement; an approved boolean is not reconciliation.
+
+Local 140 focused route/service checks pass. The RLS negative control fails when
+the refusal is removed and passes after restoration. A real disposable
+PostgreSQL snapshot/dedup case was added to the existing database lane, but
+local database absence caused a skip. Normal push hooks pass. Hosted exact-head
+locked/native results, fixed-window independent source reconciliation, actual
+population size, query/deadline measurements and runtime authority remain
+unaccepted. No endpoint/configuration was activated by opening the PR.
+
 Registrations, HushhTech, retention, reliability, operating cost and other legacy
 measurements require their source-specific work after the accepted first slice.
 

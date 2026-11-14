@@ -54,6 +54,10 @@ continues.
 - GA4 actual values without a completeness watermark display partial coverage
   and unknown source freshness. Malformed output cannot become zero. Equivalent
   timezone aliases are normalized; source periods do not silently become UTC.
+  Native ProtoJSON empty results decode only with response identity, matching
+  timezone, quota receipt and consistent empty fields; empty suppressed/lossy
+  responses remain unavailable. Provider-recorded zero is not actual zero
+  visitors or emitter/reconciliation acceptance.
 - Existing `npm run build` qualifies legacy and Next.js builds. Existing UI
   command checks the standalone application alongside the legacy UI. Source
   layout falls within the existing CI path filter; workflow files are unchanged.

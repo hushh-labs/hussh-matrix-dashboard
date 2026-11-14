@@ -106,16 +106,27 @@ export class Ga4AcquisitionSource extends JournaledSource {
     let propertyTimezone: string;
     try { propertyTimezone = reportingTimezone(data?.metadata?.timeZone); }
     catch { throw new SourceRequestFailure('configuration'); }
-    if (propertyTimezone !== this.config.timezone || !Array.isArray(data.metricHeaders)
-      || data.metricHeaders.map((v: { name?: string }) => v.name).join() !== 'sessions,activeUsers,engagedSessions,keyEvents'
-      || (data.rows && (!Array.isArray(data.rows) || data.rows.length > 1))
+    const names = ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'];
+    const emptyRows = data.rows === undefined || Array.isArray(data.rows) && data.rows.length === 0;
+    const partial = !!(data.metadata.subjectToThresholding || data.metadata.dataLossFromOtherRow || data.metadata.samplingMetadatas?.length);
+    // ProtoJSON omits default int32/repeated fields. A native empty runReport
+    // can omit rowCount, rows and metricHeaders. Require its response kind and
+    // requested quota receipt; an arbitrary metadata object is not zero traffic.
+    const emptyHeaders = data.metricHeaders === undefined || Array.isArray(data.metricHeaders) && data.metricHeaders.length === 0;
+    const consumed = data.propertyQuota?.tokensPerDay?.consumed;
+    const nativeEmpty = emptyRows && emptyHeaders && (data.rowCount === undefined || data.rowCount === 0)
+      && data.kind === 'analyticsData#runReport' && Number.isSafeInteger(consumed) && consumed >= 0;
+    const expectedHeaders = Array.isArray(data.metricHeaders)
+      && data.metricHeaders.map((v: { name?: string }) => v?.name).join() === names.join();
+    if (propertyTimezone !== this.config.timezone || !expectedHeaders && !nativeEmpty
+      || data.kind !== undefined && data.kind !== 'analyticsData#runReport'
+      || data.metadata.emptyReason || emptyRows && partial
+      || (data.rows !== undefined && (!Array.isArray(data.rows) || data.rows.length > 1))
       || (data.rowCount !== undefined && (!Number.isSafeInteger(data.rowCount) || data.rowCount < 0 || data.rowCount > 1))
       || data.rowCount === 0 && data.rows?.length) throw new SourceRequestFailure('configuration');
-    const partial = !!(data.metadata.subjectToThresholding || data.metadata.dataLossFromOtherRow || data.metadata.samplingMetadatas?.length);
     // GA4 does not supply an export watermark in runReport. Unknown freshness
     // remains explicit until a separately verified source watermark exists.
     const metrics: Record<string, MetricValue> = {};
-    const names = ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'];
     const values = data.rows?.[0]?.metricValues;
     if ((data.rows?.length === 1 && (!Array.isArray(values) || values.length !== names.length))
       || data.rowCount > 0 && !data.rows?.length) throw new SourceRequestFailure('configuration');

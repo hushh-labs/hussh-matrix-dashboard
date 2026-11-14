@@ -111,8 +111,7 @@ describe('GA4 report values and honest freshness', () => {
     f.advance(f.control.staleMs + 1); expect((await f.reports.read(f.request, f.access)).report).toBeNull();
   });
   it.each([
-    // Actual fixed-period source inspection returned metadata/quota only. It
-    // does not establish explicit empty metric columns or authorize fake zeros.
+    // Without the runReport kind this is not the native ProtoJSON empty report.
     { metadata: { timeZone: 'Etc/GMT', currencyCode: 'USD' }, propertyQuota: { tokensPerDay: { consumed: 1 } } },
     { ...header, rowCount: 1 }, { ...header, rows: [{ metricValues: [{ value: '5' }] }] },
     { ...header, rowCount: -1 }, { ...header, rowCount: 0, rows: [{ metricValues: [] }] },
@@ -125,6 +124,29 @@ describe('GA4 report values and honest freshness', () => {
   it('distinguishes an explicitly empty valid provider report from an unavailable response', async () => {
     const f = await gaFixture({ ...header, rowCount: 0 }); const result = (await f.source.submit(f.job))!;
     expect(result.metrics.activeUsers.value).toBe(0); expect(result.metrics.activeUsers.coverage).toBe('partial');
+  });
+  it('decodes a native ProtoJSON empty report without claiming complete traffic capture', async () => {
+    const f = await gaFixture({ kind: 'analyticsData#runReport', metadata: { timeZone: 'Etc/GMT', currencyCode: 'USD' },
+      propertyQuota: { tokensPerDay: { consumed: 1 } } });
+    const result = (await f.source.submit(f.job))!;
+    await f.worker.publish(f.job, result); await f.source.recover(f.job);
+    expect(f.fetch).toHaveBeenCalledTimes(1);
+    expect(Object.values(result.metrics).map(metric => metric.value)).toEqual([0, 0, 0, 0]);
+    expect(Object.values(result.metrics).every(metric => metric.coverage === 'partial')).toBe(true);
+    expect(result.sourceWatermark).toBeNull();
+    expect((await f.reports.read(f.request, f.access)).state).toBe('unknown_freshness');
+  });
+  it.each([
+    { ...header, rowCount: 0, metadata: { timeZone: 'UTC', subjectToThresholding: true } },
+    { ...header, rowCount: 0, metadata: { timeZone: 'UTC', dataLossFromOtherRow: true } },
+    { ...header, rowCount: 0, metadata: { timeZone: 'UTC', samplingMetadatas: [{ samplesReadCount: '1', samplingSpaceSize: '10' }] } },
+    { ...header, rowCount: 0, metadata: { timeZone: 'UTC', emptyReason: 'No permission for this source' } },
+    { kind: 'analyticsData#runReport', metadata: { timeZone: 'UTC' }, propertyQuota: {} },
+    { kind: 'analyticsData#runReport', metadata: { timeZone: 'UTC' }, propertyQuota: { tokensPerDay: { consumed: 1 } }, rowCount: 1 },
+    { kind: 'analyticsData#runReport', metadata: { timeZone: 'UTC' }, propertyQuota: { tokensPerDay: { consumed: 1 } }, rows: null },
+  ])('keeps suppressed, incomplete or malformed empty results unavailable', async data => {
+    const f = await gaFixture(data); await expect(f.source.submit(f.job)).rejects.toMatchObject({ kind: 'configuration' });
+    expect((await f.reports.read(f.request, f.access)).report).toBeNull();
   });
   it('accepts equivalent provider timezone aliases without treating export days as UTC', async () => {
     const f = await gaFixture({ ...header, metadata: { timeZone: 'Etc/UTC' }, rowCount: 0 });
