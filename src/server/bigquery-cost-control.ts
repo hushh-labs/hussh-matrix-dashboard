@@ -1,7 +1,8 @@
+import { conservativeBillingBound } from './bigquery-billing-bound';
 import { randomUUID } from 'node:crypto';
 import type { BigQuery, Query } from '@google-cloud/bigquery';
 import type { Firestore } from '@google-cloud/firestore';
-import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, RESTORATION_LIMITS, type RestorationGrant } from './legacy-restoration';
+import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, RESTORATION_LIMITS, HISTORICAL_LIMITS, type RestorationGrant } from './legacy-restoration';
 
 // These ceilings cannot be raised through request options or environment variables.
 export const BIGQUERY_COST_LIMITS = Object.freeze({
@@ -162,6 +163,7 @@ export function createGuardedBigQuery(options: {
   estimate?: (request: Query) => Promise<number>;
   prepare?: (request: Query) => Promise<Query>;
   restoration?: (request: Query, estimatedBytes: number) => Promise<RestorationGrant | undefined>;
+  queueLimit?: () => Promise<number>;
   enabled: () => boolean;
   now?: () => Date;
   newId?: () => string;
@@ -183,9 +185,11 @@ export function createGuardedBigQuery(options: {
     }
     let perStatement = Math.min(requestedBytes, BIGQUERY_COST_LIMITS.bytesPerStatement);
     let restoration: RestorationGrant | undefined;
+    // Resolve any asynchronous policy before inspecting the semaphore, so a
+    // completion cannot race between the capacity check and enqueue.
+    const requestedQueue = legacyDiagnosticOnly() ? 128 : await options.queueLimit?.() ?? BIGQUERY_COST_LIMITS.queuedRequests;
+    const queueLimit = Math.max(BIGQUERY_COST_LIMITS.queuedRequests, Math.min(128, requestedQueue));
     if (active >= BIGQUERY_COST_LIMITS.concurrentRequests) {
-      // Diagnostics perform dry runs only and can queue a bounded whole report.
-      const queueLimit = legacyDiagnosticOnly() ? 128 : BIGQUERY_COST_LIMITS.queuedRequests;
       if (waiting.length >= queueLimit) {
         throw new BigQueryCostControlError('Dashboard queries are busy. Try again later.');
       }
@@ -205,8 +209,8 @@ export function createGuardedBigQuery(options: {
         if (!Number.isSafeInteger(estimatedBytes) || estimatedBytes < 0) throw new BigQueryCostControlError('Invalid scan limit estimate.');
         restoration = await options.restoration?.(request, estimatedBytes);
         if (restoration) {
-          if (statements !== 1 || !Number.isSafeInteger(restoration.bytes) || restoration.bytes < estimatedBytes
-            || restoration.bytes > RESTORATION_LIMITS.bytesPerJob) throw new BigQueryCostControlError();
+          if (statements !== 1 || !Number.isSafeInteger(restoration.bytes) || (!restoration.reuse && restoration.bytes < estimatedBytes)
+            || restoration.bytes > HISTORICAL_LIMITS.bytesPerJob) throw new BigQueryCostControlError();
           perStatement = restoration.bytes;
         }
         if (estimatedBytes > perStatement * statements) {
@@ -244,7 +248,7 @@ export function createGuardedBigQuery(options: {
           statementTimeoutMs: String(BIGQUERY_COST_LIMITS.timeoutMs),
         } } : {}),
         labels: { application: 'metrics_dashboard', cost_policy: restoration ? 'initial_restore_v1' : 'v1', budget_day: day,
-          ...(restoration ? { restore_permit: restoration.permitId } : {}) },
+          ...(restoration ? { restore_permit: restoration.permitId, ...(restoration.reuse ? { reuse_only: 'true' } : {}) } : {}) },
       });
     } finally {
       const next = waiting.shift();
@@ -275,9 +279,10 @@ export async function guardedBigQueryDryRun(project: string, request: Query) {
   const restoration = await legacyRestoration();
   const preparing = await restoration?.isPreparing();
   const prepared = restoration ? await restoration.prepare(request) : request;
+  const restorationCeiling = preparing ? await restoration!.perJobCeiling() : BIGQUERY_COST_LIMITS.bytesPerStatement;
   return client.createQueryJob({ query: prepared.query, dryRun: true,
     useLegacySql: false, location: 'US', useQueryCache: true,
-    maximumBytesBilled: String(legacyDiagnosticOnly() ? 512 * 1024 ** 3 : preparing ? RESTORATION_LIMITS.bytesPerJob : BIGQUERY_COST_LIMITS.bytesPerStatement) });
+    maximumBytesBilled: String(legacyDiagnosticOnly() ? 512 * 1024 ** 3 : restorationCeiling) });
 }
 
 const executeGuardedBigQuery = createGuardedBigQuery({
@@ -286,19 +291,26 @@ const executeGuardedBigQuery = createGuardedBigQuery({
   enabled: () => process.env.METRICS_BIGQUERY_ENABLED === 'true',
   prepare: async request => (await legacyRestoration())?.prepare(request) ?? request,
   restoration: async (request, estimated) => (await legacyRestoration())?.admit(request, estimated),
+  queueLimit: async () => process.env.METRICS_LEGACY_ABANDONED_ID && await (await legacyRestoration())?.expandedPreparing() ? 128 : BIGQUERY_COST_LIMITS.queuedRequests,
   estimate: async request => {
     const client = await nativeClient();
     const restoration = await legacyRestoration();
     const preparing = await restoration?.isPreparing();
+    const restorationCeiling = preparing ? await restoration!.perJobCeiling() : BIGQUERY_COST_LIMITS.bytesPerStatement;
     const [job] = await client.createQueryJob({ query: request.query, params: request.params, types: request.types,
       dryRun: true, useLegacySql: false, useQueryCache: true, location: 'US',
-      maximumBytesBilled: String(legacyDiagnosticOnly() ? 512 * 1024 ** 3 : preparing ? RESTORATION_LIMITS.bytesPerJob : BIGQUERY_COST_LIMITS.bytesPerStatement),
+      maximumBytesBilled: String(legacyDiagnosticOnly() ? 512 * 1024 ** 3 : restorationCeiling),
       jobTimeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
     const value = job.metadata.statistics?.totalBytesProcessed;
     if (preparing && job.metadata.statistics?.query?.statementType !== 'SELECT') {
       throw new BigQueryCostControlError('Initial restoration accepts read-only SELECT plans only.');
     }
     if (typeof value !== 'string' || !/^\d+$/.test(value)) throw new BigQueryCostControlError('No native query estimate.');
+    if (await restoration?.expandedPreparing()) {
+      const stats = job.metadata.statistics?.query;
+      if (!['PRECISE', 'UPPER_BOUND'].includes(String(stats?.totalBytesProcessedAccuracy ?? ''))) throw new BigQueryCostControlError('No safe native estimate precision.');
+      return conservativeBillingBound(Number(value), stats?.referencedTables ?? [], nativeTableCatalog);
+    }
     return Number(value);
   },
   execute: async request => {
@@ -310,6 +322,7 @@ const executeGuardedBigQuery = createGuardedBigQuery({
         const [metadata] = await job.getMetadata();
         const query = metadata.configuration?.query;
         if (query?.query !== request.query || query?.maximumBytesBilled !== request.maximumBytesBilled
+          || (request.labels?.reuse_only === 'true' && (metadata.status?.state !== 'DONE' || metadata.status?.errorResult))
           || query.useLegacySql !== false || metadata.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project
           || metadata.jobReference?.location !== 'US') throw new BigQueryCostControlError();
         exists = true;
@@ -317,6 +330,7 @@ const executeGuardedBigQuery = createGuardedBigQuery({
         if ((error as { code?: number }).code !== 404) throw error;
       }
       if (!exists) {
+        if (request.labels?.reuse_only === 'true') throw new BigQueryCostControlError('A prior job could not be verified.');
         try { await client.createQueryJob(request); }
         catch (error) { if ((error as { code?: number }).code !== 409) throw error; }
         // Reconcile the exact stable ID, including any lost acknowledgement.
@@ -341,4 +355,23 @@ const executeGuardedBigQuery = createGuardedBigQuery({
 export async function guardedBigQuery(project: string, request: Query): Promise<GuardedQueryResult> {
   try { return await executeGuardedBigQuery(project, request); }
   catch (error) { noteLegacyQueryFailure(); throw error; }
+}
+
+/** Metadata only; every request is paginated and bounded. */
+async function nativeTableCatalog(project: string, dataset: string): Promise<{ id: string; type: string }[]> {
+  const { BigQuery } = await import('@google-cloud/bigquery');
+  const client = new BigQuery({ projectId: project });
+  const result: { id: string; type: string }[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const [tables, next] = await client.dataset(dataset).getTables({ autoPaginate: false, maxResults: 1000, pageToken });
+    for (const table of tables) {
+      const id = table.id, type = String(table.metadata?.type ?? '');
+      if (!id || !type) throw new Error('Incomplete table catalog.');
+      result.push({ id, type });
+    }
+    pageToken = next?.pageToken;
+    if (!pageToken) return result;
+  }
+  throw new Error('Table catalog pagination bound exceeded.');
 }

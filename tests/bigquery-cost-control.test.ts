@@ -54,7 +54,7 @@ const reservation = (id: string, statements = 1): QueryBudgetReservation => ({
 describe('BigQuery execution boundary', () => {
   it('restores the normal capped script policy once a configured permit is closed or expired', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); restoration.active = true;
-    restoration.value = { prepare: async (value: Query) => value, admit: async () => undefined, isPreparing: async () => false };
+    restoration.value = { prepare: async (value: Query) => value, admit: async () => undefined, isPreparing: async () => false, expandedPreparing: async () => false };
     const getQueryResults = vi.fn(async () => [[]]);
     sdk.createQueryJob.mockImplementation(async (value: any) => value.dryRun
       ? [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'UPDATE' } } } }]
@@ -64,12 +64,35 @@ describe('BigQuery execution boundary', () => {
     expect(paid.maximumBytesBilled).toBe(String(limits.bytesPerStatement));
     expect(paid.jobId).not.toContain('restore_');
   });
+  it('reads only a verified completed prior job and never creates a replacement', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const grant = { permitId: 'restore_1234567890abcdef', planHash: 'b'.repeat(64),
+      id: 'metrics_restore_aaaaaaaaaaaaaaaa_' + 'a'.repeat(64), bytes: 20 * 1024 ** 2,
+      report: '/api/analytics/founder?day=2026-11-05', reuse: { key: 'c'.repeat(64), priorPlanHash: 'a'.repeat(64) } };
+    restoration.active = true;
+    restoration.value = { prepare: async (value: Query) => value, admit: async () => grant, isPreparing: async () => true,
+      expandedPreparing: async () => false, perJobCeiling: async () => 16 * 1024 ** 3, reserve: vi.fn(async () => {}) };
+    let exists = true;
+    const getMetadata = vi.fn(async () => {
+      if (!exists) throw Object.assign(new Error('missing'), { code: 404 });
+      return [{ status: { state: 'DONE' }, jobReference: { projectId: project, location: 'US' },
+        configuration: { query: { query: 'SELECT 7', maximumBytesBilled: String(grant.bytes), useLegacySql: false } } }];
+    });
+    sdk.job.mockReturnValue({ getMetadata, getQueryResults: async () => [[{ value: 7 }], null] });
+    sdk.createQueryJob.mockImplementation(async (value: any) => value.dryRun
+      ? [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'SELECT' } } } }]
+      : (() => { throw new Error('unexpected paid submission'); })());
+    expect(await guardedBigQuery(project, { query: 'SELECT 7' })).toEqual([[{ value: 7 }]]);
+    exists = false;
+    await expect(guardedBigQuery(project, { query: 'SELECT 7' })).rejects.toThrow('prior job could not be verified');
+    expect(sdk.createQueryJob.mock.calls.filter(([value]: any) => !value.dryRun)).toHaveLength(0);
+  });
   it('recovers a lost restoration submission through the exact native ID without another paid job', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
     const grant = { permitId: 'restore_1234567890abcdef', planHash: 'a'.repeat(64),
       id: 'metrics_restore_1234567890abcdef_' + 'a'.repeat(64), bytes: 20 * 1024 ** 2 };
     restoration.active = true;
-    restoration.value = { prepare: async (value: Query) => value, admit: async () => grant, isPreparing: async () => true, reserve: vi.fn(async () => {}) };
+    restoration.value = { prepare: async (value: Query) => value, admit: async () => grant, isPreparing: async () => true, expandedPreparing: async () => false, perJobCeiling: async () => 16 * 1024 ** 3, reserve: vi.fn(async () => {}) };
     let exists = false; let conflict = false;
     const getQueryResults = vi.fn(async () => [[{ value: 42 }], null]);
     const getMetadata = vi.fn(async () => {

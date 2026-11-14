@@ -5789,14 +5789,20 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const sourceRequest = { query: req.query } as express.Request;
           const needsCustomers = needsCustomerScope(req.path, req.query.environment, req.query.view);
           const cohort = needsCustomers ? await readCustomerCohort() : null;
-          const key = `${cohort?.cacheKey ?? ''}:${canonicalAnalyticsKey(req.originalUrl)}`;
+          const reportUrl = canonicalAnalyticsKey(req.originalUrl);
+          const key = `${cohort?.cacheKey ?? ''}:${reportUrl}`;
           const load = () => capture(handler, sourceRequest, refresh);
           const restoration = await legacyRestoration();
+          if (await restoration?.expandedPreparing() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Historical recovery requires the trusted release probe.' }); return;
+          }
           if (publishRestoration && (!restoration || !await restoration.isActive())) {
             res.status(409).json({ error: 'Initial report publication is not active.' }); return;
           }
           const previous = await legacyPreviousRestoration();
-          const retained = await restoration?.readSnapshot(key) ?? await previous?.readSnapshot(key);
+          const retained = await restoration?.readSnapshot(key)
+            ?? (cohort ? await restoration?.readCompatibleSnapshot(reportUrl, cohort) : null)
+            ?? await previous?.readSnapshot(key);
           const useRetained = retained && (!refresh || !await restoration!.isActive());
           const scopedLoad = () => withLegacyReportScope(key, async () => {
               const value = await (cohort ? withCustomerCohort(cohort.cacheKey, load) : load());
@@ -5811,8 +5817,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
           if (restoration && publishRestoration) {
             if (result.refreshError) { res.status(503).json({ error: 'Initial refresh failed; no report was published.' }); return; }
-            await restoration.saveSnapshot(key, result.value, result.at);
+            await restoration.saveSnapshot(key, result.value, result.at, cohort ? { reportUrl, cohort } : undefined);
           }
+          if (retained?.cohortAsOf && useRetained) res.set('X-Metrics-Cohort-As-Of', retained.cohortAsOf);
+          else if (cohort) res.set('X-Metrics-Cohort-As-Of', cohort.asOf);
           res.set('X-Metrics-Cache', result.state);
           res.set('X-Metrics-Updated-At', new Date(result.at).toISOString());
           res.set('X-Metrics-Refreshing', result.refreshing ? '1' : '0');

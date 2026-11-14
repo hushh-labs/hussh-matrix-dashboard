@@ -185,7 +185,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne, publicationAsOf
           {rangeError && <p role="alert" className="text-xs text-danger">{rangeError}</p>}
         </div>
       </details>
-      <MetricsUpdateStatus period={rangeLabel(period)} updatedAt={brief ? resource.updatedAt : null} loading={resource.loading} refreshing={resource.refreshing} error={error} />
+      <MetricsUpdateStatus period={rangeLabel(period)} updatedAt={brief ? resource.updatedAt : null} cohortAsOf={brief ? resource.cohortAsOf : null} loading={resource.loading} refreshing={resource.refreshing} error={error} />
     </section>
     <p className="overview-comparison">Compared with the previous {period.days === 1 ? 'day' : `${period.days} days`} · completed days only</p>
     {resource.loading && !brief ? <MetricsSkeleton label="Loading the selected briefing period" />

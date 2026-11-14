@@ -11,6 +11,33 @@ export interface CustomerCohort {
   rows: ReadonlyArray<{ analyticsUserId: string; registeredAt: string | null }>;
 }
 const unavailable = () => new Error('Production customer membership could not be verified.');
+export interface CohortSnapshotWitness { policyRevision: string; asOf: string; rowsHash: string }
+
+/** No member identifiers are persisted; the digest binds the exact captured roster. */
+export function cohortSnapshotWitness(cohort: CustomerCohort): CohortSnapshotWitness | null {
+  requireFreshCohort(cohort);
+  if (!/^[a-f0-9]{64}$/.test(cohort.policyRevision) || !Number.isFinite(Date.parse(cohort.asOf))
+    || cohort.rows.some(row => !validHash(row.analyticsUserId) || row.registeredAt === null
+      || !Number.isFinite(Date.parse(row.registeredAt)) || Date.parse(row.registeredAt) > Date.parse(cohort.asOf))) return null;
+  const rowsHash = createHash('sha256').update(JSON.stringify([cohort.policyRevision, cohort.rows])).digest('hex');
+  if (rowsHash !== cohort.cacheKey) return null;
+  return { policyRevision: cohort.policyRevision, asOf: cohort.asOf, rowsHash };
+}
+
+/** Accept only later registrations; removals, changed policy or uncertain dates fail closed. */
+export function cohortMatchesSnapshotWitness(cohort: CustomerCohort, witness: CohortSnapshotWitness): boolean {
+  requireFreshCohort(cohort);
+  if (!witness || !/^[a-f0-9]{64}$/.test(witness.policyRevision ?? '') || !/^[a-f0-9]{64}$/.test(witness.rowsHash ?? '')
+    || cohort.policyRevision !== witness.policyRevision || !Number.isFinite(Date.parse(witness.asOf))
+    || !Number.isFinite(Date.parse(cohort.asOf)) || Date.parse(cohort.asOf) < Date.parse(witness.asOf)
+    || cohort.rows.some(row => !validHash(row.analyticsUserId) || row.registeredAt === null
+      || !Number.isFinite(Date.parse(row.registeredAt)))) return false;
+  if (createHash('sha256').update(JSON.stringify([cohort.policyRevision, cohort.rows])).digest('hex') !== cohort.cacheKey) return false;
+  const rows = cohort.rows.filter(row => Date.parse(row.registeredAt!) <= Date.parse(witness.asOf));
+  return createHash('sha256').update(JSON.stringify([cohort.policyRevision, rows])).digest('hex') === witness.rowsHash;
+}
+
+
 const validHash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{32}$/.test(value);
 
 export function requireFreshCohort(cohort: CustomerCohort, now = Date.now()) {
