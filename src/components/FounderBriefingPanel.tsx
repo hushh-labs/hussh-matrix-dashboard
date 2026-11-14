@@ -114,6 +114,8 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne, publicationAsOf
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [chartMode, setChartMode] = useState<ChartMode>('accounts');
   const latestComplete = founderLatestCompleteDate();
+  const presetClock = publicationAsOf ? new Date(publicationAsOf) : undefined;
+  const presetDay = founderLatestCompleteDate(presetClock);
   const briefingUrl = (range: FounderPeriod) => '/api/analytics/founder?' + new URLSearchParams({ start_date: range.startDate, end_date: range.endDate });
   const resource = useMetricsResource<FounderBriefingData>(briefingUrl(period), { refreshKey });
   const brief = resource.data?.period && resource.data.one?.platforms && resource.data.one?.agents && resource.data.one?.daily && resource.data.search ? resource.data : null;
@@ -163,7 +165,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne, publicationAsOf
       <span className="text-sm font-medium text-ink">Reporting period{publicationAsOf ? ` · saved ${publicationAsOf.slice(0, 10)} UTC` : ''}</span>
       <ReportTabs label="Overview reporting period" value={selection}
         options={[{ value: 'day', label: 'Latest complete day' }, { value: '7d', label: '7 days' }, { value: '30d', label: '30 days' }, { value: '90d', label: '90 days' }]}
-        onChange={value => applyRange(value === 'day' ? founderCustomRange(latestComplete, latestComplete) : founderPresetRange(Number(value.replace('d', '')) as 7 | 30 | 90), value)} />
+        onChange={value => applyRange(value === 'day' ? founderCustomRange(presetDay, presetDay) : founderPresetRange(Number(value.replace('d', '')) as 7 | 30 | 90, presetClock), value)} />
       <details className="overview-more-dates">
         <summary><CalendarDays size={15} aria-hidden="true" />More dates</summary>
         <div className="overview-date-fields">

@@ -32,4 +32,27 @@ export async function verifyNativeLegacyRestoration(db: Firestore) {
   assert.equal(await stores[1].readSnapshot('cohort-B:report'), null);
   await assert.rejects(stores[1].reserve(grants[0]!), /held/);
   assert.equal((await ref.collection('reservations').get()).size, 2);
+
+  const recoveryId = 'restore_' + randomUUID().replaceAll('-', '').slice(0, 16), recoverySource = 'e'.repeat(40);
+  const recoveryRef = db.doc(`metricsRestorationPermits/${recoveryId}`);
+  const previousReservedBytes = (await ref.get()).data()!.reservedBytes;
+  const recovery = { source: recoverySource, phase: 'planning', createdAt: now, expiresAt: now + 600_000,
+    asOf: new Date(now).toISOString(), maxBytes: 64 * 1024 ** 2, maxJobs: 2, plans: {}, reservedBytes: 0, reservedJobs: 0,
+    previousPermitId: id, previousSource: source, previousReservedBytes };
+  await db.doc(`metricsRestorationRecoveryClaims/${id}`).create({ previousPermitId: id, previousSource: source,
+    previousReservedBytes, recoveryPermitId: recoveryId, recoverySource, maxBytes: recovery.maxBytes,
+    maxJobs: recovery.maxJobs, createdAt: recovery.createdAt, expiresAt: recovery.expiresAt });
+  await recoveryRef.create(recovery);
+  const newer = [new LegacyRestoration(db, recoveryId, recoverySource, () => now, { id, source }),
+    new LegacyRestoration(db, recoveryId, recoverySource, () => now, { id, source })];
+  await assert.rejects(scoped(() => newer[0].admit({ query: 'SELECT 3' }, 1)), /recorded/);
+  const newPlans = (await recoveryRef.get()).data()!.plans;
+  await recoveryRef.update({ phase: 'open', approvedPlanDigest: restorationPlanDigest(newPlans) });
+  const nextGrant = (await scoped(() => newer[0].admit({ query: 'SELECT 3' }, 1)))!;
+  await Promise.all(Array.from({ length: 6 }, (_, i) => newer[i % 2].reserve(nextGrant)));
+  assert.equal((await recoveryRef.get()).data()!.reservedJobs, 1);
+  assert.equal((await ref.get()).data()!.reservedBytes, previousReservedBytes);
+  assert.deepEqual(await stores[1].readSnapshot('cohort-A:report'), { at: start, value });
+  await db.doc(`metricsRestorationRecoveryClaims/${id}`).update({ maxBytes: recovery.maxBytes + 1 });
+  await assert.rejects(newer[0].reserve(nextGrant), /held/);
 }

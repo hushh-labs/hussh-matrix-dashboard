@@ -404,6 +404,24 @@ test('exact-day reporting and adjacent-day controls use existing API date parame
   await customRequest;
 });
 
+test('retained reporting presets keep the saved date across UTC midnight', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-11-16T00:05:00Z') });
+  await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true,
+    publicationAsOf: '2026-11-14T19:33:10.257Z', user: { email: 'qa@example.invalid', name: 'QA reviewer' } } }));
+  await page.goto('/'); await navigate(page, 'One app');
+  for (const [label, start] of [['30 days', '2026-10-16'], ['90 days', '2026-08-17']]) {
+    const pending = page.waitForRequest(request => {
+      const url = new URL(request.url());
+      return url.pathname === '/api/analytics/all' && url.searchParams.get('one_start_date') === start
+        && url.searchParams.get('one_end_date') === '2026-11-14';
+    });
+    await page.getByRole('button', { name: label, exact: true }).click();
+    await pending;
+    await expect(page.getByText(/2026-11-14/).first()).toBeVisible();
+  }
+});
+
 test('daily agent traffic shows real drops, withholds missing data and preserves test-source separation', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await mockDashboard(page);

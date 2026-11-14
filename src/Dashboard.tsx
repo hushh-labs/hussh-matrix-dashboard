@@ -1162,6 +1162,7 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 
 export default function Dashboard() {
   const { user, signOut } = useAuth();
+  const presetRange = (days: DatePreset) => rangeForPreset(days, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined);
   // The founder lands on the compact production briefing; diagnostic tabs
   // remain available on demand.
   const [locationRoute, setLocationRoute] = useState<LocationAnalyticsRoute | null>(() => (
@@ -1741,7 +1742,7 @@ export default function Dashboard() {
               <DateRangeControl
                 range={oneRange}
                 refreshing={isRefreshing}
-                onPreset={(days) => setOneRange(rangeForPreset(days))}
+                onPreset={(days) => setOneRange(presetRange(days))}
                 onCustomRange={setOneRange}
                 ariaLabelPrefix="Growth" {...dateEditor('Growth')}
               />
@@ -1773,7 +1774,7 @@ export default function Dashboard() {
               <DateRangeControl
                 range={oneRange}
                 refreshing={isRefreshing}
-                onPreset={(days) => setOneRange(rangeForPreset(days))}
+                onPreset={(days) => setOneRange(presetRange(days))}
                 onCustomRange={setOneRange}
                 ariaLabelPrefix="One app" {...dateEditor('One app')}
               />
@@ -1790,7 +1791,7 @@ export default function Dashboard() {
               <DateRangeControl
                 range={oneRange}
                 refreshing={isRefreshing}
-                onPreset={(days) => setOneRange(rangeForPreset(days))}
+                onPreset={(days) => setOneRange(presetRange(days))}
                 onCustomRange={setOneRange}
                 ariaLabelPrefix="Hussh Connect" {...dateEditor('Hussh Connect')}
               />
@@ -1799,8 +1800,8 @@ export default function Dashboard() {
         ) : activeTab === 'overview' ? (
           loading ? <main className="space-y-6">
             <div className="grid gap-3 lg:grid-cols-2">
-              <DateRangeControl range={kaiRange} onPreset={days => setKaiRange(rangeForPreset(days))} onCustomRange={setKaiRange} ariaLabelPrefix="One web" {...dateEditor('One web')} />
-              <DateRangeControl range={hushhAiRange} onPreset={days => setHushhAiRange(rangeForPreset(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hussh AI" {...dateEditor('Hussh AI')} />
+              <DateRangeControl range={kaiRange} onPreset={days => setKaiRange(presetRange(days))} onCustomRange={setKaiRange} ariaLabelPrefix="One web" {...dateEditor('One web')} />
+              <DateRangeControl range={hushhAiRange} onPreset={days => setHushhAiRange(presetRange(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hussh AI" {...dateEditor('Hussh AI')} />
             </div>
             <MetricsSkeleton />
           </main> : <main className="space-y-10">
@@ -1836,7 +1837,7 @@ export default function Dashboard() {
                   <DateRangeControl
                     range={kaiRange}
                     refreshing={isRefreshing}
-                    onPreset={(days) => setKaiRange(rangeForPreset(days))}
+                    onPreset={(days) => setKaiRange(presetRange(days))}
                     onCustomRange={setKaiRange}
                     ariaLabelPrefix="One production" {...dateEditor('One production')}
                   />
@@ -1933,7 +1934,7 @@ export default function Dashboard() {
                   <DateRangeControl
                     range={hushhAiRange}
                     refreshing={isRefreshing}
-                    onPreset={(days) => setHushhAiRange(rangeForPreset(days))}
+                    onPreset={(days) => setHushhAiRange(presetRange(days))}
                     onCustomRange={setHushhAiRange}
                     ariaLabelPrefix="Hussh AI" {...dateEditor('Hussh AI')}
                   />
