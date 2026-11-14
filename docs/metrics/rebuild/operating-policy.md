@@ -16,6 +16,13 @@ These are inherited containment ceilings, not approved targets or permission to
 execute. Earlier operator 70 MiB diagnostic approvals were individual queries,
 not standing collection authorization.
 
+The user's 14 November request for optimized BigQuery planning is addressed by
+the [estimate-only preflight and staged reactivation packet](./bigquery-reactivation.md).
+Its one fixed historical capture diagnostic is not a reporting definition,
+paid execution approval or standing collection allowance. The legacy web query
+flag, refresh schedules and collection hold remain closed; a recoverable
+warehouse collector is still required before a paid pilot.
+
 The Firestore daily budget and its reservation records are durable across
 instances, and the wrapper has no refund path for a reserved invocation. A
 timeout, RPC error or process interruption does not remove that budget record.
