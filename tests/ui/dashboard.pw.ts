@@ -424,7 +424,6 @@ test('daily agent traffic shows real drops, withholds missing data and preserves
   await expect(page.getByText('One app data is unavailable for this selection.', { exact: true })).toBeVisible();
   await expect(section).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Main analytics' }).click();
-  await page.getByText('Compare daily feature activity', { exact: true }).click();
   await expect(section).toBeVisible();
 });
 
