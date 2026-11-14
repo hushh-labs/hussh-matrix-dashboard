@@ -15,6 +15,7 @@ export interface RestorationPermit {
   reservedBytes: number; reservedJobs: number;
   approvedPlanDigest?: string;
   previousPermitId?: string; previousSource?: string; previousReservedBytes?: number;
+  observations?: Record<string, { bytes: number; reports: string[] }>;
 }
 export interface RestorationGrant { permitId: string; planHash: string; id: string; bytes: number }
 const scope = new AsyncLocalStorage<{ key: string; failed: boolean }>();
@@ -51,6 +52,10 @@ export function validPermit(value: unknown, source: string, now: number): Restor
     || !p.plans || Array.isArray(p.plans) || Object.keys(p.plans).length > p.maxJobs
     || Object.entries(p.plans).some(([key, bytes]) => !/^[a-f0-9]{64}$/.test(key)
       || !Number.isSafeInteger(bytes) || bytes < 1 || bytes > RESTORATION_LIMITS.bytesPerJob)
+    || (p.observations !== undefined && (!p.observations || Array.isArray(p.observations)
+      || Object.keys(p.observations).length > 500 || Object.entries(p.observations).some(([key, item]) =>
+        !/^[a-f0-9]{64}$/.test(key) || !Number.isSafeInteger(item?.bytes) || item.bytes < 1 || item.bytes > 512 * 1024 ** 3
+        || !Array.isArray(item.reports) || item.reports.length > 32 || item.reports.some(report => typeof report !== 'string' || !report.startsWith('/api/analytics/') || report.length > 2048))))
     || (p.phase !== 'planning' && p.approvedPlanDigest !== restorationPlanDigest(p.plans))) throw fail();
   return p;
 }
@@ -97,7 +102,7 @@ export function freezeRestorationSql(sql: string, asOf: string) {
 
 export class LegacyRestoration {
   constructor(private db: Database, private id: string, private source: string, private now = Date.now,
-    private previous?: { id: string; source: string }) {
+    private previous?: { id: string; source: string }, private diagnostic = false) {
     if (!/^restore_[a-f0-9]{16}$/.test(id) || !/^[a-f0-9]{40}$/.test(source)) throw fail();
   }
   private ref() { return this.db.doc(`metricsRestorationPermits/${this.id}`); }
@@ -138,6 +143,7 @@ export class LegacyRestoration {
   async isPreparing() { const p = await this.permit(); return p.phase !== 'closed' && p.expiresAt > this.now(); }
   async prepare(request: Query) {
     const p = await this.permit();
+    if (this.diagnostic && (p.phase !== 'planning' || p.expiresAt <= this.now())) throw fail();
     if (p.phase === 'planning' && p.expiresAt <= this.now()) throw fail();
     if (p.phase === 'closed' || p.expiresAt <= this.now()) return request;
     if (!scope.getStore() || request.params !== undefined || request.types !== undefined || typeof request.query !== 'string') throw fail();
@@ -161,6 +167,25 @@ export class LegacyRestoration {
       project: 'hushh-ai-prod', location: 'US', asOf: initial.asOf, query: request.query }));
     const unit = 10 * 1024 ** 2;
     const bytes = Math.max(unit, Math.ceil(estimated / unit) * unit + unit);
+    if (this.diagnostic) {
+      if (initial.phase !== 'planning' || bytes > 512 * 1024 ** 3) throw fail();
+      const report = reportScope.slice(separator + 1);
+      if (report.length > 2048) throw fail();
+      await this.db.runTransaction(async tx => {
+        const ref = this.ref(), snapshot = await tx.get(ref), p = validPermit(snapshot.data(), this.source, this.now());
+        const previousRef = this.previousRef(), claimRef = this.claimRef();
+        this.checkPrevious(p, previousRef ? (await tx.get(previousRef)).data() : undefined, claimRef ? (await tx.get(claimRef)).data() : undefined);
+        if (p.phase !== 'planning' || p.expiresAt <= this.now() || p.asOf !== initial.asOf) throw fail();
+        const observations = { ...p.observations }, existing = observations[planHash];
+        if (!existing && Object.keys(observations).length >= 500) throw fail();
+        const reports = [...new Set([...(existing?.reports ?? []), report])].sort();
+        if (reports.length > 32) throw fail();
+        observations[planHash] = { bytes: Math.max(bytes, existing?.bytes ?? 0), reports };
+        if (Buffer.byteLength(JSON.stringify(observations)) > 700_000) throw fail();
+        tx.update(ref, { observations });
+      });
+      throw new Error('Diagnostic estimate recorded; no query was executed.');
+    }
     if (bytes > RESTORATION_LIMITS.bytesPerJob) throw fail();
     if (initial.phase === 'planning') {
       await this.db.runTransaction(async tx => {
@@ -181,6 +206,7 @@ export class LegacyRestoration {
     return { permitId: this.id, planHash, id: `metrics_${this.id}_${planHash}`, bytes: initial.plans[planHash] };
   }
   async reserve(grant: RestorationGrant) {
+    if (this.diagnostic) throw fail();
     if (grant.permitId !== this.id || !/^[a-f0-9]{64}$/.test(grant.planHash)
       || grant.id !== `metrics_${this.id}_${grant.planHash}`) throw fail();
     await this.db.runTransaction(async tx => {
@@ -211,6 +237,7 @@ export class LegacyRestoration {
     return value?.status === 200 && value.body ? { at: row.at, value } : null;
   }
   async saveSnapshot(key: string, value: { status: number; body: unknown }, at: number) {
+    if (this.diagnostic) throw fail();
     const json = JSON.stringify(value);
     if (value.status !== 200 || Buffer.byteLength(json) > RESTORATION_LIMITS.snapshotBytes) return;
     await this.db.runTransaction(async tx => {
@@ -230,6 +257,7 @@ export class LegacyRestoration {
     });
   }
 }
+export const legacyDiagnosticOnly = () => process.env.METRICS_LEGACY_DIAGNOSTIC_ONLY === '1';
 let current: { key: string; promise: Promise<LegacyRestoration> } | undefined;
 let prior: { key: string; promise: Promise<LegacyRestoration> } | undefined;
 function recoveryConfig() {
@@ -251,7 +279,9 @@ export function legacyRestoration(): Promise<LegacyRestoration | null> {
   if (recovery && !old) throw fail();
   const c = recovery ?? old;
   if (!c) return Promise.resolve(null);
-  const key = `${c.id}:${c.source}:${recovery ? `${old!.id}:${old!.source}` : ''}`;
-  if (current?.key !== key) current = { key, promise: nativeDatabase().then(db => new LegacyRestoration(db, c.id, c.source, Date.now, recovery ? old! : undefined)) };
+  const diagnostic = legacyDiagnosticOnly();
+  if (diagnostic && !recovery) throw fail();
+  const key = `${c.id}:${c.source}:${recovery ? `${old!.id}:${old!.source}` : ''}:${diagnostic}`;
+  if (current?.key !== key) current = { key, promise: nativeDatabase().then(db => new LegacyRestoration(db, c.id, c.source, Date.now, recovery ? old! : undefined, diagnostic)) };
   return current.promise;
 }

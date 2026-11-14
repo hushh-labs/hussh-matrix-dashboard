@@ -91,6 +91,13 @@ describe('BigQuery execution boundary', () => {
     expect(sdk.createQueryJob.mock.calls.filter(([value]: any) => !value.dryRun)).toHaveLength(1);
     expect(getQueryResults).toHaveBeenCalledTimes(1);
   });
+  it('never reserves or executes while diagnostic mode is set', async () => {
+    vi.stubEnv('METRICS_LEGACY_DIAGNOSTIC_ONLY', '1');
+    const reserve = vi.fn(), execute = vi.fn();
+    const run = createGuardedBigQuery({ budget: { reserve }, execute, enabled: () => true, estimate: async () => 1 });
+    await expect(run('hushh-ai-prod', { query: 'SELECT 1' })).rejects.toThrow('Diagnostic mode cannot execute');
+    expect(reserve).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
+  });
   it('rejects oversized, invalid and failed free estimates without consuming the daily allowance', async () => {
     const reserve = vi.fn(); const execute = vi.fn();
     for (const value of [limits.bytesPerStatement + 1, -1, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {

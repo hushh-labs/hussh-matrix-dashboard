@@ -128,6 +128,26 @@ describe('finite initial restoration', () => {
     claim.recoveryPermitId = nextId; old.previousPermitId = 'restore_0000000000000000';
     await expect(recovery.isPreparing()).rejects.toThrow('held');
   });
+  it('records bounded dry-run observations without reserving or permitting execution', async () => {
+    const f = fixture(); f.open(); const old = f.db.values.get(path); old.phase = 'closed';
+    const nextId = 'restore_abcdefabcdefabcd', nextSource = 'c'.repeat(40), nextPath = `metricsRestorationPermits/${nextId}`;
+    const next = { ...permit(), source: nextSource, previousPermitId: id, previousSource: source,
+      previousReservedBytes: old.reservedBytes };
+    f.db.values.set(nextPath, next);
+    f.db.values.set(`metricsRestorationRecoveryClaims/${id}`, { previousPermitId: id, previousSource: source,
+      previousReservedBytes: old.reservedBytes, recoveryPermitId: nextId, recoverySource: nextSource,
+      maxBytes: next.maxBytes, maxJobs: next.maxJobs, createdAt: next.createdAt, expiresAt: next.expiresAt });
+    const diagnostic = new LegacyRestoration(f.db.native(), nextId, nextSource, () => start, { id, source }, true);
+    await expect(f.inScope(() => diagnostic.admit({ query: 'SELECT 1' }, 5 * 1024 ** 3))).rejects.toThrow('Diagnostic estimate recorded');
+    const observations = Object.values(f.db.values.get(nextPath).observations) as Array<{ bytes: number; reports: string[] }>;
+    expect(observations).toHaveLength(1); expect(observations[0].bytes).toBeGreaterThan(5 * 1024 ** 3);
+    expect(observations[0].reports).toEqual(['/api/analytics/founder?day=2026-11-05']);
+    expect(f.db.values.get(nextPath).reservedJobs).toBe(0); expect(f.db.values.get(nextPath).plans).toEqual({});
+    await expect(diagnostic.reserve({ permitId: nextId, planHash: 'a'.repeat(64), id: 'anything', bytes: 1 })).rejects.toThrow('held');
+    await expect(diagnostic.saveSnapshot('key', { status: 200, body: {} }, start)).rejects.toThrow('held');
+    f.db.values.get(nextPath).phase = 'closed'; f.db.values.get(nextPath).approvedPlanDigest = restorationPlanDigest({});
+    await expect(diagnostic.prepare({ query: 'SELECT 1' })).rejects.toThrow('held');
+  });
   it('never freezes string literals, escaped identifiers or comments as SQL clock functions', () => {
     const sql = "SELECT CURRENT_DATE('UTC'), CURRENT_TIMESTAMP(), 'CURRENT_TIMESTAMP()', `CURRENT_DATE()` -- CURRENT_DATE()\n/* CURRENT_TIMESTAMP() */";
     expect(freezeRestorationSql(sql, new Date(start).toISOString())).toBe(

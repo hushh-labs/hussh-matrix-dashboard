@@ -25,7 +25,7 @@ import { fileURLToPath } from 'url';
 import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromValue } from './src/lib/agent-product-routing';
 import type { ProductKey } from './src/lib/agent-product-routing';
 import { FOUNDER_EARLIEST_DATE, founderCustomRange, founderPresetRange } from './src/lib/founder-briefing';
-import { legacyRestoration, legacyPreviousRestoration, legacyReportFailed, withLegacyReportScope } from './src/server/legacy-restoration';
+import { legacyRestoration, legacyPreviousRestoration, legacyDiagnosticOnly, legacyReportFailed, withLegacyReportScope } from './src/server/legacy-restoration';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
@@ -5774,6 +5774,9 @@ function registerAnalyticsRoutes(app: express.Express): void {
     get(paths: string | string[], handler: express.RequestHandler) {
       app.get(paths, async (req, res) => {
         try {
+          if (legacyDiagnosticOnly() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Diagnostic planning requires the trusted release probe.' }); return;
+          }
           const publishRestoration = req.get('X-Metrics-Restoration-Publish') === '1';
           if (publishRestoration && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Initial report publication requires the trusted release probe.' }); return;
