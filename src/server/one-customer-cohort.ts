@@ -147,6 +147,18 @@ export async function withCustomerCohort<T>(expectedKey: string, load: () => Pro
   });
 }
 
+/** Compose against a witnessed old roster only while every old member remains eligible. */
+export async function withWitnessedCustomerCohort<T>(witness: CohortSnapshotWitness, load: (cohort: CustomerCohort) => Promise<T>): Promise<T> {
+  const current = await readCurrentCustomerCohort(120_000);
+  if (!cohortMatchesSnapshotWitness(current, witness)) throw unavailable();
+  const rows = current.rows.filter(row => Date.parse(row.registeredAt!) <= Date.parse(witness.asOf));
+  const pinned: CustomerCohort = Object.freeze({ ...current, asOf: witness.asOf, cacheKey: witness.rowsHash, rows: Object.freeze(rows) });
+  const value = await queryCohort.run(pinned, () => load(pinned));
+  requireFreshCohort(pinned);
+  if (!cohortMatchesSnapshotWitness(await readCurrentCustomerCohort(), witness)) throw unavailable();
+  return value;
+}
+
 export function customerAccountCounts(cohort: CustomerCohort, range: { startDate: string; endDate: string }) {
   requireFreshCohort(cohort);
   if (cohort.rows.some(row => row.registeredAt === null)) throw unavailable();

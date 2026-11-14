@@ -715,6 +715,8 @@ function DateRangeControl({
   refreshing = false,
   expanded = false,
   onExpandedChange,
+  presetAsOf,
+  referenceNow,
 }: {
   range: HushhAiDateRangeState;
   onPreset: (days: DatePreset) => void;
@@ -723,11 +725,15 @@ function DateRangeControl({
   refreshing?: boolean;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  presetAsOf?: string | null;
+  referenceNow?: number;
 }) {
   const [draft, setDraft] = useState(range);
   useLayoutEffect(() => { setDraft(range); }, [range.startDate, range.endDate, range.preset]);
   const pending = draft.startDate !== range.startDate || draft.endDate !== range.endDate;
-  const today = toDateInputValue(new Date());
+  const today = toDateInputValue(new Date(referenceNow ?? Date.now()));
+  const presetClock = presetAsOf ? new Date(presetAsOf) : null;
+  const historicalAnchor = presetClock && Number.isFinite(presetClock.getTime()) && toDateInputValue(presetClock) < today;
   const presets: DatePreset[] = [1, 7, 14, 30, 90];
 
   return (
@@ -748,7 +754,7 @@ function DateRangeControl({
                 range.preset === days ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink',
               )}
             >
-              {days === 1 ? 'Today' : `${days} days`}
+              {days === 1 ? historicalAnchor ? 'Latest available day' : 'Today' : `${days} days`}
             </button>
           ))}
         </div>
@@ -1727,7 +1733,7 @@ export default function Dashboard() {
         else if (activeTab === 'compare') loadCompare();
         else loadData();
       }}>
-        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} cohortAsOf={resource.cohortAsOf} loading={loading} refreshing={isRefreshing} error={usingMock} />}
+        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} cohortAsOf={resource.cohortAsOf} computedAt={resource.computedAt} stale={resource.stale} loading={loading} refreshing={isRefreshing} error={usingMock} />}
         <Suspense fallback={<MetricsSkeleton label="Opening this metrics section" />} >
         {activeTab === 'briefing' ? (
           <FounderBriefingPanel publicationAsOf={user?.publicationAsOf} refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />
@@ -1745,7 +1751,7 @@ export default function Dashboard() {
             monthlyActive={data?.one?.activeUsers?.mau ?? null}
             rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
             dateControl={(
-              <DateRangeControl
+              <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow}
                 range={oneRange}
                 refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(presetRange(days))}
@@ -1777,7 +1783,7 @@ export default function Dashboard() {
             onCloseLocation={closeLocationAnalytics}
             onLocationRouteChange={changeLocationRoute}
             dateControl={(
-              <DateRangeControl
+              <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow}
                 range={oneRange}
                 refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(presetRange(days))}
@@ -1794,7 +1800,7 @@ export default function Dashboard() {
             appStoreConnect={data?.appStoreConnect ?? null}
             rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
             dateControl={(
-              <DateRangeControl
+              <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow}
                 range={oneRange}
                 refreshing={isRefreshing}
                 onPreset={(days) => setOneRange(presetRange(days))}
@@ -1806,8 +1812,8 @@ export default function Dashboard() {
         ) : activeTab === 'overview' ? (
           loading ? <main className="space-y-6">
             <div className="grid gap-3 lg:grid-cols-2">
-              <DateRangeControl range={kaiRange} onPreset={days => setKaiRange(presetRange(days))} onCustomRange={setKaiRange} ariaLabelPrefix="One web" {...dateEditor('One web')} />
-              <DateRangeControl range={hushhAiRange} onPreset={days => setHushhAiRange(presetRange(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hussh AI" {...dateEditor('Hussh AI')} />
+              <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow} range={kaiRange} onPreset={days => setKaiRange(presetRange(days))} onCustomRange={setKaiRange} ariaLabelPrefix="One web" {...dateEditor('One web')} />
+              <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow} range={hushhAiRange} onPreset={days => setHushhAiRange(presetRange(days))} onCustomRange={setHushhAiRange} ariaLabelPrefix="Hussh AI" {...dateEditor('Hussh AI')} />
             </div>
             <MetricsSkeleton />
           </main> : <main className="space-y-10">
@@ -1840,7 +1846,7 @@ export default function Dashboard() {
                 kicker="one.hushh.ai · production"
                 title="One website traffic and data status"
                 action={(
-                  <DateRangeControl
+                  <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow}
                     range={kaiRange}
                     refreshing={isRefreshing}
                     onPreset={(days) => setKaiRange(presetRange(days))}
@@ -1937,7 +1943,7 @@ export default function Dashboard() {
                 kicker="hushh.ai"
                 title="Analytics status matrix"
                 action={(
-                  <DateRangeControl
+                  <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow}
                     range={hushhAiRange}
                     refreshing={isRefreshing}
                     onPreset={(days) => setHushhAiRange(presetRange(days))}

@@ -7,7 +7,7 @@ import type { Query } from '@google-cloud/bigquery';
 // An operator-created, exact-source permit is separate from the normal daily
 // ledger. It cannot be activated, renewed or enlarged by an HTTP request.
 export const RESTORATION_LIMITS = Object.freeze({ bytes: 64 * 1024 ** 3, jobs: 80,
-  bytesPerJob: 16 * 1024 ** 3, windowMs: 60 * 60_000, snapshotMs: 24 * 60 * 60_000,
+  bytesPerJob: 16 * 1024 ** 3, windowMs: 60 * 60_000, snapshotMs: 90 * 24 * 60 * 60_000, staleMs: 24 * 60 * 60_000,
   snapshotBytes: 700_000, snapshots: 32 });
 // Hard safety envelope for a separately measured, explicitly claimed expansion.
 export const HISTORICAL_LIMITS = Object.freeze({ totalBytes: 2048 * 1024 ** 3, jobs: 500, bytesPerJob: 64 * 1024 ** 3 });
@@ -30,14 +30,21 @@ const scope = new AsyncLocalStorage<{ key: string; failed: boolean }>();
 export const withLegacyReportScope = <T>(key: string, load: () => Promise<T>) => scope.run({ key, failed: false }, load);
 export function noteLegacyQueryFailure() { const current = scope.getStore(); if (current) current.failed = true; }
 export const legacyReportFailed = () => scope.getStore()?.failed ?? true;
+const closedComposition = new AsyncLocalStorage<{ store: LegacyRestoration; jobs: Set<string> }>();
+/** Only the operator route creates this scope; it never authorizes a job submission. */
+export const withClosedComposition = <T>(store: LegacyRestoration, load: () => Promise<T>) =>
+  closedComposition.run({ store, jobs: new Set() }, async () => ({ value: await load(), jobs: [...closedComposition.getStore()!.jobs].sort() }));
+export const currentClosedComposition = () => closedComposition.getStore();
+
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export const restorationPlanDigest = (plans: Record<string, number>) => hash(JSON.stringify(Object.entries(plans).sort(([a], [b]) => a.localeCompare(b))));
 export const restorationReportDigest = (reports: string[]) => hash(JSON.stringify([...reports].sort()));
 export const restorationReuseDigest = (plans: Record<string, string>) => hash(JSON.stringify(Object.entries(plans).sort(([a], [b]) => a.localeCompare(b))));
 const fail = () => new Error('Initial report restoration is held by its finite allowance.');
+export class ClosedJobMissingError extends Error {}
 type Database = Pick<Firestore, 'doc' | 'runTransaction'>;
 let database: Promise<Database> | undefined;
-async function nativeDatabase() {
+export async function nativeDatabase() {
   return database ??= import('@google-cloud/firestore').then(({ Firestore }) => new Firestore({
     projectId: 'hushh-ai-prod', databaseId: 'one-plg-production' }));
 }
@@ -289,6 +296,41 @@ export class LegacyRestoration {
     if (!initial.plans[planHash] || bytes > initial.plans[planHash]) throw fail();
     return { permitId: this.id, planHash, id: `metrics_${this.id}_${planHash}`, bytes: initial.plans[planHash] };
   }
+  async closedDescriptor() {
+    const p = await this.permit();
+    if (p.phase !== 'closed' || !p.abandonedPermitId || this.now() - p.createdAt > RESTORATION_LIMITS.snapshotMs) throw fail();
+    return { id: this.id, source: this.source, asOf: p.asOf, createdAt: p.createdAt,
+      approvedPlanDigest: p.approvedPlanDigest!, approvedReportDigest: p.approvedReportDigest!, fixedReports: p.fixedReports! };
+  }
+  /** Bind source-generated SQL only to an existing, immutable reservation. */
+  async closedJob(request: Query) {
+    const p = await this.permit(), reportScope = scope.getStore()?.key;
+    if (p.phase !== 'closed' || !p.abandonedPermitId || this.now() - p.createdAt > RESTORATION_LIMITS.snapshotMs
+      || !reportScope || typeof request.query !== 'string' || request.params !== undefined || request.types !== undefined) throw fail();
+    const separator = reportScope.indexOf(':'), cohortScope = reportScope.slice(0, separator), report = reportScope.slice(separator + 1);
+    if (separator < 0 || !/^(?:[a-f0-9]{64})?$/.test(cohortScope) || !p.fixedReports!.includes(report)
+      || !/^(?:SELECT|WITH)\b/i.test(request.query.trim())) throw fail();
+    const query = freezeRestorationSql(request.query, p.asOf);
+    const planHash = hash(JSON.stringify({ schema: 1, source: this.source, cohortScope,
+      project: 'hushh-ai-prod', location: 'US', asOf: p.asOf, query }));
+    const reuseKey = hash(JSON.stringify([hash(query), cohortScope])), priorHash = p.reusePlans![reuseKey];
+    if (priorHash && this.previous) {
+      const original = validPermit((await this.previousRef()!.get()).data(), this.previous.source, this.now());
+      const expected = hash(JSON.stringify({ schema: 1, source: this.previous.source, cohortScope,
+        project: 'hushh-ai-prod', location: 'US', asOf: original.asOf, query }));
+      const reservation = (await this.previousRef()!.collection('reservations').doc(priorHash).get()).data();
+      const id = `metrics_${this.previous.id}_${priorHash}`, bytes = original.plans[priorHash];
+      if (expected !== priorHash || !Number.isSafeInteger(bytes) || bytes < 1
+        || reservation?.jobId !== id || reservation.bytes !== bytes) throw fail();
+      return { id, bytes, query };
+    }
+    const id = `metrics_${this.id}_${planHash}`;
+    const reservation = (await this.ref().collection('reservations').doc(planHash).get()).data();
+    if (reservation?.jobId !== id || !Number.isSafeInteger(reservation.bytes) || reservation.bytes < 1
+      || reservation.bytes > p.maxPerJobBytes!) throw new ClosedJobMissingError(`Completed-job reservation unavailable: ${planHash}`);
+    return { id, bytes: reservation.bytes as number, query };
+  }
+
   async reserve(grant: RestorationGrant) {
     if (this.diagnostic) throw fail();
     if (grant.reuse) {
@@ -337,6 +379,18 @@ export class LegacyRestoration {
     return row ? { at: row.at, value: row.value, ...(row.witness ? { cohortAsOf: row.witness.asOf } : {}) } : null;
   }
   /** New witnessed snapshots can survive additions after their capture cutoff. */
+  async capturedWitness(reportUrl: string): Promise<CohortSnapshotWitness | null> {
+    const p = await this.permit(), reportHash = hash(reportUrl);
+    if (p.phase !== 'closed' || !p.fixedReports?.includes(reportUrl)) throw fail();
+    const index = (await this.ref().collection('snapshotIndex').doc(reportHash).get()).data();
+    if (!index || index.schema !== 1 || index.source !== this.source || index.reportHash !== reportHash
+      || !Array.isArray(index.keys) || index.keys.length > RESTORATION_LIMITS.snapshots) return null;
+    for (const keyHash of [...index.keys].reverse()) {
+      const row = await this.snapshotRow(keyHash, p);
+      if (row?.witness) return row.witness;
+    }
+    return null;
+  }
   async readCompatibleSnapshot(reportUrl: string, cohort: CustomerCohort): Promise<{ at: number; value: { status: number; body: unknown }; cohortAsOf: string } | null> {
     if (!reportUrl.startsWith('/api/analytics/') || reportUrl.length > 2048) return null;
     const p = await this.permit(), reportHash = hash(reportUrl);
