@@ -28,7 +28,8 @@ export function reportingWorkerServer(config: ReportingRuntimeConfig, runtime: R
   };
   const server = createServer(async (req, res) => {
     try {
-      if (req.method === 'GET' && req.url === '/healthz') return reply(res, 200, { status: 'ok' });
+      // Google Frontend can reserve paths ending in z; retain the old local alias.
+      if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) return reply(res, 200, { status: 'ok' });
       const roles: Record<string, string> = {
         '/internal/metrics/read': config.webInvokerEmail, '/internal/metrics/request': config.webInvokerEmail,
         '/internal/metrics/status': config.webInvokerEmail, '/internal/metrics/collect': config.taskInvokerEmail,
