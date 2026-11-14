@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { AGENT_MEASUREMENTS, featureTrackingGap } from '../src/lib/agent-measurement-contract.mjs';
-import { exactCount, eventsPerDevice, eventVolumeExplanation, featureMeasurementNote, featureMeasurementState, unclassifiedEvents } from '../src/lib/feature-measurement';
+import { exactCount, eventsPerDevice, eventVolumeExplanation, featureActivityDescription, featureActivityLabel, featureMeasurementNote, featureMeasurementState, unclassifiedEvents } from '../src/lib/feature-measurement';
 
 describe('feature metric units', () => {
+  it('distinguishes all sharing events from successful confirmations', () => {
+    expect(featureActivityLabel('live_sharing', 'old')).toBe('Sharing activity');
+    expect(featureActivityDescription('live_sharing')).toContain('non-success or unclassified');
+    expect(featureMeasurementNote('live_sharing')).toContain('only records with a success result');
+  });
+
   it('measures revoke outcomes separately while retaining their general consent classification', () => {
     const withdrawal = AGENT_MEASUREMENTS.find(row => row.key === 'revocation_submitted')!;
     expect(withdrawal.events).toEqual(['consent_action_result']);

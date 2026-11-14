@@ -27,6 +27,7 @@ import type { ProductKey } from './src/lib/agent-product-routing';
 import { FOUNDER_EARLIEST_DATE, founderCustomRange, founderPresetRange } from './src/lib/founder-briefing';
 import { legacyRestoration, legacyPreviousRestoration, legacyDiagnosticOnly, legacyReportFailed, withLegacyReportScope, currentClosedComposition, withClosedComposition, ClosedJobMissingError, noteLegacyQueryFailure } from './src/server/legacy-restoration';
 import { closedComposer } from './src/server/closed-composer';
+import { closedMeasurement, currentClosedMeasurement, withClosedMeasurement } from './src/server/closed-measurement';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
@@ -2521,7 +2522,15 @@ async function queryOnePlatformCapture(projectId:string, queries:ReturnType<type
       let query = queries.combined, combined = Boolean(query);
       if (query) {
         try { await composition.store.closedJob({ query }); }
-        catch (error) { if (!(error instanceof ClosedJobMissingError)) throw error; query = ''; combined = false; }
+        catch (error) {
+          if (!(error instanceof ClosedJobMissingError)) throw error;
+          // A fixed diagnostic may measure an unplanned missing combined query;
+          // this read-only request cannot submit it as a paid job.
+          if (currentClosedMeasurement() && error.plannedBytes === undefined) {
+            try { await guardedBigQuery(projectId, { query }); } catch { /* held after the bounded dry run */ }
+          }
+          query = ''; combined = false;
+        }
       }
       query ||= queries.baseline;
       const rows = await queryBigQuerySqlUncached(projectId, query);
@@ -5794,6 +5803,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (legacyDiagnosticOnly() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Diagnostic planning requires the trusted release probe.' }); return;
           }
+          const measureClosed = req.get('X-Metrics-Measure-Closed') === '1';
+          if (measureClosed && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Closed-job measurement requires the trusted release probe.' }); return;
+          }
           const composePublication = req.get('X-Metrics-Compose') === '1';
           if (composePublication && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Closed-job composition requires the trusted release probe.' }); return;
@@ -5815,6 +5828,21 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const load = () => capture(handler, sourceRequest, refresh);
           const restoration = await legacyRestoration();
           const composer = await closedComposer();
+          if (measureClosed) {
+            const measurement = await closedMeasurement();
+            if (!measurement || !restoration || composePublication || publishRestoration) { res.status(409).json({ error: 'Closed-job measurement is not configured.' }); return; }
+            await measurement.requireOpen(reportUrl);
+            const perform = async (captured: typeof cohort) => {
+              const measurementKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
+              return withLegacyReportScope(measurementKey, () => withClosedMeasurement(measurement, reportUrl,
+                () => withClosedComposition(restoration, () => capture(handler, sourceRequest, true))));
+            };
+            if (cohort) {
+              const witness = await measurement.witness(); if (!witness) throw new Error('No captured cohort witness.');
+              await withWitnessedCustomerCohort(witness, pinned => perform(pinned));
+            } else await perform(null);
+            res.status(200).json({ state: 'measurement attempted', paidQueries: 0 }); return;
+          }
           if (composePublication) {
             if (!composer || !restoration || publishRestoration) { res.status(409).json({ error: 'Closed-job composition is not configured.' }); return; }
             await composer.requireOpen(reportUrl);

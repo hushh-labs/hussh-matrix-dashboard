@@ -26,7 +26,7 @@ export function eventVolumeExplanation(events: number | null, devices: number | 
 }
 
 const activityDescriptions: Record<string, string> = {
-  live_sharing: 'Sharing confirmations, including shares made during Check-In. Location views are counted separately.',
+  live_sharing: 'All recorded sharing confirmation events, including non-success or unclassified results. Successful confirmations are shown separately; location views are counted separately.',
   location_viewed: 'Times a shared location was viewed. Repeat views count again.',
   check_in: 'Check-in steps and results. A check-in can also create a sharing confirmation.',
   check_out: 'Times a check-out was recorded.',
@@ -80,6 +80,7 @@ export function featureActivityDescription(key: string): string {
 }
 
 const activityLabels: Record<string, string> = {
+  live_sharing: 'Sharing activity',
   auth_started: 'Sign-in started', phone_verified: 'Phone verification steps', google_signin: 'Google sign-in steps',
   profile_created: 'Profile creation', onboarding_completed: 'Account setup completed',
   portfolio_view: 'Portfolio views', ai_recommendation: 'Recommendation views',
@@ -95,7 +96,7 @@ export function featureActivityLabel(key: string, fallback: string): string {
 }
 
 const featureNotes: Record<string, string> = {
-  live_sharing: 'Counts one_location_share_confirmed records. Check-In can also emit this event. These are confirmations, not unique sharing sessions or recipients; viewing a shared location is counted separately.',
+  live_sharing: 'Counts all one_location_share_confirmed records, including non-success or unclassified results. The confirmed-shares card counts only records with a success result. Check-In can also emit this event; viewing a shared location is counted separately.',
   location_viewed: 'Counts one_location_journey_action with action=location_share_viewed. Repeated view records count again; they do not mean a new share was sent or a new person joined.',
   check_in: 'Counts check-in events and journey action nearby_check_in_result. A Check-In may also emit a sharing confirmation, so feature rows overlap.',
   check_out: 'Counts events matching check_out. These record the end of a check-in, not a new sharing session.',

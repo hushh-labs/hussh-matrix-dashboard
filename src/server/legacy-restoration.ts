@@ -41,7 +41,11 @@ export const restorationPlanDigest = (plans: Record<string, number>) => hash(JSO
 export const restorationReportDigest = (reports: string[]) => hash(JSON.stringify([...reports].sort()));
 export const restorationReuseDigest = (plans: Record<string, string>) => hash(JSON.stringify(Object.entries(plans).sort(([a], [b]) => a.localeCompare(b))));
 const fail = () => new Error('Initial report restoration is held by its finite allowance.');
-export class ClosedJobMissingError extends Error {}
+export class ClosedJobMissingError extends Error {
+  constructor(public planHash: string, public plannedBytes: number | undefined) {
+    super(`Completed-job reservation unavailable: ${planHash}`);
+  }
+}
 type Database = Pick<Firestore, 'doc' | 'runTransaction'>;
 let database: Promise<Database> | undefined;
 export async function nativeDatabase() {
@@ -327,7 +331,7 @@ export class LegacyRestoration {
     const id = `metrics_${this.id}_${planHash}`;
     const reservation = (await this.ref().collection('reservations').doc(planHash).get()).data();
     if (reservation?.jobId !== id || !Number.isSafeInteger(reservation.bytes) || reservation.bytes < 1
-      || reservation.bytes > p.maxPerJobBytes!) throw new ClosedJobMissingError(`Completed-job reservation unavailable: ${planHash}`);
+      || reservation.bytes > p.maxPerJobBytes!) throw new ClosedJobMissingError(planHash, p.plans[planHash]);
     return { id, bytes: reservation.bytes as number, query };
   }
 
