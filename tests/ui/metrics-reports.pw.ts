@@ -10,6 +10,12 @@ test('production Metrics build protects APIs and renders honest unavailable repo
   const anonymous = await request.get(`${origin}/api/reports/one.adoption?startDate=2026-11-10&endDate=2026-11-11&timezone=UTC`);
   expect(anonymous.status()).toBe(401);
   expect(anonymous.headers()['cache-control']).toContain('no-store');
+  const operational = await request.get(`${origin}/plg/uat/workspace`);
+  expect(operational.status()).toBe(503); // explicit missing compatibility binding, no legacy/source fallback
+  expect(operational.headers()['cache-control']).toContain('no-store');
+  const unknown = await request.get(`${origin}/api/analytics/unknown`);
+  expect(unknown.status()).toBe(404);
+  expect(await unknown.json()).toEqual({ message: 'Not found.' });
   await page.goto(origin);
   await expect(page.getByRole('heading', { name: 'Understand what is working.' })).toBeVisible();
   await context.addCookies([{ name: 'hussh_matrix_session', value: fixtureCookie(), url: origin, httpOnly: true, sameSite: 'Lax' }]);

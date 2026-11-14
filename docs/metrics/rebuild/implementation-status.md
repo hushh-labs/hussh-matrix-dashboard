@@ -7,6 +7,10 @@ The corresponding website source is default off in a separate local branch;
 neither it nor this application increment is live. Refresh is requested for
 the final rollout; old schedules remain paused until accepted source/policy and
 runtime qualification. Prior exact-head CI below does not certify newer source.
+The later [operational forwarding boundary](./operational-forwarding.md) now
+implements held OAuth/PLG/callback/assets routes without a provider-path fallback.
+Its actual Express OAuth protocol test passes with Google exchange stubbed;
+native shared-domain/legacy-UI handoff and resource wiring are not accepted.
 
 13 November 2026. Foundation review packet: PR #185.
 

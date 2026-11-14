@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import { reportingSession } from '../src/server/reports/session';
 import { digest } from '../src/server/reports/contracts';
+import { forwardMetricsCompatibility, retainedMetricsOrigin } from '../src/server/reports/compatibility';
 import {
   createApp,
   validateConfig,
@@ -190,6 +191,42 @@ describe('Google OAuth 2.0 & Domain Protection Layer', () => {
   // 3. Callback Authentication & Cookie Verification
   // -------------------------------------------------------------------------
   describe('OAuth Callback & Session Creation', () => {
+    it('forwards the real OAuth callback/session/logout through the held operational boundary', async () => {
+      const config = { approved: true, legacyOrigin: retainedMetricsOrigin, webNativeOrigin: 'https://metrics-report-web-demo-uc.a.run.app',
+        publicOrigin: 'https://metrics.hussh.ai', timeoutMs: 1000, maxRequestBytes: 4096, maxResponseBytes: 65_536 };
+      const legacy: typeof fetch = async (target, init) => {
+        const url = new URL(String(target)); expect(url.origin).toBe(retainedMetricsOrigin);
+        const outgoing = request(app)[init?.method === 'POST' ? 'post' : 'get'](url.pathname + url.search);
+        new Headers(init?.headers).forEach((value, name) => outgoing.set(name, value));
+        // Simulated trusted Cloud Run TLS metadata, not a browser-supplied header.
+        outgoing.set('X-Forwarded-Proto', 'https');
+        const received = await outgoing;
+        const headers = new Headers();
+        if (received.headers.location) headers.set('location', received.headers.location);
+        if (received.headers['content-type']) headers.set('content-type', received.headers['content-type']);
+        for (const cookie of getSetCookies(received)) headers.append('set-cookie', cookie);
+        return new Response(received.text, { status: received.status, headers });
+      };
+      const invoke = (path: string, init?: RequestInit) => forwardMetricsCompatibility(new Request(config.publicOrigin + path, init), config, legacy);
+      const start = await invoke('/api/auth/google'); expect(start.status).toBe(302);
+      const google = new URL(start.headers.get('location')!);
+      const pkce = start.headers.getSetCookie().find(cookie => cookie.startsWith('oauth_pkce='))!.split(';')[0];
+      mockVerifyIdTokenImpl = async () => ({ getPayload: () => ({ email: 'staff@hushh.ai', hd: 'hushh.ai', email_verified: true,
+        nonce: google.searchParams.get('nonce') }) });
+      const callback = await invoke(`/auth/callback?code=synthetic-code&state=${google.searchParams.get('state')}`, { headers: { cookie: pkce } });
+      expect(callback.status).toBe(302); expect(callback.headers.get('location')).toBe('/');
+      const cookie = callback.headers.getSetCookie().find(value => value.startsWith('hussh_matrix_session='))!.split(';')[0];
+      const env = { SESSION_SECRET: testConfig.sessionSecret, METRICS_SCOPE_DIGEST: digest('compatibility-scope'),
+        ALLOWED_EMAIL_DOMAINS: testConfig.allowedDomains.join(','), ALLOWED_EMAILS: '' };
+      expect(reportingSession(parseCookies(cookie).hussh_matrix_session, env)).not.toBeNull();
+      expect((await invoke('/api/auth/me', { headers: { cookie } })).status).toBe(200);
+      const logout = await invoke('/api/auth/logout', { method: 'POST', headers: { cookie, origin: config.publicOrigin } });
+      expect(logout.status).toBe(200);
+      const cleared = logout.headers.getSetCookie().find(value => value.startsWith('hussh_matrix_session='))!.split(';')[0];
+      expect(reportingSession(parseCookies(cleared).hussh_matrix_session, env)).toBeNull();
+      expect(callback.headers.get('cache-control')).toContain('no-store');
+    });
+
     it('authenticates valid @hushh.ai user, clears oauth_pkce, sets hussh_matrix_session (~8h, HttpOnly, SameSite=Lax, Secure under HTTPS)', async () => {
       const { pkceCookie, state, nonce } = await initiateOAuth();
 

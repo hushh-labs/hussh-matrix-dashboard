@@ -31,6 +31,7 @@ describe('Metrics web source boundary', () => {
     }
     inspect(path.join(root, 'src/metrics-web/app/page.tsx'));
     inspect(path.join(root, 'src/metrics-web/app/api/report-jobs/route.ts'));
+    inspect(path.join(root, 'src/metrics-web/app/[...legacy]/route.ts'));
     expect(visited.size).toBeGreaterThan(5);
   });
 });
