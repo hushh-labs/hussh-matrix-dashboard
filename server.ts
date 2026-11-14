@@ -25,7 +25,8 @@ import { fileURLToPath } from 'url';
 import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromValue } from './src/lib/agent-product-routing';
 import type { ProductKey } from './src/lib/agent-product-routing';
 import { FOUNDER_EARLIEST_DATE, founderCustomRange, founderPresetRange } from './src/lib/founder-briefing';
-import { legacyRestoration, legacyPreviousRestoration, legacyDiagnosticOnly, legacyReportFailed, withLegacyReportScope } from './src/server/legacy-restoration';
+import { legacyRestoration, legacyPreviousRestoration, legacyDiagnosticOnly, legacyReportFailed, withLegacyReportScope, currentClosedComposition, withClosedComposition, ClosedJobMissingError, noteLegacyQueryFailure } from './src/server/legacy-restoration';
+import { closedComposer } from './src/server/closed-composer';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
@@ -39,7 +40,7 @@ import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-ca
 import { guardedBigQuery, guardedBigQueryDryRun } from './src/server/bigquery-cost-control';
 import type { Query } from '@google-cloud/bigquery';
 import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
-import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort, withCustomerCohort, requireCurrentCustomerCohort } from './src/server/one-customer-cohort';
+import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort, withCustomerCohort, withWitnessedCustomerCohort, requireCurrentCustomerCohort } from './src/server/one-customer-cohort';
 import { oneAppScope, readOneAppEnvironments } from './src/server/one-app-scope';
 import { onePlatformCaptureQueries, readPlatformCapture, unpackPlatformCapture } from './src/server/one-platform-capture';
 import { registrationTotals } from './src/server/one-registration-totals.mjs';
@@ -2512,6 +2513,22 @@ function buildOneLocationFunnel(usersByStep: Map<string, number>): OneAppFunnelS
 const platformCaptureCache = new Map<string,{at:number;promise:Promise<BigQueryFeedResult>}>();
 let platformCaptureBudget = {at:0,attempts:0};
 async function queryOnePlatformCapture(projectId:string, queries:ReturnType<typeof onePlatformCaptureQueries>):Promise<BigQueryFeedResult> {
+  const composition = currentClosedComposition();
+  if (composition) {
+    // Reproduce only an actually reserved capture query. A baseline-only
+    // result explicitly leaves the optional Android capture unavailable.
+    try {
+      let query = queries.combined, combined = Boolean(query);
+      if (query) {
+        try { await composition.store.closedJob({ query }); }
+        catch (error) { if (!(error instanceof ClosedJobMissingError)) throw error; query = ''; combined = false; }
+      }
+      query ||= queries.baseline;
+      const rows = await queryBigQuerySqlUncached(projectId, query);
+      if (rows.error) throw new Error('Completed platform aggregate unavailable.');
+      return combined ? rows : { rows: [{ platforms: rows.rows, androidCapture: null }], error: null };
+    } catch { noteLegacyQueryFailure(); return { rows: [], error: 'Completed platform aggregate unavailable.' }; }
+  }
   // Planning failures and the normal metadata-attempt budget cannot decide a
   // different SQL branch when the sealed initial plan is later executed.
   if (await (await legacyRestoration())?.isPreparing()) {
@@ -5777,6 +5794,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (legacyDiagnosticOnly() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Diagnostic planning requires the trusted release probe.' }); return;
           }
+          const composePublication = req.get('X-Metrics-Compose') === '1';
+          if (composePublication && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Closed-job composition requires the trusted release probe.' }); return;
+          }
           const publishRestoration = req.get('X-Metrics-Restoration-Publish') === '1';
           if (publishRestoration && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Initial report publication requires the trusted release probe.' }); return;
@@ -5793,6 +5814,31 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const key = `${cohort?.cacheKey ?? ''}:${reportUrl}`;
           const load = () => capture(handler, sourceRequest, refresh);
           const restoration = await legacyRestoration();
+          const composer = await closedComposer();
+          if (composePublication) {
+            if (!composer || !restoration || publishRestoration) { res.status(409).json({ error: 'Closed-job composition is not configured.' }); return; }
+            await composer.requireOpen(reportUrl);
+            const perform = async (captured: typeof cohort) => {
+              const compositionKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
+              return withLegacyReportScope(compositionKey, () => withClosedComposition(restoration, async () => {
+                const value = await capture(handler, sourceRequest, true);
+                if (legacyReportFailed()) throw { status: 503, body: { error: 'Completed source inputs are incomplete; no report was published.' } };
+                return value;
+              }));
+            };
+            let composed: Awaited<ReturnType<typeof perform>>; let captured = cohort;
+            if (cohort) {
+              const witness = await composer.witness(); if (!witness) throw new Error('No captured cohort witness.');
+              composed = await withWitnessedCustomerCohort(witness, async pinned => { captured = pinned; return perform(pinned); });
+            } else composed = await perform(null);
+            const composedKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
+            const computedAt = await composer.save(reportUrl, composedKey, composed.value, composed.jobs, captured ?? undefined);
+            const { producer } = await composer.descriptor();
+            res.set('X-Metrics-Cache', 'COMPOSED'); res.set('X-Metrics-Updated-At', producer.asOf);
+            res.set('X-Metrics-Computed-At', new Date(computedAt).toISOString()); res.set('X-Metrics-Other-Source-Freshness', 'unknown');
+            res.set('X-Metrics-Observed-At', new Date().toISOString());
+            res.status(composed.value.status).json(composed.value.body); return;
+          }
           if (await restoration?.expandedPreparing() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Historical recovery requires the trusted release probe.' }); return;
           }
@@ -5802,8 +5848,14 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const previous = await legacyPreviousRestoration();
           const retained = await restoration?.readSnapshot(key)
             ?? (cohort ? await restoration?.readCompatibleSnapshot(reportUrl, cohort) : null)
+            ?? await composer?.read(reportUrl, cohort)
             ?? await previous?.readSnapshot(key);
           const useRetained = retained && (!refresh || !await restoration!.isActive());
+          // Closed restoration publications are read-only. Do not turn an
+          // unsupported range into an automatic warehouse scan on a new day.
+          if (restoration && !retained && !await restoration.isPreparing()) {
+            res.status(503).json({ error: 'No retained report is available for this selection.' }); return;
+          }
           const scopedLoad = () => withLegacyReportScope(key, async () => {
               const value = await (cohort ? withCustomerCohort(cohort.cacheKey, load) : load());
               if (publishRestoration && legacyReportFailed()) throw { status: 503, body: { error: 'Initial source computation is incomplete; no report was published.' } };
@@ -5821,6 +5873,11 @@ function registerAnalyticsRoutes(app: express.Express): void {
           }
           if (retained?.cohortAsOf && useRetained) res.set('X-Metrics-Cohort-As-Of', retained.cohortAsOf);
           else if (cohort) res.set('X-Metrics-Cohort-As-Of', cohort.asOf);
+          if (retained && 'computedAt' in retained && useRetained) {
+            res.set('X-Metrics-Computed-At', new Date(retained.computedAt).toISOString());
+            res.set('X-Metrics-Other-Source-Freshness', 'unknown');
+          }
+          res.set('X-Metrics-Observed-At', new Date().toISOString());
           res.set('X-Metrics-Cache', result.state);
           res.set('X-Metrics-Updated-At', new Date(result.at).toISOString());
           res.set('X-Metrics-Refreshing', result.refreshing ? '1' : '0');

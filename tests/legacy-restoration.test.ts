@@ -99,6 +99,8 @@ describe('finite initial restoration', () => {
     expect(await f.store.readSnapshot('cohort-A:report')).toEqual({ at: start, value });
     expect(await f.store.readSnapshot('cohort-B:report')).toBeNull();
     expect(f.db.values.get(path).reservedJobs).toBe(0);
+    f.time(start + limits.staleMs + 1); expect(await f.store.readSnapshot('cohort-A:report')).toEqual({ at: start, value });
+    expect(await f.store.publicationAsOf()).toBe(new Date(start).toISOString());
     f.time(start + limits.snapshotMs + 1); expect(await f.store.readSnapshot('cohort-A:report')).toBeNull();
     expect(await f.store.publicationAsOf()).toBeNull();
   });
@@ -194,6 +196,12 @@ describe('finite initial restoration', () => {
     expect(reused.reuse?.priorPlanHash).toBe(oldHash); await expanded.reserve(reused);
     expect(f.db.values.get(nextPath).reservedJobs).toBe(1);
     expect(f.db.values.get(path).reservedBytes).toBe(original.reservedBytes);
+    f.db.values.get(nextPath).phase = 'closed';
+    expect((await f.inScope(() => expanded.closedJob({ query: 'SELECT 2' }))).id).toBe(grant.id);
+    expect((await f.inScope(() => expanded.closedJob({ query }))).id).toBe(reused.id);
+    await expect(f.inScope(() => expanded.closedJob({ query: 'SELECT 3' }))).rejects.toThrow('reservation unavailable');
+    await expect(f.inScope(() => expanded.closedJob({ query: 'SELECT 2' }), 'b'.repeat(64) + ':/api/analytics/founder?day=other')).rejects.toThrow('held');
+    f.db.values.get(nextPath).phase = 'open';
     await expect(f.inScope(() => expanded.admit({ query: 'SELECT 3' }, 1), 'a'.repeat(64) + ':/api/analytics/founder?day=other')).rejects.toThrow('held');
     await expect(expanded.reserve({ ...grant, bytes: -1 })).rejects.toThrow('held');
     const approval = f.db.values.get(`metricsRestorationExecutionApprovals/${nextId}`);

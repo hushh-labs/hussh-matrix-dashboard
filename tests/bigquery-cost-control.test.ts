@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Firestore } from '@google-cloud/firestore';
 import type { Query } from '@google-cloud/bigquery';
+import { withClosedComposition, type LegacyRestoration } from '../src/server/legacy-restoration';
 import { BIGQUERY_COST_LIMITS as limits, BigQueryCostControlError, countBudgetedStatements,
   createGuardedBigQuery, FirestoreQueryBudgetStore, guardedBigQuery, guardedBigQueryDryRun,
   type QueryBudgetReservation } from '../src/server/bigquery-cost-control';
@@ -52,17 +53,34 @@ const reservation = (id: string, statements = 1): QueryBudgetReservation => ({
 });
 
 describe('BigQuery execution boundary', () => {
-  it('restores the normal capped script policy once a configured permit is closed or expired', async () => {
+  it('fails closed when a restoration closes while a request waits in the queue across UTC midnight', async () => {
+    let open = true, release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
+    const estimate = vi.fn(async () => 1), reserve = vi.fn(async () => {}), execute = vi.fn(async () => { await barrier; return [[]] as [Record<string, unknown>[]]; });
+    const run = createGuardedBigQuery({ enabled: () => true, estimate, budget: { reserve }, execute,
+      guard: async () => { if (!open) throw new BigQueryCostControlError('closed'); }, now: () => new Date('2026-11-15T00:00:01Z') });
+    const first = run(project, { query: 'SELECT 1' }), second = run(project, { query: 'SELECT 2' });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    const queued = run(project, { query: 'SELECT 3' }); await new Promise(resolve => setTimeout(resolve, 0));
+    open = false; release(); await Promise.all([first, second]);
+    await expect(queued).rejects.toThrow('closed'); expect(estimate).toHaveBeenCalledTimes(2); expect(reserve).toHaveBeenCalledTimes(2); expect(execute).toHaveBeenCalledTimes(2);
+  });
+  it('never reserves or executes when closure happens during an estimate', async () => {
+    let open = true, release!: () => void, started!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { started = resolve; });
+    const reserve = vi.fn(), execute = vi.fn();
+    const run = createGuardedBigQuery({ enabled: () => true, budget: { reserve }, execute,
+      estimate: async () => { started(); await barrier; return 1; }, guard: async () => { if (!open) throw new BigQueryCostControlError('closed'); },
+      now: () => new Date('2026-11-15T00:00:01Z') });
+    const result = run(project, { query: 'SELECT 1' }); await entered; open = false; release();
+    await expect(result).rejects.toThrow('closed'); expect(reserve).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('does not submit or estimate new jobs when a configured restoration is closed', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); restoration.active = true;
     restoration.value = { prepare: async (value: Query) => value, admit: async () => undefined, isPreparing: async () => false, expandedPreparing: async () => false };
-    const getQueryResults = vi.fn(async () => [[]]);
-    sdk.createQueryJob.mockImplementation(async (value: any) => value.dryRun
-      ? [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'UPDATE' } } } }]
-      : [{ getQueryResults }]);
-    await guardedBigQuery(project, { query: 'UPDATE `p.d.t` SET value=1' });
-    const paid = sdk.createQueryJob.mock.calls.find(([value]: any) => !value.dryRun)![0] as Query;
-    expect(paid.maximumBytesBilled).toBe(String(limits.bytesPerStatement));
-    expect(paid.jobId).not.toContain('restore_');
+    await expect(guardedBigQuery(project, { query: 'SELECT 1' })).rejects.toThrow('No retained report');
+    await expect(guardedBigQueryDryRun(project, { query: 'SELECT 1', dryRun: true })).rejects.toThrow('No retained report');
+    expect(sdk.createQueryJob).not.toHaveBeenCalled();
   });
   it('reads only a verified completed prior job and never creates a replacement', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
@@ -86,6 +104,32 @@ describe('BigQuery execution boundary', () => {
     exists = false;
     await expect(guardedBigQuery(project, { query: 'SELECT 7' })).rejects.toThrow('prior job could not be verified');
     expect(sdk.createQueryJob.mock.calls.filter(([value]: any) => !value.dryRun)).toHaveLength(0);
+  });
+  it('composes only an exact completed native result without dry runs, reservation or submission', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const grant = { id: 'metrics_restore_1234567890abcdef_' + 'a'.repeat(64), bytes: 20 * 1024 ** 2, query: 'SELECT 7' };
+    const store = { closedJob: vi.fn(async () => grant) } as unknown as LegacyRestoration;
+    const metadata = { status: { state: 'DONE' }, jobReference: { projectId: project, location: 'US' },
+      configuration: { query: { query: grant.query, maximumBytesBilled: String(grant.bytes), useLegacySql: false } } };
+    const getMetadata = vi.fn(async () => [metadata]); const getQueryResults = vi.fn(async () => [[{ value: 7 }], null]);
+    sdk.job.mockReturnValue({ getMetadata, getQueryResults });
+    const result = await withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }));
+    expect(result.value).toEqual([[{ value: 7 }]]); expect(result.jobs).toEqual([grant.id]);
+    expect(sdk.createQueryJob).not.toHaveBeenCalled();
+    metadata.configuration.query.query = 'SELECT 8';
+    await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('verification');
+    metadata.configuration.query.query = grant.query; metadata.status.state = 'RUNNING';
+    await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('verification');
+    metadata.status.state = 'DONE'; metadata.configuration.query.maximumBytesBilled = '1';
+    await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('verification');
+    metadata.configuration.query.maximumBytesBilled = String(grant.bytes); metadata.jobReference.location = 'EU';
+    await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('verification');
+    metadata.jobReference.location = 'US';
+    getQueryResults.mockResolvedValueOnce([[{ value: 7 }], { pageToken: 'more' }] as any);
+    await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('payload bound');
+    getMetadata.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 404 }));
+    await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('missing');
+    expect(sdk.createQueryJob).not.toHaveBeenCalled();
   });
   it('recovers a lost restoration submission through the exact native ID without another paid job', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');

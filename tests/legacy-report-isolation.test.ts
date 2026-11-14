@@ -6,14 +6,15 @@ import { noteLegacyQueryFailure } from '../src/server/legacy-restoration';
 
 const state = vi.hoisted(() => ({ query: vi.fn(), historyFails: true, dailyFails: false, agentsFail: false,
   cohortKey: 'b'.repeat(64), retained: undefined as undefined | { key: string; at: number; value: { status: number; body: unknown } },
-  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), expanded: false, phase: 'none' as 'none' | 'planning' | 'open' }));
+  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), composer: null as any, expanded: false, phase: 'none' as 'none' | 'planning' | 'open' | 'closed' }));
 vi.mock('../src/server/legacy-restoration', async original => ({
   ...await original<typeof import('../src/server/legacy-restoration')>(),
   legacyPreviousRestoration: async () => ({ readSnapshot: state.priorSnapshot }),
   legacyRestoration: async () => state.retained || state.phase !== 'none' ? {
     readSnapshot: state.readSnapshot, readCompatibleSnapshot: state.compatibleSnapshot, saveSnapshot: state.saveSnapshot,
-    isActive: async () => state.phase === 'open', isPreparing: async () => state.phase !== 'none', expandedPreparing: async () => state.expanded } : null,
+    isActive: async () => state.phase === 'open', isPreparing: async () => state.phase === 'open' || state.phase === 'planning', expandedPreparing: async () => state.expanded } : null,
 }));
+vi.mock('../src/server/closed-composer', () => ({ closedComposer: async () => state.composer }));
 vi.mock('../src/server/bigquery-cost-control', () => ({
   guardedBigQuery: async (_project: string, options: { query: string }) => {
     try {
@@ -37,7 +38,7 @@ vi.mock('../src/server/one-customer-cohort', async original => {
 const secret = 'legacy-report-isolation-test-session-secret-long-enough';
 const cookie = (email = 'metrics-qa@hushh.ai') => `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email, exp: Math.floor(Date.now() / 1000) + 3600 }), secret))}`;
 const app = () => createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; state.composer = null; });
 
 function source() {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('No external calls in route verification'); }));
@@ -64,6 +65,21 @@ function source() {
 }
 
 describe('legacy report source isolation', () => {
+  it('rejects composition from ordinary viewers before loading source data', async () => {
+    source(); const server = app();
+    const result = await request(server).get('/api/analytics/founder?start_date=2026-11-11&end_date=2026-11-11')
+      .set('Cookie', cookie()).set('X-Metrics-Compose', '1');
+    expect(result.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
+  });
+
+  it('does not publish a trusted composition if a required completed input fails', async () => {
+    source(); state.phase = 'closed'; state.historyFails = true;
+    const save = vi.fn(); state.composer = { requireOpen: async () => ({}), save, descriptor: async () => ({ producer: { asOf: new Date().toISOString() } }) };
+    const server = app(), url = '/api/analytics/all?view=one&environment=uat&one_start_date=2026-11-11&one_end_date=2026-11-11';
+    state.query.mockImplementation(async () => { throw new Error('Completed job unavailable'); });
+    const result = await request(server).get(url).set('Cookie', cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Compose', '1');
+    expect(result.status).toBe(503); expect(save).not.toHaveBeenCalled();
+  });
   it('does not coalesce trusted publication with a pending ordinary request that later fails', async () => {
     source(); state.phase = 'open'; state.historyFails = false;
     const delegate = state.query.getMockImplementation()!;
@@ -129,7 +145,7 @@ describe('legacy report source isolation', () => {
     expect(state.query).not.toHaveBeenCalled();
     state.cohortKey = 'd'.repeat(64);
     const changed = await request(server).get(url).set('Cookie', cookie());
-    expect(changed.body.marker).toBeUndefined(); expect(state.query).toHaveBeenCalled();
+    expect(changed.status).toBe(503); expect(changed.body.marker).toBeUndefined(); expect(state.query).not.toHaveBeenCalled();
     const publishDenied = await request(server).get(url).set('Cookie', cookie()).set('X-Metrics-Restoration-Publish', '1');
     expect(publishDenied.status).toBe(403);
   });

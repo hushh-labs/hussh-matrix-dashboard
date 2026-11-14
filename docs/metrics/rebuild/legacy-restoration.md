@@ -157,3 +157,31 @@ creation times, and observed eligibility changes fail closed. Older publications
 without witnesses still require an exact cohort match. Traversals are live, not
 atomic; this preserves current-membership checks and does not establish a separate
 permission epoch or detect a revoke and re-enable between traversals.
+
+## Dated retention and closed-job composition
+
+A retained report is readable for at most 90 days from the original producer
+clock, with its original source, period and UTC timestamp. After 24 hours it is
+labeled as stale. The preset for a dated historical anchor says “Latest
+available day,” and missing retained reports fail closed without a warehouse
+dry run or a new daily-budget job. This is continuity for dated observations,
+not a claim that collection or daily refresh has resumed.
+
+An operator-only composer can use a separately scoped, time-limited manifest
+bound to a closed producer and its sealed approval. Each source-generated query
+is frozen to the producer clock and mapped to an existing immutable reservation
+or the producer's approved prior-job mapping. Native metadata must prove the
+exact job ID, SQL, cap, project, location, successful completion and bounded
+results. The composer has no dry-run, reservation, create-job or ordinary query
+fallback. Missing evidence rejects publication. A write-once, separately named
+snapshot records the original producer, as-of time, verified native job IDs,
+composer source and actual reconstruction time. Fresh non-warehouse source
+watermarks that cannot be proven are explicitly marked unknown. A repeated
+publication is rejected rather than returning an unsaved replacement.
+
+For customer-scoped reports, a fresh verified roster must reproduce an existing
+captured witness after projecting out only registrations after its cutoff.
+Current eligibility is checked before and after composition and again when
+reading the publication. Removals, policy changes, uncertain creation dates and
+missing witnesses hold the report; no roster is stored in the snapshot. The
+live traversal does not prove an independent permission epoch.

@@ -2,7 +2,7 @@ import { conservativeBillingBound } from './bigquery-billing-bound';
 import { randomUUID } from 'node:crypto';
 import type { BigQuery, Query } from '@google-cloud/bigquery';
 import type { Firestore } from '@google-cloud/firestore';
-import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, RESTORATION_LIMITS, HISTORICAL_LIMITS, type RestorationGrant } from './legacy-restoration';
+import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, currentClosedComposition, RESTORATION_LIMITS, HISTORICAL_LIMITS, type RestorationGrant } from './legacy-restoration';
 
 // These ceilings cannot be raised through request options or environment variables.
 export const BIGQUERY_COST_LIMITS = Object.freeze({
@@ -164,6 +164,7 @@ export function createGuardedBigQuery(options: {
   prepare?: (request: Query) => Promise<Query>;
   restoration?: (request: Query, estimatedBytes: number) => Promise<RestorationGrant | undefined>;
   queueLimit?: () => Promise<number>;
+  guard?: () => Promise<void>;
   enabled: () => boolean;
   now?: () => Date;
   newId?: () => string;
@@ -199,6 +200,7 @@ export function createGuardedBigQuery(options: {
     }
     try {
       if (!options.enabled()) throw new BigQueryCostControlError();
+      await options.guard?.();
       if (options.estimate) {
         let estimatedBytes: number;
         try {
@@ -220,6 +222,7 @@ export function createGuardedBigQuery(options: {
         }
       }
       if (!options.enabled()) throw new BigQueryCostControlError();
+      await options.guard?.();
       // Independent final fence: diagnostic revisions never reserve or submit a paid job.
       if (legacyDiagnosticOnly()) throw new BigQueryCostControlError('Diagnostic mode cannot execute queries.');
       const id = restoration?.id ?? `metrics_${options.newId?.() ?? randomUUID().replaceAll('-', '_')}`;
@@ -231,6 +234,7 @@ export function createGuardedBigQuery(options: {
         throw new BigQueryCostControlError('The dashboard query budget is unavailable.');
       }
       if (!options.enabled()) throw new BigQueryCostControlError();
+      await options.guard?.();
       // Whitelist request fields; caller-supplied project/job/session/destination
       // options cannot bypass the fixed job identity or expand the billing scope.
       return await options.execute({
@@ -272,6 +276,7 @@ async function nativeClient() {
 /** Estimates never execute SQL. Keep the platform capture's existing scan
  * comparison without exposing native createQueryJob to runtime callers. */
 export async function guardedBigQueryDryRun(project: string, request: Query) {
+  if (currentClosedComposition()) { noteLegacyQueryFailure(); throw new BigQueryCostControlError('Closed-job composition cannot estimate or submit jobs.'); }
   if (process.env.METRICS_BIGQUERY_ENABLED !== 'true') throw new BigQueryCostControlError();
   if (project !== BIGQUERY_COST_LIMITS.project || request.dryRun !== true
     || typeof request.query !== 'string' || countBudgetedStatements(request.query) !== 1) {
@@ -280,6 +285,7 @@ export async function guardedBigQueryDryRun(project: string, request: Query) {
   const client = await nativeClient();
   const restoration = await legacyRestoration();
   const preparing = await restoration?.isPreparing();
+  if (restoration && !preparing) throw new BigQueryCostControlError('No retained report is available for this selection.');
   const prepared = restoration ? await restoration.prepare(request) : request;
   const restorationCeiling = preparing ? await restoration!.perJobCeiling() : BIGQUERY_COST_LIMITS.bytesPerStatement;
   return client.createQueryJob({ query: prepared.query, dryRun: true,
@@ -291,13 +297,29 @@ const executeGuardedBigQuery = createGuardedBigQuery({
   budget: new FirestoreQueryBudgetStore(),
   // Disabled unless deliberately configured after an explicit decision to resume.
   enabled: () => process.env.METRICS_BIGQUERY_ENABLED === 'true',
-  prepare: async request => (await legacyRestoration())?.prepare(request) ?? request,
-  restoration: async (request, estimated) => (await legacyRestoration())?.admit(request, estimated),
+  prepare: async request => {
+    const restoration = await legacyRestoration();
+    // A closed restoration is read-only: a cache miss must not start a new
+    // daily-budget query when the UTC ledger rolls over.
+    if (restoration && !await restoration.isPreparing()) throw new BigQueryCostControlError('No retained report is available for this selection.');
+    return restoration?.prepare(request) ?? request;
+  },
+  restoration: async (request, estimated) => {
+    const restoration = await legacyRestoration();
+    const grant = await restoration?.admit(request, estimated);
+    if (restoration && !grant) throw new BigQueryCostControlError('The restoration is no longer open.');
+    return grant;
+  },
+  guard: async () => {
+    const restoration = await legacyRestoration();
+    if (restoration && !await restoration.isPreparing()) throw new BigQueryCostControlError('The restoration is no longer open.');
+  },
   queueLimit: async () => process.env.METRICS_LEGACY_ABANDONED_ID && await (await legacyRestoration())?.expandedPreparing() ? 128 : BIGQUERY_COST_LIMITS.queuedRequests,
   estimate: async request => {
     const client = await nativeClient();
     const restoration = await legacyRestoration();
     const preparing = await restoration?.isPreparing();
+    if (restoration && !preparing) throw new BigQueryCostControlError('The restoration is no longer open.');
     const restorationCeiling = preparing ? await restoration!.perJobCeiling() : BIGQUERY_COST_LIMITS.bytesPerStatement;
     const [job] = await client.createQueryJob({ query: request.query, params: request.params, types: request.types,
       dryRun: true, useLegacySql: false, useQueryCache: true, location: 'US',
@@ -355,7 +377,25 @@ const executeGuardedBigQuery = createGuardedBigQuery({
 });
 
 export async function guardedBigQuery(project: string, request: Query): Promise<GuardedQueryResult> {
-  try { return await executeGuardedBigQuery(project, request); }
+  try {
+    const composition = currentClosedComposition();
+    if (composition) {
+      if (process.env.METRICS_BIGQUERY_ENABLED !== 'true') throw new BigQueryCostControlError();
+      if (project !== BIGQUERY_COST_LIMITS.project || typeof request.query !== 'string' || countBudgetedStatements(request.query) !== 1) throw new BigQueryCostControlError();
+      const grant = await composition.store.closedJob(request);
+      const client = await nativeClient(), job = client.job(grant.id, { location: 'US' });
+      const [metadata] = await job.getMetadata();
+      const query = metadata.configuration?.query;
+      if (metadata.status?.state !== 'DONE' || metadata.status?.errorResult || query?.query !== grant.query
+        || query?.maximumBytesBilled !== String(grant.bytes) || query?.useLegacySql !== false
+        || metadata.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project || metadata.jobReference?.location !== 'US') throw new BigQueryCostControlError('Completed job failed verification.');
+      const [rows, next] = await job.getQueryResults({ autoPaginate: false, maxResults: 2000, timeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
+      if (next?.pageToken || rows.length >= 2000 || Buffer.byteLength(JSON.stringify(rows)) > RESTORATION_LIMITS.snapshotBytes) throw new BigQueryCostControlError('Completed aggregate exceeds its payload bound.');
+      composition.jobs.add(grant.id);
+      return [rows as Record<string, unknown>[]];
+    }
+    return await executeGuardedBigQuery(project, request);
+  }
   catch (error) { noteLegacyQueryFailure(); throw error; }
 }
 

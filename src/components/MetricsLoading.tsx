@@ -18,12 +18,14 @@ function utcLabel(value?: string | null) {
   return time && Number.isFinite(time.getTime()) ? `${time.toISOString().slice(0, 19).replace('T', ' ')} UTC` : null;
 }
 
-export function MetricsUpdateStatus({ period, updatedAt, cohortAsOf, refreshing, loading, error }: {
-  period?: string; updatedAt?: string | null; cohortAsOf?: string | null; refreshing?: boolean; loading?: boolean; error?: boolean;
+export function MetricsUpdateStatus({ period, updatedAt, cohortAsOf, computedAt, stale, refreshing, loading, error }: {
+  period?: string; updatedAt?: string | null; cohortAsOf?: string | null; computedAt?: string | null; stale?: boolean; refreshing?: boolean; loading?: boolean; error?: boolean;
 }) {
-  const updated = utcLabel(updatedAt), cohort = utcLabel(cohortAsOf);
+  const updated = utcLabel(updatedAt), cohort = utcLabel(cohortAsOf), computed = utcLabel(computedAt);
   return <p role="status" aria-live="polite" className="my-3 text-xs font-medium leading-5 text-muted" data-metrics-state={loading ? 'loading' : refreshing ? 'refreshing' : error ? 'error' : 'ready'}>
     {loading ? `Loading ${period || 'metrics'}…` : error && !updatedAt ? `Metrics unavailable for ${period || 'this selection'}` : `${period ? `Showing ${period}` : 'Showing latest metrics'}${updated ? ` · Updated ${updated}` : ''}`}
+    {stale ? ' · Retained data is more than 24 hours old' : ''}
+    {computed ? ` · Reconstructed ${computed}; non-warehouse source freshness is not verified` : ''}
     {cohort && updated ? ` · Cohort traversal began ${cohort} (live, not atomic)` : ''}
     {refreshing && !loading ? ' · Refreshing selected metrics' : ''}
     {error && updatedAt ? ' · Refresh unavailable; showing the last successful update' : ''}

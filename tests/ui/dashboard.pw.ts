@@ -91,6 +91,18 @@ test('Location footer reports an unavailable selected source', async ({ page }) 
   await expect(page.getByText('Metrics temporarily unavailable · details below')).toBeVisible();
 });
 
+test('retained freshness uses the server observation even when the browser clock differs', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-11-14T12:00:00Z') });
+  await mockDashboard(page);
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: allAnalytics, headers: {
+    'X-Metrics-Updated-At': '2026-11-14T10:00:00Z', 'X-Metrics-Observed-At': '2026-11-16T10:00:00Z',
+    'X-Metrics-Computed-At': '2026-11-16T09:00:00Z',
+  } }));
+  await page.goto('/location-analytics/production');
+  await expect(page.getByText(/Retained data is more than 24 hours old/)).toBeVisible();
+  await expect(page.getByText(/non-warehouse source freshness is not verified/)).toBeVisible();
+});
+
 test('UAT Location deep links and agent drilldowns keep the selected source', async ({ page }) => {
   await mockDashboard(page);
   const urls: URL[] = [];
@@ -431,6 +443,8 @@ test('retained reporting presets keep the saved date across UTC midnight', async
   await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true,
     publicationAsOf: '2026-11-14T19:33:10.257Z', user: { email: 'qa@example.invalid', name: 'QA reviewer' } } }));
   await page.goto('/'); await navigate(page, 'One app');
+  await expect(page.getByRole('button', { name: 'Latest available day', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Today', exact: true })).toHaveCount(0);
   for (const [label, start] of [['30 days', '2026-10-16'], ['90 days', '2026-08-17']]) {
     const pending = page.waitForRequest(request => {
       const url = new URL(request.url());
