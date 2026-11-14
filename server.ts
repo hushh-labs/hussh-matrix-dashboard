@@ -35,6 +35,7 @@ import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-brief
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
+import { instagramPublication } from './src/server/instagram/publication';
 import { oneSurfaceSql, oneFounderSurfaceSql, oneNonDebugSql, oneFeedEnvironment, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
 import { oneAccountSource, oneIdentityAuthorityId, accountScopeNote, readOneAccountCounts } from './src/server/one-account-scope.mjs';
 import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushhtech-window.mjs';
@@ -9740,12 +9741,29 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
       return res.json({ state: 'not_configured', username: null, reach: null, lastSuccessfulSync: null, lastAttempt: null, canSync: false });
     }
     try {
+      const retained = await legacyRestoration();
+      if (retained) {
+        const report = await (await instagramPublication(instagramAccountId)).read();
+        res.set('Cache-Control', 'no-store');
+        return report ? res.json(report) : res.status(503).json({ error: 'Instagram publication is unavailable.' });
+      }
       const summary = await instagramStore.summary(instagramAccountId);
       const user = (req as any).sessionUser as SessionUser;
       return res.json({ ...summary, canSync: instagramAdmins.has(user.email.toLowerCase()) });
     } catch {
       return res.status(503).json({ state: 'sync_failed', username: null, reach: null, lastSuccessfulSync: null, lastAttempt: null, canSync: false });
     }
+  });
+  app.post('/api/analytics/instagram/initial-publication', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if ((req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai' || req.get('X-Metrics-Instagram-Initial') !== '1') return res.status(403).json({ error: 'Trusted operator required.' });
+    if (!instagramEnabled || !/^\d+$/.test(instagramAccountId) || !instagramCredentials.configured()) return res.status(503).json({ error: 'Instagram reader unavailable.' });
+    try {
+      const retained = await legacyRestoration();
+      if (!retained) return res.status(503).json({ error: 'Instagram publication is unavailable.' });
+      await retained.closedDescriptor();
+      return res.json(await (await instagramPublication(instagramAccountId)).collect(instagramCredentials, instagramVersion));
+    } catch { return res.status(503).json({ error: 'Instagram publication is unavailable.' }); }
   });
   app.post('/api/instagram/sync', async (req, res) => {
     const user = (req as any).sessionUser as SessionUser | null;
