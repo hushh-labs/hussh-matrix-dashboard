@@ -17,6 +17,14 @@ async function gaFixture(data: unknown) {
   return { ...f, request, job, source, fetch };
 }
 describe('GA4 report values and honest freshness', () => {
+  it('rejects noncanonical property aliases before they can create a second budget identity', async () => {
+    const f = await gaFixture({ ...header, rowCount: 0 });
+    for (const propertyId of ['0123456', '000', '+123456']) {
+      expect(() => new Ga4AcquisitionSource(f.store, { sourceGeneration: f.control.sourceGeneration,
+        timeoutMs: 1000, maxResponseBytes: 20_000 }, { ...website, propertyId, timezone: 'UTC', informationWatermark: null }, f.fetch, f.clock)).toThrow();
+    }
+    expect(f.fetch).not.toHaveBeenCalled();
+  });
   it('requires a reviewed GA4 coverage window instead of admitting dates after unknown collection', async () => {
     const f = await gaFixture({ ...header, rowCount: 0 });
     const { environment: _environment, secretVersion: _key, ...common } = f.binding as typeof f.binding & { environment: string; secretVersion: string };

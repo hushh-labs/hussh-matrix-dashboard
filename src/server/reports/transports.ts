@@ -53,7 +53,7 @@ export function analyticsReaderCredentialHeaders(principal: string,
 
 /** No warehouse endpoint, credential forwarding or redirect following. */
 export function googleAggregateFetch(expectedUrl: string, credentials: CredentialHeaders = adcCredentialHeaders(), fetcher: typeof fetch = fetch): AggregateFetch {
-  if (!/^https:\/\/analyticsdata\.googleapis\.com\/v1beta\/properties\/\d{3,20}:runReport$/.test(expectedUrl)) throw new ReportError('invalid');
+  if (!/^https:\/\/analyticsdata\.googleapis\.com\/v1beta\/properties\/[1-9]\d{2,19}:runReport$/.test(expectedUrl)) throw new ReportError('invalid');
   return async (url, request) => {
     if (url !== expectedUrl) throw new ReportError('invalid');
     request.signal.throwIfAborted();

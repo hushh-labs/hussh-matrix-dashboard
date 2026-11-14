@@ -93,6 +93,18 @@ describe('warehouse-free source-owned website records', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(await f.get('sourceReadBudgets', 'website-production-2026-11-13')).toEqual({ used: 13, limit: 13 });
   });
+  it('persists a denied lower read-unit cap instead of restoring it after a policy increase', async () => {
+    const f = await fixture(), fetcher = vi.fn<AggregateFetch>(), job = (await f.worker.claim(f.id, digest('worker')))!.job;
+    await f.put('sourceReadBudgets', 'website-production-2026-11-13', { used: 13, limit: 100 });
+    await f.put('policy', 'website-read-budget', { approved: true, dailyReadUnits: 1 });
+    const source = new WebsiteActivitySource(f.store, { sourceGeneration: f.binding.sourceGeneration,
+      timeoutMs: 1000, maxResponseBytes: 20_000 }, 'production', f.binding.captureGeneration, 10, fetcher, f.clock);
+    await expect(source.submit(job)).rejects.toMatchObject({ kind: 'quota' });
+    expect(await f.get('sourceReadBudgets', 'website-production-2026-11-13')).toEqual({ used: 13, limit: 1 });
+    await f.put('policy', 'website-read-budget', { approved: true, dailyReadUnits: 100 });
+    await expect(source.submit(job)).rejects.toMatchObject({ kind: 'quota' });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it('uses a distinct HMAC and rejects all endpoint overrides before transport', async () => {
     const f = await fixture(), key = Buffer.alloc(32, 7), fetcher = vi.fn<typeof fetch>(async () => Response.json({}));
     const transport = signedWebsiteAggregateFetch('production', key, fetcher, f.clock);

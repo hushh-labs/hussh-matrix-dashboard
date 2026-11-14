@@ -56,7 +56,7 @@ export function validateSourceBinding(value: unknown, job: ReportJob): ReportSou
   if (b.kind === 'ga4') {
     // A reviewed lower bound is not evidence that collection continued after a
     // provider was paused or its emitter changed. Never extrapolate that range.
-    if (b.reportId !== 'hushhai.acquisition' || !/^\d{3,20}$/.test(b.propertyId)
+    if (b.reportId !== 'hushhai.acquisition' || !/^[1-9]\d{2,19}$/.test(b.propertyId)
       || typeof b.coverageThrough !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.coverageThrough)
       || !Number.isFinite(Date.parse(b.coverageThrough)) || new Date(b.coverageThrough).toISOString().slice(0, 10) !== b.coverageThrough
       || b.coverageThrough < b.coverageFrom || job.request.endDate > b.coverageThrough

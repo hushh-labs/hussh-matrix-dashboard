@@ -80,6 +80,31 @@ deploying the reporting web identity. Do not promise zero hosting/storage cost.
 
 ## Required replacement publication protocol
 
+Native sources additionally require explicit approved daily source allowances;
+per-staff request windows and reusable worker slots are not global daily caps.
+`one-read-budget` and `ga4-read-budget` contain exactly `approved` and
+`dailyQueries`. Their validation ceiling of 1,000 is not a proposed value or
+activation default. The source ledger uses the UTC admission day and the fixed
+One environment/adoption operation or canonical GA4 property ID. Staff, job,
+period, reader, key version, hostname/stream, source generation and control
+revision cannot reset that source's allowance. Monitoring follows the same
+reservation protocol for its fixed service tuple; Website retains its existing
+environment-scoped `dailyReadUnits` accounting and keys.
+
+The source receipt and allowance reserve atomically before credentials or native
+submission. No refund follows a timeout, invalid result or uncertain response.
+Recovery of an existing receipt does not charge or call the provider again.
+Recovery with no receipt can admit and charge the first request. Observed tighter daily caps
+persist even when admission is denied and prior usage exceeds the new limit;
+raising policy later cannot restore that day's previous cap. The next UTC day
+has a new ledger, retaining prior records for reconciliation. Unchanged denied
+ledgers are not rewritten merely for a bounded redelivery.
+
+These are native request/read-unit ceilings, **not monetary guarantees**. Source
+owners still establish bounded upstream computation, measured costs and suitable
+operating values. No production policies are seeded, nor collection enabled, by
+the application guard or its synthetic tests.
+
 The following is a design requirement, not an inventory of inherited behavior or
 an acceptance claim for draft #186. Its exact-source implementation and recovery
 checks, source reconciliation and runtime acceptance are separate evidence.

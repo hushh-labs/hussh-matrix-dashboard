@@ -45,6 +45,8 @@ for (const mode of ['memory', ...(emulator ? ['firestore'] : [])]) {
       } else store = new MemoryStore();
       reader = new MetricsReports(store, () => now); worker = new MetricsReportWorker(store, () => now);
       await put('policy', 'current', policy); await put('controls', request.reportId, control);
+      await put('policy', 'one-read-budget', { approved: true, dailyQueries: 100 });
+      await put('policy', 'ga4-read-budget', { approved: true, dailyQueries: 100 });
     });
     afterAll(async () => { await Promise.all(databases.map(db => db.terminate())); });
     async function claim() {
