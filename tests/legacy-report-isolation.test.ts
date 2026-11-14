@@ -6,13 +6,13 @@ import { noteLegacyQueryFailure } from '../src/server/legacy-restoration';
 
 const state = vi.hoisted(() => ({ query: vi.fn(), historyFails: true, dailyFails: false, agentsFail: false,
   cohortKey: 'b'.repeat(64), retained: undefined as undefined | { key: string; at: number; value: { status: number; body: unknown } },
-  readSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), phase: 'none' as 'none' | 'planning' | 'open' }));
+  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), expanded: false, phase: 'none' as 'none' | 'planning' | 'open' }));
 vi.mock('../src/server/legacy-restoration', async original => ({
   ...await original<typeof import('../src/server/legacy-restoration')>(),
   legacyPreviousRestoration: async () => ({ readSnapshot: state.priorSnapshot }),
   legacyRestoration: async () => state.retained || state.phase !== 'none' ? {
-    readSnapshot: state.readSnapshot, saveSnapshot: state.saveSnapshot,
-    isActive: async () => state.phase === 'open', isPreparing: async () => state.phase !== 'none' } : null,
+    readSnapshot: state.readSnapshot, readCompatibleSnapshot: state.compatibleSnapshot, saveSnapshot: state.saveSnapshot,
+    isActive: async () => state.phase === 'open', isPreparing: async () => state.phase !== 'none', expandedPreparing: async () => state.expanded } : null,
 }));
 vi.mock('../src/server/bigquery-cost-control', () => ({
   guardedBigQuery: async (_project: string, options: { query: string }) => {
@@ -37,7 +37,7 @@ vi.mock('../src/server/one-customer-cohort', async original => {
 const secret = 'legacy-report-isolation-test-session-secret-long-enough';
 const cookie = (email = 'metrics-qa@hushh.ai') => `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email, exp: Math.floor(Date.now() / 1000) + 3600 }), secret))}`;
 const app = () => createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.phase = 'none'; });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; });
 
 function source() {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('No external calls in route verification'); }));
@@ -138,6 +138,11 @@ describe('legacy report source isolation', () => {
     const response = await request(app()).get('/api/analytics/founder?start_date=2026-11-05&end_date=2026-11-05').set('Cookie', cookie());
     expect(response.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
   });
+  it('restricts an active historical expansion to the release probe', async () => {
+    source(); state.phase = 'open'; state.expanded = true;
+    const response = await request(app()).get('/api/analytics/founder?start_date=2026-11-05&end_date=2026-11-05').set('Cookie', cookie());
+    expect(response.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
+  });
   it('reads a compatible original snapshot without relabeling its time or querying', async () => {
     source(); state.phase = 'planning';
     const url = '/api/analytics/founder?start_date=2026-11-05&end_date=2026-11-05';
@@ -152,6 +157,18 @@ describe('legacy report source isolation', () => {
     state.cohortKey = 'd'.repeat(64);
     const changed = await request(app()).get(url).set('Cookie', cookie());
     expect(changed.body.marker).toBeUndefined();
+  });
+  it('preserves the witnessed cohort cutoff on a compatible retained response', async () => {
+    source(); state.phase = 'planning';
+    const url = '/api/analytics/founder?start_date=2026-11-05&end_date=2026-11-05';
+    const at = Date.now() - 60_000, cohortAsOf = '2026-11-14T12:00:00.000Z';
+    state.readSnapshot.mockResolvedValue(null);
+    state.compatibleSnapshot.mockResolvedValue({ at, value: { status: 200, body: { marker: 'witnessed' } }, cohortAsOf });
+    const response = await request(app()).get(url).set('Cookie', cookie());
+    expect(response.status).toBe(200); expect(response.body.marker).toBe('witnessed');
+    expect(response.headers['x-metrics-updated-at']).toBe(new Date(at).toISOString());
+    expect(response.headers['x-metrics-cohort-as-of']).toBe(cohortAsOf);
+    expect(response.headers['x-metrics-cache']).toBe('RESTORED'); expect(state.query).not.toHaveBeenCalled();
   });
   it('keeps bounded period accounts, platforms and agents when historical first-seen cannot be read', async () => {
     source(); state.historyFails = true; state.dailyFails = false; state.agentsFail = false;

@@ -13,11 +13,18 @@ export function MetricsSkeleton({ label = 'Loading the selected period' }: { lab
   </section>;
 }
 
-export function MetricsUpdateStatus({ period, updatedAt, refreshing, loading, error }: {
-  period?: string; updatedAt?: string | null; refreshing?: boolean; loading?: boolean; error?: boolean;
+function utcLabel(value?: string | null) {
+  const time = value ? new Date(value) : null;
+  return time && Number.isFinite(time.getTime()) ? `${time.toISOString().slice(0, 19).replace('T', ' ')} UTC` : null;
+}
+
+export function MetricsUpdateStatus({ period, updatedAt, cohortAsOf, refreshing, loading, error }: {
+  period?: string; updatedAt?: string | null; cohortAsOf?: string | null; refreshing?: boolean; loading?: boolean; error?: boolean;
 }) {
+  const updated = utcLabel(updatedAt), cohort = utcLabel(cohortAsOf);
   return <p role="status" aria-live="polite" className="my-3 text-xs font-medium leading-5 text-muted" data-metrics-state={loading ? 'loading' : refreshing ? 'refreshing' : error ? 'error' : 'ready'}>
-    {loading ? `Loading ${period || 'metrics'}…` : error && !updatedAt ? `Metrics unavailable for ${period || 'this selection'}` : `${period ? `Showing ${period}` : 'Showing latest metrics'}${updatedAt ? ` · Updated ${new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}`}
+    {loading ? `Loading ${period || 'metrics'}…` : error && !updatedAt ? `Metrics unavailable for ${period || 'this selection'}` : `${period ? `Showing ${period}` : 'Showing latest metrics'}${updated ? ` · Updated ${updated}` : ''}`}
+    {cohort && updated ? ` · Cohort traversal began ${cohort} (live, not atomic)` : ''}
     {refreshing && !loading ? ' · Refreshing selected metrics' : ''}
     {error && updatedAt ? ' · Refresh unavailable; showing the last successful update' : ''}
   </p>;

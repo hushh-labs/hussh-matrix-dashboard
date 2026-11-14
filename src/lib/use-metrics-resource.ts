@@ -21,7 +21,7 @@ export function useMetricsResource<T>(url: string | null, options: { refreshKey?
   }, [url, options.refreshKey]);
   // Never paint the old period under a newly selected period, even for one frame.
   const snapshot = state?.url === url ? state.snapshot : peekMetrics<T>(url);
-  return { data: snapshot?.data ?? null, updatedAt: snapshot?.updatedAt ?? null,
+  return { data: snapshot?.data ?? null, updatedAt: snapshot?.updatedAt ?? null, cohortAsOf: snapshot?.cohortAsOf ?? null,
     loading: Boolean(url && !snapshot && !(state?.url === url && state.error)),
     refreshing: Boolean(state?.url === url && state.busy), error: Boolean(state?.url === url && state.error) };
 }
