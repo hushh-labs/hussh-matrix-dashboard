@@ -7,7 +7,8 @@ import { metricsHostingGateway } from '../../src/server/reports/hosting-gateway'
 const origin = 'http://127.0.0.1:3200';
 function fixtureCookie() {
   const body = JSON.stringify({ email: 'staff@example.invalid', exp: Math.floor(Date.now() / 1000) + 60 });
-  return `s:${body}.${createHmac('sha256', 'local-metrics-build-check-'.repeat(3)).update(body).digest('base64url')}`;
+  // The retained OAuth handler serializes the cookie through encodeURIComponent.
+  return encodeURIComponent(`s:${body}.${createHmac('sha256', 'local-metrics-build-check-'.repeat(3)).update(body).digest('base64url')}`);
 }
 test('production Metrics build protects APIs and renders honest unavailable reports', async ({ page, context, request }) => {
   const anonymous = await request.get(`${origin}/api/reports/one.adoption?startDate=2026-11-10&endDate=2026-11-11&timezone=UTC`);

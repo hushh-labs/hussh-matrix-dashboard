@@ -17,6 +17,13 @@ describe('Metrics session compatibility', () => {
     expect(JSON.stringify(access)).not.toMatch(/staff|Private name|private-image/);
     expect(reportingSession(signed('approved@example.invalid'), env, now)).not.toBeNull();
   });
+  it('matches the retained sign-in secret normalization without changing quota identity', () => {
+    const cookie = signed('staff@hushh.ai');
+    const access = reportingSession(cookie, env, now);
+    expect(reportingSession(cookie, { ...env, SESSION_SECRET: `\n ${env.SESSION_SECRET}\r\n` }, now)).toEqual(access);
+    expect(reportingSession(cookie, { ...env, SESSION_SECRET: ' \r\n' }, now)).toBeNull();
+    expect(reportingSession(cookie + 'x', { ...env, SESSION_SECRET: `${env.SESSION_SECRET}\n` }, now)).toBeNull();
+  });
   it('rechecks current allowlists and expiry for every read', () => {
     const cookie = signed('staff@hushh.ai');
     expect(reportingSession(cookie, { ...env, ALLOWED_EMAIL_DOMAINS: '' }, now)).toBeNull();

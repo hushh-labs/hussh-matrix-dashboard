@@ -3,7 +3,8 @@ import type { ReportAccess } from './contracts';
 
 export function reportingSession(cookie: string | undefined, env: Record<string, string | undefined> = process.env,
   now = Date.now()): ReportAccess | null {
-  const secret = env.SESSION_SECRET ?? '', scopeDigest = env.METRICS_SCOPE_DIGEST ?? '';
+  // Match the retained Google sign-in authority and trusted release-session tool.
+  const secret = (env.SESSION_SECRET ?? '').trim(), scopeDigest = env.METRICS_SCOPE_DIGEST ?? '';
   if (secret.length < 32 || !/^[a-f0-9]{64}$/.test(scopeDigest) || !cookie?.startsWith('s:') || cookie.length > 4096) return null;
   const signed = cookie.slice(2), split = signed.lastIndexOf('.');
   if (split < 0) return null;

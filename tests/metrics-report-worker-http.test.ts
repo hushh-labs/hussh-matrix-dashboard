@@ -29,6 +29,19 @@ describe('private Metrics worker HTTP boundary', () => {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     return { config, runtime, verify, send, origin };
   }
+  it('provides a bounded health path outside Cloud Run reserved URLs without consulting authority or sources', async () => {
+    const f = await fixture();
+    for (const path of ['/health', '/healthz']) {
+      const response = await fetch(f.origin + path);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(await response.json()).toEqual({ status: 'ok' });
+    }
+    expect(f.verify).not.toHaveBeenCalled();
+    for (const operation of Object.values(f.runtime)) expect(operation).not.toHaveBeenCalled();
+    expect((await fetch(f.origin + '/health', { method: 'POST' })).status).toBe(404);
+    expect((await fetch(f.origin + '/health/')).status).toBe(404);
+  });
   it('authenticates before parsing input and rejects cross-role invocation', async () => {
     const f = await fixture();
     expect((await f.send('read', null, { bad: true })).status).toBe(401);
