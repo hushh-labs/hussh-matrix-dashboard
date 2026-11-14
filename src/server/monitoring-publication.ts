@@ -48,8 +48,12 @@ export class MonitoringPublication {
           const number = typeof rawInteger === 'string' && /^\d+$/.test(rawInteger) ? Number(rawInteger)
             : typeof rawDouble === 'number' ? rawDouble : NaN;
           const interval = point?.interval, exact = interval && Date.parse(interval.startTime) === start && Date.parse(interval.endTime) === end;
-          fields[metric.key] = { value: exact && Number.isSafeInteger(number) && number >= 0 ? number : null, observedAt: new Date(this.now()).toISOString() };
-        } catch { fields[metric.key] = { value: null, observedAt: new Date(this.now()).toISOString() }; }
+          const valid = exact && Number.isSafeInteger(number) && number >= 0;
+          fields[metric.key] = { value: valid ? number : null, state: valid ? 'available' : 'partial_or_unavailable', httpStatus: 200, observedAt: new Date(this.now()).toISOString() };
+        } catch (error: any) {
+          const code = error?.response?.status ?? error?.status;
+          fields[metric.key] = { value: null, state: 'unavailable', httpStatus: Number.isInteger(code) && code >= 400 && code <= 599 ? code : null, observedAt: new Date(this.now()).toISOString() };
+        }
       }
       windows.push({ startDate: new Date(start).toISOString().slice(0, 10), endDate: new Date(end - 1).toISOString().slice(0, 10), days, metrics: fields });
     }

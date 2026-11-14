@@ -38,4 +38,11 @@ describe('bounded Monitoring publication', () => {
   expect(day.metrics.requests.value).toBeNull(); expect(day.metrics.errors.value).toBeNull(); expect(day.metrics.instances.value).toBeNull();
   expect(week.metrics.requests.value).toBeNull(); expect(week.metrics.errors.value).toBeNull(); expect(week.metrics.instances.value).toBe(0);
  });
+ it('records a sanitized provider failure without a value', async () => {
+  const db = new Memory(), store = new MonitoringPublication(db.native(), 'hushh-pda', 'hushh-webapp', asOf, () => now);
+  await store.collect(async () => { throw { response: { status: 403, data: 'private provider detail' } }; });
+  const report = await store.read('2026-11-14', '2026-11-14');
+  expect(report.metrics.requests).toMatchObject({ value: null, state: 'unavailable', httpStatus: 403 });
+  expect(JSON.stringify(report)).not.toContain('private provider detail');
+ });
 });
