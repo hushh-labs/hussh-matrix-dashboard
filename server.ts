@@ -30,6 +30,7 @@ import { closedComposer } from './src/server/closed-composer';
 import { closedMeasurement, currentClosedMeasurement, withClosedMeasurement } from './src/server/closed-measurement';
 import { currentContinuation, legacyContinuation, withContinuation } from './src/server/legacy-continuation';
 import { closedContinuationComposer } from './src/server/closed-continuation-composer';
+import { verifiedPlgPublicationAnchor } from './src/server/plg-publication-anchor';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
@@ -9642,6 +9643,19 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
     } else {
       res.json({ authenticated: false, user: null });
     }
+  });
+
+  app.get('/api/auth/plg-publication', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!(req as any).sessionUser) { res.status(401).json({ error: 'Sign in to view metrics.' }); return; }
+    // A PLG anchor requires the witnessed production One publication; this
+    // lookup never runs during ordinary sign-in or starts warehouse work.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const publicationAsOf = await Promise.race([
+      legacyRestoration().then(r => verifiedPlgPublicationAnchor(r, readCustomerCohort, requireCurrentCustomerCohort)).catch(() => null),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 8000); }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    res.json({ publicationAsOf });
   });
 
   // Unmatched auth endpoints return 404 Not Found

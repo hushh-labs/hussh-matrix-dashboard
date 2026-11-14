@@ -79,7 +79,7 @@ function Field({ label, children, description }: { label: string; children: Reac
   );
 }
 
-export function PlgWorkspace({ refreshKey = 0, publicationAsOf }: { refreshKey?: number; publicationAsOf?: string | null }) {
+export function PlgWorkspace({ refreshKey = 0 }: { refreshKey?: number }) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -363,7 +363,7 @@ export function PlgWorkspace({ refreshKey = 0, publicationAsOf }: { refreshKey?:
         </button>
       </section>}
       {tab === 'automation' && <PlgGoogleMailPanel templates={state.templates} mailOwner={Boolean(workspace.mailOwner)} />}
-      {tab === 'results' && <PlgAppUsage refreshKey={refreshKey} publicationAsOf={publicationAsOf} />}
+      {tab === 'results' && <PlgAppUsage refreshKey={refreshKey} />}
       {tab === 'results' && <div>
         <h3 className="text-lg font-semibold text-ink">Campaign results</h3>
         <p className="mt-1 text-sm text-muted">These totals cover enrolled campaign accounts. Registered-user totals and app-wide DAU are separate One app analytics.</p>

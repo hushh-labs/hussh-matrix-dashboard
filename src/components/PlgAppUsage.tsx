@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMetricsResource } from '../lib/use-metrics-resource';
 import { exactCount } from '../lib/feature-measurement';
 import { buildAnalyticsUrl, type AllAnalyticsResponse } from '../lib/analytics-service';
@@ -9,8 +9,20 @@ const timestamp = (value?: string | null) => value && Number.isFinite(Date.parse
   ? `${new Date(value).toISOString().slice(0, 19).replace('T', ' ')} UTC` : 'Not available';
 
 /** Aggregate authority is shared with One analytics; never derive app totals from audience pages. */
-export function PlgAppUsage({ refreshKey = 0, publicationAsOf }: { refreshKey?: number; publicationAsOf?: string | null }) {
+export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [days, setDays] = useState(30);
+  const [publicationAsOf, setPublicationAsOf] = useState<string | null>(null);
+  const [anchorLoading, setAnchorLoading] = useState(true);
+  useEffect(() => {
+    let active = true; const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    setPublicationAsOf(null); setAnchorLoading(true);
+    void fetch('/api/auth/plg-publication', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
+      .then(response => response.ok ? response.json() : null)
+      .then(value => { if (active && typeof value?.publicationAsOf === 'string' && Number.isFinite(Date.parse(value.publicationAsOf))) setPublicationAsOf(value.publicationAsOf); })
+      .catch(() => {}).finally(() => { clearTimeout(timeout); if (active) setAnchorLoading(false); });
+    return () => { active = false; clearTimeout(timeout); controller.abort(); };
+  }, [refreshKey]);
   const anchor = publicationAsOf && Number.isFinite(Date.parse(publicationAsOf)) ? new Date(publicationAsOf) : null;
   const endDate = anchor?.toISOString().slice(0, 10) ?? '';
   const startDate = endDate ? new Date(Date.parse(endDate) - (days - 1) * 86_400_000).toISOString().slice(0, 10) : '';
@@ -41,7 +53,7 @@ export function PlgAppUsage({ refreshKey = 0, publicationAsOf }: { refreshKey?: 
     { label: 'Device/browser IDs', values: deviceValid ? device : null },
   ];
   return (
-    <section aria-label="App-wide One usage" className={cn(dashboardCard, 'space-y-5 p-5 sm:p-6')} aria-busy={resource.loading || resource.refreshing}>
+    <section aria-label="App-wide One usage" className={cn(dashboardCard, 'space-y-5 p-5 sm:p-6')} aria-busy={anchorLoading || resource.loading || resource.refreshing}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-ink">App-wide One usage</h3>
@@ -53,7 +65,7 @@ export function PlgAppUsage({ refreshKey = 0, publicationAsOf }: { refreshKey?: 
           </select>
         </label>
       </div>
-      {resource.loading ? <p role="status" className="text-sm text-muted">Loading app-wide measurements…</p> : <>
+      {anchorLoading || resource.loading ? <p role="status" className="text-sm text-muted">Loading app-wide measurements…</p> : <>
         {(resource.error || resource.data?.one?.error) && <p role="status" className="text-sm text-warning">Some source reads failed or could not refresh. Each metric keeps its own availability; the snapshot time below may precede this request.</p>}
         {!production && <p role="status" className="text-sm text-muted">Production aggregates are unavailable. No zero is inferred.</p>}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

@@ -38,8 +38,9 @@ async function mockPlg(page: Page, denied = false, withAgents = false,
       outcome: { status: 'supported', proof: 'calendar.provider_effect.v1', label: 'Provider-confirmed Calendar change', reason: 'Retained positive evidence only.' } }],
     actions: [{ id: 'calendar.event.create', label: 'Create event', agentId: 'agent_calendar', kind: 'action', proof: 'client_reported' }] });
   await mockDashboard(page);
-  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: usageAsOf,
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T19:33:10.257Z', plgPublicationAsOf: usageAsOf,
     user: { email: 'qa@example.invalid', name: 'QA reviewer', domainAuthorized: true } } }));
+  await page.route('**/api/auth/plg-publication', route => route.fulfill({ json: { publicationAsOf: usageAsOf } }));
   await page.route('**/api/analytics/all?*', route => route.fulfill({ json: usagePublication(route.request().url()), headers: usageHeaders }));
   await page.route('**/api/plg/**', async (route) => {
     if (denied)
@@ -776,8 +777,7 @@ test('withholds app aggregates when a response mixes UAT into a production-only 
 
 test('does not request or display PLG usage without a valid dated publication anchor', async ({ page }) => {
   await mockPlg(page); let anchor: string | undefined;
-  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: anchor,
-    user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));
+  await page.route('**/api/auth/plg-publication', route => route.fulfill({ json: { publicationAsOf: anchor } }));
   const reads: string[] = []; page.on('request', req => { if (new URL(req.url()).pathname === '/api/analytics/all') reads.push(req.url()); });
   for (const value of [undefined, 'invalid']) {
     anchor = value; await page.goto('/plg'); await page.getByRole('tab', { name: 'Results', exact: true }).click();
@@ -803,7 +803,7 @@ test('uses the dated production publication for PLG usage and rejects mismatched
   await mockPlg(page);
   const asOf = '2026-11-14T21:34:55.606Z'; let corrupt: 'none' | 'period' | 'provenance' = 'none';
   await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true,
-    publicationAsOf: asOf, user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));
+    publicationAsOf: '2026-11-14T19:33:10.257Z', plgPublicationAsOf: asOf, user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));
   await page.route('**/api/analytics/all?*', route => {
     const body = usagePublication(route.request().url());
     if (corrupt === 'period') body.one.data.production.range.endDate = '2026-11-15';
