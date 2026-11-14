@@ -28,6 +28,7 @@ import { FOUNDER_EARLIEST_DATE, founderCustomRange, founderPresetRange } from '.
 import { legacyRestoration, legacyPreviousRestoration, legacyDiagnosticOnly, legacyReportFailed, withLegacyReportScope, currentClosedComposition, withClosedComposition, ClosedJobMissingError, noteLegacyQueryFailure } from './src/server/legacy-restoration';
 import { closedComposer } from './src/server/closed-composer';
 import { closedMeasurement, currentClosedMeasurement, withClosedMeasurement } from './src/server/closed-measurement';
+import { currentContinuation, legacyContinuation, withContinuation } from './src/server/legacy-continuation';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
@@ -2540,7 +2541,7 @@ async function queryOnePlatformCapture(projectId:string, queries:ReturnType<type
   }
   // Planning failures and the normal metadata-attempt budget cannot decide a
   // different SQL branch when the sealed initial plan is later executed.
-  if (await (await legacyRestoration())?.isPreparing()) {
+  if (currentContinuation() || await (await legacyRestoration())?.isPreparing()) {
     try { return await readPlatformCapture(await bigQueryClient(projectId), queries); }
     catch { return { rows: [], error: 'One platform capture is unavailable.' }; }
   }
@@ -5803,6 +5804,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (legacyDiagnosticOnly() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Diagnostic planning requires the trusted release probe.' }); return;
           }
+          const publishContinuation = req.get('X-Metrics-Continue') === '1';
+          if (publishContinuation && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Continuation requires the trusted release probe.' }); return;
+          }
           const measureClosed = req.get('X-Metrics-Measure-Closed') === '1';
           if (measureClosed && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Closed-job measurement requires the trusted release probe.' }); return;
@@ -5828,6 +5833,33 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const load = () => capture(handler, sourceRequest, refresh);
           const restoration = await legacyRestoration();
           const composer = await closedComposer();
+          const continuation = await legacyContinuation();
+          if (publishContinuation) {
+            if (!continuation || !restoration || measureClosed || composePublication || publishRestoration) { res.status(409).json({ error: 'Continuation is not configured.' }); return; }
+            await continuation.requireOpen(reportUrl);
+            const perform = async (captured: typeof cohort) => {
+              const continuationKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
+              return withLegacyReportScope(continuationKey, () => withContinuation(continuation, async () => {
+                const value = await capture(handler, sourceRequest, true);
+                if (legacyReportFailed()) throw { status: 503, body: { error: 'Continuation source inputs are incomplete; no report was published.' } };
+                return value;
+              }));
+            };
+            let completed: Awaited<ReturnType<typeof perform>>; let captured = cohort;
+            if (cohort) {
+              const witness = await continuation.witness(); if (!witness) throw new Error('No captured cohort witness.');
+              completed = await withWitnessedCustomerCohort(witness, async pinned => { captured = pinned; return perform(pinned); });
+            } else completed = await perform(null);
+            const continuationKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
+            const computedAt = await continuation.save(reportUrl, continuationKey, completed.value, completed.jobs, captured ?? undefined);
+            const times = completed.jobs.map(job => job.endedAt);
+            res.set('X-Metrics-Cache', 'CONTINUED'); res.set('X-Metrics-Updated-At', (await restoration.closedDescriptor()).asOf);
+            res.set('X-Metrics-Computed-At', new Date(computedAt).toISOString()); res.set('X-Metrics-Other-Source-Freshness', 'unknown');
+            res.set('X-Metrics-Warehouse-From', new Date(Math.min(...times)).toISOString());
+            res.set('X-Metrics-Warehouse-Through', new Date(Math.max(...times)).toISOString());
+            res.set('X-Metrics-Observed-At', new Date().toISOString());
+            res.status(completed.value.status).json(completed.value.body); return;
+          }
           if (measureClosed) {
             const measurement = await closedMeasurement();
             if (!measurement || !restoration || composePublication || publishRestoration) { res.status(409).json({ error: 'Closed-job measurement is not configured.' }); return; }
@@ -5877,6 +5909,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const retained = await restoration?.readSnapshot(key)
             ?? (cohort ? await restoration?.readCompatibleSnapshot(reportUrl, cohort) : null)
             ?? await composer?.read(reportUrl, cohort)
+            ?? await continuation?.read(reportUrl, cohort)
             ?? await previous?.readSnapshot(key);
           const useRetained = retained && (!refresh || !await restoration!.isActive());
           // Closed restoration publications are read-only. Do not turn an
@@ -5904,6 +5937,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (retained && 'computedAt' in retained && useRetained) {
             res.set('X-Metrics-Computed-At', new Date(retained.computedAt).toISOString());
             res.set('X-Metrics-Other-Source-Freshness', 'unknown');
+          }
+          if (retained && 'warehouseFrom' in retained && 'warehouseThrough' in retained && typeof retained.warehouseFrom === 'number' && typeof retained.warehouseThrough === 'number' && useRetained) {
+            res.set('X-Metrics-Warehouse-From', new Date(retained.warehouseFrom).toISOString());
+            res.set('X-Metrics-Warehouse-Through', new Date(retained.warehouseThrough).toISOString());
           }
           res.set('X-Metrics-Observed-At', new Date().toISOString());
           res.set('X-Metrics-Cache', result.state);

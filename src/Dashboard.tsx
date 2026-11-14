@@ -1733,7 +1733,7 @@ export default function Dashboard() {
         else if (activeTab === 'compare') loadCompare();
         else loadData();
       }}>
-        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} cohortAsOf={resource.cohortAsOf} computedAt={resource.computedAt} stale={resource.stale} loading={loading} refreshing={isRefreshing} error={usingMock} />}
+        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} cohortAsOf={resource.cohortAsOf} computedAt={resource.computedAt} warehouseFrom={resource.warehouseFrom} warehouseThrough={resource.warehouseThrough} stale={resource.stale} loading={loading} refreshing={isRefreshing} error={usingMock} />}
         <Suspense fallback={<MetricsSkeleton label="Opening this metrics section" />} >
         {activeTab === 'briefing' ? (
           <FounderBriefingPanel publicationAsOf={user?.publicationAsOf} refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />

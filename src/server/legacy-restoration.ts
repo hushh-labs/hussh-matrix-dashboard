@@ -25,11 +25,12 @@ export interface RestorationPermit {
   observations?: Record<string, { bytes: number; reports: string[]; queryDigest: string; cohortScope: string }>;
 }
 export interface RestorationGrant { permitId: string; planHash: string; id: string; bytes: number; report?: string;
-  reuse?: { key: string; priorPlanHash: string } }
+  reuse?: { key: string; priorPlanHash: string; priorPermitId?: string } }
 const scope = new AsyncLocalStorage<{ key: string; failed: boolean }>();
 export const withLegacyReportScope = <T>(key: string, load: () => Promise<T>) => scope.run({ key, failed: false }, load);
 export function noteLegacyQueryFailure() { const current = scope.getStore(); if (current) current.failed = true; }
 export const legacyReportFailed = () => scope.getStore()?.failed ?? true;
+export const currentLegacyReportKey = () => scope.getStore()?.key;
 const closedComposition = new AsyncLocalStorage<{ store: LegacyRestoration; jobs: Set<string> }>();
 /** Only the operator route creates this scope; it never authorizes a job submission. */
 export const withClosedComposition = <T>(store: LegacyRestoration, load: () => Promise<T>) =>
@@ -201,6 +202,12 @@ export class LegacyRestoration {
         || approval.createdAt !== p.createdAt || approval.expiresAt !== p.expiresAt)) throw fail();
     return p;
   }
+  /** Transactional verification for a single cumulative continuation. */
+  async verifiedClosedIn(read: (ref: any) => Promise<any>) {
+    const p = await this.checkedPermit(read);
+    if (p.phase !== 'closed' || !p.abandonedPermitId || !this.previous || !this.abandoned) throw fail();
+    return { p, id: this.id, source: this.source, original: this.previous, abandoned: this.abandoned };
+  }
   private async permit() { return this.checkedPermit(ref => ref.get()); }
   async perJobCeiling() { const p = await this.permit(); return p.abandonedPermitId ? p.maxPerJobBytes! : RESTORATION_LIMITS.bytesPerJob; }
   async expandedPreparing() { const p = await this.permit(); return !!p.abandonedPermitId && p.phase !== 'closed' && p.expiresAt > this.now(); }
@@ -329,9 +336,11 @@ export class LegacyRestoration {
       return { id, bytes, query };
     }
     const id = `metrics_${this.id}_${planHash}`;
-    const reservation = (await this.ref().collection('reservations').doc(planHash).get()).data();
+    const snapshot = await this.ref().collection('reservations').doc(planHash).get();
+    if (!snapshot.exists) throw new ClosedJobMissingError(planHash, p.plans[planHash]);
+    const reservation = snapshot.data();
     if (reservation?.jobId !== id || !Number.isSafeInteger(reservation.bytes) || reservation.bytes < 1
-      || reservation.bytes > p.maxPerJobBytes!) throw new ClosedJobMissingError(planHash, p.plans[planHash]);
+      || reservation.bytes > p.maxPerJobBytes!) throw fail();
     return { id, bytes: reservation.bytes as number, query };
   }
 

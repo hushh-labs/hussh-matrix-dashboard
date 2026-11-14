@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { CustomerCohort } from '../src/server/one-customer-cohort';
 import type { Firestore } from '@google-cloud/firestore';
-import { LegacyRestoration, RESTORATION_LIMITS as limits, freezeRestorationSql,
+import { ClosedJobMissingError, LegacyRestoration, RESTORATION_LIMITS as limits, freezeRestorationSql,
   restorationPlanDigest, restorationReportDigest, restorationReuseDigest, validPermit, withLegacyReportScope, type RestorationPermit } from '../src/server/legacy-restoration';
 
 class Database {
@@ -198,6 +198,11 @@ describe('finite initial restoration', () => {
     expect(f.db.values.get(path).reservedBytes).toBe(original.reservedBytes);
     f.db.values.get(nextPath).phase = 'closed';
     expect((await f.inScope(() => expanded.closedJob({ query: 'SELECT 2' }))).id).toBe(grant.id);
+    const storedReservation = f.db.values.get(`${nextPath}/reservations/${grant.planHash}`);
+    storedReservation.jobId = 'conflicting';
+    const invalid = await f.inScope(() => expanded.closedJob({ query: 'SELECT 2' })).catch(error => error);
+    expect(invalid).toBeInstanceOf(Error); expect(invalid).not.toBeInstanceOf(ClosedJobMissingError);
+    storedReservation.jobId = grant.id;
     expect((await f.inScope(() => expanded.closedJob({ query }))).id).toBe(reused.id);
     await expect(f.inScope(() => expanded.closedJob({ query: 'SELECT 3' }))).rejects.toThrow('reservation unavailable');
     await expect(f.inScope(() => expanded.closedJob({ query: 'SELECT 2' }), 'b'.repeat(64) + ':/api/analytics/founder?day=other')).rejects.toThrow('held');

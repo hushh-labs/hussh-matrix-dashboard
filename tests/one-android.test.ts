@@ -122,10 +122,10 @@ it('refreshes platform rows through one cache owner while reusing bounded captur
     const uncached=vi.fn().mockResolvedValue({rows:[{...platform,events:3}],error:null});
     const nestedCache=vi.fn().mockResolvedValue({rows:[platform],error:null});
     const captureRead=vi.fn().mockResolvedValue({rows:[envelope],error:null});
-    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture','legacyRestoration','currentClosedComposition',
+    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture','legacyRestoration','currentClosedComposition','currentContinuation',
       ts.transpile(seam,{target:ts.ScriptTarget.ES2022})+';return queryOnePlatformCapture;')(
         crypto,{getStore:()=>({refresh:false})},new AggregateCache({maxAgeMs:30000,maxEntries:128}),
-        uncached,nestedCache,async()=>({}),captureRead,async()=>null,()=>null);
+        uncached,nestedCache,async()=>({}),captureRead,async()=>null,()=>null,()=>null);
     const first=unpackPlatformCapture(await read('project',queries));
     expect(first.platforms.rows[0].events).toBe(2);
     await vi.advanceTimersByTimeAsync(30001);

@@ -6,7 +6,7 @@ import { noteLegacyQueryFailure } from '../src/server/legacy-restoration';
 
 const state = vi.hoisted(() => ({ query: vi.fn(), historyFails: true, dailyFails: false, agentsFail: false,
   cohortKey: 'b'.repeat(64), retained: undefined as undefined | { key: string; at: number; value: { status: number; body: unknown } },
-  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), composer: null as any, expanded: false, phase: 'none' as 'none' | 'planning' | 'open' | 'closed' }));
+  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), composer: null as any, continuation: null as any, expanded: false, phase: 'none' as 'none' | 'planning' | 'open' | 'closed' }));
 vi.mock('../src/server/legacy-restoration', async original => ({
   ...await original<typeof import('../src/server/legacy-restoration')>(),
   legacyPreviousRestoration: async () => ({ readSnapshot: state.priorSnapshot }),
@@ -15,6 +15,9 @@ vi.mock('../src/server/legacy-restoration', async original => ({
     isActive: async () => state.phase === 'open', isPreparing: async () => state.phase === 'open' || state.phase === 'planning', expandedPreparing: async () => state.expanded } : null,
 }));
 vi.mock('../src/server/closed-composer', () => ({ closedComposer: async () => state.composer }));
+vi.mock('../src/server/legacy-continuation', async original => ({
+  ...await original<typeof import('../src/server/legacy-continuation')>(), legacyContinuation: async () => state.continuation,
+}));
 vi.mock('../src/server/bigquery-cost-control', () => ({
   guardedBigQuery: async (_project: string, options: { query: string }) => {
     try {
@@ -38,7 +41,7 @@ vi.mock('../src/server/one-customer-cohort', async original => {
 const secret = 'legacy-report-isolation-test-session-secret-long-enough';
 const cookie = (email = 'metrics-qa@hushh.ai') => `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email, exp: Math.floor(Date.now() / 1000) + 3600 }), secret))}`;
 const app = () => createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; state.composer = null; });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; state.composer = null; state.continuation = null; });
 
 function source() {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('No external calls in route verification'); }));
@@ -65,6 +68,17 @@ function source() {
 }
 
 describe('legacy report source isolation', () => {
+  it('rejects continuation headers from ordinary viewers before any source work', async () => {
+    source(); state.phase = 'closed'; state.continuation = { read: vi.fn() };
+    const result = await request(app()).get('/api/analytics/founder?start_date=2026-11-11&end_date=2026-11-11')
+      .set('Cookie', cookie()).set('X-Metrics-Continue', '1');
+    expect(result.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
+  });
+  it('never loads a missing ordinary report while a private continuation is open', async () => {
+    source(); state.phase = 'closed'; state.continuation = { read: vi.fn().mockResolvedValue(null) };
+    const result = await request(app()).get('/api/analytics/founder?start_date=2026-11-11&end_date=2026-11-11').set('Cookie', cookie());
+    expect(result.status).toBe(503); expect(state.query).not.toHaveBeenCalled();
+  });
   it('rejects a closed-job measurement from ordinary viewers before source work', async () => {
     source(); const server = app();
     const result = await request(server).get('/api/analytics/founder?start_date=2026-11-11&end_date=2026-11-11')

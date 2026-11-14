@@ -3,6 +3,7 @@ import type { Firestore } from '@google-cloud/firestore';
 import type { Query } from '@google-cloud/bigquery';
 import { withClosedComposition, ClosedJobMissingError, type LegacyRestoration } from '../src/server/legacy-restoration';
 import { withClosedMeasurement, type ClosedMeasurement } from '../src/server/closed-measurement';
+import { withContinuation, type LegacyContinuation } from '../src/server/legacy-continuation';
 import { BIGQUERY_COST_LIMITS as limits, BigQueryCostControlError, countBudgetedStatements,
   createGuardedBigQuery, FirestoreQueryBudgetStore, guardedBigQuery, guardedBigQueryDryRun,
   type QueryBudgetReservation } from '../src/server/bigquery-cost-control';
@@ -54,6 +55,52 @@ const reservation = (id: string, statements = 1): QueryBudgetReservation => ({
 });
 
 describe('BigQuery execution boundary', () => {
+  it('reuses only an exact completed continuation job and never replaces a missing prior job', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const grant = { permitId: 'restore_1234567890abcdef', planHash: 'b'.repeat(64),
+      id: 'metrics_restore_aaaaaaaaaaaaaaaa_' + 'a'.repeat(64), bytes: 20 * 1024 ** 2,
+      report: '/api/analytics/founder?day=2026-11-05', reuse: { key: '', priorPermitId: 'restore_aaaaaaaaaaaaaaaa', priorPlanHash: 'a'.repeat(64) } };
+    const store = { isPreparing: async () => true, prepare: async (request: Query) => request,
+      existing: async () => grant, reserve: vi.fn(async () => {}) } as unknown as LegacyContinuation;
+    const metadata = { status: { state: 'DONE' }, jobReference: { jobId: grant.id, projectId: project, location: 'US' },
+      configuration: { query: { query: 'SELECT 7', maximumBytesBilled: String(grant.bytes), useLegacySql: false } }, statistics: { endTime: String(Date.now() - 1000) } };
+    const getMetadata = vi.fn(async () => [metadata]);
+    sdk.job.mockReturnValue({ getMetadata, getQueryResults: async () => [[{ value: 7 }], null] });
+    const result = await withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }));
+    expect(result.jobs).toEqual([{ id: grant.id, endedAt: Number(metadata.statistics.endTime) }]);
+    metadata.jobReference.jobId = 'wrong';
+    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('verification');
+    getMetadata.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 404 }));
+    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('prior job could not be verified');
+    expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
+  it('keeps a normal request closed while private continuation requests occupy the queue', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); restoration.active = true;
+    restoration.value = { isPreparing: async () => false };
+    const grant = { permitId: 'restore_1234567890abcdef', planHash: 'b'.repeat(64),
+      id: 'metrics_restore_aaaaaaaaaaaaaaaa_' + 'a'.repeat(64), bytes: 20 * 1024 ** 2,
+      report: '/api/analytics/founder?day=2026-11-05', reuse: { key: '', priorPermitId: 'restore_aaaaaaaaaaaaaaaa', priorPlanHash: 'a'.repeat(64) } };
+    const store = { isPreparing: async () => true, prepare: async (request: Query) => request,
+      existing: async () => grant, reserve: vi.fn(async () => {}) } as unknown as LegacyContinuation;
+    const metadata = { status: { state: 'DONE' }, jobReference: { jobId: grant.id, projectId: project, location: 'US' },
+      configuration: { query: { query: 'SELECT 7', maximumBytesBilled: String(grant.bytes), useLegacySql: false } }, statistics: { endTime: String(Date.now() - 1000) } };
+    let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
+    const results = vi.fn(async () => { await barrier; return [[{ value: 7 }], null]; });
+    sdk.job.mockReturnValue({ getMetadata: async () => [metadata], getQueryResults: results });
+    const privateRuns = [1, 2, 3].map(() => withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' })));
+    await vi.waitFor(() => expect(results).toHaveBeenCalledTimes(2));
+    await expect(guardedBigQuery(project, { query: 'SELECT 7' })).rejects.toThrow('No retained report');
+    expect(sdk.createQueryJob).not.toHaveBeenCalled(); release(); await Promise.all(privateRuns);
+    expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
+  it('does not estimate, reserve or submit when a prior reservation is malformed', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const reserve = vi.fn();
+    const store = { isPreparing: async () => true, prepare: async (request: Query) => request,
+      existing: async () => { throw new Error('conflicting prior reservation'); }, reserve } as unknown as LegacyContinuation;
+    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('conflicting prior reservation');
+    expect(reserve).not.toHaveBeenCalled(); expect(sdk.createQueryJob).not.toHaveBeenCalled(); expect(sdk.job).not.toHaveBeenCalled();
+  });
   it('fails closed when a restoration closes while a request waits in the queue across UTC midnight', async () => {
     let open = true, release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
     const estimate = vi.fn(async () => 1), reserve = vi.fn(async () => {}), execute = vi.fn(async () => { await barrier; return [[]] as [Record<string, unknown>[]]; });
