@@ -79,7 +79,7 @@ describe('warehouse-free source-owned website records', () => {
     await expect(source.submit(job)).rejects.toMatchObject({ kind: 'configuration' });
     await f.put('policy', 'website-read-budget', { approved: true, dailyReadUnits: 100 });
     await f.put('sourceReadBudgets', 'website-production-2026-11-13', { used: 13, limit: 13 });
-    await expect(source.submit(job)).rejects.toMatchObject({ kind: 'configuration' });
+    await expect(source.submit(job)).rejects.toMatchObject({ kind: 'quota', retryAfterMs: 86_400_000 });
     expect(fetcher).not.toHaveBeenCalled();
     expect(await f.get('sourceReadBudgets', 'website-production-2026-11-13')).toEqual({ used: 13, limit: 13 });
   });

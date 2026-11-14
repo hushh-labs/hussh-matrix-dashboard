@@ -187,12 +187,13 @@ export class WebsiteActivitySource extends JournaledSource {
     const days = (Date.parse(job.request.endDate) - Date.parse(job.request.startDate)) / 86_400_000 + 1;
     const units = days * (this.maxEventsPerDay + 3);
     if (!Number.isSafeInteger(units) || units <= 0 || days > 7) throw new ReportError('invalid');
-    const ref = reportPath('sourceReadBudgets', `website-${this.environment}-${new Date(this.now()).toISOString().slice(0, 10)}`);
+    const now = this.now(), day = new Date(now).toISOString().slice(0, 10);
+    const ref = reportPath('sourceReadBudgets', `website-${this.environment}-${day}`);
     const budget = await tx.get<{ used: number; limit: number }>(ref);
     if (budget && (Object.keys(budget).sort().join() !== 'limit,used' || !Number.isSafeInteger(budget.used)
       || !Number.isSafeInteger(budget.limit) || budget.used < 0 || budget.used > budget.limit)) throw new SourceRequestFailure('configuration');
     const used = budget?.used ?? 0, limit = Math.min(budget?.limit ?? policy.dailyReadUnits, policy.dailyReadUnits);
-    if (units > limit - used) throw new SourceRequestFailure('configuration');
+    if (units > limit - used) throw new SourceRequestFailure('quota', Date.parse(day) + 86_400_000 - now);
     // No refund on timeout, schema failure or lost acknowledgement. The day key
     // excludes generation, staff and job sequence, preventing quota resets.
     return () => tx.set(ref, { used: used + units, limit });

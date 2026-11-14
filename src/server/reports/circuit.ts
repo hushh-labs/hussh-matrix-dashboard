@@ -51,7 +51,7 @@ export class MetricsSourceCircuit {
     if (result.ticket) return result.ticket;
     throw new SourceCircuitClosed(result.retryAt!, result.needsAttention!);
   }
-  async complete(ticket: CircuitTicket, outcome: 'healthy' | 'transient' | 'configuration', retryAfterMs = 0) {
+  async complete(ticket: CircuitTicket, outcome: 'healthy' | 'transient' | 'configuration' | 'quota', retryAfterMs = 0) {
     const now = this.now();
     // Sample once outside a transaction callback that may be retried.
     const sample = this.random(), jitter = Number.isFinite(sample) ? Math.min(1, Math.max(0, sample)) : 0;
@@ -61,6 +61,12 @@ export class MetricsSourceCircuit {
       if (state.epoch !== ticket.epoch || (ticket.probe
         ? state.phase !== 'probe' || state.probeOwner !== ticket.owner || state.probeUntil <= now : state.phase !== 'closed')) return;
       if (outcome === 'healthy') { tx.set(path('sourceCircuits', ticket.source), { ...empty(), epoch: state.epoch }); return; }
+      if (outcome === 'quota') {
+        if (!Number.isSafeInteger(retryAfterMs) || retryAfterMs <= 0) throw new ReportError('invalid');
+        tx.set(path('sourceCircuits', ticket.source), { ...state, phase: 'open', epoch: state.epoch + 1,
+          nextAllowedAt: now + retryAfterMs, probeOwner: null, probeUntil: 0 });
+        return; // Expected depletion is a timed admission limit, not broken source configuration.
+      }
       const failures = state.failures + 1;
       const wait = Math.min(p.maxBackoffMs, p.baseBackoffMs * 2 ** Math.min(30, Math.max(0, failures - p.failureThreshold)));
       const delay = Math.max(Math.floor(wait * (0.5 + jitter / 2)),

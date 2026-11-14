@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import type { Firestore } from '@google-cloud/firestore';
-import { digest, type AggregateResult, type ReportingPolicy, type ReportControl } from '../src/server/reports/contracts';
+import { digest, reportDefinitions, type AggregateResult, type ReportingPolicy, type ReportControl } from '../src/server/reports/contracts';
 import { FirestoreReportStore, reportPath } from '../src/server/reports/store';
 import { MetricsReports, MetricsReportWorker } from '../src/server/reports/service';
 import { MetricsReportDispatch, type DispatchPolicy, type ReportTaskQueue } from '../src/server/reports/dispatch';
 import { sourceBindingGeneration } from '../src/server/reports/bindings';
 import { MetricsCollection } from '../src/server/reports/lifecycle';
-import { Ga4AcquisitionSource } from '../src/server/reports/sources';
+import { Ga4AcquisitionSource, OneAdoptionSource, WebsiteActivitySource } from '../src/server/reports/sources';
 import { MetricsSourceCircuit } from '../src/server/reports/circuit';
 import { FirestoreReportMaintenanceStore } from '../src/server/reports/maintenance-store';
 import { MetricsReportMaintenance } from '../src/server/reports/maintenance';
@@ -103,4 +103,56 @@ export async function verifyNativeReportStorage(db: Firestore) {
   assert.equal((await db.doc(reportPath('quotas', oldQuota)).get()).exists, false);
   assert.equal((await db.doc(reportPath('jobs', uncertain.job.id)).get()).exists, true);
   assert.equal((await db.doc(reportPath('snapshots', scheduled.jobId!)).get()).exists, true);
+
+  // Review P1: a genuine completed journal, interrupted before publication,
+  // can be settled across a control change by competing native transactions.
+  const known = (await worker.claim(uncertain.job.id, digest('native-known-outcome')))!;
+  let knownCalls = 0;
+  await new OneAdoptionSource(store, { sourceGeneration: known.job.control.sourceGeneration, timeoutMs: 500, maxResponseBytes: 20_000 },
+    'uat', async () => { knownCalls++; return Response.json({ ...result, sourceCheckedAt: now, sourceWatermark: now }); }, () => now).submit(known.job);
+  now += policy.leaseMs + 1;
+  await db.doc(reportPath('controls', request.reportId)).set({ ...control, revision: 3 });
+  const beforeSlots = (await db.doc(reportPath('capacity', 'custom')).get()).data()!.active;
+  await Promise.all([worker.claim(known.job.id, digest('native-obsolete-one'), 1),
+    new MetricsReportWorker(restarted, () => now).claim(known.job.id, digest('native-obsolete-two'), 1)]);
+  assert.equal((await db.doc(reportPath('jobs', known.job.id)).get()).data()?.status, 'invalidated');
+  assert.equal((await db.doc(reportPath('capacity', 'custom')).get()).data()?.active, beforeSlots - 1);
+  assert.equal((await db.doc(reportPath('snapshots', known.job.id)).get()).exists, false);
+  assert.equal((await db.doc(reportPath('sourceReceipts', known.job.id)).get()).data()?.state, 'completed');
+  await assert.rejects(worker.publish(known.job, { ...result, sourceCheckedAt: now, sourceWatermark: now }), { code: 'stale_worker' });
+  assert.equal(knownCalls, 1);
+  assert.equal((await readers[0].request(request, access)).state, 'accepted');
+
+  // Review P2: actual native budget/circuit state survives reset without refund
+  // or duplicate source submission. No external provider is contacted.
+  now = Date.parse('2026-11-13T23:59:59Z');
+  const webRequest = { ...request, reportId: 'hushhai.activity' as const, startDate: '2026-11-12', endDate: '2026-11-12' };
+  const webContent = { approved: true, enabled: true, reportId: webRequest.reportId, revision: 1, scopeDigest: access.scopeDigest,
+    reconciliationDigest: digest('native-website-reconciliation'), coverageFrom: '2026-11-01', coverageThrough: '2026-11-12',
+    timeoutMs: 500, maxResponseBytes: 20_000, kind: 'website', environment: 'production', captureGeneration: digest('native-capture'),
+    maxEventsPerDay: 10, secretVersion: 'projects/hushh-ai-prod/secrets/metrics-website-aggregate-source-production/versions/1' };
+  const webBinding = { ...webContent, sourceGeneration: sourceBindingGeneration(webContent) };
+  const webControl = { ...control, sourceGeneration: webBinding.sourceGeneration };
+  await db.doc(reportPath('sources', webRequest.reportId)).set(webBinding);
+  await db.doc(reportPath('controls', webRequest.reportId)).set(webControl);
+  await db.doc(reportPath('policy', 'website-read-budget')).set({ approved: true, dailyReadUnits: 13 });
+  await db.doc(reportPath('sourcePolicies', webBinding.sourceGeneration)).set({ approved: true, failureThreshold: 2, baseBackoffMs: 1000, maxBackoffMs: 5000, probeLeaseMs: 1000 });
+  await db.doc(reportPath('sourceReadBudgets', 'website-production-2026-11-13')).set({ used: 13, limit: 13 });
+  const web = await readers[0].requestScheduled(webRequest, access); let webCalls = 0;
+  const webCollection = new MetricsCollection(restarted, async () => new WebsiteActivitySource(store, {
+    sourceGeneration: webBinding.sourceGeneration, timeoutMs: 500, maxResponseBytes: 20_000,
+  }, 'production', webBinding.captureGeneration, 10, async () => {
+    webCalls++; return Response.json({ ...result, period: { startDate: webRequest.startDate, endDate: webRequest.endDate, timezone: 'UTC' },
+      sourceGeneration: webBinding.sourceGeneration, sourceCheckedAt: now, sourceWatermark: null,
+      metrics: Object.fromEntries(reportDefinitions[webRequest.reportId].metrics.map(name => [name,
+        { value: 1, unit: 'event', basis: 'source_recorded', coverage: 'partial' }])) });
+  }, () => now), () => now);
+  const exhausted = await webCollection.collect(web.jobId!, digest('native-budget-exhausted'));
+  assert.equal(exhausted.needsAttention, false); assert.equal(exhausted.retryAfterMs, 1000); assert.equal(webCalls, 0);
+  now += 1001;
+  assert.equal((await webCollection.collect(web.jobId!, digest('native-budget-reset'))).state, 'completed');
+  assert.equal((await webCollection.collect(web.jobId!, digest('native-budget-redelivery'))).state, 'completed');
+  assert.equal(webCalls, 1);
+  assert.deepEqual((await db.doc(reportPath('sourceReadBudgets', 'website-production-2026-11-13')).get()).data(), { used: 13, limit: 13 });
+  assert.deepEqual((await db.doc(reportPath('sourceReadBudgets', 'website-production-2026-11-14')).get()).data(), { used: 13, limit: 13 });
 }

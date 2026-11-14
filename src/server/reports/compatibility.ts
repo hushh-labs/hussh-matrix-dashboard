@@ -34,6 +34,16 @@ const privateHeaders = { 'Cache-Control': 'private, no-store, max-age=0', Vary: 
 const failure = (status: number) => Response.json({ message: status === 404 ? 'Not found.' : status === 405 ? 'Method not allowed.' : 'This service is currently unavailable.' },
   { status, headers: privateHeaders });
 
+function approvedOnePreferenceRedirect(path: string, method: string, target: URL) {
+  if (!['GET', 'HEAD'].includes(method)) return false;
+  const match = /^\/integrations\/plg\/(unsubscribe|preferences)\/([a-zA-Z0-9._~-]+)\/?$/.exec(path);
+  if (!match) return false;
+  const destination = match[1] === 'unsubscribe'
+    ? `https://one.hussh.ai/email/unsubscribe/${encodeURIComponent(match[2])}`
+    : 'https://one.hussh.ai/one/profile/account#email-updates';
+  return target.href === destination;
+}
+
 async function boundedBody(stream: ReadableStream<Uint8Array> | null, limit: number, signal: AbortSignal) {
   if (!stream) return new Uint8Array();
   const reader = stream.getReader(), chunks: Uint8Array[] = []; let size = 0;
@@ -79,13 +89,15 @@ export async function forwardMetricsCompatibility(request: Request, rawConfig: u
     if (response.redirected || response.status === 304) throw new Error('Unavailable');
     const output = new Headers(privateHeaders);
     for (const name of responseHeaders) { const value = response.headers.get(name); if (value) output.set(name, value); }
+    if (response.headers.get('referrer-policy') === 'no-referrer') output.set('referrer-policy', 'no-referrer');
     const cookies = response.headers.getSetCookie();
     if (cookies.join('').length > 16_384 || cookies.some(cookie => /;\s*domain\s*=/i.test(cookie))) throw new Error('Unavailable');
     for (const cookie of cookies) output.append('set-cookie', cookie);
     const location = response.headers.get('location');
     if (location) {
       const target = new URL(location, c.publicOrigin);
-      if (target.username || target.password || ![c.publicOrigin, 'https://accounts.google.com'].includes(target.origin)) throw new Error('Unavailable');
+      if (target.username || target.password || ![c.publicOrigin, 'https://accounts.google.com'].includes(target.origin)
+        && !approvedOnePreferenceRedirect(url.pathname, request.method, target)) throw new Error('Unavailable');
       output.set('location', location);
     }
     const bytes = request.method === 'HEAD' || response.status === 204 ? null

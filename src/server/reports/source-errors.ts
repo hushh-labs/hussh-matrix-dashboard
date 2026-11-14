@@ -1,7 +1,7 @@
 import { ReportError } from './contracts';
 
 export class SourceRequestFailure extends ReportError {
-  constructor(public kind: 'transient' | 'configuration', public retryAfterMs = 0) { super('unavailable'); }
+  constructor(public kind: 'transient' | 'configuration' | 'quota', public retryAfterMs = 0) { super('unavailable'); }
 }
 export function providerRetryAfter(value: string | null, now = Date.now()) {
   if (!value) return 0;
