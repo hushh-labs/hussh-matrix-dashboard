@@ -36,6 +36,7 @@ import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
 import { instagramPublication } from './src/server/instagram/publication';
+import { monitoringPublication, monitoringSend } from './src/server/monitoring-publication';
 import { oneSurfaceSql, oneFounderSurfaceSql, oneNonDebugSql, oneFeedEnvironment, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
 import { oneAccountSource, oneIdentityAuthorityId, accountScopeNote, readOneAccountCounts } from './src/server/one-account-scope.mjs';
 import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushhtech-window.mjs';
@@ -9735,6 +9736,27 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
   const instagramStore = new BigQueryInstagramStore();
   const instagramCredentials = new InstagramCredentials();
   const instagramViewer = (req: express.Request) => Boolean((req as any).sessionUser as SessionUser | null);
+  app.get('/api/analytics/one/monitoring-publication', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!(req as any).sessionUser) return res.status(401).json({ error: 'Authentication required.' });
+    const start = firstQueryValue(req.query.start_date), end = firstQueryValue(req.query.end_date);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || req.query.environment !== 'production') return res.status(400).json({ error: 'Select a production reporting window.' });
+    try {
+      const restoration = await legacyRestoration(), asOf = await restoration?.publicationAsOf();
+      if (!asOf) return res.status(503).json({ error: 'Monitoring publication unavailable.' });
+      const report = await (await monitoringPublication(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, asOf)).read(start, end);
+      return report ? res.json(report) : res.status(503).json({ error: 'Monitoring publication unavailable.' });
+    } catch { return res.status(503).json({ error: 'Monitoring publication unavailable.' }); }
+  });
+  app.post('/api/analytics/one/monitoring-initial-publication', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if ((req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai' || req.get('X-Metrics-Monitoring-Initial') !== '1') return res.status(403).json({ error: 'Trusted operator required.' });
+    try {
+      const restoration = await legacyRestoration(); if (!restoration) throw new Error('Restoration unavailable');
+      const descriptor = await restoration.closedDescriptor();
+      return res.json(await (await monitoringPublication(KAI_PROD_GCP_PROJECT, KAI_PROD_CLOUD_RUN_SERVICE, descriptor.asOf)).collect(monitoringSend));
+    } catch { return res.status(503).json({ error: 'Monitoring publication unavailable.' }); }
+  });
   app.get('/api/analytics/instagram', async (req, res) => {
     if (!instagramViewer(req)) return res.status(401).json({ error: 'Authentication required' });
     if (!instagramEnabled || !/^\d+$/.test(instagramAccountId) || !instagramCredentials.configured()) {
