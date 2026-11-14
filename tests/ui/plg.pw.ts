@@ -789,6 +789,17 @@ test('does not request or display PLG usage without a valid dated publication an
   expect(reads).toHaveLength(0);
 });
 
+test('waits for a slow verified publication anchor before requesting usage', async ({ page }) => {
+  await mockPlg(page);
+  await page.route('**/api/auth/plg-publication', async route => {
+    await new Promise(resolve => setTimeout(resolve, 20_000));
+    await route.fulfill({ json: { publicationAsOf: usageAsOf } });
+  });
+  await page.goto('/plg'); await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage.getByText('Requested dates: 2026-10-16 to 2026-11-14.', { exact: false })).toBeVisible({ timeout: 30_000 });
+});
+
 test('does not treat a body timestamp as a publication provenance header', async ({ page }) => {
   await mockPlg(page);
   await page.route('**/api/analytics/all?*', route => route.fulfill({ headers: { 'X-Metrics-Cache': 'RESTORED' },

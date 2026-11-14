@@ -9684,7 +9684,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
     let timer: ReturnType<typeof setTimeout> | undefined;
     const publicationAsOf = await Promise.race([
       legacyRestoration().then(r => verifiedPlgPublicationAnchor(r, readCustomerCohort, requireCurrentCustomerCohort)).catch(() => null),
-      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 8000); }),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 30_000); }),
     ]).finally(() => { if (timer) clearTimeout(timer); });
     res.json({ publicationAsOf });
   });
