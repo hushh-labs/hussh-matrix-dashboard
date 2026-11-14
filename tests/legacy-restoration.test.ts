@@ -100,6 +100,34 @@ describe('finite initial restoration', () => {
     f.time(start + limits.snapshotMs + 1); expect(await f.store.readSnapshot('cohort-A:report')).toBeNull();
     expect(await f.store.publicationAsOf()).toBeNull();
   });
+  it('binds recovery to a closed original and its remaining total allowance without changing its snapshots', async () => {
+    const f = fixture(); f.open();
+    const value = { status: 200, body: { result: 'original' } };
+    await f.store.saveSnapshot('cohort-A:report', value, start);
+    const old = f.db.values.get(path); old.phase = 'closed'; old.maxBytes = limits.bytes; old.reservedBytes = 60 * 1024 ** 3;
+    const nextId = 'restore_fedcba0987654321', nextSource = 'b'.repeat(40), nextPath = `metricsRestorationPermits/${nextId}`;
+    const next = { ...permit(), source: nextSource, maxBytes: 4 * 1024 ** 3, previousPermitId: id,
+      previousSource: source, previousReservedBytes: old.reservedBytes };
+    f.db.values.set(nextPath, next);
+    f.db.values.set(`metricsRestorationRecoveryClaims/${id}`, { previousPermitId: id, previousSource: source,
+      previousReservedBytes: old.reservedBytes, recoveryPermitId: nextId, recoverySource: nextSource,
+      maxBytes: next.maxBytes, maxJobs: next.maxJobs, createdAt: next.createdAt, expiresAt: next.expiresAt });
+    const recovery = new LegacyRestoration(f.db.native(), nextId, nextSource, () => start, { id, source });
+    expect(await recovery.isPreparing()).toBe(true);
+    expect(await f.store.readSnapshot('cohort-A:report')).toEqual({ at: start, value });
+    next.maxBytes++;
+    await expect(recovery.isPreparing()).rejects.toThrow('held');
+    next.maxBytes--; old.phase = 'open';
+    await expect(recovery.isPreparing()).rejects.toThrow('held');
+    old.phase = 'closed'; old.reservedBytes--;
+    await expect(recovery.isPreparing()).rejects.toThrow('held');
+    old.reservedBytes++;
+    const claim = f.db.values.get(`metricsRestorationRecoveryClaims/${id}`);
+    claim.recoveryPermitId = 'restore_0000000000000000';
+    await expect(recovery.isPreparing()).rejects.toThrow('held');
+    claim.recoveryPermitId = nextId; old.previousPermitId = 'restore_0000000000000000';
+    await expect(recovery.isPreparing()).rejects.toThrow('held');
+  });
   it('never freezes string literals, escaped identifiers or comments as SQL clock functions', () => {
     const sql = "SELECT CURRENT_DATE('UTC'), CURRENT_TIMESTAMP(), 'CURRENT_TIMESTAMP()', `CURRENT_DATE()` -- CURRENT_DATE()\n/* CURRENT_TIMESTAMP() */";
     expect(freezeRestorationSql(sql, new Date(start).toISOString())).toBe(

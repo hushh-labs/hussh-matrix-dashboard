@@ -6,9 +6,10 @@ import { noteLegacyQueryFailure } from '../src/server/legacy-restoration';
 
 const state = vi.hoisted(() => ({ query: vi.fn(), historyFails: true, dailyFails: false, agentsFail: false,
   cohortKey: 'b'.repeat(64), retained: undefined as undefined | { key: string; at: number; value: { status: number; body: unknown } },
-  readSnapshot: vi.fn(), saveSnapshot: vi.fn(), phase: 'none' as 'none' | 'planning' | 'open' }));
+  readSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), phase: 'none' as 'none' | 'planning' | 'open' }));
 vi.mock('../src/server/legacy-restoration', async original => ({
   ...await original<typeof import('../src/server/legacy-restoration')>(),
+  legacyPreviousRestoration: async () => ({ readSnapshot: state.priorSnapshot }),
   legacyRestoration: async () => state.retained || state.phase !== 'none' ? {
     readSnapshot: state.readSnapshot, saveSnapshot: state.saveSnapshot,
     isActive: async () => state.phase === 'open', isPreparing: async () => state.phase !== 'none' } : null,
@@ -36,7 +37,7 @@ vi.mock('../src/server/one-customer-cohort', async original => {
 const secret = 'legacy-report-isolation-test-session-secret-long-enough';
 const cookie = (email = 'metrics-qa@hushh.ai') => `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email, exp: Math.floor(Date.now() / 1000) + 3600 }), secret))}`;
 const app = () => createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-afterEach(() => { vi.unstubAllGlobals(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.phase = 'none'; });
+afterEach(() => { vi.unstubAllGlobals(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.phase = 'none'; });
 
 function source() {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('No external calls in route verification'); }));
@@ -131,6 +132,21 @@ describe('legacy report source isolation', () => {
     expect(changed.body.marker).toBeUndefined(); expect(state.query).toHaveBeenCalled();
     const publishDenied = await request(server).get(url).set('Cookie', cookie()).set('X-Metrics-Restoration-Publish', '1');
     expect(publishDenied.status).toBe(403);
+  });
+  it('reads a compatible original snapshot without relabeling its time or querying', async () => {
+    source(); state.phase = 'planning';
+    const url = '/api/analytics/founder?start_date=2026-11-05&end_date=2026-11-05';
+    const at = Date.now() - 60_000, value = { status: 200, body: { marker: 'old producer', partial: true } };
+    const key = 'b'.repeat(64) + ':' + canonicalAnalyticsKey(url);
+    state.readSnapshot.mockResolvedValue(null);
+    state.priorSnapshot.mockImplementation(async candidate => candidate === key ? { at, value } : null);
+    const response = await request(app()).get(url).set('Cookie', cookie());
+    expect(response.status).toBe(200); expect(response.body).toEqual(value.body);
+    expect(response.headers['x-metrics-updated-at']).toBe(new Date(at).toISOString());
+    expect(response.headers['x-metrics-cache']).toBe('RESTORED'); expect(state.query).not.toHaveBeenCalled();
+    state.cohortKey = 'd'.repeat(64);
+    const changed = await request(app()).get(url).set('Cookie', cookie());
+    expect(changed.body.marker).toBeUndefined();
   });
   it('keeps bounded period accounts, platforms and agents when historical first-seen cannot be read', async () => {
     source(); state.historyFails = true; state.dailyFails = false; state.agentsFail = false;

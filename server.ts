@@ -1,3 +1,4 @@
+import { websiteGa4Request, WEBSITE_GA4_PROPERTY, WEBSITE_GA4_MEASUREMENT } from './src/server/ga4-website-scope';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -24,7 +25,7 @@ import { fileURLToPath } from 'url';
 import { inferProductFromQuestion, isOneEnvironmentSplitQuestion, productFromValue } from './src/lib/agent-product-routing';
 import type { ProductKey } from './src/lib/agent-product-routing';
 import { FOUNDER_EARLIEST_DATE, founderCustomRange, founderPresetRange } from './src/lib/founder-briefing';
-import { legacyRestoration, legacyReportFailed, withLegacyReportScope } from './src/server/legacy-restoration';
+import { legacyRestoration, legacyPreviousRestoration, legacyReportFailed, withLegacyReportScope } from './src/server/legacy-restoration';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
@@ -3971,12 +3972,19 @@ async function fetchGa4DataApiSummary(
   measurementId: string,
   range: HushhAiDateRange,
 ): Promise<DataResult<Record<string, unknown>>> {
+  if (propertyId !== WEBSITE_GA4_PROPERTY || measurementId !== WEBSITE_GA4_MEASUREMENT) {
+    return { data: waitingGa4Summary('Hushh AI', range, '', '', 'The configured GA4 source does not match the verified website stream.'), error: null };
+  }
+  const websiteReport = (body: Record<string, unknown>) => runGa4Report(propertyId, websiteGa4Request(body));
+  const websiteRealtime = (body: Record<string, unknown>) => runGa4RealtimeReport(propertyId, websiteGa4Request(body, true));
   const generatedAt = new Date().toISOString();
   const dateRanges = [{ startDate: range.startDate, endDate: range.endDate }];
   const last7DateRanges = [ga4RecentCalendarRange(7)];
   const last24DateRanges = [{ startDate: 'yesterday', endDate: 'today' }];
   const ga4Warnings = [
     'GA4 aggregate data only; no user-level/session-level rows.',
+    'Processed reports cover the verified website stream and hushh.ai/hussh.si hosts. Historical cross-domain identity and collection completeness are not verified. Realtime is stream-wide because GA4 realtime does not expose hostName.',
+    'Provider-reported zero does not establish zero real visitors: browser analytics was paused and requires consent.',
     'Users are non-additive across days and dimensions.',
     'Hourly timestamps are in the GA4 property timezone.',
     'Last-day/today data is processed GA4 reporting data and may change.',
@@ -4008,51 +4016,51 @@ async function fetchGa4DataApiSummary(
       hourlySessions,
       hourOfDay,
     ] = await Promise.all([
-      runGa4RealtimeReport(propertyId, {
+      websiteRealtime({
         minuteRanges: [{ name: 'last_30_minutes', startMinutesAgo: 29, endMinutesAgo: 0 }],
         metrics: [{ name: 'activeUsers' }, { name: 'eventCount' }],
         limit: '10',
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges: last24DateRanges,
         metrics: coreMetrics,
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges: last7DateRanges,
         metrics: coreMetrics,
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'date' }],
         metrics: coreMetrics,
         orderBys: [{ dimension: { dimensionName: 'date' } }],
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         metrics: coreMetrics,
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'eventName' }],
         metrics: [{ name: 'eventCount' }, { name: 'activeUsers' }],
         orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
         limit: '20',
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'pagePath' }, { name: 'pageTitle' }],
         metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }, { name: 'eventCount' }],
         orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }],
         limit: '20',
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'platform' }, { name: 'deviceCategory' }, { name: 'country' }],
         metrics: [{ name: 'eventCount' }, { name: 'activeUsers' }],
         orderBys: [{ metric: { metricName: 'eventCount' }, desc: true }],
         limit: '20',
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'sessionDefaultChannelGroup' }],
         metrics: [
@@ -4066,7 +4074,7 @@ async function fetchGa4DataApiSummary(
         orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
         limit: '12',
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'sessionSourceMedium' }],
         metrics: [
@@ -4080,7 +4088,7 @@ async function fetchGa4DataApiSummary(
         orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
         limit: '12',
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'sessionDefaultChannelGroup' }, { name: 'landingPage' }],
         metrics: [
@@ -4092,7 +4100,7 @@ async function fetchGa4DataApiSummary(
         orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
         limit: '15',
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'country' }, { name: 'deviceCategory' }],
         metrics: [
@@ -4104,7 +4112,7 @@ async function fetchGa4DataApiSummary(
         orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
         limit: '20',
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'dateHour' }],
         metrics: [
@@ -4117,7 +4125,7 @@ async function fetchGa4DataApiSummary(
         orderBys: [{ dimension: { dimensionName: 'dateHour' } }],
         limit: String(Math.min(range.days * 24, 2_400)),
       }),
-      runGa4Report(propertyId, {
+      websiteReport({
         dateRanges,
         dimensions: [{ name: 'hour' }],
         metrics: [
@@ -5784,7 +5792,8 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (publishRestoration && (!restoration || !await restoration.isActive())) {
             res.status(409).json({ error: 'Initial report publication is not active.' }); return;
           }
-          const retained = await restoration?.readSnapshot(key);
+          const previous = await legacyPreviousRestoration();
+          const retained = await restoration?.readSnapshot(key) ?? await previous?.readSnapshot(key);
           const useRetained = retained && (!refresh || !await restoration!.isActive());
           const scopedLoad = () => withLegacyReportScope(key, async () => {
               const value = await (cohort ? withCustomerCohort(cohort.cacheKey, load) : load());
@@ -9430,7 +9439,8 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
   app.get('/api/auth/me', async (req, res) => {
     const user = (req as any).sessionUser as SessionUser | null;
     if (user) {
-      const publicationAsOf = await legacyRestoration().then(r => r?.publicationAsOf()).catch(() => null);
+      const publicationAsOf = await legacyPreviousRestoration().then(r => r?.publicationAsOf()).catch(() => null)
+        ?? await legacyRestoration().then(r => r?.publicationAsOf()).catch(() => null);
       res.json({
         authenticated: true,
         ...(publicationAsOf ? { publicationAsOf } : {}),

@@ -84,3 +84,25 @@ uses only the normal limits; expiry never authorizes a fresh restoration job.
 Snapshots are retained as recovery evidence; no TTL deletion or old-data cleanup
 is enabled here. The longer-term published-report collector remains separate
 work under #184 and its accepted operating-policy/reconciliation requirements.
+
+## One-time historical recovery after the initial fill
+
+A separate recovery permit may be created only with an immutable claim tied to
+one original closed permit. The claim pins both permit IDs and source commits,
+the original reserved bytes, new byte/job caps and the unextendable time window.
+Every preparation, plan, reservation and publication checks the claim and the
+original closed ledger. The new maximum plus the original reservation cannot
+exceed the original 64 GiB ceiling. Recovery cannot chain from a recovery or
+change the original reservations. The operator must dry-run the exact requested
+periods and inspect plan coverage before opening the permit; fixed 30/90-day
+production and UAT requests can still exceed the remaining allowance. No cap
+implies that arbitrary periods or missing history are complete.
+
+The old source-bound snapshots remain read-only. Their original source, cohort,
+URL, as-of and 24-hour retention remain intact; a new binary never relabels them
+as the recovery source. Preset controls use the saved publication date, shown
+in the report, while those snapshots are retained. Unsupported or incomplete
+source data remains unavailable, and warehouse failures still block publication.
+The GA4 website reader binds processed reports to the verified stream and both
+approved domain families. Realtime is stream-wide because GA4 realtime does not
+provide a hostname dimension. Provider zero is not proof of zero actual visitors.
