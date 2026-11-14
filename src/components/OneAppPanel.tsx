@@ -1485,7 +1485,7 @@ export function OneAppPanel({
       <Block
         kicker="App performance"
         title="Is the app up?"
-        hint="Availability and response times for the live web service."
+        hint={retained ? (environment === 'production' ? 'Dated Monitoring observations for the production web service.' : 'Monitoring is unavailable for test analytics.') : 'Availability and response times for the live web service.'}
       >
         {retained ? <RetainedHealth range={activeData?.range} environment={environment} /> : <Health metrics={healthMetrics} />}
       </Block>
