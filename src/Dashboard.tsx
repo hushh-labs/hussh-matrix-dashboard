@@ -1196,6 +1196,7 @@ export default function Dashboard() {
   useEffect(() => {
     let active = true;
     setOnePartialReports([]);
+    if (activeTab !== 'one') return () => { active = false; };
     void fetch('/api/auth/one-partial-publications', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(35_000) })
       .then(response => response.ok ? response.json() : null).then(data => {
         if (!active || !Array.isArray(data?.reports)) return;
@@ -1203,7 +1204,7 @@ export default function Dashboard() {
           && /^\d{4}-\d{2}-\d{2}$/.test(row.startDate) && /^\d{4}-\d{2}-\d{2}$/.test(row.endDate)).slice(0, 5));
       }).catch(() => {});
     return () => { active = false; };
-  }, [user?.email]);
+  }, [activeTab, user?.email]);
   useEffect(() => {
     let active = true; setOnePublicationAsOf(null);
     void fetch('/api/auth/one-publication', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(35_000) })
