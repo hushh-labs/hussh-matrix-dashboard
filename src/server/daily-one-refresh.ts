@@ -279,10 +279,12 @@ export class DailyOneRefresh {
     const { run } = await this.permit();
     if (run.phase !== 'closed' || !run.reports.includes(report)) return null;
     if (requireActive) {
-      const activation = (await this.ref().collection('activation').doc('current').get()).data();
+      const full = (await this.ref().collection('activation').doc('current').get()).data();
+      const activation = full ?? (await this.ref().collection('activation').doc('partial').get()).data();
       if (!activation || activation.source !== this.source || activation.runId !== this.id || activation.reportDigest !== run.reportDigest
         || activation.logicalAsOf !== run.logicalAsOf || activation.state !== 'active' || !activation.witness || !activationCohort
-        || !cohortMatchesSnapshotWitness(activationCohort, activation.witness)) return null;
+        || !cohortMatchesSnapshotWitness(activationCohort, activation.witness)
+        || (!full && (!Array.isArray(activation.reports) || !activation.reports.includes(hash(report))))) return null;
     }
     const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
     if (environment === 'production' ? !cohort : environment !== 'uat' || !!cohort) return null;
@@ -316,6 +318,43 @@ export class DailyOneRefresh {
     const times = row.jobs.map((job: { endedAt: number }) => job.endedAt);
     return { value, asOf: row.dataAsOf as string, computedAt: row.computedAt as number, warehouseFrom: Math.min(...times), warehouseThrough: Math.max(...times),
       ...(row.witness ? { cohortAsOf: row.witness.asOf as string } : {}) };
+  }
+  /** Publish only independently verified reports, without changing the complete-set anchor. */
+  async activatePartial(cohort: CustomerCohort) {
+    const { run } = await this.permit();
+    const witness = cohortSnapshotWitness(cohort);
+    if (run.phase !== 'closed' || !witness) throw fail();
+    await requireCurrentCustomerCohort(cohort.cacheKey);
+    const values = await Promise.all(run.reports.map(report => {
+      const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
+      return environment === 'production' ? this.read(report, cohort, false) : null;
+    }));
+    const reports = run.reports.filter((_, index) => values[index]?.asOf === run.logicalAsOf).map(hash);
+    if (!reports.length || reports.length === run.reports.length) throw fail();
+    await requireCurrentCustomerCohort(cohort.cacheKey);
+    const activation = this.ref().collection('activation').doc('partial');
+    await this.db.runTransaction(async tx => {
+      const { run: live } = await this.checked(ref => tx.get(ref)), existing = await tx.get(activation);
+      const own = live.reports.slice(recoveredReports(live)).filter(report => reports.includes(hash(report)));
+      const snapshots = await Promise.all(own.map(report => tx.get(this.ref().collection('snapshots').doc(hash(report)))));
+      if (live.phase !== 'closed' || live.logicalAsOf !== run.logicalAsOf || live.reportDigest !== run.reportDigest || existing.exists
+        || snapshots.some((snapshot, index) => !snapshot.exists || snapshot.data()?.state !== 'verified'
+          || snapshot.data()?.source !== this.source || snapshot.data()?.reportHash !== hash(own[index]))) throw fail();
+      requireFreshCohort(cohort);
+      tx.create(activation, { state: 'active', source: this.source, runId: this.id, reportDigest: live.reportDigest, logicalAsOf: live.logicalAsOf, witness, reports, activatedAt: this.now() });
+    });
+    return reports.length;
+  }
+  async partialReports(cohort: CustomerCohort) {
+    const { run } = await this.permit();
+    if (run.phase !== 'closed' || !(await this.ref().collection('activation').doc('partial').get()).exists) return [];
+    const rows = await Promise.all(run.reports.map(async report => {
+      const query = new URL(report, 'http://analytics.internal').searchParams;
+      if (query.get('environment') !== 'production' || !await this.read(report, cohort, true, cohort)) return null;
+      const startDate = query.get('one_start_date'), endDate = query.get('one_end_date');
+      return startDate && endDate ? { startDate, endDate } : null;
+    }));
+    return rows.filter((row): row is { startDate: string; endDate: string } => !!row);
   }
   /** Make the complete, closed set visible together; no warehouse work occurs. */
   async activate(cohort: CustomerCohort) {

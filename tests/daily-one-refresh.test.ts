@@ -170,6 +170,33 @@ describe('finite daily One refresh admission', () => {
    expect(await f.store.read(f.reports[7], null, true, { ...cohort, rows: [], cacheKey: '0'.repeat(64) })).toBeNull();
   } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
  });
+ it('activates only verified partial scopes while retaining the complete-set anchor', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 2000);
+  try {
+   const policyRevision = 'c'.repeat(64), rows = [{ analyticsUserId: 'd'.repeat(32), registeredAt: '2026-11-01T00:00:00.000Z' }];
+   const cacheKey = createHash('sha256').update(JSON.stringify([policyRevision, rows])).digest('hex');
+   const cohort = { policyRevision, rows, cacheKey, asOf: '2026-11-15T07:00:02.000Z', expiresAt: start + 600_000 };
+   const f = await secondRecoveryFixture(cacheKey); vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(cohort);
+   f.db.values.get(`metricsOneDailyRuns/${f.id2}`).phase = 'closed'; const witness = cohorts.cohortSnapshotWitness(cohort)!;
+   for (const [i, report] of f.reports.slice(2, 4).entries()) {
+    const reportHash = createHash('sha256').update(report).digest('hex');
+    f.db.values.set(`metricsOneDailyRuns/${f.id2}/snapshots/${reportHash}`, { schema: 1, state: 'verified', source: f.source2,
+     measurementId: f.run2.measurementId, measurementSource: f.run2.measurementSource, measurementDigest: f.run2.measurementDigest,
+     scopeDigest: f.run2.scopeDigest, runId: f.id2, parentId: f.childId, parentSource: f.childSource, reportHash, dataAsOf: asOf,
+     sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown', computedAt: start + 2000,
+     jobs: [{ id: `metrics_${f.id2}_${String(i).padStart(64, '0')}`, endedAt: start + 2000 }], json: JSON.stringify(payloadFor(report)), witness });
+   }
+   expect(await f.store.activatePartial(cohort)).toBe(4);
+   expect(await f.store.read(f.reports[2], cohort)).not.toBeNull();
+   expect(await f.store.read(f.reports[4], cohort)).toBeNull();
+   expect(await f.store.publicationAsOf(cohort)).toBeNull();
+   expect((await f.store.partialReports(cohort)).length).toBe(4);
+   const removed = { ...cohort, rows: [], cacheKey: '0'.repeat(64) };
+   expect(await f.store.read(f.reports[2], removed)).toBeNull();
+   expect(await f.store.partialReports(removed)).toEqual([]);
+   await expect(f.store.activatePartial(cohort)).rejects.toThrow();
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
  it('composes the second report only from the immediate closed parent jobs', async () => {
   vi.useFakeTimers(); vi.setSystemTime(start + 2000);
   try {

@@ -105,6 +105,16 @@ describe('legacy report source isolation', () => {
     state.currentCohortFails = true; expect((await endpoint()).body.publicationAsOf).toBeNull();
     expect((await request(app()).get('/api/auth/one-publication')).status).toBe(401); expect(state.query).not.toHaveBeenCalled();
   });
+  it('requires a session and a current cohort for partial date choices', async () => {
+    state.daily = { partialReports: vi.fn().mockResolvedValue([{ startDate: '2026-10-17', endDate: '2026-11-15' }]) };
+    const endpoint = () => request(app()).get('/api/auth/one-partial-publications').set('Cookie', cookie());
+    expect((await request(app()).get('/api/auth/one-partial-publications')).status).toBe(401);
+    const denied = await request(app()).get('/api/analytics/all?view=one&environment=production').set('Cookie', cookie()).set('X-Metrics-Daily-One-Activate', 'partial');
+    expect(denied.status).toBe(403);
+    const result = await endpoint(); expect(result.status).toBe(200); expect(result.body.reports).toEqual([{ startDate: '2026-10-17', endDate: '2026-11-15' }]);
+    expect(result.headers['cache-control']).toBe('no-store'); expect(state.query).not.toHaveBeenCalled();
+    state.currentCohortFails = true; expect((await endpoint()).body.reports).toEqual([]); state.currentCohortFails = false;
+  });
   it('compares only matching retained growth windows without exposing cohort proof or querying', async () => {
     source(); state.phase = 'closed'; const asOf = '2026-11-14T21:34:55.606Z';
     const witness = { policyRevision: 'a'.repeat(64), rowsHash: 'f'.repeat(64), asOf: '2026-11-14T21:53:15.758Z' };
