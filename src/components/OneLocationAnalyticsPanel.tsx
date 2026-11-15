@@ -27,6 +27,7 @@ import {
 } from 'recharts';
 
 import { formatNumber } from '../lib/analytics-service';
+import { locationDailyTrend } from '../lib/location-daily-trend';
 import { dashboardCard, dashboardLabel, dashboardPanel, dashboardBand } from '../lib/theme';
 import { cn } from '../lib/utils';
 import type {
@@ -352,11 +353,7 @@ export function OneLocationAnalyticsPanel({
   );
   const requestFulfilled = locationAnalytics?.journey.find((row) => row.key === 'request_fulfilled');
   const circleEngaged = locationAnalytics?.journey.find((row) => row.key === 'circle_engaged');
-  const trend = (selectedOne?.daily ?? []).map((point) => ({
-    date: point.eventDate.slice(5),
-    active: point.locationUsers,
-    sharing: byKey.get('live_sharing')?.daily.find((row) => row.eventDate === point.eventDate)?.users ?? 0,
-  }));
+  const trend = locationDailyTrend(selectedOne);
 
   return (
     <main className="space-y-6 sm:space-y-8">
@@ -478,6 +475,7 @@ export function OneLocationAnalyticsPanel({
           <div className={cn(dashboardPanel, 'p-5 sm:p-6')}>
             <p className="text-base font-bold text-ink">Daily Location activity</p>
             <p className="mt-1 text-xs font-medium text-muted">Unique devices using Location versus live sharing</p>
+            {(!selectedOne.locationBehaviorAvailable || trend.some(point => point.sharing === null)) && <p className="mt-1 text-xs font-medium text-warning">Live sharing behavior data is unavailable for one or more displayed days.</p>}
             <div className="mt-5 h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
