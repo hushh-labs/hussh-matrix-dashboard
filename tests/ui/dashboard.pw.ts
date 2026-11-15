@@ -67,6 +67,19 @@ test('retained app health keeps the dated One report and labels separate provide
   expect(requests.some(url => new URL(url).searchParams.has('include_health'))).toBe(false);
 });
 
+test('retained Monitoring shows partial observed production values and never reuses them for UAT', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:34:55.606Z', user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));
+  const reads: string[] = [];
+  await page.route('**/api/analytics/one/monitoring-publication?*', route => { const url = new URL(route.request().url()); reads.push(url.searchParams.get('environment') || '');
+    return route.fulfill({ json: { startDate: url.searchParams.get('start_date'), endDate: url.searchParams.get('end_date'), source: 'Cloud Monitoring · production One service', sourceObservedAt: '2026-11-15T07:00:00Z', stale: false,
+      metrics: { requests: { value: 64826, observedAt: '2026-11-15T07:00:00Z' }, errors: { value: null, observedAt: '2026-11-15T07:00:00Z' }, instances: { value: null, observedAt: '2026-11-15T07:00:00Z' } } } }); });
+  await page.goto('/'); await navigate(page, 'One app'); await page.getByRole('button', { name: 'App health', exact: true }).click();
+  await expect(page.getByText('64,826', { exact: true })).toBeVisible(); await expect(page.getByText(/observed values may be partial/)).toBeVisible();
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
+  await expect(page.getByText('64,826', { exact: true })).toHaveCount(0); expect(reads.every(value => value === 'production')).toBe(true);
+});
+
 test('idle reports do not poll or prefetch; Refresh requests only the selected report', async ({ page }) => {
   await page.clock.install();
   await mockDashboard(page);

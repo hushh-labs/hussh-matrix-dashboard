@@ -1,6 +1,7 @@
 import { ReportDetails, ReportTabs } from './ReportControls';
 import { MetricsSkeleton } from './MetricsLoading';
 import { AndroidAnalyticsPanel } from './AndroidAnalyticsPanel';
+import { useMetricsResource } from '../lib/use-metrics-resource';
 import { Fragment, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle, ChevronDown, Info, ShieldCheck, Users } from 'lucide-react';
@@ -1186,6 +1187,17 @@ function Health({ metrics }: { metrics: BreakdownMetric[] }) {
   );
 }
 
+function RetainedHealth({ range, environment }: { range?: { startDate: string; endDate: string }; environment: 'production' | 'uat' }) {
+  const url = environment === 'production' && range ? `/api/analytics/one/monitoring-publication?environment=production&start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}` : null;
+  const resource = useMetricsResource<{ startDate: string; endDate: string; source: string; sourceObservedAt: string; stale: boolean; metrics: Record<string, { value: number | null; observedAt: string }> }>(url);
+  const report = resource.data, matches = report?.startDate === range?.startDate && report.endDate === range?.endDate;
+  if (!matches) return <><p className="mb-3 text-sm text-muted" role="status">The saved One report does not include Cloud Run monitoring. Live monitoring is unavailable here.</p><Health metrics={[]} /></>;
+  return <div className={cn(dashboardPanel, 'p-5')}>
+    <p className="text-sm text-muted">{report.source} · us-central1 · {report.startDate} to {report.endDate} UTC · collection ended {report.sourceObservedAt} UTC.{report.stale ? ' This publication is more than 24 hours old.' : ''} Monitoring can omit series, so these observed values may be partial. Latency was not collected.</p>
+    <div className="mt-4 grid gap-4 sm:grid-cols-3">{([['requests', 'Requests'], ['errors', '5xx responses'], ['instances', 'Peak reported instances']] as const).map(([key, label]) => <div key={key} className={cn(dashboardCard, 'p-5')}><p className="text-sm text-muted">{label}</p><p className="mt-2 text-3xl font-semibold">{report.metrics[key]?.value == null ? 'Unavailable' : exactCount(report.metrics[key].value!)}</p><p className="mt-1 text-xs text-muted">Observed {report.metrics[key]?.observedAt || 'at an unknown time'}</p></div>)}</div>
+  </div>;
+}
+
 /**
  * The provenance line.
  *
@@ -1473,10 +1485,9 @@ export function OneAppPanel({
       <Block
         kicker="App performance"
         title="Is the app up?"
-        hint="Availability and response times for the live web service."
+        hint={retained ? (environment === 'production' ? 'Dated Monitoring observations for the production web service.' : 'Monitoring is unavailable for test analytics.') : 'Availability and response times for the live web service.'}
       >
-        {retained && <p className="mb-3 text-sm text-muted" role="status">The saved One report does not include Cloud Run monitoring. Live monitoring is unavailable here.</p>}
-        <Health metrics={retained ? [] : healthMetrics} />
+        {retained ? <RetainedHealth range={activeData?.range} environment={environment} /> : <Health metrics={healthMetrics} />}
       </Block>
 
       </>}
