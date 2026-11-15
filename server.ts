@@ -353,12 +353,12 @@ function firstQueryValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-function parseProductDateRange(
+export function parseProductDateRange(
   query: Record<string, unknown>,
   prefix: string,
   configuredWindowDays: number,
 ): HushhAiDateRange {
-  const today = new Date();
+  const today = reportPeriodNow();
   const endDefault = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   const configuredDays = Number(firstQueryValue(query[`${prefix}_window_days`]) ?? firstQueryValue(query.window_days) ?? configuredWindowDays);
   const defaultDays = Math.min(Math.max(Number.isFinite(configuredDays) ? Math.floor(configuredDays) : configuredWindowDays, 1), MAX_HUSHH_AI_RANGE_DAYS);
@@ -390,8 +390,13 @@ function buildDateRange(start: Date, end: Date): HushhAiDateRange {
   };
 }
 
+function reportPeriodNow(): Date {
+  const asOf = currentContinuation()?.dataAsOf;
+  return asOf ? new Date(asOf) : new Date();
+}
+
 function utcToday(): Date {
-  const now = new Date();
+  const now = reportPeriodNow();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
@@ -1311,7 +1316,7 @@ async function fetchHushhTechSearchConsoleFallback(
   };
 }
 
-async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
+export async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Promise<DataResult<Record<string, unknown>>> {
   const generatedAt = new Date().toISOString();
   const queryProject = BQ_JOB_PROJECT || HUSHHTECH_SEARCH_PROJECT;
   const datasetRef = `\`${HUSHHTECH_SEARCH_PROJECT}.${HUSHHTECH_SEARCH_DATASET}\``;
@@ -1578,7 +1583,7 @@ function toNumber(value: unknown): number {
 }
 
 function defaultUtcRange(days: number): HushhAiDateRange {
-  const end = new Date();
+  const end = reportPeriodNow();
   const endDate = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
   const windowDays = Math.max(1, Math.min(days, MAX_HUSHH_AI_RANGE_DAYS));
   return {
@@ -1591,7 +1596,7 @@ function defaultUtcRange(days: number): HushhAiDateRange {
   };
 }
 
-function last24HourUtcRange(now = new Date()): HushhAiDateRange {
+function last24HourUtcRange(now = reportPeriodNow()): HushhAiDateRange {
   const start = new Date(now.getTime() - 86_400_000);
   return {
     startDate: formatUtcDate(start),
@@ -5836,14 +5841,14 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const continuation = await legacyContinuation();
           if (publishContinuation) {
             if (!continuation || !restoration || measureClosed || composePublication || publishRestoration) { res.status(409).json({ error: 'Continuation is not configured.' }); return; }
-            await continuation.requireOpen(reportUrl);
+            const admission = await continuation.requireOpen(reportUrl);
             const perform = async (captured: typeof cohort) => {
               const continuationKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
               return withLegacyReportScope(continuationKey, () => withContinuation(continuation, async () => {
                 const value = await capture(handler, sourceRequest, true);
                 if (legacyReportFailed()) throw { status: 503, body: { error: 'Continuation source inputs are incomplete; no report was published.' } };
                 return value;
-              }));
+              }, admission.doc.dataAsOf));
             };
             let completed: Awaited<ReturnType<typeof perform>>; let captured = cohort;
             if (cohort) {

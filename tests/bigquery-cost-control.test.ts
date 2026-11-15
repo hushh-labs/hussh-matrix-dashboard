@@ -66,12 +66,12 @@ describe('BigQuery execution boundary', () => {
       configuration: { query: { query: 'SELECT 7', maximumBytesBilled: String(grant.bytes), useLegacySql: false } }, statistics: { endTime: String(Date.now() - 1000) } };
     const getMetadata = vi.fn(async () => [metadata]);
     sdk.job.mockReturnValue({ getMetadata, getQueryResults: async () => [[{ value: 7 }], null] });
-    const result = await withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }));
+    const result = await withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }), '2026-11-14T21:34:55.606Z');
     expect(result.jobs).toEqual([{ id: grant.id, endedAt: Number(metadata.statistics.endTime) }]);
     metadata.jobReference.jobId = 'wrong';
-    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('verification');
+    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }), '2026-11-14T21:34:55.606Z')).rejects.toThrow('verification');
     getMetadata.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 404 }));
-    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('prior job could not be verified');
+    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }), '2026-11-14T21:34:55.606Z')).rejects.toThrow('prior job could not be verified');
     expect(sdk.createQueryJob).not.toHaveBeenCalled();
   });
   it('keeps a normal request closed while private continuation requests occupy the queue', async () => {
@@ -87,7 +87,7 @@ describe('BigQuery execution boundary', () => {
     let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
     const results = vi.fn(async () => { await barrier; return [[{ value: 7 }], null]; });
     sdk.job.mockReturnValue({ getMetadata: async () => [metadata], getQueryResults: results });
-    const privateRuns = [1, 2, 3].map(() => withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' })));
+    const privateRuns = [1, 2, 3].map(() => withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }), '2026-11-14T21:34:55.606Z'));
     await vi.waitFor(() => expect(results).toHaveBeenCalledTimes(2));
     await expect(guardedBigQuery(project, { query: 'SELECT 7' })).rejects.toThrow('No retained report');
     expect(sdk.createQueryJob).not.toHaveBeenCalled(); release(); await Promise.all(privateRuns);
@@ -98,7 +98,7 @@ describe('BigQuery execution boundary', () => {
     const reserve = vi.fn();
     const store = { isPreparing: async () => true, prepare: async (request: Query) => request,
       existing: async () => { throw new Error('conflicting prior reservation'); }, reserve } as unknown as LegacyContinuation;
-    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('conflicting prior reservation');
+    await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }), '2026-11-14T21:34:55.606Z')).rejects.toThrow('conflicting prior reservation');
     expect(reserve).not.toHaveBeenCalled(); expect(sdk.createQueryJob).not.toHaveBeenCalled(); expect(sdk.job).not.toHaveBeenCalled();
   });
   it('fails closed when a restoration closes while a request waits in the queue across UTC midnight', async () => {
