@@ -6,6 +6,7 @@ import { withClosedMeasurement, type ClosedMeasurement } from '../src/server/clo
 import { withContinuation, type LegacyContinuation } from '../src/server/legacy-continuation';
 import { withDailyOneMeasurement, type DailyOneMeasurement } from '../src/server/daily-one-measurement';
 import { currentDailyOneRefresh, withDailyOneRefresh, type DailyOneRefresh } from '../src/server/daily-one-refresh';
+import { withPlatformCaptureSignal } from '../src/server/platform-capture-signal';
 import { BIGQUERY_COST_LIMITS as limits, BigQueryCostControlError, countBudgetedStatements,
   createGuardedBigQuery, FirestoreQueryBudgetStore, guardedBigQuery, guardedBigQueryDryRun,
   type QueryBudgetReservation } from '../src/server/bigquery-cost-control';
@@ -136,6 +137,56 @@ describe('BigQuery execution boundary', () => {
     await expect(pending).rejects.toThrow('no longer open');
     expect(sdk.createQueryJob.mock.calls.filter(([request]: any) => !request.dryRun)).toHaveLength(0);
     expect(store.claimSubmission).toHaveBeenCalledOnce();
+  });
+  it('does not create a daily job when the caller aborts during native metadata lookup', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); const controller = new AbortController();
+    const id = 'metrics_refresh_20261115_1111111111111111_' + 'a'.repeat(64);
+    const grant = { permitId: 'refresh_20261115_1111111111111111', planHash: 'a'.repeat(64), id, bytes: 20 * 1024 ** 2, report: '/fixed' };
+    const store = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }), isPreparing: async () => true, expandedPreparing: async () => false, perJobCeiling: async () => grant.bytes,
+      prepare: async (request: Query) => request, existing: async () => undefined, admit: async () => grant,
+      reserve: vi.fn(async () => {}), claimSubmission: vi.fn(async () => true) } as unknown as DailyOneRefresh;
+    sdk.createQueryJob.mockImplementation(async (request: any) => { if (!request.dryRun) throw new Error('unexpected paid job'); return [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'SELECT' } } } }]; });
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; }), barrier = new Promise<void>(resolve => { release = resolve; });
+    sdk.job.mockReturnValue({ getMetadata: async () => { entered(); await barrier; throw Object.assign(new Error('missing'), { code: 404 }); } });
+    const pending = withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }), controller.signal, () => controller.abort());
+    await started; controller.abort(); release(); await expect(pending).rejects.toThrow('interrupted');
+    expect(sdk.createQueryJob.mock.calls.filter(([request]: any) => !request.dryRun)).toHaveLength(0); expect(store.claimSubmission).toHaveBeenCalledOnce();
+  });
+  it('keeps a started reservation after aborting during native submission without a second create', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); const controller = new AbortController();
+    const id = 'metrics_refresh_20261115_1111111111111111_' + 'a'.repeat(64);
+    const grant = { permitId: 'refresh_20261115_1111111111111111', planHash: 'a'.repeat(64), id, bytes: 20 * 1024 ** 2, report: '/fixed' };
+    const store = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }), isPreparing: async () => true, expandedPreparing: async () => false, perJobCeiling: async () => grant.bytes,
+      prepare: async (request: Query) => request, existing: async () => undefined, admit: async () => grant,
+      reserve: vi.fn(async () => {}), claimSubmission: vi.fn(async () => true) } as unknown as DailyOneRefresh;
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; }), barrier = new Promise<void>(resolve => { release = resolve; });
+    sdk.job.mockReturnValue({ getMetadata: async () => { throw Object.assign(new Error('missing'), { code: 404 }); } });
+    sdk.createQueryJob.mockImplementation(async (request: any) => { if (request.dryRun) return [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'SELECT' } } } }]; entered(); await barrier; return [{}]; });
+    const pending = withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }), controller.signal, () => controller.abort());
+    await started; controller.abort(); release(); await expect(pending).rejects.toThrow('interrupted');
+    expect(sdk.createQueryJob.mock.calls.filter(([request]: any) => !request.dryRun)).toHaveLength(1); expect(store.reserve).toHaveBeenCalledOnce(); expect(store.claimSubmission).toHaveBeenCalledOnce();
+  });
+  it('aborts a queued platform estimate before any reservation or execution', async () => {
+    const controller = new AbortController(), reserve = vi.fn(async () => {}), execute = vi.fn(async () => [[]] as any);
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; }), barrier = new Promise<void>(resolve => { release = resolve; });
+    const run = createGuardedBigQuery({ enabled: () => true, budget: { reserve }, execute, estimate: async () => { entered(); await barrier; return 1; } });
+    const pending = withPlatformCaptureSignal(controller.signal, () => run(project, { query: 'SELECT 1' }));
+    await started; controller.abort(); release(); await expect(pending).rejects.toThrow('interrupted'); expect(reserve).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
+  });
+  it('does not admit an aborted platform request after the semaphore opens', async () => {
+    const controller = new AbortController(), reserve = vi.fn(async () => {}), estimate = vi.fn(async () => 1);
+    let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
+    const execute = vi.fn(async () => { await barrier; return [[]] as any; });
+    const run = createGuardedBigQuery({ enabled: () => true, budget: { reserve }, execute, estimate });
+    const first = run(project, { query: 'SELECT 1' }), second = run(project, { query: 'SELECT 2' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const third = withPlatformCaptureSignal(controller.signal, () => run(project, { query: 'SELECT 3' }));
+    await new Promise(resolve => setTimeout(resolve, 0)); controller.abort(); release();
+    await expect(third).rejects.toThrow('interrupted'); await Promise.all([first, second]);
+    expect(estimate).toHaveBeenCalledTimes(2); expect(reserve).toHaveBeenCalledTimes(2); expect(execute).toHaveBeenCalledTimes(2);
   });
   it('records the real completion time of a verified daily native job', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
@@ -511,3 +562,4 @@ describe('fixed SQL statement accounting', () => {
     expect(() => countBudgetedStatements(sql)).toThrow(BigQueryCostControlError);
   });
 });
+

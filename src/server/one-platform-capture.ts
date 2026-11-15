@@ -1,3 +1,4 @@
+import { withPlatformCaptureSignal } from './platform-capture-signal';
 type Row = Record<string, unknown>;
 export type PlatformCaptureResult = { rows: Row[]; error: string | null };
 type QueryOptions = { query: string; location: string; dryRun?: boolean; maximumBytesBilled?: string; jobTimeoutMs?: number };
@@ -67,17 +68,26 @@ export function onePlatformCaptureQueries({ table, dateFilter, meaningful, andro
 }
 
 /** The optional capture adds at most 100 MB over the existing platform scan. */
-export async function readPlatformCapture(reader: Reader, queries: ReturnType<typeof onePlatformCaptureQueries>): Promise<PlatformCaptureResult> {
-  const deadline = Date.now() + 40_000;
+export async function readPlatformCapture(reader: Reader, queries: ReturnType<typeof onePlatformCaptureQueries>,
+  options: { guardedDeadlineMs?: number; signal?: AbortSignal; onAbort?: () => void } = {}): Promise<PlatformCaptureResult> {
+  const guarded = options.guardedDeadlineMs !== undefined;
+  if (guarded && (!Number.isSafeInteger(options.guardedDeadlineMs) || options.guardedDeadlineMs! < 1 || options.guardedDeadlineMs! > 90_000)) throw new Error('Invalid aggregate deadline');
+  const controller = guarded ? new AbortController() : null;
+  const abort = () => { controller?.abort(); if (guarded) options.onAbort?.(); };
+  if (options.signal?.aborted) abort(); else options.signal?.addEventListener('abort', abort, { once: true });
+  const deadline = Date.now() + (options.guardedDeadlineMs ?? 40_000);
   const bounded = async (operation: () => Promise<unknown>) => {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error('Aggregate deadline reached');
+    if (remaining <= 0 || controller?.signal.aborted) { abort(); throw new Error('Aggregate deadline reached'); }
     let timer: ReturnType<typeof setTimeout>;
+    let cancelled: (() => void) | undefined;
     try {
       return await Promise.race([operation(), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Aggregate deadline reached')), remaining);
+        cancelled = () => reject(new Error('Aggregate deadline reached'));
+        controller?.signal.addEventListener('abort', cancelled, { once: true });
+        timer = setTimeout(() => { abort(); reject(new Error('Aggregate deadline reached')); }, remaining);
       })]);
-    } finally { clearTimeout(timer!); }
+    } finally { clearTimeout(timer!); if (cancelled) controller?.signal.removeEventListener('abort', cancelled); }
   };
   const execute = async (query: string, maximumBytesBilled?: number): Promise<Row[]> => {
     const response = await bounded(() => reader.query({query, location:'US',
@@ -89,7 +99,7 @@ export async function readPlatformCapture(reader: Reader, queries: ReturnType<ty
   const baselineOnly = async (limit?: number, unavailable = false): Promise<PlatformCaptureResult> => ({
     rows:[{platforms:await execute(queries.baseline,limit), androidCapture:unavailable ? null : {events:0}}], error:null,
   });
-  try {
+  const run = async (): Promise<PlatformCaptureResult> => { try {
     if (!queries.combined) return await baselineOnly();
     const estimate = async (query: string) => {
       const response = await bounded(() => reader.createQueryJob({query, location:'US', dryRun:true}));
@@ -109,7 +119,9 @@ export async function readPlatformCapture(reader: Reader, queries: ReturnType<ty
     return {rows:await execute(queries.combined,limit), error:null};
   } catch {
     return {rows:[], error:'One platform and Android aggregate query unavailable'};
-  }
+  } };
+  try { return controller ? await withPlatformCaptureSignal(controller.signal, run) : await run(); }
+  finally { options.signal?.removeEventListener('abort', abort); }
 }
 
 const record = (value:unknown): value is Row => value !== null && typeof value === 'object' && !Array.isArray(value);

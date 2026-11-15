@@ -5,6 +5,7 @@ import type { Firestore } from '@google-cloud/firestore';
 import { currentClosedMeasurement } from './closed-measurement';
 import { currentContinuation } from './legacy-continuation';
 import { currentDailyOneRefresh } from './daily-one-refresh';
+import { platformCaptureAborted } from './platform-capture-signal';
 import { currentDailyOneMeasurement } from './daily-one-measurement';
 import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, currentClosedComposition, ClosedJobMissingError, freezeRestorationSql, RESTORATION_LIMITS, HISTORICAL_LIMITS, type RestorationGrant } from './legacy-restoration';
 
@@ -178,11 +179,13 @@ export function createGuardedBigQuery(options: {
   let active = 0;
   const waiting: Array<() => void> = [];
   return async (project: string, request: Query): Promise<GuardedQueryResult> => {
+    assertQueryNotAborted();
     if (!options.enabled()) throw new BigQueryCostControlError();
     if (project !== BIGQUERY_COST_LIMITS.project) {
       throw new BigQueryCostControlError('BigQuery query jobs must use the approved dashboard project.');
     }
     if (options.prepare) request = await options.prepare(request);
+    assertQueryNotAborted();
     if (typeof request.query !== 'string') throw new BigQueryCostControlError('A fixed SQL query is required.');
     const statements = countBudgetedStatements(request.query);
     const requestedBytes = request.maximumBytesBilled == null
@@ -205,9 +208,11 @@ export function createGuardedBigQuery(options: {
       active++;
     }
     try {
+      assertQueryNotAborted();
       if (!options.enabled()) throw new BigQueryCostControlError();
       await options.guard?.();
       restoration = await options.existing?.(request);
+      assertQueryNotAborted();
       if (restoration) {
         if (statements !== 1 || !restoration.reuse || !Number.isSafeInteger(restoration.bytes)
           || restoration.bytes < 1 || restoration.bytes > HISTORICAL_LIMITS.bytesPerJob) throw new BigQueryCostControlError();
@@ -220,8 +225,10 @@ export function createGuardedBigQuery(options: {
         } catch {
           throw new BigQueryCostControlError('The query scan could not be estimated safely.');
         }
+        assertQueryNotAborted();
         if (!Number.isSafeInteger(estimatedBytes) || estimatedBytes < 0) throw new BigQueryCostControlError('Invalid scan limit estimate.');
         restoration = await options.restoration?.(request, estimatedBytes);
+        assertQueryNotAborted();
         if (restoration) {
           if (statements !== 1 || !Number.isSafeInteger(restoration.bytes) || (!restoration.reuse && restoration.bytes < estimatedBytes)
             || restoration.bytes > HISTORICAL_LIMITS.bytesPerJob) throw new BigQueryCostControlError();
@@ -235,6 +242,7 @@ export function createGuardedBigQuery(options: {
       }
       if (!options.enabled()) throw new BigQueryCostControlError();
       await options.guard?.();
+      assertQueryNotAborted();
       // Independent final fence: diagnostic revisions never reserve or submit a paid job.
       if (legacyDiagnosticOnly()) throw new BigQueryCostControlError('Diagnostic mode cannot execute queries.');
       const id = restoration?.id ?? `metrics_${options.newId?.() ?? randomUUID().replaceAll('-', '_')}`;
@@ -247,7 +255,9 @@ export function createGuardedBigQuery(options: {
       }
       if (!options.enabled()) throw new BigQueryCostControlError();
       await options.guard?.();
+      assertQueryNotAborted();
       const reuseOnly = await options.beforeExecute?.(restoration) ?? !!restoration?.reuse;
+      assertQueryNotAborted();
       // Whitelist request fields; caller-supplied project/job/session/destination
       // options cannot bypass the fixed job identity or expand the billing scope.
       return await options.execute({
@@ -275,6 +285,10 @@ export function createGuardedBigQuery(options: {
       else active--;
     }
   };
+}
+
+function assertQueryNotAborted() {
+  if (platformCaptureAborted() || currentDailyOneRefresh()?.signal?.aborted) throw new BigQueryCostControlError('The report request was interrupted.');
 }
 
 const activeRestoration = async () => currentDailyOneRefresh()?.store ?? currentContinuation()?.store ?? await legacyRestoration();
@@ -315,6 +329,7 @@ async function measureDailyOne(project: string, request: Query) {
 /** Estimates never execute SQL. Keep the platform capture's existing scan
  * comparison without exposing native createQueryJob to runtime callers. */
 export async function guardedBigQueryDryRun(project: string, request: Query) {
+  assertQueryNotAborted();
   if (currentDailyOneMeasurement()) {
     if (request.dryRun !== true) throw new BigQueryCostControlError();
     const processed = await measureDailyOne(project, request);
@@ -332,6 +347,7 @@ export async function guardedBigQueryDryRun(project: string, request: Query) {
   if (restoration && !preparing) throw new BigQueryCostControlError('No retained report is available for this selection.');
   const prepared = restoration ? await restoration.prepare(request) : request;
   const restorationCeiling = preparing ? await restoration!.perJobCeiling() : BIGQUERY_COST_LIMITS.bytesPerStatement;
+  assertQueryNotAborted();
   return client.createQueryJob({ query: prepared.query, dryRun: true,
     useLegacySql: false, location: 'US', useQueryCache: true,
     maximumBytesBilled: String(legacyDiagnosticOnly() ? 512 * 1024 ** 3 : restorationCeiling) });
@@ -367,11 +383,13 @@ const executeGuardedBigQuery = createGuardedBigQuery({
   },
   queueLimit: async () => (currentContinuation() || currentDailyOneRefresh()) ? 128 : process.env.METRICS_LEGACY_ABANDONED_ID && await (await legacyRestoration())?.expandedPreparing() ? 128 : BIGQUERY_COST_LIMITS.queuedRequests,
   estimate: async request => {
+    assertQueryNotAborted();
     const client = await nativeClient();
     const restoration = await activeRestoration();
     const preparing = await restoration?.isPreparing();
     if (restoration && !preparing) throw new BigQueryCostControlError('The restoration is no longer open.');
     const restorationCeiling = preparing ? await restoration!.perJobCeiling() : BIGQUERY_COST_LIMITS.bytesPerStatement;
+    assertQueryNotAborted();
     const [job] = await client.createQueryJob({ query: request.query, params: request.params, types: request.types,
       dryRun: true, useLegacySql: false, useQueryCache: true, location: 'US',
       maximumBytesBilled: String(legacyDiagnosticOnly() ? 512 * 1024 ** 3 : restorationCeiling),
@@ -389,7 +407,9 @@ const executeGuardedBigQuery = createGuardedBigQuery({
     return Number(value);
   },
   execute: async request => {
+    assertQueryNotAborted();
     const client = await nativeClient();
+    assertQueryNotAborted();
     if (typeof request.jobId === 'string' && (request.jobId.startsWith('metrics_restore_') || request.jobId.startsWith('metrics_refresh_'))) {
       const job = client.job(request.jobId, { location: 'US' });
       let exists = false;
@@ -405,12 +425,17 @@ const executeGuardedBigQuery = createGuardedBigQuery({
       } catch (error) {
         if ((error as { code?: number }).code !== 404) throw error;
       }
+      assertQueryNotAborted();
       if (!exists) {
         if (request.labels?.reuse_only === 'true') throw new BigQueryCostControlError('A prior job could not be verified.');
         const daily = currentDailyOneRefresh();
         if (daily && !await daily.store.isPreparing()) throw new BigQueryCostControlError('The daily refresh is no longer open.');
+        assertQueryNotAborted();
+        // A submission already dispatched can complete after an abort; its
+        // started reservation remains charged and must be reconciled by ID.
         try { await client.createQueryJob(request); }
         catch (error) { if ((error as { code?: number }).code !== 409) throw error; }
+        assertQueryNotAborted();
         // Reconcile the exact stable ID, including any lost acknowledgement.
         const [metadata] = await job.getMetadata();
         if ((request.jobId.startsWith('metrics_refresh_') && metadata.jobReference?.jobId !== request.jobId)
@@ -436,6 +461,7 @@ const executeGuardedBigQuery = createGuardedBigQuery({
       return [rows as Record<string, unknown>[]];
     }
     // A stable, pre-reserved jobId makes submission retries idempotent.
+    assertQueryNotAborted();
     const [job] = await client.createQueryJob(request);
     const [rows] = await job.getQueryResults({ autoPaginate: true, timeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
     return [rows as Record<string, unknown>[]];
@@ -508,6 +534,7 @@ export async function guardedBigQuery(project: string, request: Query): Promise<
     return await executeGuardedBigQuery(project, request);
   }
   catch (error) {
+    currentDailyOneRefresh()?.cancel?.();
     const closed = currentClosedComposition();
     if (closed) {
       const message = error instanceof Error ? error.message : '';

@@ -103,6 +103,25 @@ describe('Android shared aggregate read regression',()=>{
       expect(reader.query).not.toHaveBeenCalled();
     } finally {vi.useRealTimers();}
   });
+  it('allows a guarded queued aggregate to finish after forty seconds within the proof margin',async()=>{
+    vi.useFakeTimers();
+    try {
+      const reader={createQueryJob:vi.fn().mockResolvedValue(estimate(1000)),query:vi.fn().mockImplementation(()=>new Promise(resolve=>setTimeout(()=>resolve([[envelope]]),45_000)))};
+      const pending=readPlatformCapture(reader,queries,{guardedDeadlineMs:90_000});
+      await vi.advanceTimersByTimeAsync(45_001);
+      expect(unpackPlatformCapture(await pending).platforms.error).toBeNull(); expect(reader.query).toHaveBeenCalledTimes(1);
+    } finally {vi.useRealTimers();}
+  });
+  it('aborts the whole guarded report at the finite deadline and does not start a fallback scan',async()=>{
+    vi.useFakeTimers();
+    try {
+      let release!: (value: unknown) => void; const cancelled=vi.fn();
+      const reader={createQueryJob:vi.fn().mockImplementation(()=>new Promise(resolve=>{release=resolve;})),query:vi.fn()};
+      const pending=readPlatformCapture(reader,queries,{guardedDeadlineMs:90_000,onAbort:cancelled});
+      await vi.advanceTimersByTimeAsync(90_001); expect((await pending).error).toBeTruthy(); expect(cancelled).toHaveBeenCalled();
+      release(estimate(1000)); await Promise.resolve(); expect(reader.query).not.toHaveBeenCalled();
+    } finally {vi.useRealTimers();}
+  });
   it.each([new Error('auth failure'),null,{rows:[]}, {rows:[{platforms:[{platform:'WEB'}],androidCapture:{events:0}}]}, {rows:[{...envelope,platforms:[platform,platform]}]}])('rejects malformed platform envelopes',value=>{
     expect(unpackPlatformCapture(value).platforms.error).toBeTruthy();
   });
@@ -123,10 +142,10 @@ it('refreshes platform rows through one cache owner while reusing bounded captur
     const nestedCache=vi.fn().mockResolvedValue({rows:[platform],error:null});
     const captureRead=vi.fn().mockResolvedValue({rows:[envelope],error:null});
     let daily = false;
-    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture','legacyRestoration','currentClosedComposition','currentContinuation','currentDailyOneRefresh','currentDailyOneMeasurement','noteLegacyQueryFailure',
+    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture','legacyRestoration','currentClosedComposition','currentContinuation','currentDailyOneRefresh','currentDailyOneMeasurement','noteLegacyQueryFailure','readCustomerCohort',
       ts.transpile(seam,{target:ts.ScriptTarget.ES2022})+';return queryOnePlatformCapture;')(
         crypto,{getStore:()=>({refresh:false})},new AggregateCache({maxAgeMs:30000,maxEntries:128}),
-        uncached,nestedCache,async()=>({}),captureRead,async()=>null,()=>null,()=>null,()=>daily ? {} : null,()=>null,()=>{});
+        uncached,nestedCache,async()=>({}),captureRead,async()=>null,()=>null,()=>null,()=>daily ? {} : null,()=>null,()=>{},async()=>({expiresAt:Date.now()+200_000}));
     const first=unpackPlatformCapture(await read('project',queries));
     expect(first.platforms.rows[0].events).toBe(2);
     await vi.advanceTimersByTimeAsync(30001);
@@ -141,5 +160,21 @@ it('refreshes platform rows through one cache owner while reusing bounded captur
     expect(fresh.platforms.rows[0].events).toBe(2);
     expect(captureRead).toHaveBeenCalledTimes(2);
     expect(uncached).toHaveBeenCalledTimes(1);
+  } finally {vi.useRealTimers();}
+});
+
+it('does not extend the proof deadline while the BigQuery client is being acquired',async()=>{
+  vi.useFakeTimers();
+  try {
+    const source=readFileSync(new URL('../server.ts',import.meta.url),'utf8');
+    const seam=source.slice(source.indexOf('const platformCaptureCache ='),source.indexOf('async function fetchOneAppSummary('));
+    let release!: (value: unknown) => void; const client=new Promise(resolve=>{release=resolve;}), cancelled=vi.fn(), captureRead=vi.fn();
+    const expiresAt=Date.now()+120_000;
+    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture','legacyRestoration','currentClosedComposition','currentContinuation','currentDailyOneRefresh','currentDailyOneMeasurement','noteLegacyQueryFailure','readCustomerCohort',
+      ts.transpile(seam,{target:ts.ScriptTarget.ES2022})+';return queryOnePlatformCapture;')(
+        crypto,{getStore:()=>({refresh:false})},new AggregateCache({maxAgeMs:30000,maxEntries:128}),vi.fn(),vi.fn(),()=>client,captureRead,
+        async()=>null,()=>null,()=>null,()=>({cancel:cancelled}),()=>null,()=>{},async()=>({expiresAt}));
+    const pending=read('project',queries); await vi.advanceTimersByTimeAsync(110_000); release({});
+    expect((await pending).error).toBeTruthy(); expect(captureRead).not.toHaveBeenCalled(); expect(cancelled).toHaveBeenCalled();
   } finally {vi.useRealTimers();}
 });
