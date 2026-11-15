@@ -39,6 +39,11 @@ export function reportingRuntimeConfigFromEnv(env: Record<string, string | undef
   try { return reportingRuntimeConfig(JSON.parse(env.METRICS_COLLECTOR_CONFIG ?? '')); }
   catch { throw new ReportError('unavailable'); }
 }
+/** A settled periodic receipt is an answer, not a dispatch request. */
+export async function dispatchPeriodic(accepted: Awaited<ReturnType<MetricsReports['requestPeriodic']>>, deliver: (id: string) => Promise<unknown>) {
+  if (accepted.jobId && ['accepted', 'running', 'delayed'].includes(accepted.state)) await deliver(accepted.jobId);
+  return accepted;
+}
 export function createReportingRuntime(config: ReportingRuntimeConfig) {
   config = reportingRuntimeConfig(config);
   const db = new Firestore({ projectId: config.projectId, databaseId: config.databaseId });
@@ -75,6 +80,11 @@ export function createReportingRuntime(config: ReportingRuntimeConfig) {
       const accepted = await reports.requestScheduled(input, { subjectHash: digest(config.dispatcherInvokerEmail), scopeDigest: config.scopeDigest });
       if (accepted.jobId) await dispatch.deliver(accepted.jobId, digest(config.dispatcherInvokerEmail));
       return accepted;
+    },
+    async periodic(entryId: string) {
+      enabled();
+      const accepted = await reports.requestPeriodic(entryId, { subjectHash: digest(config.dispatcherInvokerEmail), scopeDigest: config.scopeDigest });
+      return dispatchPeriodic(accepted, id => dispatch.deliver(id, digest(config.dispatcherInvokerEmail)));
     },
     close: () => db.terminate(),
   };
