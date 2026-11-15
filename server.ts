@@ -29,6 +29,8 @@ import { legacyRestoration, legacyPreviousRestoration, legacyDiagnosticOnly, leg
 import { closedComposer } from './src/server/closed-composer';
 import { closedMeasurement, currentClosedMeasurement, withClosedMeasurement } from './src/server/closed-measurement';
 import { currentContinuation, legacyContinuation, withContinuation } from './src/server/legacy-continuation';
+import { currentDailyOneRefresh, dailyOneRefresh, withDailyOneRefresh } from './src/server/daily-one-refresh';
+import { currentDailyOneMeasurement, dailyOneMeasurement, withDailyOneMeasurement } from './src/server/daily-one-measurement';
 import { closedContinuationComposer } from './src/server/closed-continuation-composer';
 import { verifiedPlgPublicationAnchor } from './src/server/plg-publication-anchor';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
@@ -395,7 +397,7 @@ function buildDateRange(start: Date, end: Date): HushhAiDateRange {
 }
 
 function reportPeriodNow(): Date {
-  const asOf = currentContinuation()?.dataAsOf;
+  const asOf = currentDailyOneMeasurement()?.logicalAsOf ?? currentDailyOneRefresh()?.logicalAsOf ?? currentContinuation()?.dataAsOf;
   return asOf ? new Date(asOf) : new Date();
 }
 
@@ -2550,9 +2552,11 @@ async function queryOnePlatformCapture(projectId:string, queries:ReturnType<type
   }
   // Planning failures and the normal metadata-attempt budget cannot decide a
   // different SQL branch when the sealed initial plan is later executed.
-  if (currentContinuation() || await (await legacyRestoration())?.isPreparing()) {
-    try { return await readPlatformCapture(await bigQueryClient(projectId), queries); }
-    catch { return { rows: [], error: 'One platform capture is unavailable.' }; }
+  if (currentDailyOneMeasurement() || currentDailyOneRefresh() || currentContinuation() || await (await legacyRestoration())?.isPreparing()) {
+    try { const result = await readPlatformCapture(await bigQueryClient(projectId), queries);
+      if (currentDailyOneRefresh() && result.error) noteLegacyQueryFailure();
+      return result;
+    } catch { if (currentDailyOneRefresh()) noteLegacyQueryFailure(); return { rows: [], error: 'One platform capture is unavailable.' }; }
   }
   const key = `${projectId}:platform-capture:${crypto.createHash('sha256').update(queries.combined || queries.baseline).digest('hex')}`;
   const baseline = async (capture:unknown):Promise<BigQueryFeedResult> => {
@@ -5813,6 +5817,22 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (legacyDiagnosticOnly() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Diagnostic planning requires the trusted release probe.' }); return;
           }
+          const measureDailyOne = req.get('X-Metrics-Daily-One-Measure') === '1';
+          if (measureDailyOne && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Daily One measurement requires the trusted release probe.' }); return;
+          }
+          const sealDailyOne = req.get('X-Metrics-Daily-One-Seal') === '1';
+          if (sealDailyOne && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Daily One measurement requires the trusted release probe.' }); return;
+          }
+          const activateDailyOne = req.get('X-Metrics-Daily-One-Activate') === '1';
+          if (activateDailyOne && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Daily One activation requires the trusted release probe.' }); return;
+          }
+          const publishDailyOne = req.get('X-Metrics-Daily-One-Publish') === '1';
+          if (publishDailyOne && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Daily One publication requires the trusted release probe.' }); return;
+          }
           const publishContinuation = req.get('X-Metrics-Continue') === '1';
           if (publishContinuation && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Continuation requires the trusted release probe.' }); return;
@@ -5848,6 +5868,67 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const composer = await closedComposer();
           const continuation = await legacyContinuation();
           const continuationComposer = await closedContinuationComposer();
+          if (activateDailyOne) {
+            if (sealDailyOne || measureDailyOne || publishDailyOne || publishContinuation || composeContinuation || measureClosed || composePublication || publishRestoration || !restoration) {
+              res.status(409).json({ error: 'Daily One activation is not configured.' }); return;
+            }
+            const daily = await dailyOneRefresh();
+            if (!daily) { res.status(409).json({ error: 'Daily One activation is not configured.' }); return; }
+            await restoration.closedDescriptor();
+            const pinned = await readCustomerCohort();
+            const asOf = await daily.activate(pinned);
+            await requireCurrentCustomerCohort(pinned.cacheKey);
+            res.set('Cache-Control', 'no-store'); res.status(200).json({ state: 'active', publicationAsOf: asOf }); return;
+          }
+          if (sealDailyOne) {
+            if (activateDailyOne || measureDailyOne || publishDailyOne || publishContinuation || composeContinuation || measureClosed || composePublication || publishRestoration || !restoration) {
+              res.status(409).json({ error: 'Daily One measurement is not configured.' }); return;
+            }
+            const measurement = await dailyOneMeasurement();
+            if (!measurement) { res.status(409).json({ error: 'Daily One measurement is not configured.' }); return; }
+            await restoration.closedDescriptor();
+            const sealed = await measurement.seal();
+            res.set('Cache-Control', 'no-store'); res.status(200).json({ state: 'sealed', ...sealed }); return;
+          }
+          if (measureDailyOne) {
+            if (activateDailyOne || sealDailyOne || publishDailyOne || publishContinuation || composeContinuation || measureClosed || composePublication || publishRestoration || !restoration) {
+              res.status(409).json({ error: 'Daily One measurement is not configured.' }); return;
+            }
+            const measurement = await dailyOneMeasurement();
+            if (!measurement) { res.status(409).json({ error: 'Daily One measurement is not configured.' }); return; }
+            await restoration.closedDescriptor();
+            const perform = async () => {
+              const pinned = needsCustomers ? await readCustomerCohort() : null;
+              return withLegacyReportScope(`${pinned?.cacheKey ?? ''}:${reportUrl}`, () => withDailyOneMeasurement(measurement, reportUrl, async () => {
+                try { await capture(handler, sourceRequest, true); } catch { /* estimates never produce report rows */ }
+              }));
+            };
+            if (cohort) await withCustomerCohort(cohort.cacheKey, perform); else await perform();
+            await measurement.noteReport(reportUrl);
+            res.set('Cache-Control', 'no-store'); res.status(200).json({ state: 'attempted', paidQueries: 0, coverage: 'not exhaustive' }); return;
+          }
+          if (publishDailyOne) {
+            if (activateDailyOne || sealDailyOne || measureDailyOne || publishContinuation || composeContinuation || measureClosed || composePublication || publishRestoration || !restoration) {
+              res.status(409).json({ error: 'Daily One publication is not configured.' }); return;
+            }
+            const daily = await dailyOneRefresh();
+            if (!daily) { res.status(409).json({ error: 'Daily One publication is not configured.' }); return; }
+            await restoration.closedDescriptor();
+            const perform = async () => {
+              const pinned = needsCustomers ? await readCustomerCohort() : null;
+              const dailyKey = `${pinned?.cacheKey ?? ''}:${reportUrl}`;
+              return withLegacyReportScope(dailyKey, () => withDailyOneRefresh(daily, reportUrl, async () => {
+                const value = await capture(handler, sourceRequest, true);
+                if (legacyReportFailed()) throw new Error('Daily source inputs are incomplete.');
+                const jobs = [...currentDailyOneRefresh()!.jobs].map(([id, endedAt]) => ({ id, endedAt }));
+                const computedAt = await daily.save(reportUrl, value, jobs, pinned);
+                return { computedAt, jobs };
+              }));
+            };
+            const result = cohort ? await withCustomerCohort(cohort.cacheKey, perform) : await perform();
+            res.set('Cache-Control', 'no-store');
+            res.status(200).json({ state: 'staged', computedAt: result.computedAt, jobs: result.jobs.length }); return;
+          }
           if (composeContinuation) {
             if (!continuationComposer || !continuation || !restoration || publishContinuation || measureClosed || composePublication || publishRestoration) {
               res.status(409).json({ error: 'Continuation composition is not configured.' }); return;
@@ -5995,7 +6076,20 @@ function registerAnalyticsRoutes(app: express.Express): void {
             res.status(409).json({ error: 'Initial report publication is not active.' }); return;
           }
           const previous = await legacyPreviousRestoration();
-          const retained = await restoration?.readSnapshot(key)
+          let dailyRetained: Awaited<ReturnType<NonNullable<Awaited<ReturnType<typeof dailyOneRefresh>>>['read']>> = null;
+          let dailyGateCohort: Awaited<ReturnType<typeof readCustomerCohort>> | null = null;
+          if (restoration && req.path === '/api/analytics/all' && req.query.view === 'one' && !publishRestoration) {
+            try {
+              const daily = await dailyOneRefresh();
+              if (daily) {
+                dailyGateCohort = cohort ?? await readCustomerCohort();
+                dailyRetained = await daily.read(reportUrl, cohort, true, dailyGateCohort);
+              }
+            }
+            catch { /* Keep the last verified publication if a new run is unavailable. */ }
+          }
+          const retained = (dailyRetained ? { ...dailyRetained, at: Date.parse(dailyRetained.asOf) } : null)
+            ?? await restoration?.readSnapshot(key)
             ?? (cohort ? await restoration?.readCompatibleSnapshot(reportUrl, cohort) : null)
             ?? await composer?.read(reportUrl, cohort)
             ?? await continuation?.read(reportUrl, cohort)
@@ -6018,6 +6112,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
             : publishRestoration ? { value: await scopedLoad(), at: Date.now(), state: 'REFRESHED', refreshing: false, refreshError: false }
               : await snapshots.read(key, scopedLoad, refresh);
           if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
+          else if (dailyRetained && dailyGateCohort) await requireCurrentCustomerCohort(dailyGateCohort.cacheKey);
           if (restoration && publishRestoration) {
             if (result.refreshError) { res.status(503).json({ error: 'Initial refresh failed; no report was published.' }); return; }
             await restoration.saveSnapshot(key, result.value, result.at, cohort ? { reportUrl, cohort } : undefined);
@@ -6032,6 +6127,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
             res.set('X-Metrics-Warehouse-From', new Date(retained.warehouseFrom).toISOString());
             res.set('X-Metrics-Warehouse-Through', new Date(retained.warehouseThrough).toISOString());
           }
+          if (dailyRetained && useRetained) res.set('X-Metrics-Source-Coverage', 'intraday-or-unknown');
           res.set('X-Metrics-Observed-At', new Date().toISOString());
           res.set('X-Metrics-Cache', result.state);
           res.set('X-Metrics-Updated-At', new Date(result.at).toISOString());
@@ -9685,7 +9781,33 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
     // lookup never runs during ordinary sign-in or starts warehouse work.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const publicationAsOf = await Promise.race([
-      legacyRestoration().then(r => verifiedPlgPublicationAnchor(r, readCustomerCohort, requireCurrentCustomerCohort)).catch(() => null),
+      (async () => {
+        try {
+          const daily = await dailyOneRefresh();
+          if (daily) {
+            const cohort = await readCustomerCohort(), asOf = await daily.publicationAsOf(cohort);
+            if (asOf) { await requireCurrentCustomerCohort(cohort.cacheKey); return asOf; }
+          }
+        } catch { /* Retain the prior verified PLG anchor. */ }
+        return legacyRestoration().then(r => verifiedPlgPublicationAnchor(r, readCustomerCohort, requireCurrentCustomerCohort)).catch(() => null);
+      })(),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 30_000); }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    res.json({ publicationAsOf });
+  });
+
+  app.get('/api/auth/one-publication', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!(req as any).sessionUser) { res.status(401).json({ error: 'Sign in to view metrics.' }); return; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const publicationAsOf = await Promise.race([
+      (async () => {
+        const daily = await dailyOneRefresh(); if (!daily) return null;
+        const cohort = await readCustomerCohort();
+        const asOf = await daily.publicationAsOf(cohort);
+        if (asOf) await requireCurrentCustomerCohort(cohort.cacheKey);
+        return asOf;
+      })().catch(() => null),
       new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 30_000); }),
     ]).finally(() => { if (timer) clearTimeout(timer); });
     res.json({ publicationAsOf });

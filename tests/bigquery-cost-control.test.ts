@@ -4,6 +4,8 @@ import type { Query } from '@google-cloud/bigquery';
 import { withClosedComposition, ClosedJobMissingError, type LegacyRestoration } from '../src/server/legacy-restoration';
 import { withClosedMeasurement, type ClosedMeasurement } from '../src/server/closed-measurement';
 import { withContinuation, type LegacyContinuation } from '../src/server/legacy-continuation';
+import { withDailyOneMeasurement, type DailyOneMeasurement } from '../src/server/daily-one-measurement';
+import { currentDailyOneRefresh, withDailyOneRefresh, type DailyOneRefresh } from '../src/server/daily-one-refresh';
 import { BIGQUERY_COST_LIMITS as limits, BigQueryCostControlError, countBudgetedStatements,
   createGuardedBigQuery, FirestoreQueryBudgetStore, guardedBigQuery, guardedBigQueryDryRun,
   type QueryBudgetReservation } from '../src/server/bigquery-cost-control';
@@ -73,6 +75,101 @@ describe('BigQuery execution boundary', () => {
     getMetadata.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 404 }));
     await expect(withContinuation(store, () => guardedBigQuery(project, { query: 'SELECT 7' }), '2026-11-14T21:34:55.606Z')).rejects.toThrow('prior job could not be verified');
     expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
+  it('measures daily SQL with native dry runs only and does not return fabricated rows', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const finish = vi.fn(async () => {}), measurement = { requireOpen: async () => ({ logicalAsOf: '2026-11-14T23:59:59.999Z' }),
+      claim: async () => ({ planHash: 'a'.repeat(64), existing: null }), finish } as unknown as DailyOneMeasurement;
+    sdk.createQueryJob.mockResolvedValue([{ metadata: { statistics: { totalBytesProcessed: '0', query: { statementType: 'SELECT', totalBytesProcessedAccuracy: 'PRECISE', referencedTables: [] } } } }]);
+    await expect(withDailyOneMeasurement(measurement, '/fixed', () => guardedBigQuery(project, { query: 'SELECT CURRENT_DATE()' }))).rejects.toThrow('estimates only');
+    expect(sdk.createQueryJob).toHaveBeenCalledOnce(); expect(sdk.createQueryJob.mock.calls[0][0]).toMatchObject({ dryRun: true, useLegacySql: false });
+    expect(finish).toHaveBeenCalledWith('a'.repeat(64), expect.objectContaining({ processed: 0, bound: 10 * 1024 ** 2 }));
+  });
+  it('cannot submit a dry run after daily measurement closes during claim', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); let opened = true;
+    const finish = vi.fn(async () => {}), measurement = { requireOpen: async () => { if (!opened) throw new Error('closed'); return { logicalAsOf: '2026-11-14T23:59:59.999Z' }; },
+      claim: async () => { opened = false; return { planHash: 'a'.repeat(64), existing: null }; }, finish } as unknown as DailyOneMeasurement;
+    await expect(withDailyOneMeasurement(measurement, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 1' }))).rejects.toThrow('closed');
+    expect(sdk.createQueryJob).not.toHaveBeenCalled(); expect(finish).toHaveBeenCalledWith('a'.repeat(64), null);
+  });
+  it('never replaces a missing already-started daily job', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const id = 'metrics_refresh_20261115_1111111111111111_' + 'a'.repeat(64);
+    const grant = { permitId: 'refresh_20261115_1111111111111111', planHash: 'a'.repeat(64), id,
+      bytes: 20 * 1024 ** 2, report: '/fixed', reuse: { key: '', priorPlanHash: 'a'.repeat(64) } };
+    const store = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }), isPreparing: async () => true, prepare: async (request: Query) => request,
+      existing: async () => grant, reserve: vi.fn(async () => {}), claimSubmission: vi.fn(async () => false) } as unknown as DailyOneRefresh;
+    sdk.job.mockReturnValue({ getMetadata: async () => { throw Object.assign(new Error('missing'), { code: 404 }); } });
+    await expect(withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' })))
+      .rejects.toThrow('prior job could not be verified');
+    expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
+  it('rejects a daily job whose native identity or configuration differs', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const id = 'metrics_refresh_20261115_1111111111111111_' + 'a'.repeat(64);
+    const grant = { permitId: 'refresh_20261115_1111111111111111', planHash: 'a'.repeat(64), id,
+      bytes: 20 * 1024 ** 2, report: '/fixed', reuse: { key: '', priorPlanHash: 'a'.repeat(64) } };
+    const store = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }), isPreparing: async () => true, prepare: async (request: Query) => request,
+      existing: async () => grant, reserve: vi.fn(async () => {}), claimSubmission: vi.fn(async () => false) } as unknown as DailyOneRefresh;
+    const metadata = { status: { state: 'DONE' }, jobReference: { jobId: 'wrong', projectId: project, location: 'US' },
+      configuration: { query: { query: 'SELECT 7', maximumBytesBilled: String(grant.bytes), useLegacySql: false } } };
+    sdk.job.mockReturnValue({ getMetadata: async () => [metadata] });
+    await expect(withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow();
+    metadata.jobReference.jobId = id; metadata.configuration.query.query = 'SELECT 8';
+    await expect(withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow();
+    expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
+  it('does not create a daily job when the run closes during native metadata lookup', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); let open = true;
+    const id = 'metrics_refresh_20261115_1111111111111111_' + 'a'.repeat(64);
+    const grant = { permitId: 'refresh_20261115_1111111111111111', planHash: 'a'.repeat(64), id, bytes: 20 * 1024 ** 2, report: '/fixed' };
+    const store = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }), isPreparing: async () => open, expandedPreparing: async () => false, perJobCeiling: async () => grant.bytes,
+      prepare: async (request: Query) => request, existing: async () => undefined, admit: async () => grant,
+      reserve: vi.fn(async () => {}), claimSubmission: vi.fn(async () => true) } as unknown as DailyOneRefresh;
+    sdk.createQueryJob.mockImplementation(async (request: any) => { if (!request.dryRun) throw new Error('unexpected paid job');
+      return [{ metadata: { statistics: { totalBytesProcessed: '1', query: { statementType: 'SELECT' } } } }]; });
+    let entered!: () => void, release!: () => void;
+    const lookupStarted = new Promise<void>(resolve => { entered = resolve; }), barrier = new Promise<void>(resolve => { release = resolve; });
+    sdk.job.mockReturnValue({ getMetadata: async () => { entered(); await barrier; throw Object.assign(new Error('missing'), { code: 404 }); } });
+    const pending = withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }));
+    await lookupStarted; open = false; release();
+    await expect(pending).rejects.toThrow('no longer open');
+    expect(sdk.createQueryJob.mock.calls.filter(([request]: any) => !request.dryRun)).toHaveLength(0);
+    expect(store.claimSubmission).toHaveBeenCalledOnce();
+  });
+  it('records the real completion time of a verified daily native job', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const id = 'metrics_refresh_20261115_1111111111111111_' + 'a'.repeat(64), endedAt = Date.now() - 1000;
+    const grant = { permitId: 'refresh_20261115_1111111111111111', planHash: 'a'.repeat(64), id,
+      bytes: 20 * 1024 ** 2, report: '/fixed', reuse: { key: '', priorPlanHash: 'a'.repeat(64) } };
+    const store = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }),
+      isPreparing: async () => true, prepare: async (request: Query) => request, existing: async () => grant,
+      reserve: vi.fn(async () => {}), claimSubmission: vi.fn(async () => false) } as unknown as DailyOneRefresh;
+    const metadata = { status: { state: 'DONE' }, jobReference: { jobId: id, projectId: project, location: 'US' },
+      configuration: { query: { query: 'SELECT 7', maximumBytesBilled: String(grant.bytes), useLegacySql: false } }, statistics: { endTime: String(endedAt) } };
+    sdk.job.mockReturnValue({ getMetadata: async () => [metadata], getQueryResults: async () => [[{ value: 7 }], null] });
+    const result = await withDailyOneRefresh(store, '/fixed', async () => {
+      await guardedBigQuery(project, { query: 'SELECT 7' }); return currentDailyOneRefresh()?.jobs.get(id);
+    });
+    expect(result).toBe(endedAt); expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
+  it('keeps ordinary requests closed while a private daily request waits on a native result', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); restoration.active = true; restoration.value = { isPreparing: async () => false };
+    const id = 'metrics_refresh_20261115_1111111111111111_' + 'a'.repeat(64), endedAt = Date.now() - 1000;
+    const grant = { permitId: 'refresh_20261115_1111111111111111', planHash: 'a'.repeat(64), id,
+      bytes: 20 * 1024 ** 2, report: '/fixed', reuse: { key: '', priorPlanHash: 'a'.repeat(64) } };
+    const store = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }),
+      isPreparing: async () => true, prepare: async (request: Query) => request, existing: async () => grant,
+      reserve: vi.fn(async () => {}), claimSubmission: vi.fn(async () => false) } as unknown as DailyOneRefresh;
+    const metadata = { status: { state: 'DONE' }, jobReference: { jobId: id, projectId: project, location: 'US' },
+      configuration: { query: { query: 'SELECT 7', maximumBytesBilled: String(grant.bytes), useLegacySql: false } }, statistics: { endTime: String(endedAt) } };
+    let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
+    const results = vi.fn(async () => { await barrier; return [[{ value: 7 }], null]; });
+    sdk.job.mockReturnValue({ getMetadata: async () => [metadata], getQueryResults: results });
+    const pending = withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }));
+    await vi.waitFor(() => expect(results).toHaveBeenCalledOnce());
+    await expect(guardedBigQuery(project, { query: 'SELECT 7' })).rejects.toThrow('No retained report');
+    release(); await pending; expect(sdk.createQueryJob).not.toHaveBeenCalled();
   });
   it('keeps a normal request closed while private continuation requests occupy the queue', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true'); restoration.active = true;

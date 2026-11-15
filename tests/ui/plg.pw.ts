@@ -744,6 +744,15 @@ test('keeps app-wide accounts and devices separate from the campaign cohort and 
   await usage.screenshot({ path: '.codex/artifacts/plg/app-usage-1440.png' });
 });
 
+test('labels intraday app-wide usage as potentially incomplete', async ({ page }) => {
+  await mockPlg(page);
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ headers: { ...usageHeaders, 'X-Metrics-Source-Coverage': 'intraday-or-unknown' }, json: usagePublication(route.request().url()) }));
+  await page.goto('/plg'); await page.getByRole('tab', { name: 'Results', exact: true }).click();
+  const usage = page.getByRole('region', { name: 'App-wide One usage', exact: true });
+  await expect(usage).toContainText('latest source day may be incomplete and can change');
+  await expect(usage).not.toContainText('latest finalized GA4 day');
+});
+
 test('shows query failure as unavailable while preserving a healthy selected-range account read', async ({ page }) => {
   await mockPlg(page);
   await page.route('**/api/analytics/all?*', (route) => {

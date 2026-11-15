@@ -157,6 +157,29 @@ test('retained freshness uses the server observation even when the browser clock
   await expect(page.getByText(/non-warehouse source freshness is not verified/)).toBeVisible();
 });
 
+test('shows incomplete source-day coverage only when the server reports it', async ({ page }) => {
+  await mockDashboard(page); let partial = true;
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: allAnalytics, headers: {
+    'X-Metrics-Updated-At': '2026-11-14T23:59:59.999Z', ...(partial ? { 'X-Metrics-Source-Coverage': 'intraday-or-unknown' } : {}),
+  } }));
+  await page.goto('/location-analytics/production');
+  await expect(page.getByText(/Latest source day may be incomplete and can change/)).toBeVisible();
+  partial = false; await page.reload();
+  await expect(page.getByText(/Latest source day may be incomplete and can change/)).toHaveCount(0);
+});
+
+test('uses the verified One anchor without changing Growth dates', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:00:00.000Z', user: { email: 'qa@example.invalid', name: 'QA' } } }));
+  await page.route('**/api/auth/one-publication', route => route.fulfill({ json: { publicationAsOf: '2026-11-15T07:00:00.000Z' } }));
+  const urls: URL[] = [];
+  page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
+  await page.goto('/location-analytics/production');
+  await expect.poll(() => urls.some(url => url.searchParams.get('view') === 'one' && url.searchParams.get('one_end_date') === '2026-11-15')).toBe(true);
+  await navigate(page, 'Growth');
+  await expect.poll(() => urls.some(url => url.searchParams.get('view') === 'growth' && url.searchParams.get('one_end_date') === '2026-11-14')).toBe(true);
+});
+
 test('UAT Location deep links and agent drilldowns keep the selected source', async ({ page }) => {
   await mockDashboard(page);
   const urls: URL[] = [];

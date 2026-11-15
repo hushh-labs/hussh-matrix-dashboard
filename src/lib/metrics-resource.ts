@@ -1,5 +1,5 @@
 /** Session-only browser cache; never persist private dashboard responses. */
-export interface MetricsSnapshot<T> { data: T; fetchedAt: number; updatedAt: string | null; headerUpdatedAt?: string | null; cohortAsOf?: string | null; observedAt?: string | null; computedAt?: string | null; warehouseFrom?: string | null; warehouseThrough?: string | null; cacheState?: string | null; refreshing: boolean; refreshError: boolean }
+export interface MetricsSnapshot<T> { data: T; fetchedAt: number; updatedAt: string | null; headerUpdatedAt?: string | null; cohortAsOf?: string | null; observedAt?: string | null; computedAt?: string | null; warehouseFrom?: string | null; warehouseThrough?: string | null; cacheState?: string | null; sourceCoverage?: string | null; refreshing: boolean; refreshError: boolean }
 const values = new Map<string, MetricsSnapshot<unknown>>();
 const pending = new Map<string, Promise<MetricsSnapshot<unknown>>>();
 const MAX_ENTRIES = 48;
@@ -37,7 +37,7 @@ export async function readMetrics<T>(url: string, options: { refresh?: boolean }
       cohortAsOf: response.headers.get('X-Metrics-Cohort-As-Of'), observedAt: response.headers.get('X-Metrics-Observed-At'),
       computedAt: response.headers.get('X-Metrics-Computed-At'),
       warehouseFrom: response.headers.get('X-Metrics-Warehouse-From'), warehouseThrough: response.headers.get('X-Metrics-Warehouse-Through'),
-      cacheState: response.headers.get('X-Metrics-Cache'),
+      cacheState: response.headers.get('X-Metrics-Cache'), sourceCoverage: response.headers.get('X-Metrics-Source-Coverage'),
       refreshing: response.headers.get('X-Metrics-Refreshing') === '1', refreshError: response.headers.get('X-Metrics-Refresh-Error') === '1' };
     if (requestGeneration !== generation) throw new Error('Session changed');
     while (values.size >= MAX_ENTRIES && !values.has(url)) values.delete(values.keys().next().value!);
