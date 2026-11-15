@@ -418,6 +418,14 @@ describe('finite daily One refresh admission', () => {
   const diagnostic = new DailyClosedDiagnostic(f.db.native(), diagnosticId, f.childSource, f.store, () => start + 1000);
   await expect(diagnostic.claim(f.reports[0])).rejects.toThrow(); await expect(diagnostic.claim(f.reports[1])).resolves.toBeDefined();
  });
+ it('limits the second closed continuation diagnostic to its failed production 90-day report', async () => {
+  const f = await secondRecoveryFixture(), diagnosticId = 'dailycheck_7777777777777777', path = `metricsDailyClosedDiagnostics/${diagnosticId}`;
+  f.db.values.get(`metricsOneDailyRuns/${f.id2}`).phase = 'closed';
+  f.db.values.set(path, { phase: 'open', source: f.source2, runId: f.id2, runSource: f.source2, logicalAsOf: asOf,
+   report: f.reports[4], reportDigest: f.run2.reportDigest, createdAt: start, expiresAt: start + 3600_000 });
+  const diagnostic = new DailyClosedDiagnostic(f.db.native(), diagnosticId, f.source2, f.store, () => start + 1000);
+  await expect(diagnostic.claim(f.reports[3])).rejects.toThrow(); await expect(diagnostic.claim(f.reports[4])).resolves.toBeDefined();
+ });
  it('fixes all five windows for both environments and rejects unsupported reports', async () => {
   const f = fixture(); expect(f.reports).toHaveLength(10); expect(new Set(f.reports).size).toBe(10); await expect(f.store.requireOpen(f.reports[0])).resolves.toBeDefined(); await expect(f.store.requireOpen('/api/analytics/all?view=growth')).rejects.toThrow();
  });
