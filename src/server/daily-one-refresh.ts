@@ -7,10 +7,13 @@ import { cohortMatchesSnapshotWitness, cohortSnapshotWitness, requireFreshCohort
 import { currentLegacyReportKey, freezeRestorationSql, nativeDatabase, restorationReportDigest, type RestorationGrant } from './legacy-restoration';
 
 /** Hard ceilings are safety bounds, not an approval or an operating target. */
-export const DAILY_ONE_LIMITS = Object.freeze({ bytes: 500 * 1024 ** 3, jobs: 250, perJob: 64 * 1024 ** 3, lifetimeMs: 60 * 60_000 });
+export const DAILY_ONE_LIMITS = Object.freeze({ bytes: 1024 ** 4, jobs: 250, perJob: 64 * 1024 ** 3, lifetimeMs: 60 * 60_000 });
+// The first current-day estimate was sealed by this exact reviewed producer.
+// SQL is freshly estimated again by the executor before every new job.
+const FIRST_MEASUREMENT_SOURCE = '3c6bb690a538d75b20c6dfc6494b9c0a8ae3bd58';
 type Database = Pick<Firestore, 'doc' | 'runTransaction'>;
 type DailyRun = { source: string; policyGeneration: string; day: string; logicalAsOf: string; phase: 'open' | 'closed'; createdAt: number; expiresAt: number;
-  reports: string[]; reportDigest: string; measurementDigest: string; maxBytes: number; maxJobs: number; maxPerJobBytes: number; reservedBytes: number; reservedJobs: number };
+  reports: string[]; reportDigest: string; measurementSource: string; measurementDigest: string; maxBytes: number; maxJobs: number; maxPerJobBytes: number; reservedBytes: number; reservedJobs: number };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export const dailyOnePolicyGeneration = (source: string, maxDailyBytes: number, maxDailyJobs: number, maxPerJobBytes: number) =>
   hash(JSON.stringify({ schema: 1, source, maxDailyBytes, maxDailyJobs, maxPerJobBytes }));
@@ -55,6 +58,7 @@ export class DailyOneRefresh {
       || run.logicalAsOf.slice(0, 10) > run.day || Date.parse(run.day) - Date.parse(run.logicalAsOf.slice(0, 10)) > 86_400_000
       || !Number.isSafeInteger(run.createdAt) || !Number.isSafeInteger(run.expiresAt) || run.expiresAt <= run.createdAt || run.expiresAt - run.createdAt > DAILY_ONE_LIMITS.lifetimeMs
       || Date.parse(run.logicalAsOf) > run.createdAt || new Date(run.createdAt).toISOString().slice(0, 10) !== run.day || !/^[a-f0-9]{64}$/.test(run.measurementDigest ?? '')
+      || ![this.source, FIRST_MEASUREMENT_SOURCE].includes(run.measurementSource)
       || !['open', 'closed'].includes(run.phase) || !Array.isArray(run.reports) || run.reportDigest !== restorationReportDigest(run.reports)
       || restorationReportDigest(dailyOneManifest(run.logicalAsOf.slice(0, 10))) !== run.reportDigest
       || !Number.isSafeInteger(run.maxBytes) || run.maxBytes < 1 || run.maxBytes > DAILY_ONE_LIMITS.bytes || !Number.isSafeInteger(run.maxJobs) || run.maxJobs < 1 || run.maxJobs > DAILY_ONE_LIMITS.jobs
@@ -64,14 +68,14 @@ export class DailyOneRefresh {
       read(this.db.doc(`metricsOneDailyPolicies/${run.policyGeneration}`)), read(this.db.doc(`metricsOneDailyApprovals/${this.id}`)), read(this.db.doc(`metricsOneDailySlots/${run.day}`)), read(this.db.doc(`metricsOneDailyMeasurements/${this.id}`)),
     ]);
     const policy = policySnap.data(), approval = approvalSnap.data(), slot = slotSnap.data(), measurement = measurementSnap.data();
-    const keys = ['source','policyGeneration','day','logicalAsOf','createdAt','expiresAt','reportDigest','measurementDigest','maxBytes','maxJobs','maxPerJobBytes'] as const;
+    const keys = ['source','policyGeneration','day','logicalAsOf','createdAt','expiresAt','reportDigest','measurementSource','measurementDigest','maxBytes','maxJobs','maxPerJobBytes'] as const;
     if (!policySnap.exists || policy?.approved !== true || policy.generation !== run.policyGeneration || policy.source !== this.source
       || !Number.isSafeInteger(policy.maxDailyBytes) || policy.maxDailyBytes < run.maxBytes || policy.maxDailyBytes > DAILY_ONE_LIMITS.bytes
       || !Number.isSafeInteger(policy.maxDailyJobs) || policy.maxDailyJobs < run.maxJobs || policy.maxDailyJobs > DAILY_ONE_LIMITS.jobs
       || !Number.isSafeInteger(policy.maxPerJobBytes) || policy.maxPerJobBytes < run.maxPerJobBytes || policy.maxPerJobBytes > DAILY_ONE_LIMITS.perJob
       || dailyOnePolicyGeneration(this.source, policy.maxDailyBytes, policy.maxDailyJobs, policy.maxPerJobBytes) !== run.policyGeneration
       || !approvalSnap.exists || approval?.approved !== true || approval?.runId !== this.id || keys.some(key => approval[key] !== run[key])
-      || !measurementSnap.exists || measurement?.phase !== 'sealed' || measurement.runId !== this.id || measurement.source !== this.source
+      || !measurementSnap.exists || measurement?.phase !== 'sealed' || measurement.runId !== this.id || measurement.source !== run.measurementSource
       || measurement.day !== run.day || measurement.logicalAsOf !== run.logicalAsOf || measurement.reportDigest !== run.reportDigest
       || measurement.digest !== run.measurementDigest || measurement.coverage !== 'not exhaustive' || !Number.isSafeInteger(measurement.sealedAt) || measurement.sealedAt > run.createdAt
       || !Number.isSafeInteger(measurement.measuredBytes) || measurement.measuredBytes < 0 || measurement.measuredBytes > run.maxBytes
@@ -164,7 +168,8 @@ export class DailyOneRefresh {
       const reservations = await Promise.all(jobs.map(job => tx.get(this.ref().collection('reservations').doc(job.id.slice(-64)))));
       if (existing.exists || reservations.some((snapshot, index) => !snapshot.exists || snapshot.data()?.jobId !== jobs[index].id || snapshot.data()?.state !== 'started' || snapshot.data()?.scopeHash !== hash(scope!) || snapshot.data()?.reportHash !== reportHash || !Number.isSafeInteger(snapshot.data()?.startedAt)
         || snapshot.data()?.startedAt > jobs[index].endedAt)) throw fail();
-      tx.create(target, { schema: 1, state: 'pending', source: this.source, runId: this.id, reportHash, dataAsOf: live.logicalAsOf,
+      tx.create(target, { schema: 1, state: 'pending', source: this.source, measurementSource: live.measurementSource,
+        measurementDigest: live.measurementDigest, runId: this.id, reportHash, dataAsOf: live.logicalAsOf,
         computedAt, sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown', jobs, json, ...(witness ? { witness } : {}) });
     });
     if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
@@ -189,7 +194,8 @@ export class DailyOneRefresh {
     const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
     if (environment === 'production' ? !cohort : environment !== 'uat' || !!cohort) return null;
     const row = (await this.ref().collection('snapshots').doc(hash(report)).get()).data();
-    if (!row || row.schema !== 1 || row.state !== 'verified' || row.source !== this.source || row.runId !== this.id || row.reportHash !== hash(report)
+    if (!row || row.schema !== 1 || row.state !== 'verified' || row.source !== this.source || row.measurementSource !== run.measurementSource
+      || row.measurementDigest !== run.measurementDigest || row.runId !== this.id || row.reportHash !== hash(report)
       || row.dataAsOf !== run.logicalAsOf || row.sourceCoverage !== 'intraday-or-unknown' || row.nonWarehouseFreshness !== 'unknown'
       || !Number.isSafeInteger(row.computedAt) || row.computedAt < run.createdAt || row.computedAt > this.now()
       || this.now() - Date.parse(run.logicalAsOf) > 90 * 86_400_000 || typeof row.json !== 'string' || Buffer.byteLength(row.json) > 700_000

@@ -22,7 +22,7 @@ const day = '2026-11-15', asOf = '2026-11-14T23:59:59.999Z', start = Date.parse(
 function fixture() {
  const db = new Database(); let now = start; const reports = dailyOneManifest('2026-11-14'), reportDigest = restorationReportDigest(reports);
  const policy = { approved: true, source, maxDailyBytes: 200 * unit, maxDailyJobs: 5, maxPerJobBytes: 100 * unit }; const generation = dailyOnePolicyGeneration(source, policy.maxDailyBytes, policy.maxDailyJobs, policy.maxPerJobBytes);
- const run = { source, policyGeneration: generation, day, logicalAsOf: asOf, phase: 'open', createdAt: start, expiresAt: start + 3600_000, reports, reportDigest, measurementDigest: 'f'.repeat(64), maxBytes: 150 * unit, maxJobs: 4, maxPerJobBytes: 100 * unit, reservedBytes: 0, reservedJobs: 0 };
+ const run = { source, policyGeneration: generation, day, logicalAsOf: asOf, phase: 'open', createdAt: start, expiresAt: start + 3600_000, reports, reportDigest, measurementSource: source, measurementDigest: 'f'.repeat(64), maxBytes: 150 * unit, maxJobs: 4, maxPerJobBytes: 100 * unit, reservedBytes: 0, reservedJobs: 0 };
  db.values.set(`metricsOneDailyRuns/${id}`, run); db.values.set(`metricsOneDailyPolicies/${generation}`, { ...policy, generation });
  db.values.set(`metricsOneDailyApprovals/${id}`, { ...run, runId: id, approved: true }); db.values.set(`metricsOneDailySlots/${day}`, { day, runId: id, source, policyGeneration: generation, state: 'sealed' });
  db.values.set(`metricsOneDailyMeasurements/${id}`, { phase: 'sealed', runId: id, source, day, logicalAsOf: asOf, reportDigest, digest: run.measurementDigest, coverage: 'not exhaustive', sealedAt: start, measuredBytes: 80 * unit, measuredQueries: 3 });
@@ -46,6 +46,21 @@ describe('finite daily One refresh admission', () => {
   const f = fixture();
   await expect(withDailyOneRefresh(f.store, f.reports[0], () => f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)))).resolves.toBeDefined();
   await expect(withDailyOneRefresh(f.store, f.reports[1], () => f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)))).rejects.toThrow();
+ });
+ it('accepts the exact earlier measurement source under a one-TiB cap and rejects drift or larger caps', async () => {
+  const f = fixture(), earlier = '3c6bb690a538d75b20c6dfc6494b9c0a8ae3bd58';
+  const generation = dailyOnePolicyGeneration(source, DAILY_ONE_LIMITS.bytes, 250, DAILY_ONE_LIMITS.perJob);
+  Object.assign(f.run, { policyGeneration: generation, measurementSource: earlier, maxBytes: DAILY_ONE_LIMITS.bytes, maxJobs: 250, maxPerJobBytes: DAILY_ONE_LIMITS.perJob });
+  f.db.values.set(`metricsOneDailyPolicies/${generation}`, { approved: true, generation, source, maxDailyBytes: DAILY_ONE_LIMITS.bytes, maxDailyJobs: 250, maxPerJobBytes: DAILY_ONE_LIMITS.perJob });
+  Object.assign(f.db.values.get(`metricsOneDailyApprovals/${id}`), f.run);
+  Object.assign(f.db.values.get(`metricsOneDailySlots/${day}`), { policyGeneration: generation });
+  Object.assign(f.db.values.get(`metricsOneDailyMeasurements/${id}`), { source: earlier, measuredBytes: 734202429440, measuredQueries: 220 });
+  await expect(f.store.requireOpen(f.reports[0])).resolves.toBeDefined();
+  f.run.measurementSource = 'e'.repeat(40); f.db.values.get(`metricsOneDailyApprovals/${id}`).measurementSource = f.run.measurementSource;
+  await expect(f.store.requireOpen(f.reports[0])).rejects.toThrow();
+  f.run.measurementSource = earlier; f.db.values.get(`metricsOneDailyApprovals/${id}`).measurementSource = earlier;
+  f.run.maxBytes = DAILY_ONE_LIMITS.bytes + 1; f.db.values.get(`metricsOneDailyApprovals/${id}`).maxBytes = f.run.maxBytes;
+  await expect(f.store.requireOpen(f.reports[0])).rejects.toThrow();
  });
  it('coalesces atomic reservations and claims a single submission before native work', async () => {
   const f = fixture(), query = await f.store.prepare({ query: 'SELECT CURRENT_DATE()' }); expect(query.query).toContain('2026-11-14');
@@ -96,7 +111,7 @@ describe('finite daily One refresh admission', () => {
     vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(cohort);
     const witness = cohorts.cohortSnapshotWitness(cohort), sha = (value: string) => createHash('sha256').update(value).digest('hex');
     for (const [index, report] of f.reports.entries()) f.db.values.set(`metricsOneDailyRuns/${id}/snapshots/${sha(report)}`, {
-      schema: 1, state: 'verified', source, runId: id, reportHash: sha(report), dataAsOf: asOf, computedAt: start + 1000,
+      schema: 1, state: 'verified', source, measurementSource: source, measurementDigest: 'f'.repeat(64), runId: id, reportHash: sha(report), dataAsOf: asOf, computedAt: start + 1000,
       sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown', json: JSON.stringify(payloadFor(report, index)),
       jobs: [{ id: `metrics_${id}_${sha(report)}`, endedAt: start + 500 }], ...(index < 5 ? { witness } : {}),
     });
