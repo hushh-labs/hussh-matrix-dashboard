@@ -1629,7 +1629,7 @@ export default function Dashboard() {
           )),
         },
       ],
-      caveats: ['Search Console is daily/delayed search visibility data, not product user identity.'],
+      caveats: ['Search Console is daily/delayed search visibility data, not product user identity.', ...(search?.note ? [search.note] : [])],
     });
   };
 

@@ -870,6 +870,7 @@ function buildPlatforms(
     ...(hushhTech?.dataQualityWarnings ?? []),
     !hushhTech?.gcp ? 'Cloud Monitoring coverage waiting' : null,
     !search ? 'Search Console coverage waiting' : null,
+    search?.note ?? null,
   ].filter(Boolean).join('; ') || null;
   const kaiProdFeed = kaiProduction?.productionFeed?.status;
   const kaiProdGcp = kaiProduction?.gcp;
