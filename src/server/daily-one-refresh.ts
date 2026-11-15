@@ -34,7 +34,7 @@ export const dailyPartialDigest = (activation: any) => hash(JSON.stringify([
 export const dailyOnePolicyGeneration = (source: string, maxDailyBytes: number, maxDailyJobs: number, maxPerJobBytes: number) =>
   hash(JSON.stringify({ schema: 1, source, maxDailyBytes, maxDailyJobs, maxPerJobBytes }));
 const fail = () => new Error('The bounded One refresh is unavailable.');
-type ReservationReason = 'scope' | 'lineage' | 'cohort' | 'window' | 'conflict' | 'ledger';
+type ReservationReason = 'scope' | 'lineage' | 'cohort' | 'window' | 'conflict' | 'ledger' | 'limit';
 class ReservationHold extends Error {
   constructor(readonly reason: ReservationReason) { super('The bounded One refresh is unavailable.'); }
 }
@@ -325,8 +325,9 @@ export class DailyOneRefresh {
       if (reservationSnap.exists) { const old = reservationSnap.data(); if (old.jobId !== grant.id || old.bytes !== grant.bytes || old.scopeHash !== scopeHash || old.reportHash !== reportHash || !['reserved','started'].includes(old.state)) throw new ReservationHold('conflict'); return; }
       if (!daySnap.exists || day?.day !== run.day || day.policyGeneration !== run.policyGeneration || !Number.isSafeInteger(day.reservedBytes) || day.reservedBytes < 0
         || !Number.isSafeInteger(day.reservedJobs) || day.reservedJobs < 0 || day.reservedBytes !== (run.parentReservedBytes ?? 0) + run.reservedBytes
-        || day.reservedJobs !== (run.parentReservedJobs ?? 0) + run.reservedJobs || run.reservedBytes + grant.bytes > run.maxBytes || run.reservedJobs + 1 > run.maxJobs
-        || day.reservedBytes + grant.bytes > policy.maxDailyBytes || day.reservedJobs + 1 > policy.maxDailyJobs) throw new ReservationHold('ledger');
+        || day.reservedJobs !== (run.parentReservedJobs ?? 0) + run.reservedJobs) throw new ReservationHold('ledger');
+      if (run.reservedBytes + grant.bytes > run.maxBytes || run.reservedJobs + 1 > run.maxJobs
+        || day.reservedBytes + grant.bytes > policy.maxDailyBytes || day.reservedJobs + 1 > policy.maxDailyJobs) throw new ReservationHold('limit');
       tx.update(dayRef, { reservedBytes: day.reservedBytes + grant.bytes, reservedJobs: day.reservedJobs + 1 });
       tx.update(this.ref(), { reservedBytes: run.reservedBytes + grant.bytes, reservedJobs: run.reservedJobs + 1 });
       tx.create(reservation, { jobId: grant.id, bytes: grant.bytes, scopeHash, reportHash, state: 'reserved', reservedAt: now });

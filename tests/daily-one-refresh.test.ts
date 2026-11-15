@@ -183,6 +183,18 @@ describe('finite daily One refresh admission', () => {
    expect(JSON.stringify(warning.mock.calls)).not.toContain('private provider detail');
   } finally { vi.restoreAllMocks(); }
  });
+ it('distinguishes a reached finite limit from an inconsistent ledger', async () => {
+  const f = fixture(), warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+   const grants = await Promise.all([14, 15, 16, 17, 18].map(i => f.scope(() => f.store.admit({ query: `SELECT ${i}` }, 1))));
+   for (const grant of grants.slice(0, 4)) await f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(grant)));
+   await expect(f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(grants[4])))).rejects.toThrow();
+   expect(warning).toHaveBeenLastCalledWith('Daily reservation held:', 'limit');
+   f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedJobs = 0;
+   await expect(f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(grants[4])))).rejects.toThrow();
+   expect(warning).toHaveBeenLastCalledWith('Daily reservation held:', 'ledger');
+  } finally { vi.restoreAllMocks(); }
+ });
  it('reuses only exact closed parent reservations without increasing the shared budget', async () => {
   vi.useFakeTimers(); vi.setSystemTime(start + 3000);
   try {
