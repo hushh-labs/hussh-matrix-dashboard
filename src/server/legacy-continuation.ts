@@ -23,10 +23,12 @@ type JobProof = { id: string; endedAt: number };
 const CONTINUATION_LIMITS = Object.freeze({ bytes: 500 * 1024 ** 3, jobs: 200 });
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const fail = () => new Error('Cumulative report continuation is unavailable.');
-const context = new AsyncLocalStorage<{ store: LegacyContinuation; jobs: Map<string, JobProof> }>();
+const context = new AsyncLocalStorage<{ store: LegacyContinuation; dataAsOf: string; jobs: Map<string, JobProof> }>();
 export const currentContinuation = () => context.getStore();
-export const withContinuation = <T>(store: LegacyContinuation, load: () => Promise<T>) =>
-  context.run({ store, jobs: new Map() }, async () => ({ value: await load(), jobs: [...context.getStore()!.jobs.values()].sort((a, b) => a.id.localeCompare(b.id)) }));
+export const withContinuation = <T>(store: LegacyContinuation, load: () => Promise<T>, dataAsOf: string) => {
+  if (!Number.isFinite(Date.parse(dataAsOf))) throw fail();
+  return context.run({ store, dataAsOf, jobs: new Map() }, async () => ({ value: await load(), jobs: [...context.getStore()!.jobs.values()].sort((a, b) => a.id.localeCompare(b.id)) }));
+};
 
 /** Uses the same guarded query/reservation pipeline as the original restoration. */
 export class LegacyContinuation {
