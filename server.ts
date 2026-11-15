@@ -32,6 +32,7 @@ import { currentContinuation, legacyContinuation, withContinuation } from './src
 import { currentDailyOneRefresh, dailyOneRefresh, withDailyOneRefresh, validOnePayload } from './src/server/daily-one-refresh';
 import { currentDailyOneMeasurement, dailyOneMeasurement, withDailyOneMeasurement } from './src/server/daily-one-measurement';
 import { configuredDailyClosedDiagnostic } from './src/server/daily-closed-diagnostic';
+import { configuredDailyOneComposer } from './src/server/daily-one-composer';
 import { configuredDailyOneCohortPreflight } from './src/server/daily-one-cohort-preflight';
 import { closedContinuationComposer } from './src/server/closed-continuation-composer';
 import { verifiedPlgPublicationAnchor } from './src/server/plg-publication-anchor';
@@ -5821,6 +5822,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
             res.status(403).json({ error: 'Diagnostic planning requires the trusted release probe.' }); return;
           }
           const measureDailyOne = req.get('X-Metrics-Daily-One-Measure') === '1';
+          const composeDailyParent = req.get('X-Metrics-Daily-One-Compose-Parent') === '1';
+          if (composeDailyParent && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Daily parent composition requires the trusted release probe.' }); return;
+          }
           const diagnoseDailyClosed = req.get('X-Metrics-Daily-Closed-Diagnostic') === '1';
           if (diagnoseDailyClosed && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Closed daily diagnostic requires the trusted release probe.' }); return;
@@ -5875,6 +5880,27 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const composer = await closedComposer();
           const continuation = await legacyContinuation();
           const continuationComposer = await closedContinuationComposer();
+          if (composeDailyParent) {
+            if (diagnoseDailyClosed || activateDailyOne || sealDailyOne || measureDailyOne || publishDailyOne || publishContinuation || composeContinuation || measureClosed || composePublication || publishRestoration || !restoration || !cohort) {
+              res.status(409).json({ error: 'Daily parent composition is not configured.' }); return;
+            }
+            const daily = await dailyOneRefresh(), composer = daily && await configuredDailyOneComposer(daily);
+            if (!daily || !composer) { res.status(409).json({ error: 'Daily parent composition is not configured.' }); return; }
+            await restoration.closedDescriptor();
+            const claim = await composer.claim(reportUrl);
+            const computedAt = await withCustomerCohort(cohort.cacheKey, async () => {
+              const pinned = await readCustomerCohort(); await claim.parent.verifyMeasuredCohort(pinned);
+              return withLegacyReportScope(`${pinned.cacheKey}:${reportUrl}`, async () => {
+                const composed = await withClosedComposition(claim.parent, async () => {
+                  const value = await capture(handler, sourceRequest, true);
+                  if (legacyReportFailed()) throw new Error('Completed daily inputs are incomplete.');
+                  return composer.save(claim, value, pinned, validOnePayload);
+                }, claim.run.logicalAsOf);
+                return composed.value;
+              });
+            });
+            res.set('Cache-Control', 'no-store'); res.status(200).json({ state: 'composed', computedAt }); return;
+          }
           if (diagnoseDailyClosed) {
             if (activateDailyOne || sealDailyOne || measureDailyOne || publishDailyOne || publishContinuation || composeContinuation || measureClosed || composePublication || publishRestoration || !restoration || !cohort) {
               res.status(409).json({ error: 'Closed daily diagnostic is not configured.' }); return;
