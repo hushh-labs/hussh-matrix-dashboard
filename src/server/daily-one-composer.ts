@@ -7,10 +7,12 @@ import type { DailyOneRefresh, DailyRun } from './daily-one-refresh';
 type Database = Pick<Firestore, 'doc' | 'runTransaction'>;
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const fail = () => new Error('Daily parent composition is unavailable.');
+const composerReport = (run: DailyRun) => run.reports[(run.parentDepth ?? 1) - 1];
+const parentOwnJobs = (run: DailyRun) => run.parentDepth === 2 ? run.parentOwnReservedJobs : run.parentReservedJobs;
 const keys = ['source','parentId','parentSource','childId','logicalAsOf','report','reportDigest','scopeDigest','createdAt','expiresAt'] as const;
 function matches(doc: any, id: string, run: DailyRun) {
  return !!doc && doc.source === run.composerSource && doc.source === run.source && doc.parentId === run.parentId && doc.parentSource === run.parentSource
-  && doc.childId === id && doc.logicalAsOf === run.logicalAsOf && doc.report === run.reports[0]
+  && doc.childId === id && doc.logicalAsOf === run.logicalAsOf && doc.report === composerReport(run)
   && doc.reportDigest === run.reportDigest && doc.scopeDigest === run.scopeDigest
   && Number.isSafeInteger(doc.createdAt) && Number.isSafeInteger(doc.expiresAt) && doc.expiresAt > doc.createdAt && doc.expiresAt - doc.createdAt <= 3600_000;
 }
@@ -19,20 +21,20 @@ export async function verifiedDailyComposer(read: (ref: any) => Promise<any>, db
  validate: (value: { status: number; body: unknown }, report: string) => boolean, now = Date.now()) {
  if (!run.composerId) throw fail();
  const ref = db.doc(`metricsOneDailyComposers/${run.composerId}`), doc = (await read(ref)).data();
- const snapshot = (await read(ref.collection('snapshots').doc(hash(run.reports[0])))).data();
+ const snapshot = (await read(ref.collection('snapshots').doc(hash(composerReport(run))))).data();
  if (!matches(doc, childId, run) || doc.phase !== 'closed' || !snapshot || snapshot.state !== 'verified'
   || snapshot.source !== doc.source || snapshot.parentId !== doc.parentId || snapshot.parentSource !== doc.parentSource
-  || snapshot.childId !== childId || snapshot.logicalAsOf !== run.logicalAsOf || snapshot.reportHash !== hash(run.reports[0])
+  || snapshot.childId !== childId || snapshot.logicalAsOf !== run.logicalAsOf || snapshot.reportHash !== hash(composerReport(run))
   || snapshot.nonWarehouseFreshness !== 'unknown' || !snapshot.witness || !/^[a-f0-9]{64}$/.test(snapshot.witness.policyRevision ?? '')
   || !/^[a-f0-9]{64}$/.test(snapshot.witness.rowsHash ?? '') || !Number.isFinite(Date.parse(snapshot.witness.asOf))
-  || hash(`${snapshot.witness.rowsHash}:${run.reports[0]}`) !== run.measurementScopes[hash(run.reports[0])]
+  || hash(`${snapshot.witness.rowsHash}:${composerReport(run)}`) !== run.measurementScopes[hash(composerReport(run))]
   || !Number.isSafeInteger(snapshot.computedAt) || snapshot.computedAt < doc.createdAt || snapshot.computedAt > now + 10_000 || typeof snapshot.json !== 'string'
-  || Buffer.byteLength(snapshot.json) > 700_000 || !Array.isArray(snapshot.jobs) || snapshot.jobs.length !== run.parentReservedJobs
+  || Buffer.byteLength(snapshot.json) > 700_000 || !Array.isArray(snapshot.jobs) || snapshot.jobs.length !== parentOwnJobs(run)
   || !snapshot.jobs.length || new Set(snapshot.jobs.map((j: any) => j.id)).size !== snapshot.jobs.length
   || snapshot.jobs.some((j: any) => typeof j.id !== 'string' || !new RegExp(`^metrics_${run.parentId}_[a-f0-9]{64}$`).test(j.id)
     || !Number.isSafeInteger(j.endedAt) || j.endedAt < run.parentCreatedAt! || j.endedAt > snapshot.computedAt + 10_000)) throw fail();
  let value: { status: number; body: unknown }; try { value = JSON.parse(snapshot.json); } catch { throw fail(); }
- if (!validate(value, run.reports[0])) throw fail();
+ if (!validate(value, composerReport(run))) throw fail();
  return snapshot;
 }
 /** Exact completed-parent results only; an interrupted attempt cannot be replayed. */
@@ -44,7 +46,7 @@ export class DailyOneComposer {
   const { run, parent, childId } = await this.daily.parentForComposition(), ref = this.db.doc(`metricsOneDailyComposers/${this.id}`);
   const doc = (await ref.get()).data(), now = this.now();
   if (!parent || this.id !== run.composerId || this.source !== run.composerSource || !matches(doc, childId, run) || doc.phase !== 'open'
-   || report !== run.reports[0] || now < doc.createdAt || now >= doc.expiresAt) throw fail();
+   || report !== composerReport(run) || now < doc.createdAt || now >= doc.expiresAt) throw fail();
   const attempt = ref.collection('attempts').doc('one');
   await this.db.runTransaction(async tx => {
    const lineage = await this.daily.compositionIn(r => tx.get(r));
@@ -58,13 +60,13 @@ export class DailyOneComposer {
   validate: (value: { status: number; body: unknown }, report: string) => boolean) {
   const active = currentClosedComposition(), { run, parent, childId, ref, doc } = claim, computedAt = this.now(), json = JSON.stringify(value);
   const witness = cohortSnapshotWitness(cohort), jobs = active ? [...active.jobTimes].map(([id, endedAt]) => ({ id, endedAt })) : [];
-  if (!active || active.store !== parent || active.jobs.size !== jobs.length || !witness || currentLegacyReportKey() !== `${cohort.cacheKey}:${run.reports[0]}`
-   || hash(`${cohort.cacheKey}:${run.reports[0]}`) !== run.measurementScopes[hash(run.reports[0])] || !validate(value, run.reports[0])
-   || Buffer.byteLength(json) > 700_000 || jobs.length !== run.parentReservedJobs || !jobs.length
+  if (!active || active.store !== parent || active.jobs.size !== jobs.length || !witness || currentLegacyReportKey() !== `${cohort.cacheKey}:${composerReport(run)}`
+   || hash(`${cohort.cacheKey}:${composerReport(run)}`) !== run.measurementScopes[hash(composerReport(run))] || !validate(value, composerReport(run))
+   || Buffer.byteLength(json) > 700_000 || jobs.length !== parentOwnJobs(run) || !jobs.length
    || jobs.some(job => !active.jobs.has(job.id) || !new RegExp(`^metrics_${run.parentId}_[a-f0-9]{64}$`).test(job.id)
      || job.endedAt < run.parentCreatedAt! || job.endedAt > computedAt + 10_000)) throw fail();
   await requireCurrentCustomerCohort(cohort.cacheKey);
-  const target = ref.collection('snapshots').doc(hash(run.reports[0]));
+  const target = ref.collection('snapshots').doc(hash(composerReport(run)));
   await this.db.runTransaction(async tx => {
    const lineage = await this.daily.compositionIn(r => tx.get(r));
    const live = (await tx.get(ref)).data(), existing = await tx.get(target), attempt = await tx.get(claim.attempt);
@@ -72,12 +74,12 @@ export class DailyOneComposer {
    if (lineage.run.source !== run.source || lineage.run.scopeDigest !== run.scopeDigest || !matches(live, childId, run) || live.phase !== 'open' || keys.some(k => live[k] !== doc[k]) || this.now() >= live.expiresAt
     || existing.exists || attempt.data()?.state !== 'started' || reservations.some((snapshot, index) => !snapshot.exists
       || snapshot.data()?.jobId !== jobs[index].id || snapshot.data()?.state !== 'started'
-      || snapshot.data()?.reportHash !== hash(run.reports[0]) || snapshot.data()?.scopeHash !== hash(`${cohort.cacheKey}:${run.reports[0]}`)
+      || snapshot.data()?.reportHash !== hash(composerReport(run)) || snapshot.data()?.scopeHash !== hash(`${cohort.cacheKey}:${composerReport(run)}`)
       || !Number.isSafeInteger(snapshot.data()?.bytes) || snapshot.data()?.bytes < 1 || snapshot.data()?.bytes > run.maxPerJobBytes
       || !Number.isSafeInteger(snapshot.data()?.startedAt) || snapshot.data()?.startedAt > jobs[index].endedAt)) throw fail();
    requireFreshCohort(cohort);
    tx.create(target, { state: 'pending', source: doc.source, parentId: run.parentId, parentSource: run.parentSource, childId,
-    logicalAsOf: run.logicalAsOf, reportHash: hash(run.reports[0]), computedAt, jobs, json, witness, nonWarehouseFreshness: 'unknown' });
+    logicalAsOf: run.logicalAsOf, reportHash: hash(composerReport(run)), computedAt, jobs, json, witness, nonWarehouseFreshness: 'unknown' });
   });
   await requireCurrentCustomerCohort(cohort.cacheKey);
   await this.db.runTransaction(async tx => {

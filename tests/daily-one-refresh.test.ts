@@ -70,6 +70,33 @@ async function continuationFixture(index = 1, cacheKey = 'b'.repeat(64)) {
  let childNow = start + 1000; const store = new DailyOneRefresh(f.db.native(), childId, childSource, () => childNow);
  return { ...f, time: (value: number) => { f.time(value); childNow = value; }, scope, parent, child, childId, childSource, store, prior, query };
 }
+async function secondRecoveryFixture(cacheKey = 'b'.repeat(64)) {
+ const f = await continuationFixture(1, cacheKey), query = { query: 'SELECT 2' };
+ const prior = await f.scope(() => f.store.admit(query, 1)); await f.scope(() => f.store.reserve(prior)); await f.scope(() => f.store.claimSubmission(prior));
+ const parent = f.db.values.get(`metricsOneDailyRuns/${f.childId}`); parent.phase = 'closed'; f.time(start + 2000);
+ const id2 = 'refresh_20261115_7777777777777777', source2 = 'f'.repeat(40), measurementId = 'dailymeasure_20261115_8888888888888888';
+ const priorBytes = parent.parentReservedBytes + parent.reservedBytes, priorJobs = parent.parentReservedJobs + parent.reservedJobs;
+ const run = { ...parent, source: source2, phase: 'open', createdAt: start + 2000, expiresAt: start + 3600_000,
+  measurementId, measurementSource: source2, measurementDigest: '8'.repeat(64), maxBytes: f.policy.maxDailyBytes - priorBytes, maxJobs: f.policy.maxDailyJobs - priorJobs,
+  reservedBytes: 0, reservedJobs: 0, parentId: f.childId, parentSource: f.childSource, parentDepth: 2 as const,
+  parentReservedBytes: priorBytes, parentReservedJobs: priorJobs, parentOwnReservedBytes: parent.reservedBytes, parentOwnReservedJobs: parent.reservedJobs,
+  parentCreatedAt: parent.createdAt, newReportsDigest: restorationReportDigest(f.reports.slice(2)), composerId: 'dailycomposer_7777777777777777', composerSource: source2 };
+ f.db.values.set(`metricsOneDailyRuns/${id2}`, run); f.db.values.set(`metricsOneDailyApprovals/${id2}`, { ...run, runId: id2, approved: true });
+ f.db.values.set(`metricsOneDailyContinuationClaims/${f.childId}`, { ...run, runId: id2, approved: true });
+ f.db.values.set(`metricsOneDailyMeasurements/${id2}`, { phase: 'sealed', runId: id2, source: source2, day, logicalAsOf: asOf, reportDigest: run.reportDigest,
+  digest: run.measurementDigest, coverage: 'not exhaustive', sealedAt: start + 2000, measuredBytes: 80 * unit, measuredQueries: 4 });
+ f.db.values.set(`metricsOneDailyMeasurements/${measurementId}`, { phase: 'closed', source: source2, targetRunId: id2, day, logicalAsOf: asOf,
+  reportDigest: run.reportDigest, expiresAt: start + 3600_000 });
+ const report = f.reports[1], reportHash = createHash('sha256').update(report).digest('hex'), composerPath = `metricsOneDailyComposers/${run.composerId}`;
+ f.db.values.set(composerPath, { phase: 'closed', source: source2, parentId: f.childId, parentSource: f.childSource, childId: id2,
+  logicalAsOf: asOf, report, reportDigest: run.reportDigest, scopeDigest: run.scopeDigest, createdAt: start + 1000, expiresAt: start + 3600_000 });
+ f.db.values.set(`${composerPath}/snapshots/${reportHash}`, { state: 'verified', source: source2, parentId: f.childId, parentSource: f.childSource, childId: id2,
+  logicalAsOf: asOf, reportHash, computedAt: start + 1500, json: JSON.stringify(payloadFor(report)), nonWarehouseFreshness: 'unknown',
+  jobs: [{ id: prior.id, endedAt: start + 1500 }], witness: { policyRevision: 'c'.repeat(64), rowsHash: cacheKey, asOf } });
+ const store = new DailyOneRefresh(f.db.native(), id2, source2, () => start + 2000);
+ const scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${cacheKey}:${f.reports[2]}`, fn);
+ return { ...f, id2, source2, run2: run, parent2: parent, store, scope, prior2: prior };
+}
 describe('private no-query cohort preflight', () => {
  it('checks the sealed report scopes twice and fails closed on changed membership, missing evidence and expiry', async () => {
   const f = fixture(), sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -93,6 +120,76 @@ describe('private no-query cohort preflight', () => {
  });
 });
 describe('finite daily One refresh admission', () => {
+ it('admits only eight new reports while accounting for both closed predecessors', async () => {
+  const f = await secondRecoveryFixture(), before = f.parent.reservedBytes + f.parent2.reservedBytes;
+  await expect(f.store.requireOpen(f.reports[0])).rejects.toThrow(); await expect(f.store.requireOpen(f.reports[1])).rejects.toThrow();
+  await expect(f.store.requireOpen(f.reports[2])).resolves.toBeDefined();
+  // The full fixed manifest was measured, but only the remaining paid jobs count against the new limit.
+  expect(f.run2.maxJobs).toBe(3); expect(f.db.values.get(`metricsOneDailyMeasurements/${f.id2}`).measuredQueries).toBe(4);
+  const grant = await f.scope(() => f.store.admit({ query: 'SELECT 3' }, 1)); await f.scope(() => f.store.reserve(grant));
+  expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedBytes).toBe(before + grant.bytes);
+  expect(await f.scope(() => f.store.claimSubmission(grant))).toBe(true); expect(await f.scope(() => f.store.claimSubmission(grant))).toBe(false);
+ });
+ it('rejects changed predecessor totals, a reset ledger, and any third continuation', async () => {
+  const f = await secondRecoveryFixture(), grant = await f.scope(() => f.store.admit({ query: 'SELECT 3' }, 1));
+  f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedBytes = f.parent2.reservedBytes;
+  await expect(f.scope(() => f.store.reserve(grant))).rejects.toThrow();
+  f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedBytes = f.run2.parentReservedBytes;
+  f.parent2.reservedJobs++; await expect(f.store.requireOpen(f.reports[2])).rejects.toThrow(); f.parent2.reservedJobs--;
+  f.run2.parentOwnReservedBytes++; f.db.values.get(`metricsOneDailyApprovals/${f.id2}`).parentOwnReservedBytes++;
+  f.db.values.get(`metricsOneDailyContinuationClaims/${f.childId}`).parentOwnReservedBytes++;
+  await expect(f.store.requireOpen(f.reports[2])).rejects.toThrow();
+  f.run2.parentOwnReservedBytes--; f.db.values.get(`metricsOneDailyApprovals/${f.id2}`).parentOwnReservedBytes--;
+  f.db.values.get(`metricsOneDailyContinuationClaims/${f.childId}`).parentOwnReservedBytes--;
+  // A malformed extra ancestor is rejected before recursion can become unbounded.
+  f.parent.parentId = f.id2; f.parent.parentSource = f.source2;
+  await expect(f.store.requireOpen(f.reports[2])).rejects.toThrow();
+ });
+ it('requires both parent composers and all eight new snapshots before activation', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 2000);
+  try {
+   const policyRevision = 'c'.repeat(64), rows = [{ analyticsUserId: 'd'.repeat(32), registeredAt: '2026-11-01T00:00:00.000Z' }];
+   const cacheKey = createHash('sha256').update(JSON.stringify([policyRevision, rows])).digest('hex');
+   const cohort = { policyRevision, rows, cacheKey, asOf: '2026-11-15T07:00:02.000Z', expiresAt: start + 600_000 };
+   const f = await secondRecoveryFixture(cacheKey); vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(cohort);
+   f.db.values.get(`metricsOneDailyRuns/${f.id2}`).phase = 'closed'; const witness = cohorts.cohortSnapshotWitness(cohort)!;
+   for (const [i, report] of f.reports.slice(2).entries()) {
+    const reportHash = createHash('sha256').update(report).digest('hex');
+    f.db.values.set(`metricsOneDailyRuns/${f.id2}/snapshots/${reportHash}`, { schema: 1, state: 'verified', source: f.source2,
+     measurementId: f.run2.measurementId, measurementSource: f.run2.measurementSource, measurementDigest: f.run2.measurementDigest,
+     scopeDigest: f.run2.scopeDigest, runId: f.id2, parentId: f.childId, parentSource: f.childSource, reportHash, dataAsOf: asOf,
+     sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown', computedAt: start + 2000,
+     jobs: [{ id: `metrics_${f.id2}_${String(i).padStart(64, '0')}`, endedAt: start + 2000 }],
+     json: JSON.stringify(payloadFor(report)), ...(i < 3 ? { witness } : {}) });
+   }
+   const composerPath = `metricsOneDailyComposers/${f.run2.composerId}`, composer = f.db.values.get(composerPath);
+   composer.phase = 'open'; await expect(f.store.activate(cohort)).rejects.toThrow(); composer.phase = 'closed';
+   await expect(f.store.activate(cohort)).resolves.toBe(asOf);
+   const first = await f.store.read(f.reports[0], cohort), second = await f.store.read(f.reports[1], cohort);
+   expect(first?.warehouseFrom).toBe(start + 500); expect(second?.warehouseFrom).toBe(start + 1500);
+   expect(await f.store.read(f.reports[7], null, true, { ...cohort, rows: [], cacheKey: '0'.repeat(64) })).toBeNull();
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('composes the second report only from the immediate closed parent jobs', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 2000);
+  try {
+   const policyRevision = 'c'.repeat(64), rows = [{ analyticsUserId: 'd'.repeat(32), registeredAt: '2026-11-01T00:00:00.000Z' }];
+   const cacheKey = createHash('sha256').update(JSON.stringify([policyRevision, rows])).digest('hex');
+   const cohort = { policyRevision, rows, cacheKey, asOf: '2026-11-15T07:00:02.000Z', expiresAt: start + 600_000 };
+   const f = await secondRecoveryFixture(cacheKey), report = f.reports[1], path = `metricsOneDailyComposers/${f.run2.composerId}`;
+   f.db.values.get(path).phase = 'open'; f.db.values.delete(`${path}/snapshots/${createHash('sha256').update(report).digest('hex')}`);
+   await expect(f.store.requireOpen(f.reports[2])).rejects.toThrow(); vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(cohort);
+   const composer = new DailyOneComposer(f.db.native(), f.run2.composerId, f.source2, f.store, () => start + 2000), claim = await composer.claim(report);
+   await withLegacyReportScope(`${cacheKey}:${report}`, () => withClosedComposition(claim.parent, async () => {
+    const active = currentClosedComposition()!; active.jobs.add(f.prior2.id); active.jobTimes.set(f.prior2.id, start + 1500);
+    await expect(composer.save(claim, payloadFor(report), cohort, validOnePayload)).resolves.toBe(start + 2000);
+   }, asOf));
+   f.db.values.get(path).phase = 'closed'; await expect(f.store.requireOpen(f.reports[2])).resolves.toBeDefined();
+   f.db.values.get(`metricsOneDailyRuns/${f.id2}`).phase = 'closed';
+   expect((await f.store.read(f.reports[0], cohort, false))?.warehouseFrom).toBe(start + 500);
+   expect((await f.store.read(report, cohort, false))?.warehouseFrom).toBe(start + 1500);
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
  it('does not reserve after the caller aborts while the ledger transaction is reading', async () => {
   const f = fixture(), controller = new AbortController(), grant = await f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1));
   let entered!: () => void, release!: () => void; const started = new Promise<void>(r => { entered = r; }), barrier = new Promise<void>(r => { release = r; });
