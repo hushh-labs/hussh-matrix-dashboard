@@ -106,12 +106,13 @@ describe('legacy report source isolation', () => {
     expect((await request(app()).get('/api/auth/one-publication')).status).toBe(401); expect(state.query).not.toHaveBeenCalled();
   });
   it('requires a session and a current cohort for partial date choices', async () => {
-    state.daily = { partialReports: vi.fn().mockResolvedValue([{ startDate: '2026-10-17', endDate: '2026-11-15' }]) };
+    state.daily = { partialReports: vi.fn().mockResolvedValue([{ startDate: '2026-10-17', endDate: '2026-11-15', environment: 'production' }, { startDate: '2026-11-09', endDate: '2026-11-15', environment: 'uat' }]) };
     const endpoint = () => request(app()).get('/api/auth/one-partial-publications').set('Cookie', cookie());
     expect((await request(app()).get('/api/auth/one-partial-publications')).status).toBe(401);
     const denied = await request(app()).get('/api/analytics/all?view=one&environment=production').set('Cookie', cookie()).set('X-Metrics-Daily-One-Activate', 'partial');
     expect(denied.status).toBe(403);
-    const result = await endpoint(); expect(result.status).toBe(200); expect(result.body.reports).toEqual([{ startDate: '2026-10-17', endDate: '2026-11-15' }]);
+    const result = await endpoint(); expect(result.status).toBe(200); expect(result.body.reports).toEqual([{ startDate: '2026-10-17', endDate: '2026-11-15', environment: 'production' }]);
+    const v2 = await request(app()).get('/api/auth/one-partial-publications-v2').set('Cookie', cookie()); expect(v2.body.reports).toHaveLength(2);
     expect(result.headers['cache-control']).toBe('no-store'); expect(state.query).not.toHaveBeenCalled();
     state.currentCohortFails = true; expect((await endpoint()).body.reports).toEqual([]); state.currentCohortFails = false;
   });
