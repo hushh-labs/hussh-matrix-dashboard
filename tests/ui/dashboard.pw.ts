@@ -425,6 +425,19 @@ test('shared registry distinguishes an unknown disabled count from zero', async 
   await expect(tile).toContainText('0 disabled');
 });
 
+test('capability diagnostics distinguish unknown device counts from zero', async ({ page }) => {
+  await mockDashboard(page);
+  const capabilities = one.capabilities.map((cap, index) => ({ ...cap, devices: index === 0 ? null : index === 1 ? 0 : cap.devices }));
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics,
+    one: { ...allAnalytics.one!, data: { ...allAnalytics.one!.data!, production: { ...one, capabilities } } },
+  } }));
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: 'Retention', exact: true }).click();
+  const diagnostic = page.getByText('Agent Capabilities (Which Agent)', { exact: true }).locator('..');
+  await expect(diagnostic).toContainText('Device count unavailable');
+  await expect(diagnostic).toContainText('0 devices');
+});
+
 for (const width of [390, 1440]) {
   test(`One keeps collection diagnostics out of the report at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
