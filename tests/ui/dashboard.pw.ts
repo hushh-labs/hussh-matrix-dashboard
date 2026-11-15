@@ -183,7 +183,7 @@ test('uses the verified One anchor without changing Growth dates', async ({ page
 test('offers explicit newer partial production dates without changing the old default or UAT', async ({ page }) => {
   await mockDashboard(page);
   await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:00:00.000Z', user: { email: 'qa@example.invalid', name: 'QA' } } }));
-  await page.route('**/api/auth/one-partial-publications', route => route.fulfill({ json: { reports: [{ startDate: '2026-10-17', endDate: '2026-11-15', environment: 'production' }] } }));
+  await page.route('**/api/auth/one-partial-publications-v2', route => route.fulfill({ json: { reports: [{ startDate: '2026-10-17', endDate: '2026-11-15', environment: 'production' }] } }));
   const urls: URL[] = [];
   page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
   await page.goto('/location-analytics/production');
@@ -199,7 +199,7 @@ test('offers explicit newer partial production dates without changing the old de
 
 test('offers only the matching environment partial dates', async ({ page }) => {
   await mockDashboard(page);
-  await page.route('**/api/auth/one-partial-publications', route => route.fulfill({ json: { reports: [
+  await page.route('**/api/auth/one-partial-publications-v2', route => route.fulfill({ json: { reports: [
     { startDate: '2026-10-17', endDate: '2026-11-15', environment: 'production' },
     { startDate: '2026-11-09', endDate: '2026-11-15', environment: 'uat' },
   ] } }));

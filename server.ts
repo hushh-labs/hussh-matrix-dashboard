@@ -9905,7 +9905,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
     res.json({ publicationAsOf });
   });
 
-  app.get('/api/auth/one-partial-publications', async (req, res) => {
+  app.get(['/api/auth/one-partial-publications', '/api/auth/one-partial-publications-v2'], async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!(req as any).sessionUser) { res.status(401).json({ error: 'Sign in to view metrics.' }); return; }
     try {
@@ -9914,7 +9914,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
       const cohort = await readCustomerCohort();
       const reports = await daily.partialReports(cohort);
       await requireCurrentCustomerCohort(cohort.cacheKey);
-      res.json({ reports });
+      res.json({ reports: req.path.endsWith('-v2') ? reports : reports.filter(report => report.environment === 'production') });
     } catch { res.json({ reports: [] }); }
   });
 

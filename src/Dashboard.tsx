@@ -1197,7 +1197,7 @@ export default function Dashboard() {
     let active = true;
     setOnePartialReports([]);
     if (activeTab !== 'one') return () => { active = false; };
-    void fetch('/api/auth/one-partial-publications', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(35_000) })
+    void fetch('/api/auth/one-partial-publications-v2', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(35_000) })
       .then(response => response.ok ? response.json() : null).then(data => {
         if (!active || !Array.isArray(data?.reports)) return;
         setOnePartialReports(data.reports.filter((row: any) => typeof row?.startDate === 'string' && typeof row?.endDate === 'string'
