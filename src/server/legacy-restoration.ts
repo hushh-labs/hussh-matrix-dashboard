@@ -31,11 +31,11 @@ export const withLegacyReportScope = <T>(key: string, load: () => Promise<T>) =>
 export function noteLegacyQueryFailure() { const current = scope.getStore(); if (current) current.failed = true; }
 export const legacyReportFailed = () => scope.getStore()?.failed ?? true;
 export const currentLegacyReportKey = () => scope.getStore()?.key;
-type ClosedJobResolver = Pick<LegacyRestoration, 'closedJob' | 'closedDescriptor'>;
-const closedComposition = new AsyncLocalStorage<{ store: ClosedJobResolver; jobs: Set<string> }>();
+type ClosedJobResolver = { closedJob(request: Query): Promise<{ id: string; bytes: number; query: string }>; closedDescriptor(): Promise<{ asOf: string }> };
+const closedComposition = new AsyncLocalStorage<{ store: ClosedJobResolver; jobs: Set<string>; logicalAsOf?: string; observation: { reason: string | null; maxRows: number; maxBytes: number } }>();
 /** Only the operator route creates this scope; it never authorizes a job submission. */
-export const withClosedComposition = <T>(store: ClosedJobResolver, load: () => Promise<T>) =>
-  closedComposition.run({ store, jobs: new Set() }, async () => ({ value: await load(), jobs: [...closedComposition.getStore()!.jobs].sort() }));
+export const withClosedComposition = <T>(store: ClosedJobResolver, load: () => Promise<T>, logicalAsOf?: string) =>
+  closedComposition.run({ store, jobs: new Set(), logicalAsOf, observation: { reason: null, maxRows: 0, maxBytes: 0 } }, async () => ({ value: await load(), jobs: [...closedComposition.getStore()!.jobs].sort() }));
 export const currentClosedComposition = () => closedComposition.getStore();
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');

@@ -254,7 +254,7 @@ describe('BigQuery execution boundary', () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
     const grant = { id: 'metrics_restore_1234567890abcdef_' + 'a'.repeat(64), bytes: 20 * 1024 ** 2, query: 'SELECT 7' };
     const store = { closedJob: vi.fn(async () => grant) } as unknown as LegacyRestoration;
-    const metadata = { status: { state: 'DONE' }, jobReference: { projectId: project, location: 'US' },
+    const metadata = { status: { state: 'DONE' }, jobReference: { jobId: grant.id, projectId: project, location: 'US' },
       configuration: { query: { query: grant.query, maximumBytesBilled: String(grant.bytes), useLegacySql: false } } };
     const getMetadata = vi.fn(async () => [metadata]); const getQueryResults = vi.fn(async () => [[{ value: 7 }], null]);
     sdk.job.mockReturnValue({ getMetadata, getQueryResults });
@@ -275,6 +275,13 @@ describe('BigQuery execution boundary', () => {
     getMetadata.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 404 }));
     await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('missing');
     expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
+  it('never submits or estimates a missing closed daily job', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const store = { closedJob: vi.fn(async () => { throw new ClosedJobMissingError('a'.repeat(64), undefined); }) } as unknown as LegacyRestoration;
+    await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }), '2026-11-15T10:32:59.000Z')).rejects.toBeInstanceOf(ClosedJobMissingError);
+    expect(sdk.createQueryJob).not.toHaveBeenCalled();
+    expect(sdk.job).not.toHaveBeenCalled();
   });
   it('composes a closed continuation using only exact completed jobs, never estimating or submitting', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
