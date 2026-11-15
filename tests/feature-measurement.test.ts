@@ -23,6 +23,8 @@ describe('feature metric units', () => {
     for (const key of ['mail_signin_screen_view', 'inbox_viewed', 'autocategory_applied', 'kyc_reply_sent', 'preferences_updated']) {
       expect(featureMeasurementState(key, true, true, undefined)).toBe('not_tracked');
       expect(featureMeasurementState(key, true, true, 0)).toBe('not_tracked');
+      expect(featureMeasurementState(key, false, true, undefined)).toBe('unavailable');
+      expect(featureMeasurementState(key, false, false, 2)).toBe('unavailable');
       // Preserve historical and newly arriving evidence even if the catalogue lags.
       expect(featureMeasurementState(key, true, false, 2)).toBe('observed');
     }

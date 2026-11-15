@@ -524,6 +524,21 @@ test('location routes, environments and browser history work at mobile width', a
   await expect(page.locator('.dashboard-page-heading h1')).toHaveText('One Location');
 });
 
+test('Mail feature rows report source failure without claiming missing instrumentation', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics,
+    one: { ...allAnalytics.one!, data: { ...allAnalytics.one!.data!, production: { ...one, featureUsageAvailable: false } } },
+  } }));
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  await page.getByRole('button', { name: 'Open detailed Gmail analytics', exact: true }).click();
+  for (const label of ['Mail sign-in screen views', 'Inbox views', 'Receipt categorization']) {
+    const row = page.getByRole('row').filter({ hasText: label });
+    await expect(row).toContainText('Data unavailable');
+    await expect(row).not.toContainText('Not tracked yet');
+  }
+});
+
 test('agent detail pages, feature disclosures and the chat panel fit small screens', async ({ page }) => {
   await mockDashboard(page);
   await page.setViewportSize({ width: 390, height: 900 });

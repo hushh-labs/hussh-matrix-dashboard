@@ -2,9 +2,10 @@ import { featureTrackingGap } from './agent-measurement-contract.mjs';
 
 /** An exported record is evidence; an event declaration on its own is not. */
 export function featureMeasurementState(key: string, sourceAvailable: boolean, instrumented: boolean, signals: number | null | undefined, declaredGap = false) {
-  if (sourceAvailable && typeof signals === 'number' && signals > 0) return 'observed';
+  if (!sourceAvailable) return 'unavailable';
+  if (typeof signals === 'number' && signals > 0) return 'observed';
   if (declaredGap || !instrumented || featureTrackingGap(key)) return 'not_tracked';
-  return sourceAvailable ? 'empty' : 'unavailable';
+  return 'empty';
 }
 
 export function exactCount(value: number | null | undefined): string {
