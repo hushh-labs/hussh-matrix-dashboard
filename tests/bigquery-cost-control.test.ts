@@ -179,6 +179,25 @@ describe('BigQuery execution boundary', () => {
     await expect(withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' }))).rejects.toThrow('missing');
     expect(sdk.createQueryJob).not.toHaveBeenCalled();
   });
+  it('composes a closed continuation using only exact completed jobs, never estimating or submitting', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const grant = { id: 'metrics_restore_1234567890abcdef_' + 'a'.repeat(64), bytes: 20 * 1024 ** 2, query: 'SELECT 7' };
+    const reserve = vi.fn(), store = { closedJob: vi.fn(async () => grant), reserve } as unknown as LegacyContinuation;
+    const metadata = { status: { state: 'DONE' }, jobReference: { jobId: grant.id, projectId: project, location: 'US' },
+      configuration: { query: { query: grant.query, maximumBytesBilled: String(grant.bytes), useLegacySql: false } }, statistics: { endTime: String(Date.now() - 1000) } };
+    const getMetadata = vi.fn(async () => [metadata]), getQueryResults = vi.fn(async () => [[{ value: 7 }], null]);
+    sdk.job.mockReturnValue({ getMetadata, getQueryResults });
+    const run = () => withContinuation(store, () => withClosedComposition(store, () => guardedBigQuery(project, { query: 'SELECT 7' })), '2026-11-14T21:34:55.606Z');
+    const result = await run(); expect(result.value.value).toEqual([[{ value: 7 }]]);
+    expect(result.jobs).toEqual([{ id: grant.id, endedAt: Number(metadata.statistics.endTime) }]);
+    metadata.configuration.query.maximumBytesBilled = '1'; await expect(run()).rejects.toThrow('verification');
+    metadata.configuration.query.maximumBytesBilled = String(grant.bytes); getMetadata.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 404 }));
+    await expect(run()).rejects.toThrow('missing'); expect(sdk.createQueryJob).not.toHaveBeenCalled(); expect(reserve).not.toHaveBeenCalled();
+    (store as any).isPreparing = async () => false;
+    await expect(withContinuation(store, () => withClosedComposition(store, () => guardedBigQueryDryRun(project, { query: 'SELECT 7', dryRun: true })),
+      '2026-11-14T21:34:55.606Z')).rejects.toThrow('Closed-job composition cannot estimate or submit jobs');
+    expect(sdk.createQueryJob).not.toHaveBeenCalled(); expect(reserve).not.toHaveBeenCalled();
+  });
   it('measures an approved missing completed query once with a native dry run and never submits it', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
     const hash = 'e'.repeat(64), store = { closedDescriptor: async () => ({ asOf: '2026-11-14T00:00:00.000Z' }), closedJob: async () => { throw new ClosedJobMissingError(hash, undefined); } } as unknown as LegacyRestoration;

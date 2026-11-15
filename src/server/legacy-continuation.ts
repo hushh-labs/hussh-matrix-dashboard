@@ -23,11 +23,13 @@ type JobProof = { id: string; endedAt: number };
 const CONTINUATION_LIMITS = Object.freeze({ bytes: 500 * 1024 ** 3, jobs: 200 });
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const fail = () => new Error('Cumulative report continuation is unavailable.');
-const context = new AsyncLocalStorage<{ store: LegacyContinuation; dataAsOf: string; jobs: Map<string, JobProof> }>();
+const context = new AsyncLocalStorage<{ store: LegacyContinuation; dataAsOf: string; jobs: Map<string, JobProof>;
+  observation: { maxRows: number; maxBytes: number; reason: string | null } }>();
 export const currentContinuation = () => context.getStore();
 export const withContinuation = <T>(store: LegacyContinuation, load: () => Promise<T>, dataAsOf: string) => {
   if (!Number.isFinite(Date.parse(dataAsOf))) throw fail();
-  return context.run({ store, dataAsOf, jobs: new Map() }, async () => ({ value: await load(), jobs: [...context.getStore()!.jobs.values()].sort((a, b) => a.id.localeCompare(b.id)) }));
+  return context.run({ store, dataAsOf, jobs: new Map(), observation: { maxRows: 0, maxBytes: 0, reason: null } },
+    async () => ({ value: await load(), jobs: [...context.getStore()!.jobs.values()].sort((a, b) => a.id.localeCompare(b.id)) }));
 };
 
 /** Uses the same guarded query/reservation pipeline as the original restoration. */
@@ -93,6 +95,9 @@ export class LegacyContinuation {
     return { doc, lineage, original };
   }
   private permit() { return this.checked(ref => ref.get()); }
+  async verifiedClosedIn(read: (ref: any) => Promise<any>) {
+    const result = await this.checked(read); if (result.doc.phase !== 'closed') throw fail(); return result;
+  }
   async isPreparing() { const { doc } = await this.permit(); return doc.phase === 'open' && doc.expiresAt > this.now(); }
   async expandedPreparing() { return this.isPreparing(); }
   async perJobCeiling() { const { doc } = await this.permit(); return doc.maxPerJobBytes; }
@@ -100,6 +105,31 @@ export class LegacyContinuation {
     const d = await this.permit(); if (d.doc.phase !== 'open' || d.doc.expiresAt <= this.now() || !d.doc.fixedReports.includes(report)) throw fail(); return d;
   }
   async witness() { const { doc } = await this.permit(); return this.producer.capturedWitness(doc.witnessReport); }
+  /** Read-only adapter: a closed continuation can resolve only sealed prior jobs. */
+  async closedDescriptor() {
+    const { doc } = await this.permit();
+    if (doc.phase !== 'closed') throw fail();
+    const producer = await this.producer.closedDescriptor();
+    return { ...producer, fixedReports: doc.fixedReports, witnessReport: doc.witnessReport, continuationId: this.id, continuationSource: this.source };
+  }
+  async capturedWitness(report: string) {
+    const { doc } = await this.permit();
+    if (doc.phase !== 'closed' || report !== doc.witnessReport) throw fail();
+    return this.producer.capturedWitness(report);
+  }
+  async closedJob(request: Query) {
+    const { doc } = await this.permit();
+    if (doc.phase !== 'closed' || typeof request.query !== 'string' || request.params !== undefined || request.types !== undefined) throw fail();
+    const query = freezeRestorationSql(request.query, doc.dataAsOf), prepared = { ...request, query };
+    const { planHash } = this.identity(doc, query);
+    try { return await this.producer.closedJob(prepared); }
+    catch (error) { if (!(error instanceof ClosedJobMissingError)) throw error; }
+    const snapshot = await this.ref().collection('reservations').doc(planHash).get();
+    if (!snapshot.exists) throw new ClosedJobMissingError(planHash, undefined);
+    const row = snapshot.data(), id = `metrics_${this.id}_${planHash}`;
+    if (row?.jobId !== id || !Number.isSafeInteger(row.bytes) || row.bytes < 1 || row.bytes > doc.maxPerJobBytes) throw fail();
+    return { id, bytes: row.bytes as number, query };
+  }
   async prepare(request: Query) {
     const { doc } = await this.permit();
     if (doc.phase !== 'open' || doc.expiresAt <= this.now() || !currentLegacyReportKey() || typeof request.query !== 'string'
