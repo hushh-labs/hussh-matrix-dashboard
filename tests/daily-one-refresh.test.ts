@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { AsyncResource } from 'node:async_hooks';
 import * as cohorts from '../src/server/one-customer-cohort';
 import type { Firestore } from '@google-cloud/firestore';
 import { DailyOneRefresh, dailyOneManifest, dailyOnePolicyGeneration, dailyPartialDigest, dailySnapshotDigest, DAILY_ONE_LIMITS, withDailyOneRefresh, currentDailyOneRefresh, validOnePayload } from '../src/server/daily-one-refresh';
@@ -275,6 +276,44 @@ describe('terminal bounded recovery', () => {
    await expect(f.store4.requireOpen(f.reports[7])).rejects.toThrow();
    summary.measuredBytes = 80 * unit; f.run4.parentDepth = 5;
    await expect(f.store4.requireOpen(f.reports[7])).rejects.toThrow();
+  } finally { vi.useRealTimers(); }
+ });
+ it('retains the authorized cohort when a transaction callback runs in a foreign async resource', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 5000);
+  try {
+   const f = await terminalRecoveryFixture(), report = f.reports[8], scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`:${report}`, fn);
+   const grant = await scope(() => f.store4.admit({ query: 'SELECT context_case' }, 1));
+   const foreign = new AsyncResource('foreign-transaction'), original = f.db.runTransaction.bind(f.db);
+   vi.spyOn(f.db, 'runTransaction').mockImplementation(run => foreign.runInAsyncScope(() => original(run)));
+   await expect(withDailyOneRefresh(f.store4, report, () => scope(async () => { await f.store4.reserve(grant); return f.store4.claimSubmission(grant); }), undefined, undefined, f.cohort)).resolves.toBe(true);
+   expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedJobs).toBe(f.run4.parentReservedJobs + 1);
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('keeps an aborted foreign-context transaction from reserving or submitting', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 5000);
+  let release!: () => void;
+  try {
+   const f = await terminalRecoveryFixture(), report = f.reports[8], scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`:${report}`, fn);
+   const grant = await scope(() => f.store4.admit({ query: 'SELECT cancelled_context' }, 1)), controller = new AbortController();
+   const before = { ...f.db.values.get(`metricsOneDailyBudgets/${day}`) }, foreign = new AsyncResource('foreign-transaction'), original = f.db.runTransaction.bind(f.db);
+   let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }), barrier = new Promise<void>(resolve => { release = resolve; });
+   vi.spyOn(f.db, 'runTransaction').mockImplementation(run => foreign.runInAsyncScope(() => original(async tx => { entered(); await barrier; return run(tx); })));
+   const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+   const work = withDailyOneRefresh(f.store4, report, () => scope(() => f.store4.reserve(grant)), controller.signal, undefined, f.cohort);
+   const rejected = expect(work).rejects.toThrow(); await started; controller.abort(); release(); await rejected;
+   expect(f.db.values.get(`metricsOneDailyBudgets/${day}`)).toEqual(before);
+   expect(f.db.values.has(`metricsOneDailyRuns/${f.id4}/reservations/${grant.planHash}`)).toBe(false);
+   expect(warning).toHaveBeenCalledWith('Daily reservation held:', 'window');
+  } finally { release?.(); vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('does not carry a captured cohort into another report or store', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 5000);
+  try {
+   const f = await terminalRecoveryFixture(), report = f.reports[7], other = f.reports[8];
+   const scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`:${report}`, fn), grant = await scope(() => f.store4.admit({ query: 'SELECT wrong_report' }, 1));
+   const before = { ...f.db.values.get(`metricsOneDailyBudgets/${day}`) };
+   await expect(withDailyOneRefresh(f.store4, other, () => scope(() => f.store4.reserve(grant)), undefined, undefined, f.cohort)).rejects.toThrow();
+   expect(f.db.values.get(`metricsOneDailyBudgets/${day}`)).toEqual(before);
   } finally { vi.useRealTimers(); }
  });
  it('rejects a changed preserved reservation and changed partial scope', async () => {
