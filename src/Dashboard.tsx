@@ -1742,7 +1742,7 @@ export default function Dashboard() {
         ) : activeTab === 'referrals' ? (
           <ReferralsPanel refreshKey={refreshKey} />
         ) : activeTab === 'plg' ? (
-          <PlgWorkspace refreshKey={plgRefreshKey} publicationAsOf={user?.publicationAsOf} />
+          <PlgWorkspace refreshKey={plgRefreshKey} />
         ) : activeTab === 'growth' ? (
           <GrowthPanel
             loading={loading}
