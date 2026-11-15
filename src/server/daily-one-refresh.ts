@@ -313,19 +313,21 @@ export class DailyOneRefresh {
     return { permitId: this.id, planHash, id: `metrics_${this.id}_${planHash}`, bytes, report, scopeHash } as RestorationGrant;
   }
   async reserve(grant: RestorationGrant) {
+    const active = currentDailyOneRefresh();
+    if (active && (active.store !== this || active.report !== grant.report)) throw new ReservationHold('scope');
     let release!: () => void;
     const previous = this.reservationTail;
     this.reservationTail = new Promise<void>(resolve => { release = resolve; });
     await previous;
     try {
-      if (currentDailyOneRefresh()?.signal?.aborted) throw new ReservationHold('window');
-      await this.reserveInTransaction(grant);
+      if (active?.signal?.aborted) throw new ReservationHold('window');
+      await this.reserveInTransaction(grant, active);
     } catch (error) {
-      if (currentDailyOneRefresh()) console.warn('Daily reservation held:', reservationReason(error));
+      if (active) console.warn('Daily reservation held:', reservationReason(error));
       throw error;
     } finally { release(); }
   }
-  private async reserveInTransaction(grant: RestorationGrant) {
+  private async reserveInTransaction(grant: RestorationGrant, active: ReturnType<typeof currentDailyOneRefresh>) {
     if (grant.permitId !== this.id || !/^[a-f0-9]{64}$/.test(grant.planHash) || !grant.report || !Number.isSafeInteger(grant.bytes) || grant.bytes < 1) throw new ReservationHold('scope');
     const scope = currentLegacyReportKey();
     if (!scope || !grant.report || !scope.endsWith(`:${grant.report}`)) throw new ReservationHold('scope');
@@ -338,7 +340,7 @@ export class DailyOneRefresh {
     if (grant.reuse?.priorPermitId) {
       await this.db.runTransaction(async tx => {
         const { run, parent, grandparent, parentPartial, inheritedPartial } = await check(ref => tx.get(ref)), now = this.now();
-        const gate = currentDailyOneRefresh()?.gateCohort;
+        const gate = active?.gateCohort;
         const ownerId = jobOwner(run, grant.id, this.id, grant.report!);
         const owner = ownerId === run.parentId ? parent : ownerId === run.ancestorId ? grandparent : undefined;
         if (!owner || ownerId !== grant.reuse?.priorPermitId || grant.reuse.priorPlanHash !== grant.planHash
@@ -350,7 +352,7 @@ export class DailyOneRefresh {
           tx.get(this.db.doc(`metricsOneDailyRuns/${ownerId}/reservations/${grant.planHash}`)),
           tx.get(this.db.doc(`metricsOneDailyBudgets/${run.day}`)),
         ]), row = rowSnap.data(), day = daySnap.data();
-        if (currentDailyOneRefresh()?.signal?.aborted) throw new ReservationHold('window');
+        if (active?.signal?.aborted) throw new ReservationHold('window');
         if (!rowSnap.exists || row.jobId !== grant.id || row.state !== 'started'
           || row.bytes !== grant.bytes || row.scopeHash !== scopeHash || row.reportHash !== reportHash
           || !Number.isSafeInteger(row.startedAt) || row.startedAt < owner.createdAt || row.startedAt >= owner.expiresAt || row.startedAt > now) throw new ReservationHold('conflict');
@@ -361,13 +363,13 @@ export class DailyOneRefresh {
     }
     await this.db.runTransaction(async tx => {
       const { run, policy, parentPartial, inheritedPartial } = await check(ref => tx.get(ref)), now = this.now();
-      const gate = currentDailyOneRefresh()?.gateCohort;
+      const gate = active?.gateCohort;
       if ((run.parentDepth ?? 0) >= 3) { if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness) || (run.parentDepth === 4 && !cohortMatchesSnapshotWitness(gate, inheritedPartial?.witness))) throw new ReservationHold('cohort'); requireFreshCohort(gate); }
       if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !run.reports.includes(grant.report!) || grant.bytes > run.maxPerJobBytes) throw new ReservationHold('window');
       if (grant.id !== `metrics_${this.id}_${grant.planHash}` || recoveredReports(run).includes(grant.report!)) throw new ReservationHold('scope');
       const dayRef = this.db.doc(`metricsOneDailyBudgets/${run.day}`), reservation = this.ref().collection('reservations').doc(grant.planHash);
       const [daySnap, reservationSnap] = await Promise.all([tx.get(dayRef), tx.get(reservation)]), day = daySnap.data();
-      if (currentDailyOneRefresh()?.signal?.aborted) throw new ReservationHold('window');
+      if (active?.signal?.aborted) throw new ReservationHold('window');
       if (reservationSnap.exists) { const old = reservationSnap.data(); if (old.jobId !== grant.id || old.bytes !== grant.bytes || old.scopeHash !== scopeHash || old.reportHash !== reportHash || !['reserved','started'].includes(old.state)) throw new ReservationHold('conflict'); return; }
       if (!daySnap.exists || day?.day !== run.day || day.policyGeneration !== run.policyGeneration || !Number.isSafeInteger(day.reservedBytes) || day.reservedBytes < 0
         || !Number.isSafeInteger(day.reservedJobs) || day.reservedJobs < 0 || day.reservedBytes !== (run.parentReservedBytes ?? 0) + run.reservedBytes
@@ -568,6 +570,8 @@ export class DailyOneRefresh {
   }
   /** Write the uncertain-submission fence before any native job creation. */
   async claimSubmission(grant: RestorationGrant): Promise<boolean> {
+    const active = currentDailyOneRefresh();
+    if (active && (active.store !== this || active.report !== grant.report)) throw fail();
     if (grant.permitId !== this.id || !/^[a-f0-9]{64}$/.test(grant.planHash) || !Number.isSafeInteger(grant.bytes) || grant.bytes < 1) throw fail();
     const scope = currentLegacyReportKey();
     if (!scope || !grant.report || !scope.endsWith(`:${grant.report}`)) throw fail();
@@ -575,12 +579,12 @@ export class DailyOneRefresh {
     if (grant.reuse?.priorPermitId) { await this.reserve(grant); return false; }
     return this.db.runTransaction(async tx => {
       const { run, parentPartial, inheritedPartial } = await this.checked(ref => tx.get(ref)), now = this.now();
-      const gate = currentDailyOneRefresh()?.gateCohort;
+      const gate = active?.gateCohort;
       if ((run.parentDepth ?? 0) >= 3) { if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness) || (run.parentDepth === 4 && !cohortMatchesSnapshotWitness(gate, inheritedPartial?.witness))) throw fail(); requireFreshCohort(gate); }
       if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !grant.report || !run.reports.includes(grant.report)) throw fail();
       if (grant.id !== `metrics_${this.id}_${grant.planHash}` || recoveredReports(run).includes(grant.report!)) throw fail();
       const ref = this.ref().collection('reservations').doc(grant.planHash), snapshot = await tx.get(ref), row = snapshot.data();
-      if (currentDailyOneRefresh()?.signal?.aborted) throw fail();
+      if (active?.signal?.aborted) throw fail();
       if (!snapshot.exists || row.jobId !== grant.id || row.bytes !== grant.bytes || row.scopeHash !== hash(scope) || row.reportHash !== hash(grant.report!) || !['reserved','started'].includes(row.state)) throw fail();
       if (row.state === 'started') return false;
       tx.update(ref, { state: 'started', startedAt: now }); return true;
