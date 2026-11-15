@@ -103,7 +103,8 @@ export function signedOneAggregateFetch(environment: 'production' | 'uat', secre
   return async (url, request) => {
     if (url !== expected) throw new ReportError('invalid');
     const body = JSON.stringify(request.body), timestamp = String(now());
-    const signature = createHmac('sha256', secret).update(`metrics-one-aggregate-v1:${timestamp}:${body}`).digest('hex');
+    const purpose = environment === 'uat' ? 'metrics-one-aggregate-uat-v1' : 'metrics-one-aggregate-v1';
+    const signature = createHmac('sha256', secret).update(`${purpose}:${timestamp}:${body}`).digest('hex');
     return fetcher(url, { method: 'POST', body, signal: request.signal, redirect: 'error', headers: {
       'Content-Type': 'application/json', 'X-Metrics-Timestamp': timestamp, 'X-Metrics-Signature': signature,
     } });
