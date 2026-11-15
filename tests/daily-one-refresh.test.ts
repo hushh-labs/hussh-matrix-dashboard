@@ -21,11 +21,15 @@ function payloadFor(report: string, count = 1) {
 const day = '2026-11-15', asOf = '2026-11-14T23:59:59.999Z', start = Date.parse('2026-11-15T07:00:00Z'), source = 'a'.repeat(40), id = 'refresh_20261115_1111111111111111', unit = 1024 ** 2;
 function fixture() {
  const db = new Database(); let now = start; const reports = dailyOneManifest('2026-11-14'), reportDigest = restorationReportDigest(reports);
+ const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+ const measurementScopes = Object.fromEntries(reports.map((report, index) => [sha(report), sha(`${index < 5 ? 'b'.repeat(64) : ''}:${report}`)]));
+ const scopeDigest = sha(JSON.stringify(Object.entries(measurementScopes).sort(([a], [b]) => a.localeCompare(b))));
  const policy = { approved: true, source, maxDailyBytes: 200 * unit, maxDailyJobs: 5, maxPerJobBytes: 100 * unit }; const generation = dailyOnePolicyGeneration(source, policy.maxDailyBytes, policy.maxDailyJobs, policy.maxPerJobBytes);
- const run = { source, policyGeneration: generation, day, logicalAsOf: asOf, phase: 'open', createdAt: start, expiresAt: start + 3600_000, reports, reportDigest, measurementDigest: 'f'.repeat(64), maxBytes: 150 * unit, maxJobs: 4, maxPerJobBytes: 100 * unit, reservedBytes: 0, reservedJobs: 0 };
+ const run = { source, policyGeneration: generation, day, logicalAsOf: asOf, phase: 'open', createdAt: start, expiresAt: start + 3600_000, reports, reportDigest, measurementId: 'dailymeasure_20261115_3333333333333333', measurementSource: source, measurementDigest: 'f'.repeat(64), measurementScopes, scopeDigest, maxBytes: 150 * unit, maxJobs: 4, maxPerJobBytes: 100 * unit, reservedBytes: 0, reservedJobs: 0 };
  db.values.set(`metricsOneDailyRuns/${id}`, run); db.values.set(`metricsOneDailyPolicies/${generation}`, { ...policy, generation });
  db.values.set(`metricsOneDailyApprovals/${id}`, { ...run, runId: id, approved: true }); db.values.set(`metricsOneDailySlots/${day}`, { day, runId: id, source, policyGeneration: generation, state: 'sealed' });
  db.values.set(`metricsOneDailyMeasurements/${id}`, { phase: 'sealed', runId: id, source, day, logicalAsOf: asOf, reportDigest, digest: run.measurementDigest, coverage: 'not exhaustive', sealedAt: start, measuredBytes: 80 * unit, measuredQueries: 3 });
+ db.values.set(`metricsOneDailyMeasurements/${run.measurementId}`, { phase: 'closed', source, targetRunId: id, day, logicalAsOf: asOf, reportDigest, expiresAt: start + 3600_000 });
  db.values.set(`metricsOneDailyBudgets/${day}`, { day, policyGeneration: generation, reservedBytes: 0, reservedJobs: 0 });
  const store = new DailyOneRefresh(db.native(), id, source, () => now), scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${'b'.repeat(64)}:${reports[0]}`, fn);
  return { db, run, policy, generation, reports, store, scope, time: (value: number) => { now = value; } };
@@ -46,6 +50,51 @@ describe('finite daily One refresh admission', () => {
   const f = fixture();
   await expect(withDailyOneRefresh(f.store, f.reports[0], () => f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)))).resolves.toBeDefined();
   await expect(withDailyOneRefresh(f.store, f.reports[1], () => f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)))).rejects.toThrow();
+ });
+ it('accepts the exact earlier measurement source under a one-TiB cap and rejects drift or larger caps', async () => {
+  const f = fixture(), earlier = '3c6bb690a538d75b20c6dfc6494b9c0a8ae3bd58';
+  const generation = dailyOnePolicyGeneration(source, DAILY_ONE_LIMITS.bytes, 250, DAILY_ONE_LIMITS.perJob);
+  Object.assign(f.run, { policyGeneration: generation, measurementSource: earlier, maxBytes: DAILY_ONE_LIMITS.bytes, maxJobs: 250, maxPerJobBytes: DAILY_ONE_LIMITS.perJob });
+  f.db.values.set(`metricsOneDailyPolicies/${generation}`, { approved: true, generation, source, maxDailyBytes: DAILY_ONE_LIMITS.bytes, maxDailyJobs: 250, maxPerJobBytes: DAILY_ONE_LIMITS.perJob });
+  Object.assign(f.db.values.get(`metricsOneDailyApprovals/${id}`), f.run);
+  Object.assign(f.db.values.get(`metricsOneDailySlots/${day}`), { policyGeneration: generation });
+  Object.assign(f.db.values.get(`metricsOneDailyMeasurements/${f.run.measurementId}`), { source: earlier });
+  Object.assign(f.db.values.get(`metricsOneDailyMeasurements/${id}`), { source: earlier, measuredBytes: 734202429440, measuredQueries: 220 });
+  await expect(f.store.requireOpen(f.reports[0])).resolves.toBeDefined();
+  f.run.measurementSource = 'e'.repeat(40); f.db.values.get(`metricsOneDailyApprovals/${id}`).measurementSource = f.run.measurementSource;
+  await expect(f.store.requireOpen(f.reports[0])).rejects.toThrow();
+  f.run.measurementSource = earlier; f.db.values.get(`metricsOneDailyApprovals/${id}`).measurementSource = earlier;
+  f.run.maxBytes = DAILY_ONE_LIMITS.bytes + 1; f.db.values.get(`metricsOneDailyApprovals/${id}`).maxBytes = f.run.maxBytes;
+  await expect(f.store.requireOpen(f.reports[0])).rejects.toThrow();
+ });
+ it('rejects changed membership, swapped environment scopes and tampered scope manifests', async () => {
+  const f = fixture(), production = f.reports[0], uat = f.reports[5];
+  await expect(withLegacyReportScope(`${'c'.repeat(64)}:${production}`, () => f.store.admit({ query: 'SELECT 1' }, 1))).rejects.toThrow();
+  await expect(withLegacyReportScope(`${'b'.repeat(64)}:${uat}`, () => f.store.admit({ query: 'SELECT 1' }, 1))).rejects.toThrow();
+  await expect(withLegacyReportScope(`:${production}`, () => f.store.admit({ query: 'SELECT 1' }, 1))).rejects.toThrow();
+  const key = createHash('sha256').update(production).digest('hex'); f.run.measurementScopes[key] = 'd'.repeat(64);
+  await expect(f.store.requireOpen(production)).rejects.toThrow();
+ });
+ it('verifies all measured production and UAT scopes before paid work', async () => {
+  const f = fixture(), cohort = { cacheKey: 'b'.repeat(64), expiresAt: Date.now() + 60_000 } as cohorts.CustomerCohort;
+  await expect(f.store.verifyMeasuredCohort(cohort)).resolves.toBeUndefined();
+  await expect(f.store.verifyMeasuredCohort({ ...cohort, cacheKey: 'c'.repeat(64) })).rejects.toThrow();
+  const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+  f.run.measurementScopes[sha(f.reports[4])] = sha(`${'d'.repeat(64)}:${f.reports[4]}`);
+  f.run.scopeDigest = sha(JSON.stringify(Object.entries(f.run.measurementScopes).sort(([a], [b]) => a.localeCompare(b))));
+  f.db.values.get(`metricsOneDailyApprovals/${id}`).scopeDigest = f.run.scopeDigest;
+  await expect(f.store.verifyMeasuredCohort(cohort)).rejects.toThrow();
+ });
+ it('never opens or submits after the original measurement expires', async () => {
+  const f = fixture(), measurement = f.db.values.get(`metricsOneDailyMeasurements/${f.run.measurementId}`);
+  measurement.expiresAt = start + 500; f.run.expiresAt = start + 500; f.db.values.get(`metricsOneDailyApprovals/${id}`).expiresAt = start + 500;
+  const grant = await f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)); await f.scope(() => f.store.reserve(grant));
+  f.time(start + 500);
+  await expect(f.store.requireOpen(f.reports[0])).rejects.toThrow();
+  await expect(f.scope(() => f.store.claimSubmission(grant))).rejects.toThrow();
+  expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedJobs).toBe(1);
+  const later = fixture(); later.db.values.get(`metricsOneDailyMeasurements/${later.run.measurementId}`).expiresAt = start + 500;
+  await expect(later.store.requireOpen(later.reports[0])).rejects.toThrow();
  });
  it('coalesces atomic reservations and claims a single submission before native work', async () => {
   const f = fixture(), query = await f.store.prepare({ query: 'SELECT CURRENT_DATE()' }); expect(query.query).toContain('2026-11-14');
@@ -96,7 +145,7 @@ describe('finite daily One refresh admission', () => {
     vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(cohort);
     const witness = cohorts.cohortSnapshotWitness(cohort), sha = (value: string) => createHash('sha256').update(value).digest('hex');
     for (const [index, report] of f.reports.entries()) f.db.values.set(`metricsOneDailyRuns/${id}/snapshots/${sha(report)}`, {
-      schema: 1, state: 'verified', source, runId: id, reportHash: sha(report), dataAsOf: asOf, computedAt: start + 1000,
+      schema: 1, state: 'verified', source, measurementId: f.run.measurementId, measurementSource: source, measurementDigest: 'f'.repeat(64), scopeDigest: f.run.scopeDigest, runId: id, reportHash: sha(report), dataAsOf: asOf, computedAt: start + 1000,
       sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown', json: JSON.stringify(payloadFor(report, index)),
       jobs: [{ id: `metrics_${id}_${sha(report)}`, endedAt: start + 500 }], ...(index < 5 ? { witness } : {}),
     });
@@ -136,6 +185,10 @@ describe('finite daily One refresh admission', () => {
     const policyRevision = 'c'.repeat(64), rows = [{ analyticsUserId: 'd'.repeat(32), registeredAt: '2026-11-01T00:00:00.000Z' }];
     const cacheKey = createHash('sha256').update(JSON.stringify([policyRevision, rows])).digest('hex');
     const cohort = { policyRevision, rows, cacheKey, asOf: '2026-11-15T07:00:01.000Z', expiresAt: start + 600_000 };
+    const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+    f.run.measurementScopes[sha(report)] = sha(`${cacheKey}:${report}`);
+    f.run.scopeDigest = sha(JSON.stringify(Object.entries(f.run.measurementScopes).sort(([a], [b]) => a.localeCompare(b))));
+    f.db.values.get(`metricsOneDailyApprovals/${id}`).scopeDigest = f.run.scopeDigest;
     const current = vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValueOnce(cohort).mockRejectedValueOnce(new Error('membership changed'));
     const scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${cacheKey}:${report}`, fn);
     const grant = await scope(() => f.store.admit({ query: 'SELECT 1' }, 1));
