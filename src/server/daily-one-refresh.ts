@@ -34,6 +34,20 @@ export const dailyPartialDigest = (activation: any) => hash(JSON.stringify([
 export const dailyOnePolicyGeneration = (source: string, maxDailyBytes: number, maxDailyJobs: number, maxPerJobBytes: number) =>
   hash(JSON.stringify({ schema: 1, source, maxDailyBytes, maxDailyJobs, maxPerJobBytes }));
 const fail = () => new Error('The bounded One refresh is unavailable.');
+type ReservationReason = 'scope' | 'lineage' | 'cohort' | 'window' | 'conflict' | 'ledger';
+class ReservationHold extends Error {
+  constructor(readonly reason: ReservationReason) { super('The bounded One refresh is unavailable.'); }
+}
+function reservationReason(error: unknown): ReservationReason | 'contention' | 'deadline' | 'unavailable' | 'resource-exhausted' | 'other' {
+  if (error instanceof ReservationHold) return error.reason;
+  const code = (error as { code?: unknown })?.code;
+  if (code === 10 || code === 'ABORTED') return 'contention';
+  if (code === 4 || code === 'DEADLINE_EXCEEDED') return 'deadline';
+  if (code === 14 || code === 'UNAVAILABLE') return 'unavailable';
+  if (code === 8 || code === 'RESOURCE_EXHAUSTED') return 'resource-exhausted';
+  if (error instanceof Error && error.message === 'Production customer membership could not be verified.') return 'cohort';
+  return 'other';
+}
 export function validOnePayload(value: { status?: number; body?: any }, report: string) {
   const url = new URL(report, 'http://analytics.internal'), environment = url.searchParams.get('environment');
   const start = url.searchParams.get('one_start_date'), end = url.searchParams.get('one_end_date');
@@ -64,6 +78,7 @@ export function dailyOneManifest(dataDate: string): string[] {
 }
 
 export class DailyOneRefresh {
+  private reservationTail: Promise<void> = Promise.resolve();
   constructor(private db: Database, private id: string, private source: string, private now = Date.now) {
     if (!/^refresh_\d{8}_[a-f0-9]{16}$/.test(id) || !/^[a-f0-9]{40}$/.test(source)) throw fail();
   }
@@ -253,47 +268,65 @@ export class DailyOneRefresh {
     return { permitId: this.id, planHash, id: `metrics_${this.id}_${planHash}`, bytes, report, scopeHash } as RestorationGrant;
   }
   async reserve(grant: RestorationGrant) {
-    if (grant.permitId !== this.id || !/^[a-f0-9]{64}$/.test(grant.planHash) || !grant.report || !Number.isSafeInteger(grant.bytes) || grant.bytes < 1) throw fail();
+    let release!: () => void;
+    const previous = this.reservationTail;
+    this.reservationTail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      if (currentDailyOneRefresh()?.signal?.aborted) throw new ReservationHold('window');
+      await this.reserveInTransaction(grant);
+    } catch (error) {
+      if (currentDailyOneRefresh()) console.warn('Daily reservation held:', reservationReason(error));
+      throw error;
+    } finally { release(); }
+  }
+  private async reserveInTransaction(grant: RestorationGrant) {
+    if (grant.permitId !== this.id || !/^[a-f0-9]{64}$/.test(grant.planHash) || !grant.report || !Number.isSafeInteger(grant.bytes) || grant.bytes < 1) throw new ReservationHold('scope');
     const scope = currentLegacyReportKey();
-    if (!scope || !grant.report || !scope.endsWith(`:${grant.report}`)) throw fail();
+    if (!scope || !grant.report || !scope.endsWith(`:${grant.report}`)) throw new ReservationHold('scope');
     const scopeHash = hash(scope), reportHash = hash(grant.report);
-    if ((grant as RestorationGrant & { scopeHash?: string }).scopeHash !== scopeHash) throw fail();
+    if ((grant as RestorationGrant & { scopeHash?: string }).scopeHash !== scopeHash) throw new ReservationHold('scope');
+    const check = async (read: (ref: any) => Promise<any>) => {
+      try { return await this.checked(read); }
+      catch (error) { if (error instanceof Error && error.message === 'The bounded One refresh is unavailable.') throw new ReservationHold('lineage'); throw error; }
+    };
     if (grant.reuse?.priorPermitId) {
       await this.db.runTransaction(async tx => {
-        const { run, parent, parentPartial } = await this.checked(ref => tx.get(ref)), now = this.now();
+        const { run, parent, parentPartial } = await check(ref => tx.get(ref)), now = this.now();
         const gate = currentDailyOneRefresh()?.gateCohort;
         if (run.parentDepth !== 3 || grant.reuse?.priorPermitId !== run.parentId || grant.report !== run.reports[4]
           || grant.reuse.priorPlanHash !== grant.planHash || grant.id !== `metrics_${run.parentId}_${grant.planHash}`
-          || grant.bytes > run.maxPerJobBytes
-          || run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day
-          || !gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness)) throw fail();
+          || grant.bytes > run.maxPerJobBytes) throw new ReservationHold('scope');
+        if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day) throw new ReservationHold('window');
+        if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness)) throw new ReservationHold('cohort');
         requireFreshCohort(gate);
         const [rowSnap, daySnap] = await Promise.all([
           tx.get(this.db.doc(`metricsOneDailyRuns/${run.parentId}/reservations/${grant.planHash}`)),
           tx.get(this.db.doc(`metricsOneDailyBudgets/${run.day}`)),
         ]), row = rowSnap.data(), day = daySnap.data();
-        if (currentDailyOneRefresh()?.signal?.aborted || !rowSnap.exists || row.jobId !== grant.id || row.state !== 'started'
+        if (currentDailyOneRefresh()?.signal?.aborted) throw new ReservationHold('window');
+        if (!rowSnap.exists || row.jobId !== grant.id || row.state !== 'started'
           || row.bytes !== grant.bytes || row.scopeHash !== scopeHash || row.reportHash !== reportHash
-          || !Number.isSafeInteger(row.startedAt) || row.startedAt < run.parentCreatedAt! || row.startedAt >= parent!.expiresAt || row.startedAt > now
-          || !daySnap.exists || day.policyGeneration !== run.policyGeneration || day.reservedBytes !== run.parentReservedBytes! + run.reservedBytes
-          || day.reservedJobs !== run.parentReservedJobs! + run.reservedJobs) throw fail();
+          || !Number.isSafeInteger(row.startedAt) || row.startedAt < run.parentCreatedAt! || row.startedAt >= parent!.expiresAt || row.startedAt > now) throw new ReservationHold('conflict');
+        if (!daySnap.exists || day.policyGeneration !== run.policyGeneration || day.reservedBytes !== run.parentReservedBytes! + run.reservedBytes
+          || day.reservedJobs !== run.parentReservedJobs! + run.reservedJobs) throw new ReservationHold('ledger');
       });
       return;
     }
     await this.db.runTransaction(async tx => {
-      const { run, policy, parentPartial } = await this.checked(ref => tx.get(ref)), now = this.now();
+      const { run, policy, parentPartial } = await check(ref => tx.get(ref)), now = this.now();
       const gate = currentDailyOneRefresh()?.gateCohort;
-      if (run.parentDepth === 3) { if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness)) throw fail(); requireFreshCohort(gate); }
-      if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !run.reports.includes(grant.report!) || grant.bytes > run.maxPerJobBytes) throw fail();
-      if (grant.id !== `metrics_${this.id}_${grant.planHash}` || run.reports.slice(0, recoveredReports(run)).includes(grant.report!)) throw fail();
+      if (run.parentDepth === 3) { if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness)) throw new ReservationHold('cohort'); requireFreshCohort(gate); }
+      if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !run.reports.includes(grant.report!) || grant.bytes > run.maxPerJobBytes) throw new ReservationHold('window');
+      if (grant.id !== `metrics_${this.id}_${grant.planHash}` || run.reports.slice(0, recoveredReports(run)).includes(grant.report!)) throw new ReservationHold('scope');
       const dayRef = this.db.doc(`metricsOneDailyBudgets/${run.day}`), reservation = this.ref().collection('reservations').doc(grant.planHash);
       const [daySnap, reservationSnap] = await Promise.all([tx.get(dayRef), tx.get(reservation)]), day = daySnap.data();
-      if (currentDailyOneRefresh()?.signal?.aborted) throw fail();
-      if (reservationSnap.exists) { const old = reservationSnap.data(); if (old.jobId !== grant.id || old.bytes !== grant.bytes || old.scopeHash !== scopeHash || old.reportHash !== reportHash || !['reserved','started'].includes(old.state)) throw fail(); return; }
+      if (currentDailyOneRefresh()?.signal?.aborted) throw new ReservationHold('window');
+      if (reservationSnap.exists) { const old = reservationSnap.data(); if (old.jobId !== grant.id || old.bytes !== grant.bytes || old.scopeHash !== scopeHash || old.reportHash !== reportHash || !['reserved','started'].includes(old.state)) throw new ReservationHold('conflict'); return; }
       if (!daySnap.exists || day?.day !== run.day || day.policyGeneration !== run.policyGeneration || !Number.isSafeInteger(day.reservedBytes) || day.reservedBytes < 0
         || !Number.isSafeInteger(day.reservedJobs) || day.reservedJobs < 0 || day.reservedBytes !== (run.parentReservedBytes ?? 0) + run.reservedBytes
         || day.reservedJobs !== (run.parentReservedJobs ?? 0) + run.reservedJobs || run.reservedBytes + grant.bytes > run.maxBytes || run.reservedJobs + 1 > run.maxJobs
-        || day.reservedBytes + grant.bytes > policy.maxDailyBytes || day.reservedJobs + 1 > policy.maxDailyJobs) throw fail();
+        || day.reservedBytes + grant.bytes > policy.maxDailyBytes || day.reservedJobs + 1 > policy.maxDailyJobs) throw new ReservationHold('ledger');
       tx.update(dayRef, { reservedBytes: day.reservedBytes + grant.bytes, reservedJobs: day.reservedJobs + 1 });
       tx.update(this.ref(), { reservedBytes: run.reservedBytes + grant.bytes, reservedJobs: run.reservedJobs + 1 });
       tx.create(reservation, { jobId: grant.id, bytes: grant.bytes, scopeHash, reportHash, state: 'reserved', reservedAt: now });
