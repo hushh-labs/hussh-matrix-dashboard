@@ -482,6 +482,11 @@ export async function guardedBigQuery(project: string, request: Query): Promise<
       if (metadata.status?.state !== 'DONE' || metadata.status?.errorResult || query?.query !== grant.query
         || query?.maximumBytesBilled !== String(grant.bytes) || query?.useLegacySql !== false
         || metadata.jobReference?.jobId !== grant.id || metadata.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project || metadata.jobReference?.location !== 'US') throw new BigQueryCostControlError('Completed job failed verification.');
+      if (composition.logicalAsOf) {
+        const endedAt = Number(metadata.statistics?.endTime);
+        if (!Number.isSafeInteger(endedAt) || endedAt <= 0 || endedAt > Date.now() + 10_000) throw new BigQueryCostControlError('Completed job failed verification.');
+        composition.jobTimes.set(grant.id, endedAt);
+      }
       const continuation = currentContinuation();
       if (continuation) {
         const endedAt = Number(metadata.statistics?.endTime);
