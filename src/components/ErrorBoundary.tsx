@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { recoverCurrentStaleChunk } from '../lib/stale-chunk-recovery';
 
 /**
  * Last line of defence for the dashboard.
@@ -33,6 +34,7 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    if (recoverCurrentStaleChunk(error)) return;
     // Keep the component stack: the minified function name in the message is
     // useless on its own, and this is the only place it is ever recorded.
     console.error('[dashboard] render failed:', error, info.componentStack);
