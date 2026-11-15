@@ -49,6 +49,7 @@ import { ga4RecentCalendarRange } from './src/server/ga4-windows.mjs';
 import { googleReader, fetchAndroidHistory, fetchPlayDownloads, fetchPlayVitals, boundedReportingCache } from './src/server/android-reporting';
 import { AggregateCache, canonicalAnalyticsKey } from './src/server/aggregate-cache';
 import { guardedBigQuery, guardedBigQueryDryRun } from './src/server/bigquery-cost-control';
+import { watchDailyRequest } from './src/server/platform-capture-signal';
 import type { Query } from '@google-cloud/bigquery';
 import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
 import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort, withCustomerCohort, withWitnessedCustomerCohort, requireCurrentCustomerCohort } from './src/server/one-customer-cohort';
@@ -5986,7 +5987,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
             if (!daily) { res.status(409).json({ error: 'Daily One publication is not configured.' }); return; }
             await restoration.closedDescriptor();
             const controller = new AbortController(), cancel = () => controller.abort();
-            req.once('aborted', cancel); res.once('close', cancel); if (req.aborted) cancel();
+            const unwatch = watchDailyRequest(req, res, controller);
             const perform = async () => {
               await daily.verifyMeasuredCohort(await readCustomerCohort());
               const pinned = needsCustomers ? await readCustomerCohort() : null;
@@ -6005,7 +6006,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
               if (controller.signal.aborted) throw new Error('Daily request was interrupted.');
               res.set('Cache-Control', 'no-store');
               res.status(200).json({ state: 'staged', computedAt: result.computedAt, jobs: result.jobs.length }); return;
-            } finally { req.off('aborted', cancel); res.off('close', cancel); }
+            } finally { unwatch(); }
           }
           if (composeContinuation) {
             if (!continuationComposer || !continuation || !restoration || publishContinuation || measureClosed || composePublication || publishRestoration) {
