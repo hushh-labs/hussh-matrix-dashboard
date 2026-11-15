@@ -29,6 +29,7 @@ import { legacyRestoration, legacyPreviousRestoration, legacyDiagnosticOnly, leg
 import { closedComposer } from './src/server/closed-composer';
 import { closedMeasurement, currentClosedMeasurement, withClosedMeasurement } from './src/server/closed-measurement';
 import { currentContinuation, legacyContinuation, withContinuation } from './src/server/legacy-continuation';
+import { closedContinuationComposer } from './src/server/closed-continuation-composer';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
 import { BigQueryInstagramStore } from './src/server/instagram/store';
 import { syncInstagram } from './src/server/instagram/sync';
@@ -5813,6 +5814,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (publishContinuation && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Continuation requires the trusted release probe.' }); return;
           }
+          const composeContinuation = req.get('X-Metrics-Compose-Continuation') === '1';
+          if (composeContinuation && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Continuation composition requires the trusted release probe.' }); return;
+          }
           const measureClosed = req.get('X-Metrics-Measure-Closed') === '1';
           if (measureClosed && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Closed-job measurement requires the trusted release probe.' }); return;
@@ -5839,8 +5844,53 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const restoration = await legacyRestoration();
           const composer = await closedComposer();
           const continuation = await legacyContinuation();
+          const continuationComposer = await closedContinuationComposer();
+          if (composeContinuation) {
+            if (!continuationComposer || !continuation || !restoration || publishContinuation || measureClosed || composePublication || publishRestoration) {
+              res.status(409).json({ error: 'Continuation composition is not configured.' }); return;
+            }
+            let stage = 'admission', payloadBytes = 0, nativeJobs = 0, maxResultRows = 0, maxResultBytes = 0, proofRemainingMs: number | null = null, reason: string | null = null;
+            const started = Date.now();
+            try {
+              const admission = await continuationComposer.requireOpen(reportUrl);
+              const perform = async (captured: typeof cohort) => {
+                const compositionKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
+                return withLegacyReportScope(compositionKey, () => withContinuation(continuation, () => withClosedComposition(continuation, async () => {
+                  stage = 'computation';
+                  try {
+                    const value = await capture(handler, sourceRequest, true);
+                    if (legacyReportFailed()) throw new Error('Completed source inputs are incomplete.');
+                    payloadBytes = Buffer.byteLength(JSON.stringify(value)); stage = 'cohort-recheck'; return value;
+                  } finally {
+                    const evidence = currentContinuation();
+                    nativeJobs = evidence?.jobs.size ?? 0; maxResultRows = evidence?.observation.maxRows ?? 0;
+                    maxResultBytes = evidence?.observation.maxBytes ?? 0; reason = evidence?.observation.reason ?? null;
+                    proofRemainingMs = captured ? Math.max(0, captured.expiresAt - Date.now()) : null;
+                  }
+                }), admission.producer.asOf));
+              };
+              let composed: Awaited<ReturnType<typeof perform>>; let captured = cohort;
+              stage = 'cohort';
+              if (cohort) {
+                const witness = await continuationComposer.witness(); if (!witness) throw new Error('No captured cohort witness.');
+                composed = await withWitnessedCustomerCohort(witness, async pinned => { captured = pinned; return perform(pinned); });
+              } else composed = await perform(null);
+              stage = 'save';
+              const compositionKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
+              const computedAt = await continuationComposer.save(reportUrl, compositionKey, composed.value.value, composed.jobs, captured ?? undefined);
+              const times = composed.jobs.map(job => job.endedAt);
+              res.set('X-Metrics-Cache', 'COMPOSED'); res.set('X-Metrics-Updated-At', admission.producer.asOf);
+              res.set('X-Metrics-Computed-At', new Date(computedAt).toISOString()); res.set('X-Metrics-Other-Source-Freshness', 'unknown');
+              res.set('X-Metrics-Warehouse-From', new Date(Math.min(...times)).toISOString()); res.set('X-Metrics-Warehouse-Through', new Date(Math.max(...times)).toISOString());
+              res.set('X-Metrics-Observed-At', new Date().toISOString()); res.status(composed.value.value.status).json(composed.value.value.body); return;
+            } catch (error) {
+              const duplicate = (error as { status?: number }).status === 409;
+              res.status(duplicate ? 409 : 503).json({ error: duplicate ? 'A composed publication already exists.' : 'Completed inputs are unavailable.',
+                stage, reason, elapsedMs: Math.max(0, Date.now() - started), payloadBytes, nativeJobs, maxResultRows, maxResultBytes, proofRemainingMs }); return;
+            }
+          }
           if (publishContinuation) {
-            if (!continuation || !restoration || measureClosed || composePublication || publishRestoration) { res.status(409).json({ error: 'Continuation is not configured.' }); return; }
+            if (!continuation || !restoration || composeContinuation || measureClosed || composePublication || publishRestoration) { res.status(409).json({ error: 'Continuation is not configured.' }); return; }
             const admission = await continuation.requireOpen(reportUrl);
             const perform = async (captured: typeof cohort) => {
               const continuationKey = `${captured?.cacheKey ?? ''}:${reportUrl}`;
@@ -5915,6 +5965,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
             ?? (cohort ? await restoration?.readCompatibleSnapshot(reportUrl, cohort) : null)
             ?? await composer?.read(reportUrl, cohort)
             ?? await continuation?.read(reportUrl, cohort)
+            ?? await continuationComposer?.read(reportUrl, cohort)
             ?? await previous?.readSnapshot(key);
           const useRetained = retained && (!refresh || !await restoration!.isActive());
           // Closed restoration publications are read-only. Do not turn an

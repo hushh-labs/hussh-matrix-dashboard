@@ -34,7 +34,10 @@ function fixture() {
     approvedPlanDigest: restorationPlanDigest(knownPlans), approvedReportDigest: reportDigest, fixedReports, approvedBytes: 200 * unit,
     reservedBytes: 20 * unit, reservedJobs: 1 };
   db.values.set(`metricsRestorationPermits/${originalId}`, original);
-  const producerMethods = { closedJob: async (_request: unknown): Promise<any> => { throw new ClosedJobMissingError('a'.repeat(64), undefined); }, verifiedClosedIn: async () => {
+  const producerMethods = { closedJob: async (_request: unknown): Promise<any> => { throw new ClosedJobMissingError('a'.repeat(64), undefined); },
+    closedDescriptor: async () => ({ id: producerId, source: producerSource, asOf: parent.asOf, createdAt: start - 1800000,
+      approvedPlanDigest: parent.approvedPlanDigest, approvedReportDigest: parent.approvedReportDigest, fixedReports: parent.fixedReports }),
+    capturedWitness: async () => null, verifiedClosedIn: async () => {
     if (parent.phase !== 'closed') throw new Error('parent not closed');
     return { p: parent, id: producerId, source: producerSource, original: { id: originalId, source: originalSource } };
   } };
@@ -117,6 +120,16 @@ describe('cumulative continuation', () => {
     f.doc.phase = 'closed';
     expect(await f.store.read(report, null)).toMatchObject({ value: body, at: Date.parse(f.parent.asOf), computedAt: start,
       warehouseFrom: start - 120000, warehouseThrough: start - 1000 });
+  });
+  it('resolves only an existing closed-continuation reservation for read-only composition', async () => {
+    const f = fixture(), request = { query: 'SELECT 1' }, grant = await f.scope(() => f.store.admit(request, 1));
+    await f.store.reserve(grant); f.db.values.get(`metricsRestorationContinuations/${id}`).phase = 'closed';
+    expect(await f.scope(() => f.store.closedJob(request))).toEqual({ id: grant.id, bytes: grant.bytes, query: request.query });
+    await expect(f.scope(() => f.store.closedJob({ query: 'SELECT 2' }))).rejects.toBeInstanceOf(ClosedJobMissingError);
+    const row = f.db.values.get(`metricsRestorationContinuations/${id}/reservations/${grant.planHash}`); row.jobId = 'conflict';
+    const error = await f.scope(() => f.store.closedJob(request)).catch(error => error);
+    expect(error).toBeInstanceOf(Error); expect(error).not.toBeInstanceOf(ClosedJobMissingError);
+    expect(f.db.values.get(`metricsRestorationContinuations/${id}`).reservedJobs).toBe(1);
   });
   it('rejects unsafe publication payloads and missing job evidence', async () => {
     const f = fixture();

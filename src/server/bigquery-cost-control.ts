@@ -436,14 +436,34 @@ export async function guardedBigQuery(project: string, request: Query): Promise<
       if (metadata.status?.state !== 'DONE' || metadata.status?.errorResult || query?.query !== grant.query
         || query?.maximumBytesBilled !== String(grant.bytes) || query?.useLegacySql !== false
         || metadata.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project || metadata.jobReference?.location !== 'US') throw new BigQueryCostControlError('Completed job failed verification.');
+      const continuation = currentContinuation();
+      if (continuation) {
+        const endedAt = Number(metadata.statistics?.endTime);
+        if (metadata.jobReference?.jobId !== grant.id || !Number.isSafeInteger(endedAt) || endedAt <= 0 || endedAt > Date.now() + 10_000)
+          throw new BigQueryCostControlError('Completed continuation job failed verification.');
+        continuation.jobs.set(grant.id, { id: grant.id, endedAt });
+      }
       const [rows, next] = await job.getQueryResults({ autoPaginate: false, maxResults: 2000, timeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
+      if (continuation) {
+        continuation.observation.maxRows = Math.max(continuation.observation.maxRows, rows.length);
+        continuation.observation.maxBytes = Math.max(continuation.observation.maxBytes, Buffer.byteLength(JSON.stringify(rows)));
+      }
       if (next?.pageToken || rows.length >= 2000 || Buffer.byteLength(JSON.stringify(rows)) > RESTORATION_LIMITS.snapshotBytes) throw new BigQueryCostControlError('Completed aggregate exceeds its payload bound.');
       composition.jobs.add(grant.id);
       return [rows as Record<string, unknown>[]];
     }
     return await executeGuardedBigQuery(project, request);
   }
-  catch (error) { noteLegacyQueryFailure(); throw error; }
+  catch (error) {
+    const continuation = currentContinuation();
+    if (continuation && currentClosedComposition()) {
+      const message = error instanceof Error ? error.message : '';
+      continuation.observation.reason ??= error instanceof ClosedJobMissingError ? 'missing-reservation'
+        : message.includes('payload bound') ? 'result-bound' : message.includes('verification') ? 'native-verification'
+          : (error as { code?: number })?.code === 403 ? 'native-access' : 'source-error';
+    }
+    noteLegacyQueryFailure(); throw error;
+  }
 }
 
 /** Metadata only; every request is paginated and bounded. */
