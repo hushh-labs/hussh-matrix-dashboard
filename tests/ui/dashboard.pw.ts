@@ -67,6 +67,40 @@ test('retained app health keeps the dated One report and labels separate provide
   expect(requests.some(url => new URL(url).searchParams.has('include_health'))).toBe(false);
 });
 
+test('One selection rechecks access and does not display a cached report after denial', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
+  let denyProduction = false;
+  await page.route('**/api/analytics/all?*', route => {
+    const url = new URL(route.request().url());
+    if (denyProduction && url.searchParams.get('environment') === 'production') return route.fulfill({ status: 403, json: {} });
+    return route.fulfill({ json: allAnalytics });
+  });
+  await page.goto('/'); await navigate(page, 'One app');
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+  denyProduction = true;
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
+  await page.getByRole('tab', { name: 'Main analytics', exact: true }).click();
+  await expect(page.getByText('One app data is unavailable for this selection.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toHaveCount(0);
+});
+
+test('One refresh hides the prior report while access is checked', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
+  let refresh = false, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/analytics/all?*', async route => {
+    if (!refresh) return route.fulfill({ json: allAnalytics });
+    await held; return route.fulfill({ status: 403, json: {} });
+  });
+  await page.goto('/'); await navigate(page, 'One app');
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+  refresh = true;
+  await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toHaveCount(0);
+  release();
+  await expect(page.getByText('One app data is unavailable for this selection.')).toBeVisible();
+});
+
 test('retained Monitoring shows partial observed production values and never reuses them for UAT', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
   await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:34:55.606Z', user: { email: 'qa@example.invalid', name: 'QA', domainAuthorized: true } } }));

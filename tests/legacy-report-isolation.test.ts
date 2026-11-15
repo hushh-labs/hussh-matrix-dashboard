@@ -178,6 +178,15 @@ describe('legacy report source isolation', () => {
     expect(fallback.body.marker).toBe('older'); expect(state.query).not.toHaveBeenCalled();
     expect((await request(app()).get(url)).status).toBe(401);
   });
+  it('never loads a passive One selection when restoration is absent or preparing', async () => {
+    source(); const url = '/api/analytics/all?view=one&environment=uat&one_start_date=2026-11-14&one_end_date=2026-11-14';
+    for (const phase of ['none', 'planning'] as const) {
+      state.phase = phase;
+      const result = await request(app()).get(url).set('Cookie', cookie()).set('X-Metrics-Passive-Read', '1');
+      expect(result.status).toBe(503);
+      expect(state.query).not.toHaveBeenCalled();
+    }
+  });
   it('rejects closed-continuation composition from ordinary viewers before source work', async () => {
     source(); state.phase = 'closed';
     const result = await request(app()).get('/api/analytics/founder?start_date=2026-11-11&end_date=2026-11-11')

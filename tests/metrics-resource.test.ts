@@ -7,7 +7,7 @@ beforeEach(() => clearMetricsCache());
 afterEach(() => vi.unstubAllGlobals());
 const reply = (value: number, refreshing = false) => new Response(JSON.stringify({ value }), { headers: { 'X-Metrics-Updated-At': '2026-10-07T20:00:00Z', 'X-Metrics-Refreshing': refreshing ? '1' : '0' } });
 describe('session metrics resources', () => {
-  it('reuses exact periods, deduplicates requests, and never aliases another period', async () => {
+  it('revalidates exact periods, deduplicates in-flight requests, and never aliases another period', async () => {
     const fetcher = vi.fn(async () => reply(7)); vi.stubGlobal('fetch', fetcher);
     await Promise.all([readMetrics('/one?days=7'), readMetrics('/one?days=7')]);
     expect(fetcher).toHaveBeenCalledTimes(1); expect(peekMetrics('/one?days=30')).toBeNull();
@@ -19,6 +19,16 @@ describe('session metrics resources', () => {
     await readMetrics('/one'); const value = await readMetrics('/one', { refresh: true });
     expect(fetcher).toHaveBeenCalledTimes(2); expect(fetcher).toHaveBeenLastCalledWith('/one', expect.objectContaining({ headers: expect.objectContaining({ 'X-Metrics-Refresh': '1' }) }));
     expect(value).toMatchObject({ refreshing: true, updatedAt: '2026-10-07T20:00:00Z' });
+  });
+  it('rechecks a previously loaded One selection and clears it on revoked access', async () => {
+    const url = '/api/analytics/all?view=one';
+    const fetcher = vi.fn().mockResolvedValueOnce(reply(7)).mockResolvedValueOnce(new Response('{}', { status: 403 }));
+    vi.stubGlobal('fetch', fetcher);
+    await readMetrics(url);
+    await expect(readMetrics(url)).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenLastCalledWith(url, expect.objectContaining({ headers: expect.objectContaining({ 'X-Metrics-Passive-Read': '1' }) }));
+    expect(peekMetrics(url)).toBeNull();
   });
   it('logout prevents an in-flight response from repopulating a new session cache', async () => {
     let resolve!: (response: Response) => void;
