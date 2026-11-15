@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import * as cohorts from '../src/server/one-customer-cohort';
 import type { Firestore } from '@google-cloud/firestore';
-import { DailyOneRefresh, dailyOneManifest, dailyOnePolicyGeneration, DAILY_ONE_LIMITS, withDailyOneRefresh, currentDailyOneRefresh, validOnePayload } from '../src/server/daily-one-refresh';
+import { DailyOneRefresh, dailyOneManifest, dailyOnePolicyGeneration, dailyPartialDigest, DAILY_ONE_LIMITS, withDailyOneRefresh, currentDailyOneRefresh, validOnePayload } from '../src/server/daily-one-refresh';
 import { DailyOneComposer } from '../src/server/daily-one-composer';
 import { DailyOneMeasurement, withDailyOneMeasurement } from '../src/server/daily-one-measurement';
 import { currentClosedComposition, restorationReportDigest, withClosedComposition, withLegacyReportScope } from '../src/server/legacy-restoration';
@@ -97,6 +97,42 @@ async function secondRecoveryFixture(cacheKey = 'b'.repeat(64)) {
  const scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${cacheKey}:${f.reports[2]}`, fn);
  return { ...f, id2, source2, run2: run, parent2: parent, store, scope, prior2: prior };
 }
+async function finalRecoveryFixture() {
+ const policyRevision = 'c'.repeat(64), rows = [{ analyticsUserId: 'd'.repeat(32), registeredAt: '2026-11-01T00:00:00.000Z' }];
+ const cacheKey = createHash('sha256').update(JSON.stringify([policyRevision, rows])).digest('hex');
+ const cohort = { policyRevision, rows, cacheKey, asOf, expiresAt: start + 600_000 }, f = await secondRecoveryFixture(cacheKey);
+ const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+ const parentScope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${cacheKey}:${f.reports[4]}`, fn);
+ const query = { query: 'SELECT 90' }, prior = await parentScope(() => f.store.admit(query, 1));
+ await parentScope(() => f.store.reserve(prior)); await parentScope(() => f.store.claimSubmission(prior));
+ const closedParent = f.db.values.get(`metricsOneDailyRuns/${f.id2}`); closedParent.phase = 'closed';
+ const witness = cohorts.cohortSnapshotWitness(cohort)!;
+ for (const [index, report] of f.reports.slice(2, 4).entries()) {
+  f.db.values.set(`metricsOneDailyRuns/${f.id2}/snapshots/${sha(report)}`, { schema: 1, state: 'verified', source: f.source2, runId: f.id2,
+   reportHash: sha(report), dataAsOf: asOf, scopeDigest: closedParent.scopeDigest, measurementId: closedParent.measurementId,
+   measurementSource: closedParent.measurementSource, measurementDigest: closedParent.measurementDigest, parentId: closedParent.parentId,
+   parentSource: closedParent.parentSource, sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown',
+   computedAt: start + 2000, witness, json: JSON.stringify(payloadFor(report)), jobs: [{ id: `metrics_${f.id2}_${String(index).padStart(64, '0')}`, endedAt: start + 2000 }] });
+ }
+ const partial = { state: 'active', source: f.source2, runId: f.id2, reportDigest: f.run2.reportDigest, logicalAsOf: asOf, witness, reports: f.reports.slice(0, 4).map(sha) };
+ f.db.values.set(`metricsOneDailyRuns/${f.id2}/activation/partial`, partial);
+ const id3 = 'refresh_20261115_9999999999999999', source3 = 'e'.repeat(40), measurementId = 'dailymeasure_20261115_aaaaaaaaaaaaaaaa';
+ const parentBytes = closedParent.parentReservedBytes + closedParent.reservedBytes, parentJobs = closedParent.parentReservedJobs + closedParent.reservedJobs;
+ const run: any = { ...closedParent, source: source3, phase: 'open', createdAt: start + 3000, expiresAt: start + 3600_000,
+  measurementId, measurementSource: source3, measurementDigest: '7'.repeat(64), maxBytes: f.policy.maxDailyBytes - parentBytes, maxJobs: f.policy.maxDailyJobs - parentJobs,
+  reservedBytes: 0, reservedJobs: 0, parentId: f.id2, parentSource: f.source2, parentDepth: 3,
+  parentReservedBytes: parentBytes, parentReservedJobs: parentJobs, parentOwnReservedBytes: closedParent.reservedBytes, parentOwnReservedJobs: closedParent.reservedJobs,
+  parentCreatedAt: closedParent.createdAt, parentPartialDigest: dailyPartialDigest(partial), newReportsDigest: restorationReportDigest(f.reports.slice(4)) };
+ delete run.composerId; delete run.composerSource;
+ f.db.values.set(`metricsOneDailyRuns/${id3}`, run); f.db.values.set(`metricsOneDailyApprovals/${id3}`, { ...run, runId: id3, approved: true });
+ f.db.values.set(`metricsOneDailyContinuationClaims/${f.id2}`, { ...run, runId: id3, approved: true });
+ f.db.values.set(`metricsOneDailyMeasurements/${id3}`, { phase: 'sealed', runId: id3, source: source3, day, logicalAsOf: asOf, reportDigest: run.reportDigest,
+  digest: run.measurementDigest, coverage: 'not exhaustive', sealedAt: start + 3000, measuredBytes: 80 * unit, measuredQueries: 4 });
+ f.db.values.set(`metricsOneDailyMeasurements/${measurementId}`, { phase: 'closed', source: source3, targetRunId: id3, day, logicalAsOf: asOf, reportDigest: run.reportDigest, expiresAt: start + 3600_000 });
+ let finalNow = start + 3000; const store = new DailyOneRefresh(f.db.native(), id3, source3, () => finalNow);
+ const scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${cacheKey}:${f.reports[4]}`, fn);
+ return { ...f, cohort, cacheKey, id3, source3, run3: run, partial, prior3: prior, query3: query, store, scope, time3: (value: number) => { finalNow = value; } };
+}
 describe('private no-query cohort preflight', () => {
  it('checks the sealed report scopes twice and fails closed on changed membership, missing evidence and expiry', async () => {
   const f = fixture(), sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -120,6 +156,111 @@ describe('private no-query cohort preflight', () => {
  });
 });
 describe('finite daily One refresh admission', () => {
+ it('reuses only exact closed parent reservations without increasing the shared budget', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 3000);
+  try {
+   const f = await finalRecoveryFixture(), before = { ...f.db.values.get(`metricsOneDailyBudgets/${day}`) };
+   await f.scope(() => withDailyOneRefresh(f.store, f.reports[4], async () => {
+    const prior = await f.store.existing(f.query3); expect(prior?.id).toBe(f.prior3.id); expect(prior?.reuse?.priorPermitId).toBe(f.id2);
+    await f.store.reserve(prior!); expect(await f.store.claimSubmission(prior!)).toBe(false);
+    expect(f.db.values.get(`metricsOneDailyBudgets/${day}`)).toEqual(before);
+    expect(await f.store.existing({ query: 'SELECT missing' })).toBeUndefined();
+    const row = f.db.values.get(`metricsOneDailyRuns/${f.id2}/reservations/${f.prior3.planHash}`); row.jobId = 'wrong';
+    await expect(f.store.existing(f.query3)).rejects.toThrow(); row.jobId = f.prior3.id;
+    row.state = 'reserved'; await expect(f.store.existing(f.query3)).rejects.toThrow();
+    row.state = 'started'; row.startedAt = start; await expect(f.store.reserve(prior!)).rejects.toThrow();
+   }, undefined, undefined, f.cohort));
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('fences final recovery on the parent partial witness, manifest and cumulative ledger', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 3000);
+  try {
+   const f = await finalRecoveryFixture();
+   await expect(f.store.requireOpen(f.reports[3])).rejects.toThrow(); await expect(f.store.requireOpen(f.reports[4])).resolves.toBeDefined();
+   const changed = { ...f.cohort, rows: [], cacheKey: '0'.repeat(64) };
+   await expect(f.store.verifyMeasuredCohort(changed)).rejects.toThrow();
+   f.partial.reports.pop(); await expect(f.store.requireOpen(f.reports[4])).rejects.toThrow(); f.partial.reports.push(createHash('sha256').update(f.reports[3]).digest('hex'));
+   const parentSnapshot = f.db.values.get(`metricsOneDailyRuns/${f.id2}/snapshots/${createHash('sha256').update(f.reports[2]).digest('hex')}`);
+   const original = parentSnapshot.json; parentSnapshot.json = '{}'; await expect(f.store.requireOpen(f.reports[4])).rejects.toThrow(); parentSnapshot.json = original;
+   const budget = f.db.values.get(`metricsOneDailyBudgets/${day}`); budget.reservedJobs--;
+   await f.scope(() => withDailyOneRefresh(f.store, f.reports[4], async () => {
+    const grant = await f.store.existing(f.query3); await expect(f.store.reserve(grant!)).rejects.toThrow();
+   }, undefined, undefined, f.cohort));
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('stages mixed verified job origins and rejects a changed prior reservation on read', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 3000);
+  try {
+   const f = await finalRecoveryFixture(); vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(f.cohort);
+   await f.scope(() => withDailyOneRefresh(f.store, f.reports[4], async () => {
+    const prior = await f.store.existing(f.query3); await f.store.reserve(prior!); expect(await f.store.claimSubmission(prior!)).toBe(false);
+    const fresh = await f.store.admit({ query: 'SELECT missing' }, 1); await f.store.reserve(fresh); expect(await f.store.claimSubmission(fresh)).toBe(true);
+    const jobs = [{ id: prior!.id, endedAt: start + 2500, bytes: prior!.bytes }, { id: fresh.id, endedAt: start + 3000, bytes: fresh.bytes }];
+    for (const job of jobs) { currentDailyOneRefresh()!.jobs.set(job.id, job.endedAt); currentDailyOneRefresh()!.bounds.set(job.id, job.bytes); }
+    await expect(f.store.save(f.reports[4], payloadFor(f.reports[4]), [{ ...jobs[0], bytes: jobs[0].bytes + 1 }, jobs[1]], f.cohort)).rejects.toThrow();
+    await expect(f.store.save(f.reports[4], payloadFor(f.reports[4]), jobs, f.cohort)).resolves.toBe(start + 3000);
+   }, undefined, undefined, f.cohort));
+   f.db.values.get(`metricsOneDailyRuns/${f.id3}`).phase = 'closed';
+   f.db.values.set(`metricsOneDailyRuns/${f.id3}/activation/current`, { state: 'active', source: f.source3, runId: f.id3, reportDigest: f.run3.reportDigest, logicalAsOf: asOf, witness: cohorts.cohortSnapshotWitness(f.cohort) });
+   expect(await f.store.read(f.reports[4], f.cohort)).not.toBeNull();
+   const snap = f.db.values.get(`metricsOneDailyRuns/${f.id3}/snapshots/${createHash('sha256').update(f.reports[4]).digest('hex')}`);
+   const parentRow = f.db.values.get(`metricsOneDailyRuns/${f.id2}/reservations/${f.prior3.planHash}`), childRow = f.db.values.get(`metricsOneDailyRuns/${f.id3}/reservations/${snap.jobs[1].id.slice(-64)}`);
+   const parentStart = parentRow.startedAt, childStart = childRow.startedAt, parentEnd = snap.jobs[0].endedAt, childEnd = snap.jobs[1].endedAt, computedAt = snap.computedAt;
+   const later = start + 3600_000 + 2000, freshCohort = { ...f.cohort, expiresAt: later + 60_000 }; f.time3(later); vi.setSystemTime(later);
+   expect(await f.store.read(f.reports[4], freshCohort)).not.toBeNull();
+   parentRow.startedAt = start + 3600_000; snap.jobs[0].endedAt = parentRow.startedAt + 1; snap.computedAt = later;
+   expect(await f.store.read(f.reports[4], freshCohort)).toBeNull();
+   parentRow.startedAt = parentStart; snap.jobs[0].endedAt = parentEnd;
+   childRow.startedAt = start + 3600_000; snap.jobs[1].endedAt = childRow.startedAt + 1;
+   expect(await f.store.read(f.reports[4], freshCohort)).toBeNull();
+   childRow.startedAt = childStart; snap.jobs[1].endedAt = childEnd; snap.computedAt = computedAt; parentRow.bytes++;
+   expect(await f.store.read(f.reports[4], freshCohort)).toBeNull();
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('keeps UAT data separate while requiring the production activation cohort', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 3000);
+  try {
+   const f = await finalRecoveryFixture(), report = f.reports[5];
+   vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockRejectedValue(new Error('revoked'));
+   await withLegacyReportScope(`:${report}`, () => withDailyOneRefresh(f.store, report, async () => {
+    expect(await f.store.existing(f.query3)).toBeUndefined();
+    const grant = await f.store.admit({ query: 'SELECT uat' }, 1); await f.store.reserve(grant); await f.store.claimSubmission(grant);
+    const jobs = [{ id: grant.id, endedAt: start + 3000, bytes: grant.bytes }]; currentDailyOneRefresh()!.jobs.set(grant.id, start + 3000); currentDailyOneRefresh()!.bounds.set(grant.id, grant.bytes);
+    await expect(f.store.save(report, payloadFor(report), jobs, null)).rejects.toThrow();
+    expect(f.db.values.has(`metricsOneDailyRuns/${f.id3}/snapshots/${createHash('sha256').update(report).digest('hex')}`)).toBe(false);
+   }, undefined, undefined, f.cohort));
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('activates all ten only after the six remaining scopes and preserves the parent partial publications', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 3000);
+  try {
+   const f = await finalRecoveryFixture(); vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(f.cohort);
+   const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+   for (const [index, report] of f.reports.slice(4).entries()) {
+    const uat = index > 0, plan = String(index + 1).padStart(64, '0'), jobId = `metrics_${f.id3}_${plan}`;
+    f.db.values.set(`metricsOneDailyRuns/${f.id3}/reservations/${plan}`, { jobId, state: 'started', startedAt: start + 3000, bytes: unit,
+     scopeHash: f.run3.measurementScopes[sha(report)], reportHash: sha(report) });
+    f.db.values.set(`metricsOneDailyRuns/${f.id3}/snapshots/${sha(report)}`, { schema: 1, state: 'verified', source: f.source3,
+     measurementId: f.run3.measurementId, measurementSource: f.run3.measurementSource, measurementDigest: f.run3.measurementDigest,
+     scopeDigest: f.run3.scopeDigest, runId: f.id3, parentId: f.id2, parentSource: f.source2, reportHash: sha(report), dataAsOf: asOf,
+     sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown', computedAt: start + 3000,
+     jobs: [{ id: jobId, endedAt: start + 3000, bytes: unit }], json: JSON.stringify(payloadFor(report)), ...(!uat ? { witness: cohorts.cohortSnapshotWitness(f.cohort) } : {}) });
+   }
+   f.db.values.get(`metricsOneDailyRuns/${f.id3}`).phase = 'closed';
+   const missing = `metricsOneDailyRuns/${f.id3}/snapshots/${sha(f.reports[4])}`, last = f.db.values.get(missing); f.db.values.delete(missing);
+   await expect(f.store.activate(f.cohort)).rejects.toThrow();
+   expect(await f.store.activatePartial(f.cohort)).toBe(9);
+   expect((await f.store.partialReports(f.cohort)).filter(row => row.environment === 'uat')).toHaveLength(5);
+   expect(await f.store.read(f.reports[9], null, true, f.cohort)).not.toBeNull();
+   expect(await f.store.read(f.reports[9], null, true, { ...f.cohort, rows: [], cacheKey: '0'.repeat(64) })).toBeNull();
+   f.db.values.set(missing, last);
+   await expect(f.store.activate(f.cohort)).resolves.toBe(asOf);
+   expect(await f.store.read(f.reports[0], f.cohort)).not.toBeNull();
+   expect(await f.store.read(f.reports[2], f.cohort)).not.toBeNull();
+   expect(await f.store.read(f.reports[9], null, true, f.cohort)).not.toBeNull();
+   expect(await f.store.read(f.reports[9], null, true, { ...f.cohort, rows: [], cacheKey: '0'.repeat(64) })).toBeNull();
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
  it('admits only eight new reports while accounting for both closed predecessors', async () => {
   const f = await secondRecoveryFixture(), before = f.parent.reservedBytes + f.parent2.reservedBytes;
   await expect(f.store.requireOpen(f.reports[0])).rejects.toThrow(); await expect(f.store.requireOpen(f.reports[1])).rejects.toThrow();

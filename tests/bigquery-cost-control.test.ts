@@ -58,6 +58,30 @@ const reservation = (id: string, statements = 1): QueryBudgetReservation => ({
 });
 
 describe('BigQuery execution boundary', () => {
+  it('reads an exact completed parent daily job and never submits a replacement', async () => {
+    vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
+    const priorId = 'refresh_20261115_7777777777777777', currentId = 'refresh_20261115_9999999999999999', planHash = 'a'.repeat(64);
+    const grant = { permitId: currentId, planHash, id: `metrics_${priorId}_${planHash}`, bytes: 20 * 1024 ** 2,
+      report: '/fixed', reuse: { key: '', priorPermitId: priorId, priorPlanHash: planHash } };
+    const reserve = vi.fn(async () => {}), claimSubmission = vi.fn(async () => false);
+    const store = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-15T10:32:59.000Z', parentDepth: 3 } }), verifyMeasuredCohort: async () => {},
+      isPreparing: async () => true, prepare: async (request: Query) => request, existing: async () => grant, reserve, claimSubmission } as unknown as DailyOneRefresh;
+    const metadata = { status: { state: 'DONE' }, jobReference: { jobId: grant.id, projectId: project, location: 'US' },
+      configuration: { query: { query: 'SELECT 7', maximumBytesBilled: String(grant.bytes), useLegacySql: false } }, statistics: { endTime: String(Date.now() - 1000) } };
+    const getMetadata = vi.fn(async () => [metadata]); sdk.job.mockReturnValue({ getMetadata, getQueryResults: async () => [[{ value: 7 }], null] });
+    const gate = {} as import('../src/server/one-customer-cohort').CustomerCohort;
+    const result = await withDailyOneRefresh(store, '/fixed', async () => { await guardedBigQuery(project, { query: 'SELECT 7' }); return { jobs: new Map(currentDailyOneRefresh()!.jobs), bounds: new Map(currentDailyOneRefresh()!.bounds) }; }, undefined, undefined, gate);
+    expect(result.jobs.get(grant.id)).toBe(Number(metadata.statistics.endTime));
+    expect(result.bounds.get(grant.id)).toBe(grant.bytes);
+    metadata.configuration.query.query = 'SELECT wrong';
+    await expect(withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }), undefined, undefined, gate)).rejects.toThrow();
+    metadata.configuration.query.query = 'SELECT 7'; metadata.status.state = 'RUNNING';
+    await expect(withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }), undefined, undefined, gate)).rejects.toThrow();
+    metadata.status.state = 'DONE';
+    getMetadata.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 404 }));
+    await expect(withDailyOneRefresh(store, '/fixed', () => guardedBigQuery(project, { query: 'SELECT 7' }), undefined, undefined, gate)).rejects.toThrow('prior job could not be verified');
+    expect(reserve).toHaveBeenCalled(); expect(claimSubmission).toHaveBeenCalled(); expect(sdk.createQueryJob).not.toHaveBeenCalled();
+  });
   it('reuses only an exact completed continuation job and never replaces a missing prior job', async () => {
     vi.stubEnv('METRICS_BIGQUERY_ENABLED', 'true');
     const grant = { permitId: 'restore_1234567890abcdef', planHash: 'b'.repeat(64),

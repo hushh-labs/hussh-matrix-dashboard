@@ -17,10 +17,20 @@ export type DailyRun = { source: string; policyGeneration: string; day: string; 
   reports: string[]; reportDigest: string; measurementId: string; measurementSource: string; measurementDigest: string; measurementScopes: Record<string, string>; scopeDigest: string;
   maxBytes: number; maxJobs: number; maxPerJobBytes: number; reservedBytes: number; reservedJobs: number;
   parentId?: string; parentSource?: string; parentReservedBytes?: number; parentReservedJobs?: number; parentCreatedAt?: number;
-  parentDepth?: 2; parentOwnReservedBytes?: number; parentOwnReservedJobs?: number;
+  parentDepth?: 2 | 3; parentOwnReservedBytes?: number; parentOwnReservedJobs?: number; parentPartialDigest?: string;
   newReportsDigest?: string; composerId?: string; composerSource?: string };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const recoveredReports = (run: DailyRun) => run.parentId ? run.parentDepth ?? 1 : 0;
+const recoveredReports = (run: DailyRun) => run.parentId ? run.parentDepth === 3 ? 4 : run.parentDepth ?? 1 : 0;
+const jobOwner = (run: DailyRun, id: string, runId: string, report: string) => {
+  if (new RegExp(`^metrics_${runId}_[a-f0-9]{64}$`).test(id)) return runId;
+  if (run.parentDepth === 3 && report === run.reports[4] && new RegExp(`^metrics_${run.parentId}_[a-f0-9]{64}$`).test(id)) return run.parentId!;
+  return null;
+};
+export const dailyPartialDigest = (activation: any) => hash(JSON.stringify([
+  activation?.source, activation?.runId, activation?.reportDigest, activation?.logicalAsOf,
+  activation?.witness?.policyRevision, activation?.witness?.rowsHash, activation?.witness?.asOf,
+  ...(Array.isArray(activation?.reports) ? [...activation.reports].sort() : []),
+]));
 export const dailyOnePolicyGeneration = (source: string, maxDailyBytes: number, maxDailyJobs: number, maxPerJobBytes: number) =>
   hash(JSON.stringify({ schema: 1, source, maxDailyBytes, maxDailyJobs, maxPerJobBytes }));
 const fail = () => new Error('The bounded One refresh is unavailable.');
@@ -36,12 +46,13 @@ export function validOnePayload(value: { status?: number; body?: any }, report: 
     && one?.activeUsers?.countingUnit === 'device' && one?.identifiedUsers?.countingUnit === 'account'
     && one?.identifiedUsers?.selectedRange?.startDate === start && one?.identifiedUsers?.selectedRange?.endDate === end;
 }
-const context = new AsyncLocalStorage<{ store: DailyOneRefresh; logicalAsOf: string; report: string; jobs: Map<string, number>; signal?: AbortSignal; cancel?: () => void }>();
+const context = new AsyncLocalStorage<{ store: DailyOneRefresh; logicalAsOf: string; report: string; jobs: Map<string, number>; bounds: Map<string, number>; strictJobBounds: boolean; signal?: AbortSignal; cancel?: () => void; gateCohort?: CustomerCohort }>();
 export const currentDailyOneRefresh = () => context.getStore();
 /** Internal operator scope only. Ordinary page reads never enter this context. */
-export const withDailyOneRefresh = async <T>(store: DailyOneRefresh, report: string, load: () => Promise<T>, signal?: AbortSignal, cancel?: () => void) => {
+export const withDailyOneRefresh = async <T>(store: DailyOneRefresh, report: string, load: () => Promise<T>, signal?: AbortSignal, cancel?: () => void, gateCohort?: CustomerCohort) => {
   const { run } = await store.requireOpen(report);
-  return context.run({ store, logicalAsOf: run.logicalAsOf, report, jobs: new Map(), signal, cancel }, load);
+  if (run.parentDepth === 3) { if (!gateCohort) throw fail(); await store.verifyMeasuredCohort(gateCohort); }
+  return context.run({ store, logicalAsOf: run.logicalAsOf, report, jobs: new Map(), bounds: new Map(), strictJobBounds: run.parentDepth === 3, signal, cancel, gateCohort }, load);
 };
 
 export function dailyOneManifest(dataDate: string): string[] {
@@ -57,7 +68,7 @@ export class DailyOneRefresh {
     if (!/^refresh_\d{8}_[a-f0-9]{16}$/.test(id) || !/^[a-f0-9]{40}$/.test(source)) throw fail();
   }
   private ref() { return this.db.doc(`metricsOneDailyRuns/${this.id}`); }
-  private async checked(read: (ref: any) => Promise<any>, remainingDepth = 2, requireComposer = true): Promise<{ run: DailyRun; policy: any; parent?: DailyRun; depth: number; rootId: string; rootSource: string; measurementExpiresAt: number }> {
+  private async checked(read: (ref: any) => Promise<any>, remainingDepth = 3, requireComposer = true): Promise<{ run: DailyRun; policy: any; parent?: DailyRun; parentPartial?: any; depth: number; rootId: string; rootSource: string; measurementExpiresAt: number }> {
     const run = (await read(this.ref())).data() as DailyRun | undefined;
     if (!run || run.source !== this.source || !/^[a-f0-9]{64}$/.test(run.policyGeneration ?? '') || !/^\d{4}-\d{2}-\d{2}$/.test(run.day ?? '')
       || this.id.slice(8, 16) !== run.day.replaceAll('-', '') || !Number.isFinite(Date.parse(run.logicalAsOf)) || new Date(run.logicalAsOf).toISOString() !== run.logicalAsOf
@@ -81,17 +92,18 @@ export class DailyOneRefresh {
       if (!/^refresh_\d{8}_[a-f0-9]{16}$/.test(run.parentId) || run.parentId === this.id || !/^[a-f0-9]{40}$/.test(run.parentSource ?? '')) throw fail();
       const lineage = await new DailyOneRefresh(this.db, run.parentId, run.parentSource!, this.now).checked(read, remainingDepth - 1);
       parent = lineage.run; depth = lineage.depth + 1; rootId = lineage.rootId; rootSource = lineage.rootSource;
-      if (depth > 2 || (depth === 1 ? run.parentDepth !== undefined || run.parentOwnReservedBytes !== undefined || run.parentOwnReservedJobs !== undefined
-        : run.parentDepth !== 2 || run.parentOwnReservedBytes !== parent.reservedBytes || run.parentOwnReservedJobs !== parent.reservedJobs)
+      if (depth > 3 || (depth === 1 ? run.parentDepth !== undefined || run.parentOwnReservedBytes !== undefined || run.parentOwnReservedJobs !== undefined || run.parentPartialDigest !== undefined
+        : run.parentDepth !== depth || run.parentOwnReservedBytes !== parent.reservedBytes || run.parentOwnReservedJobs !== parent.reservedJobs || (depth === 2 && run.parentPartialDigest !== undefined))
         || parent.phase !== 'closed' || parent.day !== run.day || parent.logicalAsOf !== run.logicalAsOf
         || parent.reports.length !== run.reports.length || parent.reports.some((report, index) => report !== run.reports[index])
         || parent.reportDigest !== run.reportDigest || parent.scopeDigest !== run.scopeDigest || parent.policyGeneration !== run.policyGeneration
         || parent.reservedBytes + (parent.parentReservedBytes ?? 0) !== run.parentReservedBytes || parent.reservedJobs + (parent.parentReservedJobs ?? 0) !== run.parentReservedJobs || parent.createdAt !== run.parentCreatedAt
-        || run.newReportsDigest !== restorationReportDigest(run.reports.slice(depth)) || !/^dailycomposer_[a-f0-9]{16}$/.test(run.composerId ?? '')
-        || run.composerSource !== this.source
+        || run.newReportsDigest !== restorationReportDigest(run.reports.slice(recoveredReports(run)))
+        || (depth < 3 ? !/^dailycomposer_[a-f0-9]{16}$/.test(run.composerId ?? '') || run.composerSource !== this.source
+          : run.composerId !== undefined || run.composerSource !== undefined || !/^[a-f0-9]{64}$/.test(run.parentPartialDigest ?? ''))
         || run.maxBytes + run.parentReservedBytes! > DAILY_ONE_LIMITS.bytes || run.maxJobs + run.parentReservedJobs! > DAILY_ONE_LIMITS.jobs) throw fail();
     } else if (run.parentSource !== undefined || run.parentReservedBytes !== undefined || run.parentReservedJobs !== undefined || run.parentCreatedAt !== undefined
-      || run.parentDepth !== undefined || run.parentOwnReservedBytes !== undefined || run.parentOwnReservedJobs !== undefined
+      || run.parentDepth !== undefined || run.parentOwnReservedBytes !== undefined || run.parentOwnReservedJobs !== undefined || run.parentPartialDigest !== undefined
       || run.newReportsDigest !== undefined || run.composerId !== undefined || run.composerSource !== undefined) throw fail();
     const [policySnap, approvalSnap, slotSnap, measurementSnap, measurementRunSnap] = await Promise.all([
       read(this.db.doc(`metricsOneDailyPolicies/${run.policyGeneration}`)), read(this.db.doc(`metricsOneDailyApprovals/${this.id}`)), read(this.db.doc(`metricsOneDailySlots/${run.day}`)), read(this.db.doc(`metricsOneDailyMeasurements/${this.id}`)),
@@ -115,13 +127,36 @@ export class DailyOneRefresh {
       || !Number.isSafeInteger(measurement.measuredBytes) || measurement.measuredBytes < 0 || measurement.measuredBytes > run.maxBytes
       || !Number.isSafeInteger(measurement.measuredQueries) || measurement.measuredQueries < 1 || measurement.measuredQueries > (parent ? DAILY_ONE_LIMITS.jobs : run.maxJobs)
       || !slotSnap.exists || slot?.state !== 'sealed' || slot?.runId !== rootId || slot.day !== run.day || slot.source !== rootSource || slot.policyGeneration !== run.policyGeneration) throw fail();
+    let parentPartial: any;
     if (parent) {
       const claim = (await read(this.db.doc(`metricsOneDailyContinuationClaims/${run.parentId}`))).data();
-      const fields = ['source','day','logicalAsOf','createdAt','expiresAt','reportDigest','newReportsDigest','composerId','composerSource','scopeDigest','measurementId','measurementSource','measurementDigest','maxBytes','maxJobs','maxPerJobBytes','parentId','parentSource','parentReservedBytes','parentReservedJobs','parentCreatedAt','parentDepth','parentOwnReservedBytes','parentOwnReservedJobs'] as const;
+      const fields = ['source','day','logicalAsOf','createdAt','expiresAt','reportDigest','newReportsDigest','composerId','composerSource','scopeDigest','measurementId','measurementSource','measurementDigest','maxBytes','maxJobs','maxPerJobBytes','parentId','parentSource','parentReservedBytes','parentReservedJobs','parentCreatedAt','parentDepth','parentOwnReservedBytes','parentOwnReservedJobs','parentPartialDigest'] as const;
       if (!claim || claim.runId !== this.id || claim.approved !== true || fields.some(key => claim[key] !== run[key] || approval[key] !== run[key])) throw fail();
-      if (requireComposer) await verifiedDailyComposer(read, this.db, this.id, run, validOnePayload, this.now());
+      if (depth === 3) {
+        parentPartial = (await read(this.db.doc(`metricsOneDailyRuns/${run.parentId}/activation/partial`))).data();
+        const expected = run.reports.slice(0, 4).map(hash).sort();
+        if (!parentPartial || parentPartial.state !== 'active' || parentPartial.source !== run.parentSource || parentPartial.runId !== run.parentId
+          || parentPartial.reportDigest !== run.reportDigest || parentPartial.logicalAsOf !== run.logicalAsOf || !parentPartial.witness
+          || !Array.isArray(parentPartial.reports) || JSON.stringify([...parentPartial.reports].sort()) !== JSON.stringify(expected)
+          || dailyPartialDigest(parentPartial) !== run.parentPartialDigest) throw fail();
+        for (const report of run.reports.slice(2, 4)) {
+          const snapshot = (await read(this.db.doc(`metricsOneDailyRuns/${run.parentId}/snapshots/${hash(report)}`))).data();
+          if (!snapshot || snapshot.schema !== 1 || snapshot.state !== 'verified' || snapshot.source !== run.parentSource || snapshot.runId !== run.parentId
+            || snapshot.reportHash !== hash(report) || snapshot.dataAsOf !== run.logicalAsOf || snapshot.scopeDigest !== parent.scopeDigest
+            || snapshot.measurementId !== parent.measurementId || snapshot.measurementSource !== parent.measurementSource || snapshot.measurementDigest !== parent.measurementDigest
+            || snapshot.parentId !== parent.parentId || snapshot.parentSource !== parent.parentSource || snapshot.sourceCoverage !== 'intraday-or-unknown'
+            || snapshot.nonWarehouseFreshness !== 'unknown' || typeof snapshot.json !== 'string' || Buffer.byteLength(snapshot.json) > 700_000
+            || !Number.isSafeInteger(snapshot.computedAt) || snapshot.computedAt < parent.createdAt || snapshot.computedAt > this.now()
+            || !snapshot.witness || snapshot.witness.policyRevision !== parentPartial.witness.policyRevision || snapshot.witness.rowsHash !== parentPartial.witness.rowsHash
+            || !Number.isFinite(Date.parse(snapshot.witness.asOf)) || !Array.isArray(snapshot.jobs) || !snapshot.jobs.length || snapshot.jobs.length > DAILY_ONE_LIMITS.jobs
+            || new Set(snapshot.jobs.map((job: any) => job.id)).size !== snapshot.jobs.length || snapshot.jobs.some((job: any) => typeof job.id !== 'string'
+              || !new RegExp(`^metrics_${run.parentId}_[a-f0-9]{64}$`).test(job.id) || !Number.isSafeInteger(job.endedAt)
+              || job.endedAt < parent.createdAt || job.endedAt > snapshot.computedAt + 10_000)) throw fail();
+          try { if (!validOnePayload(JSON.parse(snapshot.json), report)) throw fail(); } catch { throw fail(); }
+        }
+      } else if (requireComposer) await verifiedDailyComposer(read, this.db, this.id, run, validOnePayload, this.now());
     }
-    return { run, policy, parent, depth, rootId, rootSource, measurementExpiresAt: measurementRun.expiresAt as number };
+    return { run, policy, parent, parentPartial, depth, rootId, rootSource, measurementExpiresAt: measurementRun.expiresAt as number };
   }
   private permit() { return this.checked(ref => ref.get()); }
   async compositionIn(read: (ref: any) => Promise<any>) {
@@ -170,7 +205,8 @@ export class DailyOneRefresh {
   async verifyMeasuredCohort(cohort: CustomerCohort) {
     requireFreshCohort(cohort);
     if (!/^[a-f0-9]{64}$/.test(cohort.cacheKey)) throw fail();
-    const { run } = await this.permit();
+    const { run, parentPartial } = await this.permit();
+    if (run.parentDepth === 3 && !cohortMatchesSnapshotWitness(cohort, parentPartial?.witness)) throw fail();
     for (const report of run.reports) {
       const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
       const prefix = environment === 'production' ? cohort.cacheKey : environment === 'uat' ? '' : null;
@@ -195,7 +231,16 @@ export class DailyOneRefresh {
   async existing(request: Query): Promise<RestorationGrant | undefined> {
     const { run } = await this.permit(); if (typeof request.query !== 'string') throw fail();
     const { planHash, report, scopeHash } = this.identity(run, request.query); await this.requireOpen(report);
-    const ref = this.ref().collection('reservations').doc(planHash), snapshot = await ref.get(); if (!snapshot.exists) return undefined;
+    const ref = this.ref().collection('reservations').doc(planHash), snapshot = await ref.get();
+    if (!snapshot.exists) {
+      if (run.parentDepth !== 3 || report !== run.reports[4]) return undefined;
+      try {
+        const prior = await new DailyOneRefresh(this.db, run.parentId!, run.parentSource!, this.now).closedJob(request);
+        const priorPlanHash = prior.id.slice(-64);
+        return { permitId: this.id, planHash: priorPlanHash, id: prior.id, bytes: prior.bytes, report, scopeHash,
+          reuse: { key: '', priorPlanHash, priorPermitId: run.parentId } } as RestorationGrant;
+      } catch (error) { if (error instanceof ClosedJobMissingError) return undefined; throw error; }
+    }
     const row = snapshot.data(), id = `metrics_${this.id}_${planHash}`;
     if (row?.jobId !== id || row.scopeHash !== scopeHash || row.reportHash !== hash(report) || !Number.isSafeInteger(row.bytes) || row.bytes < 1 || row.bytes > run.maxPerJobBytes || !['reserved','started'].includes(row.state)) throw fail();
     return row.state === 'started' ? { permitId: this.id, planHash, id, bytes: row.bytes, report, scopeHash, reuse: { key: '', priorPlanHash: planHash } } as RestorationGrant : undefined;
@@ -213,8 +258,32 @@ export class DailyOneRefresh {
     if (!scope || !grant.report || !scope.endsWith(`:${grant.report}`)) throw fail();
     const scopeHash = hash(scope), reportHash = hash(grant.report);
     if ((grant as RestorationGrant & { scopeHash?: string }).scopeHash !== scopeHash) throw fail();
+    if (grant.reuse?.priorPermitId) {
+      await this.db.runTransaction(async tx => {
+        const { run, parent, parentPartial } = await this.checked(ref => tx.get(ref)), now = this.now();
+        const gate = currentDailyOneRefresh()?.gateCohort;
+        if (run.parentDepth !== 3 || grant.reuse?.priorPermitId !== run.parentId || grant.report !== run.reports[4]
+          || grant.reuse.priorPlanHash !== grant.planHash || grant.id !== `metrics_${run.parentId}_${grant.planHash}`
+          || grant.bytes > run.maxPerJobBytes
+          || run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day
+          || !gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness)) throw fail();
+        requireFreshCohort(gate);
+        const [rowSnap, daySnap] = await Promise.all([
+          tx.get(this.db.doc(`metricsOneDailyRuns/${run.parentId}/reservations/${grant.planHash}`)),
+          tx.get(this.db.doc(`metricsOneDailyBudgets/${run.day}`)),
+        ]), row = rowSnap.data(), day = daySnap.data();
+        if (currentDailyOneRefresh()?.signal?.aborted || !rowSnap.exists || row.jobId !== grant.id || row.state !== 'started'
+          || row.bytes !== grant.bytes || row.scopeHash !== scopeHash || row.reportHash !== reportHash
+          || !Number.isSafeInteger(row.startedAt) || row.startedAt < run.parentCreatedAt! || row.startedAt >= parent!.expiresAt || row.startedAt > now
+          || !daySnap.exists || day.policyGeneration !== run.policyGeneration || day.reservedBytes !== run.parentReservedBytes! + run.reservedBytes
+          || day.reservedJobs !== run.parentReservedJobs! + run.reservedJobs) throw fail();
+      });
+      return;
+    }
     await this.db.runTransaction(async tx => {
-      const { run, policy } = await this.checked(ref => tx.get(ref)), now = this.now();
+      const { run, policy, parentPartial } = await this.checked(ref => tx.get(ref)), now = this.now();
+      const gate = currentDailyOneRefresh()?.gateCohort;
+      if (run.parentDepth === 3) { if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness)) throw fail(); requireFreshCohort(gate); }
       if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !run.reports.includes(grant.report!) || grant.bytes > run.maxPerJobBytes) throw fail();
       if (grant.id !== `metrics_${this.id}_${grant.planHash}` || run.reports.slice(0, recoveredReports(run)).includes(grant.report!)) throw fail();
       const dayRef = this.db.doc(`metricsOneDailyBudgets/${run.day}`), reservation = this.ref().collection('reservations').doc(grant.planHash);
@@ -231,32 +300,36 @@ export class DailyOneRefresh {
     });
   }
   /** Stage a write-once aggregate; readers only use it after this run closes. */
-  async save(report: string, value: { status: number; body: unknown }, jobs: Array<{ id: string; endedAt: number }>, cohort: CustomerCohort | null) {
+  async save(report: string, value: { status: number; body: unknown }, jobs: Array<{ id: string; endedAt: number; bytes?: number }>, cohort: CustomerCohort | null) {
     const active = currentDailyOneRefresh(), scope = currentLegacyReportKey();
     const { run } = await this.requireOpen(report), computedAt = this.now(), json = JSON.stringify(value);
     if (!active || active.signal?.aborted || active.store !== this || active.report !== report || active.jobs.size !== jobs.length
-      || jobs.some(job => active.jobs.get(job.id) !== job.endedAt) || scope !== `${cohort?.cacheKey ?? ''}:${report}`) throw fail();
+      || jobs.some(job => active.jobs.get(job.id) !== job.endedAt || (run.parentDepth === 3 && (!Number.isSafeInteger(job.bytes) || job.bytes! < 1 || active.bounds.get(job.id) !== job.bytes))) || scope !== `${cohort?.cacheKey ?? ''}:${report}`) throw fail();
     const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
     const witness = cohort ? cohortSnapshotWitness(cohort) : null;
     if (!validOnePayload(value, report) || Buffer.byteLength(json) > 700_000 || !jobs.length || jobs.length > DAILY_ONE_LIMITS.jobs
       || (environment === 'production' ? !witness : environment !== 'uat' || !!cohort)
       || new Set(jobs.map(job => job.id)).size !== jobs.length
-      || jobs.some(job => !new RegExp(`^metrics_${this.id}_[a-f0-9]{64}$`).test(job.id)
-        || !Number.isSafeInteger(job.endedAt) || job.endedAt < run.createdAt || job.endedAt > computedAt + 10_000)) throw fail();
+      || jobs.some(job => !jobOwner(run, job.id, this.id, report)
+        || !Number.isSafeInteger(job.endedAt) || job.endedAt < (jobOwner(run, job.id, this.id, report) === this.id ? run.createdAt : run.parentCreatedAt!) || job.endedAt > computedAt + 10_000)) throw fail();
     const reportHash = hash(report), target = this.ref().collection('snapshots').doc(reportHash);
     if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
+    if (run.parentDepth === 3) { if (!active.gateCohort) throw fail(); await this.verifyMeasuredCohort(active.gateCohort); await requireCurrentCustomerCohort(active.gateCohort.cacheKey); }
     if (active.signal?.aborted) throw fail();
     // A Firestore commit already dispatched may complete after a disconnect.
     // Reads still require a verified payload, current cohort and all-ten activation.
     await this.db.runTransaction(async tx => {
-      const { run: live } = await this.checked(ref => tx.get(ref)), now = this.now();
+      const { run: live, parent, parentPartial } = await this.checked(ref => tx.get(ref)), now = this.now();
       if (live.phase !== 'open' || now < live.createdAt || now >= live.expiresAt || new Date(now).toISOString().slice(0, 10) !== live.day || !live.reports.includes(report)
         || live.reports.slice(0, recoveredReports(live)).includes(report)) throw fail();
       if (cohort) requireFreshCohort(cohort);
+      if (live.parentDepth === 3) { if (!active.gateCohort || !cohortMatchesSnapshotWitness(active.gateCohort, parentPartial?.witness)) throw fail(); requireFreshCohort(active.gateCohort); }
       const existing = await tx.get(target);
-      const reservations = await Promise.all(jobs.map(job => tx.get(this.ref().collection('reservations').doc(job.id.slice(-64)))));
+      const reservations = await Promise.all(jobs.map(job => tx.get(this.db.doc(`metricsOneDailyRuns/${jobOwner(live, job.id, this.id, report)}/reservations/${job.id.slice(-64)}`))));
       if (active.signal?.aborted) throw fail();
-      if (existing.exists || reservations.some((snapshot, index) => !snapshot.exists || snapshot.data()?.jobId !== jobs[index].id || snapshot.data()?.state !== 'started' || snapshot.data()?.scopeHash !== hash(scope!) || snapshot.data()?.reportHash !== reportHash || !Number.isSafeInteger(snapshot.data()?.startedAt)
+      if (existing.exists || reservations.some((snapshot, index) => !snapshot.exists || snapshot.data()?.jobId !== jobs[index].id || snapshot.data()?.state !== 'started' || snapshot.data()?.scopeHash !== hash(scope!) || snapshot.data()?.reportHash !== reportHash || (live.parentDepth === 3 && snapshot.data()?.bytes !== jobs[index].bytes) || !Number.isSafeInteger(snapshot.data()?.startedAt)
+        || (live.parentDepth === 3 && snapshot.data()?.startedAt < (jobOwner(live, jobs[index].id, this.id, report) === this.id ? live.createdAt : live.parentCreatedAt!))
+        || (live.parentDepth === 3 && snapshot.data()?.startedAt >= (jobOwner(live, jobs[index].id, this.id, report) === this.id ? live.expiresAt : parent!.expiresAt))
         || snapshot.data()?.startedAt > jobs[index].endedAt)) throw fail();
       tx.create(target, { schema: 1, state: 'pending', source: this.source, measurementId: live.measurementId, measurementSource: live.measurementSource,
         measurementDigest: live.measurementDigest, scopeDigest: live.scopeDigest, runId: this.id, reportHash, dataAsOf: live.logicalAsOf,
@@ -264,19 +337,21 @@ export class DailyOneRefresh {
         ...(live.parentId ? { parentId: live.parentId, parentSource: live.parentSource } : {}), ...(witness ? { witness } : {}) });
     });
     if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
+    if (run.parentDepth === 3) { if (!active.gateCohort) throw fail(); await requireCurrentCustomerCohort(active.gateCohort.cacheKey); }
     if (active.signal?.aborted) throw fail();
     await this.db.runTransaction(async tx => {
-      const { run: live } = await this.checked(ref => tx.get(ref)), snapshot = await tx.get(target), now = this.now();
+      const { run: live, parentPartial } = await this.checked(ref => tx.get(ref)), snapshot = await tx.get(target), now = this.now();
       if (active.signal?.aborted) throw fail();
       if (live.phase !== 'open' || now < live.createdAt || now >= live.expiresAt || new Date(now).toISOString().slice(0, 10) !== live.day
         || !snapshot.exists || snapshot.data()?.state !== 'pending' || snapshot.data()?.computedAt !== computedAt) throw fail();
       if (cohort) requireFreshCohort(cohort);
+      if (live.parentDepth === 3) { if (!active.gateCohort || !cohortMatchesSnapshotWitness(active.gateCohort, parentPartial?.witness)) throw fail(); requireFreshCohort(active.gateCohort); }
       tx.update(target, { state: 'verified' });
     });
     return computedAt;
   }
   async read(report: string, cohort: CustomerCohort | null, requireActive = true, activationCohort: CustomerCohort | null = cohort) {
-    const { run } = await this.permit();
+    const { run, parent } = await this.permit();
     if (run.phase !== 'closed' || !run.reports.includes(report)) return null;
     if (requireActive) {
       const full = (await this.ref().collection('activation').doc('current').get()).data();
@@ -288,6 +363,9 @@ export class DailyOneRefresh {
     }
     const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
     if (environment === 'production' ? !cohort : environment !== 'uat' || !!cohort) return null;
+    if (run.parentDepth === 3 && run.reports.slice(0, 4).includes(report)) {
+      return new DailyOneRefresh(this.db, run.parentId!, run.parentSource!, this.now).read(report, cohort, true, activationCohort);
+    }
     if (run.parentDepth === 2 && report === run.reports[0]) {
       return new DailyOneRefresh(this.db, run.parentId!, run.parentSource!, this.now).read(report, cohort, false);
     }
@@ -309,9 +387,19 @@ export class DailyOneRefresh {
       || this.now() - Date.parse(run.logicalAsOf) > 90 * 86_400_000 || typeof row.json !== 'string' || Buffer.byteLength(row.json) > 700_000
       || !Array.isArray(row.jobs) || !row.jobs.length || row.jobs.length > DAILY_ONE_LIMITS.jobs
       || new Set(row.jobs.map((job: any) => job.id)).size !== row.jobs.length
-      || row.jobs.some((job: any) => typeof job.id !== 'string' || !new RegExp(`^metrics_${this.id}_[a-f0-9]{64}$`).test(job.id)
-        || !Number.isSafeInteger(job.endedAt) || job.endedAt < run.createdAt || job.endedAt > row.computedAt + 10_000)
+      || row.jobs.some((job: any) => typeof job.id !== 'string' || !jobOwner(run, job.id, this.id, report)
+        || !Number.isSafeInteger(job.endedAt) || job.endedAt < (jobOwner(run, job.id, this.id, report) === this.id ? run.createdAt : run.parentCreatedAt!) || job.endedAt > row.computedAt + 10_000)
       || (cohort ? !row.witness || !cohortMatchesSnapshotWitness(cohort, row.witness) : !!row.witness)) return null;
+    if (run.parentDepth === 3) {
+      const reservations = await Promise.all(row.jobs.map((job: any) => this.db.doc(`metricsOneDailyRuns/${jobOwner(run, job.id, this.id, report)}/reservations/${job.id.slice(-64)}`).get()));
+      if (reservations.some((snapshot: any, index: number) => !snapshot.exists || snapshot.data()?.jobId !== row.jobs[index].id
+        || snapshot.data()?.state !== 'started' || snapshot.data()?.reportHash !== hash(report)
+        || snapshot.data()?.scopeHash !== run.measurementScopes[hash(report)] || !Number.isSafeInteger(row.jobs[index].bytes) || row.jobs[index].bytes < 1
+        || snapshot.data()?.bytes !== row.jobs[index].bytes || !Number.isSafeInteger(snapshot.data()?.startedAt)
+        || snapshot.data()?.startedAt < (jobOwner(run, row.jobs[index].id, this.id, report) === this.id ? run.createdAt : run.parentCreatedAt!)
+        || snapshot.data()?.startedAt >= (jobOwner(run, row.jobs[index].id, this.id, report) === this.id ? run.expiresAt : parent!.expiresAt)
+        || snapshot.data()?.startedAt > row.jobs[index].endedAt)) return null;
+    }
     let value: { status?: number; body?: unknown };
     try { value = JSON.parse(row.json); } catch { return null; }
     if (!validOnePayload(value, report)) return null;
@@ -327,7 +415,8 @@ export class DailyOneRefresh {
     await requireCurrentCustomerCohort(cohort.cacheKey);
     const values = await Promise.all(run.reports.map(report => {
       const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
-      return environment === 'production' ? this.read(report, cohort, false) : null;
+      return environment === 'production' ? this.read(report, cohort, false)
+        : run.parentDepth === 3 && environment === 'uat' ? this.read(report, null, false, cohort) : null;
     }));
     const reports = run.reports.filter((_, index) => values[index]?.asOf === run.logicalAsOf).map(hash);
     if (!reports.length || reports.length === run.reports.length) throw fail();
@@ -350,11 +439,12 @@ export class DailyOneRefresh {
     if (run.phase !== 'closed' || !(await this.ref().collection('activation').doc('partial').get()).exists) return [];
     const rows = await Promise.all(run.reports.map(async report => {
       const query = new URL(report, 'http://analytics.internal').searchParams;
-      if (query.get('environment') !== 'production' || !await this.read(report, cohort, true, cohort)) return null;
+      const environment = query.get('environment');
+      if (!['production', 'uat'].includes(environment ?? '') || !await this.read(report, environment === 'production' ? cohort : null, true, cohort)) return null;
       const startDate = query.get('one_start_date'), endDate = query.get('one_end_date');
-      return startDate && endDate ? { startDate, endDate } : null;
+      return startDate && endDate && (environment === 'production' || environment === 'uat') ? { startDate, endDate, environment } : null;
     }));
-    return rows.filter((row): row is { startDate: string; endDate: string } => !!row);
+    return rows.filter((row): row is { startDate: string; endDate: string; environment: 'production' | 'uat' } => !!row);
   }
   /** Make the complete, closed set visible together; no warehouse work occurs. */
   async activate(cohort: CustomerCohort) {
@@ -370,10 +460,13 @@ export class DailyOneRefresh {
     await requireCurrentCustomerCohort(cohort.cacheKey);
     const activation = this.ref().collection('activation').doc('current');
     await this.db.runTransaction(async tx => {
-      const { run: live } = await this.checked(ref => tx.get(ref)), existing = await tx.get(activation);
+      const { run: live, parentPartial } = await this.checked(ref => tx.get(ref)), existing = await tx.get(activation);
       const reports = live.reports.slice(recoveredReports(live));
       const snapshots = await Promise.all(reports.map(report => tx.get(this.ref().collection('snapshots').doc(hash(report)))));
+      const prior = live.parentDepth === 3 ? await Promise.all(live.reports.slice(2, 4).map(report => tx.get(this.db.doc(`metricsOneDailyRuns/${live.parentId}/snapshots/${hash(report)}`)))) : [];
       if (live.phase !== 'closed' || live.logicalAsOf !== run.logicalAsOf || live.reportDigest !== run.reportDigest || existing.exists
+        || (live.parentDepth === 3 && (!cohortMatchesSnapshotWitness(cohort, parentPartial?.witness)
+          || prior.some((snapshot, index) => !snapshot.exists || snapshot.data()?.state !== 'verified' || snapshot.data()?.source !== live.parentSource || snapshot.data()?.reportHash !== hash(live.reports[index + 2]))))
         || snapshots.some((snapshot, index) => !snapshot.exists || snapshot.data()?.state !== 'verified'
           || snapshot.data()?.source !== this.source || snapshot.data()?.reportHash !== hash(reports[index]))) throw fail();
       requireFreshCohort(cohort);
@@ -397,8 +490,11 @@ export class DailyOneRefresh {
     const scope = currentLegacyReportKey();
     if (!scope || !grant.report || !scope.endsWith(`:${grant.report}`)) throw fail();
     if ((grant as RestorationGrant & { scopeHash?: string }).scopeHash !== hash(scope)) throw fail();
+    if (grant.reuse?.priorPermitId) { await this.reserve(grant); return false; }
     return this.db.runTransaction(async tx => {
-      const { run } = await this.checked(ref => tx.get(ref)), now = this.now();
+      const { run, parentPartial } = await this.checked(ref => tx.get(ref)), now = this.now();
+      const gate = currentDailyOneRefresh()?.gateCohort;
+      if (run.parentDepth === 3) { if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness)) throw fail(); requireFreshCohort(gate); }
       if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !grant.report || !run.reports.includes(grant.report)) throw fail();
       if (grant.id !== `metrics_${this.id}_${grant.planHash}` || run.reports.slice(0, recoveredReports(run)).includes(grant.report!)) throw fail();
       const ref = this.ref().collection('reservations').doc(grant.planHash), snapshot = await tx.get(ref), row = snapshot.data();

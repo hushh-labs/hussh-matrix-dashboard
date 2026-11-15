@@ -183,7 +183,7 @@ test('uses the verified One anchor without changing Growth dates', async ({ page
 test('offers explicit newer partial production dates without changing the old default or UAT', async ({ page }) => {
   await mockDashboard(page);
   await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:00:00.000Z', user: { email: 'qa@example.invalid', name: 'QA' } } }));
-  await page.route('**/api/auth/one-partial-publications', route => route.fulfill({ json: { reports: [{ startDate: '2026-10-17', endDate: '2026-11-15' }] } }));
+  await page.route('**/api/auth/one-partial-publications', route => route.fulfill({ json: { reports: [{ startDate: '2026-10-17', endDate: '2026-11-15', environment: 'production' }] } }));
   const urls: URL[] = [];
   page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
   await page.goto('/location-analytics/production');
@@ -195,6 +195,20 @@ test('offers explicit newer partial production dates without changing the old de
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_end_date')).toBe('2026-11-15');
   await page.goto('/location-analytics/uat');
   await expect(choice).toHaveCount(0);
+});
+
+test('offers only the matching environment partial dates', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/auth/one-partial-publications', route => route.fulfill({ json: { reports: [
+    { startDate: '2026-10-17', endDate: '2026-11-15', environment: 'production' },
+    { startDate: '2026-11-09', endDate: '2026-11-15', environment: 'uat' },
+  ] } }));
+  const urls: URL[] = []; page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
+  await page.goto('/location-analytics/uat');
+  await expect(page.getByRole('button', { name: '2026-10-17 to 2026-11-15' })).toHaveCount(0);
+  await page.getByRole('button', { name: '2026-11-09 to 2026-11-15' }).click();
+  await expect.poll(() => urls.at(-1)?.searchParams.get('environment')).toBe('uat');
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-11-09');
 });
 
 test('session loss prompts sign-in and restores the One date and environment', async ({ page }) => {

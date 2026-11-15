@@ -457,6 +457,7 @@ const executeGuardedBigQuery = createGuardedBigQuery({
           || !Number.isSafeInteger(endedAt) || endedAt <= 0 || endedAt > Date.now() + 10_000) throw new BigQueryCostControlError('Completed continuation job failed verification.');
         continuation?.jobs.set(request.jobId!, { id: request.jobId!, endedAt });
         daily?.jobs.set(request.jobId!, endedAt);
+        if (daily?.strictJobBounds) daily.bounds.set(request.jobId!, Number(request.maximumBytesBilled));
       }
       return [rows as Record<string, unknown>[]];
     }
