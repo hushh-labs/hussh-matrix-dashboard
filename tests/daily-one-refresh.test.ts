@@ -10,11 +10,11 @@ import { currentClosedComposition, restorationReportDigest, withClosedCompositio
 import { verifyDailyOneCohortPreflight } from '../src/server/daily-one-cohort-preflight';
 import { DailyClosedDiagnostic } from '../src/server/daily-closed-diagnostic';
 class Database {
- values = new Map<string, any>(); private tail = Promise.resolve();
+ values = new Map<string, any>(); batches: number[] = []; private tail = Promise.resolve();
  doc(path: string): any { return { get: async () => this.snapshot(path), collection: (name: string) => ({ doc: (id: string) => this.doc(`${path}/${name}/${id}`), get: async () => { const prefix = `${path}/${name}/`; const docs = [...this.values.keys()].filter(key => key.startsWith(prefix) && !key.slice(prefix.length).includes('/')).map(key => this.snapshot(key)); return { docs, size: docs.length }; } }), path }; }
  snapshot(path: string) { return { exists: this.values.has(path), data: () => this.values.get(path) }; }
  async runTransaction<T>(run: (tx: any) => Promise<T>) { const prior = this.tail; let unlock!: () => void; this.tail = new Promise<void>(r => { unlock = r; }); await prior;
-  const writes = new Map<string, any>(); try { const result = await run({ get: async (ref: any) => this.snapshot(ref.path), update: (ref: any, value: any) => writes.set(ref.path, { ...(writes.get(ref.path) ?? this.values.get(ref.path)), ...value }), create: (ref: any, value: any) => { if (this.values.has(ref.path)) throw new Error('exists'); writes.set(ref.path, value); } }); for (const [key,value] of writes) this.values.set(key,value); return result; } finally { unlock(); } }
+  const writes = new Map<string, any>(); try { const result = await run({ get: async (ref: any) => this.snapshot(ref.path), getAll: async (...refs: any[]) => { this.batches.push(refs.length); return refs.map(ref => this.snapshot(ref.path)); }, update: (ref: any, value: any) => writes.set(ref.path, { ...(writes.get(ref.path) ?? this.values.get(ref.path)), ...value }), create: (ref: any, value: any) => { if (this.values.has(ref.path)) throw new Error('exists'); writes.set(ref.path, value); } }); for (const [key,value] of writes) this.values.set(key,value); return result; } finally { unlock(); } }
  native() { return this as unknown as Pick<Firestore, 'doc' | 'runTransaction'>; }
 }
 function payloadFor(report: string, count = 1) {
@@ -314,6 +314,15 @@ describe('terminal bounded recovery', () => {
    const before = { ...f.db.values.get(`metricsOneDailyBudgets/${day}`) };
    await expect(withDailyOneRefresh(f.store4, other, () => scope(() => f.store4.reserve(grant)), undefined, undefined, f.cohort)).rejects.toThrow();
    expect(f.db.values.get(`metricsOneDailyBudgets/${day}`)).toEqual(before);
+  } finally { vi.useRealTimers(); }
+ });
+ it('reads all preserved reservation proofs in one transaction batch', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 5000);
+  try {
+   const f = await terminalRecoveryFixture(), report = f.reports[8], scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`:${report}`, fn);
+   const grant = await scope(() => f.store4.admit({ query: 'SELECT batch_proofs' }, 1)); f.db.batches.length = 0;
+   await withDailyOneRefresh(f.store4, report, () => scope(() => f.store4.reserve(grant)), undefined, undefined, f.cohort);
+   expect(f.db.batches).toEqual([2]);
   } finally { vi.useRealTimers(); }
  });
  it('rejects a changed preserved reservation and changed partial scope', async () => {
