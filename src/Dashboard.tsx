@@ -1598,15 +1598,15 @@ export default function Dashboard() {
       subtitle: `Search Console aggregate details for ${search?.range?.startDate ?? hushhAiRange.startDate} to ${search?.range?.endDate ?? hushhAiRange.endDate}.`,
       badge: search?.available ? 'Search aggregate' : 'Waiting',
       summary: [
-        detailRow('Clicks', formatOptionalNumber(search?.clicks)),
-        detailRow('Impressions', formatOptionalNumber(search?.impressions)),
-        detailRow('CTR', search?.ctr == null ? '—' : `${(search.ctr * 100).toFixed(1)}%`),
-        detailRow('Avg Position', search?.averagePosition == null ? '—' : search.averagePosition.toFixed(1)),
+        detailRow('Clicks', formatOptionalNumber(search?.available ? search.clicks : null)),
+        detailRow('Impressions', formatOptionalNumber(search?.available ? search.impressions : null)),
+        detailRow('CTR', !search?.available || search.ctr == null ? '—' : `${(search.ctr * 100).toFixed(1)}%`),
+        detailRow('Avg Position', !search?.available || search.averagePosition == null ? '—' : search.averagePosition.toFixed(1)),
       ],
       sections: [
         {
           title: 'Top Queries',
-          rows: (search?.queries ?? []).slice(0, 12).map((query) => detailRow(
+          rows: (search?.available ? search.queries : []).slice(0, 12).map((query) => detailRow(
             query.query,
             `${formatOptionalNumber(query.clicks)} clicks`,
             `${formatOptionalNumber(query.impressions)} impressions · ${query.ctr == null ? '—' : `${(query.ctr * 100).toFixed(1)}%`} CTR · ${query.averagePosition == null ? '—' : query.averagePosition.toFixed(1)} avg position`,
@@ -1614,7 +1614,7 @@ export default function Dashboard() {
         },
         {
           title: 'Top Pages',
-          rows: (search?.pages ?? []).slice(0, 12).map((page) => detailRow(
+          rows: (search?.available ? search.pages : []).slice(0, 12).map((page) => detailRow(
             safeUrlLabel(page.pageUrl),
             `${formatOptionalNumber(page.clicks)} clicks`,
             `${formatOptionalNumber(page.impressions)} impressions · ${page.averagePosition == null ? '—' : page.averagePosition.toFixed(1)} avg position`,
@@ -1622,7 +1622,7 @@ export default function Dashboard() {
         },
         {
           title: 'Countries',
-          rows: (search?.countries ?? []).slice(0, 12).map((country) => detailRow(
+          rows: (search?.available ? search.countries : []).slice(0, 12).map((country) => detailRow(
             country.country,
             `${formatOptionalNumber(country.clicks)} clicks`,
             `${formatOptionalNumber(country.impressions)} impressions`,
