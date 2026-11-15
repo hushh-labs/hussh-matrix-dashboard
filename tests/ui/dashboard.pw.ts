@@ -201,6 +201,24 @@ test('session loss prompts sign-in and restores the One date and environment', a
   await expect(page.getByRole('heading', { name: 'One Location analytics', exact: true })).toBeVisible();
 });
 
+test('session loss on the One app root preserves the selected production period', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:00:00.000Z', user: { email: 'qa@example.invalid', name: 'QA' } } }));
+  let unauthorized = false; const urls: URL[] = [];
+  await page.route('**/api/analytics/all?*', route => {
+    urls.push(new URL(route.request().url())); return unauthorized ? route.fulfill({ status: 401, json: {} }) : route.fulfill({ json: allAnalytics });
+  });
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: '30 days', exact: true }).click();
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-16');
+  unauthorized = true; await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(page.getByText('Your session is no longer valid. Sign in again to continue.')).toBeVisible();
+  unauthorized = false; await page.reload();
+  await expect(page.locator('.dashboard-page-heading h1')).toHaveText('One app');
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-16');
+  expect(urls.at(-1)?.searchParams.get('environment')).toBe('production');
+});
+
 test('sign-in preserves the local Location return path without an automatic redirect', async ({ page }) => {
   await mockDashboard(page); await page.route('**/api/analytics/all?*', route => route.fulfill({ status: 401, json: {} }));
   await page.goto('/location-analytics/uat');
