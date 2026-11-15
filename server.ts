@@ -5845,7 +5845,8 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (sealDailyOne && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Daily One measurement requires the trusted release probe.' }); return;
           }
-          const activateDailyOne = req.get('X-Metrics-Daily-One-Activate') === '1';
+          const activateDailyPartial = req.get('X-Metrics-Daily-One-Activate') === 'partial';
+          const activateDailyOne = req.get('X-Metrics-Daily-One-Activate') === '1' || activateDailyPartial;
           if (activateDailyOne && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Daily One activation requires the trusted release probe.' }); return;
           }
@@ -5948,6 +5949,11 @@ function registerAnalyticsRoutes(app: express.Express): void {
             if (!daily) { res.status(409).json({ error: 'Daily One activation is not configured.' }); return; }
             await restoration.closedDescriptor();
             const pinned = await readCustomerCohort();
+            if (activateDailyPartial) {
+              const reports = await daily.activatePartial(pinned);
+              await requireCurrentCustomerCohort(pinned.cacheKey);
+              res.set('Cache-Control', 'no-store'); res.status(200).json({ state: 'partial', reports }); return;
+            }
             const asOf = await daily.activate(pinned);
             await requireCurrentCustomerCohort(pinned.cacheKey);
             res.set('Cache-Control', 'no-store'); res.status(200).json({ state: 'active', publicationAsOf: asOf }); return;
@@ -9890,6 +9896,19 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
       new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 30_000); }),
     ]).finally(() => { if (timer) clearTimeout(timer); });
     res.json({ publicationAsOf });
+  });
+
+  app.get('/api/auth/one-partial-publications', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!(req as any).sessionUser) { res.status(401).json({ error: 'Sign in to view metrics.' }); return; }
+    try {
+      const daily = await dailyOneRefresh();
+      if (!daily) { res.json({ reports: [] }); return; }
+      const cohort = await readCustomerCohort();
+      const reports = await daily.partialReports(cohort);
+      await requireCurrentCustomerCohort(cohort.cacheKey);
+      res.json({ reports });
+    } catch { res.json({ reports: [] }); }
   });
 
   app.post('/api/auth/daily-one-cohort-preflight', async (req, res) => {

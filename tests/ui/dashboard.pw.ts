@@ -180,6 +180,23 @@ test('uses the verified One anchor without changing Growth dates', async ({ page
   await expect.poll(() => urls.some(url => url.searchParams.get('view') === 'growth' && url.searchParams.get('one_end_date') === '2026-11-14')).toBe(true);
 });
 
+test('offers explicit newer partial production dates without changing the old default or UAT', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:00:00.000Z', user: { email: 'qa@example.invalid', name: 'QA' } } }));
+  await page.route('**/api/auth/one-partial-publications', route => route.fulfill({ json: { reports: [{ startDate: '2026-10-17', endDate: '2026-11-15' }] } }));
+  const urls: URL[] = [];
+  page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
+  await page.goto('/location-analytics/production');
+  const choice = page.getByRole('button', { name: '2026-10-17 to 2026-11-15' });
+  await expect(choice).toBeVisible();
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_end_date')).toBe('2026-11-14');
+  await choice.click();
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-17');
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_end_date')).toBe('2026-11-15');
+  await page.goto('/location-analytics/uat');
+  await expect(choice).toHaveCount(0);
+});
+
 test('session loss prompts sign-in and restores the One date and environment', async ({ page }) => {
   await mockDashboard(page);
   await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:00:00.000Z', user: { email: 'qa@example.invalid', name: 'QA' } } }));

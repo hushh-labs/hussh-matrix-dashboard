@@ -1192,6 +1192,19 @@ export default function Dashboard() {
   const [oneRange, setOneRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
   const [oneAppRange, setOneAppRange] = useState<HushhAiDateRangeState>(() => recoveredSelection?.range ?? rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
   const [onePublicationAsOf, setOnePublicationAsOf] = useState<string | null>(null);
+  const [onePartialReports, setOnePartialReports] = useState<{ startDate: string; endDate: string }[]>([]);
+  useEffect(() => {
+    let active = true;
+    setOnePartialReports([]);
+    if (activeTab !== 'one') return () => { active = false; };
+    void fetch('/api/auth/one-partial-publications', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(35_000) })
+      .then(response => response.ok ? response.json() : null).then(data => {
+        if (!active || !Array.isArray(data?.reports)) return;
+        setOnePartialReports(data.reports.filter((row: any) => typeof row?.startDate === 'string' && typeof row?.endDate === 'string'
+          && /^\d{4}-\d{2}-\d{2}$/.test(row.startDate) && /^\d{4}-\d{2}-\d{2}$/.test(row.endDate)).slice(0, 5));
+      }).catch(() => {});
+    return () => { active = false; };
+  }, [activeTab, user?.email]);
   useEffect(() => {
     let active = true; setOnePublicationAsOf(null);
     void fetch('/api/auth/one-publication', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(35_000) })
@@ -1813,13 +1826,19 @@ export default function Dashboard() {
             onCloseLocation={closeLocationAnalytics}
             onLocationRouteChange={changeLocationRoute}
             dateControl={(
-              <DateRangeControl presetAsOf={onePublicationAsOf ?? user?.publicationAsOf} referenceNow={resource.serverNow}
+              <><DateRangeControl presetAsOf={onePublicationAsOf ?? user?.publicationAsOf} referenceNow={resource.serverNow}
                 range={oneAppRange}
                 refreshing={isRefreshing}
                 onPreset={(days) => setOneAppRange(onePresetRange(days))}
                 onCustomRange={setOneAppRange}
                 ariaLabelPrefix="One app" {...dateEditor('One app')}
-              />
+              />{(locationRoute?.environment ?? oneEnvironment) === 'production' && onePartialReports.length > 0 && (
+                <div className="mt-2 text-sm text-muted">
+                  Newer production reports are partial; the latest source day may be incomplete and can change.
+                  {onePartialReports.map(range => <button key={`${range.startDate}:${range.endDate}`} type="button" className="ml-2 underline"
+                    onClick={() => setOneAppRange({ preset: 'custom', ...range })}>{range.startDate} to {range.endDate}</button>)}
+                </div>
+              )}</>
             )}
           />
         ) : activeTab === 'apps' ? (
