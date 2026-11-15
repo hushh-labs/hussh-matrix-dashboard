@@ -17,8 +17,9 @@ export function peekMetrics<T>(url: string | null): MetricsSnapshot<T> | null {
 }
 
 export async function readMetrics<T>(url: string, options: { refresh?: boolean } = {}): Promise<MetricsSnapshot<T>> {
+  const passive = url.startsWith('/api/analytics/all?') || url === '/api/analytics/all';
   const existing = peekMetrics<T>(url);
-  if (!options.refresh && existing) return existing;
+  if (!passive && !options.refresh && existing) return existing;
   const running = pending.get(url);
   if (running) return running as Promise<MetricsSnapshot<T>>;
   const requestGeneration = generation;
@@ -26,7 +27,7 @@ export async function readMetrics<T>(url: string, options: { refresh?: boolean }
   const request = (async () => {
     const response = await fetch(url, {
       cache: 'no-store', credentials: 'same-origin',
-      headers: { Accept: 'application/json', ...(options.refresh ? { 'X-Metrics-Refresh': '1' } : {}) },
+      headers: { Accept: 'application/json', ...(passive ? { 'X-Metrics-Passive-Read': '1' } : {}), ...(options.refresh ? { 'X-Metrics-Refresh': '1' } : {}) },
       signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok) {

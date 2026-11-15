@@ -6187,7 +6187,9 @@ function registerAnalyticsRoutes(app: express.Express): void {
             ?? await continuation?.read(reportUrl, cohort)
             ?? await continuationComposer?.read(reportUrl, cohort)
             ?? await previous?.readSnapshot(key);
-          const useRetained = retained && (!refresh || !await restoration!.isActive());
+          const passiveRead = req.get('X-Metrics-Passive-Read') === '1';
+          if (passiveRead && !retained) { res.status(503).json({ error: 'No retained report is available for this selection.' }); return; }
+          const useRetained = retained && (passiveRead || !refresh || !await restoration!.isActive());
           // Closed restoration publications are read-only. Do not turn an
           // unsupported range into an automatic warehouse scan on a new day.
           if (restoration && !retained && !await restoration.isPreparing()) {
