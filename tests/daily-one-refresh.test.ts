@@ -93,6 +93,51 @@ describe('private no-query cohort preflight', () => {
  });
 });
 describe('finite daily One refresh admission', () => {
+ it('does not reserve after the caller aborts while the ledger transaction is reading', async () => {
+  const f = fixture(), controller = new AbortController(), grant = await f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1));
+  let entered!: () => void, release!: () => void; const started = new Promise<void>(r => { entered = r; }), barrier = new Promise<void>(r => { release = r; });
+  const original = f.db.runTransaction.bind(f.db);
+  vi.spyOn(f.db, 'runTransaction').mockImplementationOnce((run: any) => original((tx: any) => run({ ...tx, get: async (ref: any) => {
+   if (ref.path === `metricsOneDailyBudgets/${day}`) { entered(); await barrier; } return tx.get(ref);
+  } })));
+  const pending = withDailyOneRefresh(f.store, f.reports[0], () => f.scope(() => f.store.reserve(grant)), controller.signal, () => controller.abort());
+  await started; controller.abort(); release(); await expect(pending).rejects.toThrow();
+  expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedBytes).toBe(0);
+  expect(f.db.values.has(`metricsOneDailyRuns/${id}/reservations/${grant.planHash}`)).toBe(false);
+  vi.restoreAllMocks();
+ });
+ it('keeps a reserved job unsubmitted if the caller aborts during the submission fence', async () => {
+  const f = fixture(), controller = new AbortController(), grant = await f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1));
+  await f.scope(() => f.store.reserve(grant)); const path = `metricsOneDailyRuns/${id}/reservations/${grant.planHash}`;
+  let entered!: () => void, release!: () => void; const started = new Promise<void>(r => { entered = r; }), barrier = new Promise<void>(r => { release = r; });
+  const original = f.db.runTransaction.bind(f.db);
+  vi.spyOn(f.db, 'runTransaction').mockImplementationOnce((run: any) => original((tx: any) => run({ ...tx, get: async (ref: any) => {
+   if (ref.path === path) { entered(); await barrier; } return tx.get(ref);
+  } })));
+  const pending = withDailyOneRefresh(f.store, f.reports[0], () => f.scope(() => f.store.claimSubmission(grant)), controller.signal, () => controller.abort());
+  await started; controller.abort(); release(); await expect(pending).rejects.toThrow();
+  expect(f.db.values.get(path).state).toBe('reserved'); expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedBytes).toBe(grant.bytes);
+  vi.restoreAllMocks();
+ });
+ it.each([1, 2])('does not verify when abort is observed before save transaction %i writes', async targetRead => {
+  const f = fixture(), controller = new AbortController(), report = f.reports[5], scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`:${report}`, fn);
+  f.time(start + 1000); const grant = await scope(() => f.store.admit({ query: 'SELECT 1' }, 1));
+  await scope(() => f.store.reserve(grant)); await scope(() => f.store.claimSubmission(grant));
+  const path = `metricsOneDailyRuns/${id}/snapshots/${createHash('sha256').update(report).digest('hex')}`;
+  let entered!: () => void, release!: () => void, reads = 0; const started = new Promise<void>(r => { entered = r; }), barrier = new Promise<void>(r => { release = r; });
+  const original = f.db.runTransaction.bind(f.db);
+  vi.spyOn(f.db, 'runTransaction').mockImplementation((run: any) => original((tx: any) => run({ ...tx, get: async (ref: any) => {
+   const result = await tx.get(ref); if (ref.path === path && ++reads === targetRead) { entered(); await barrier; } return result;
+  } })));
+  const pending = scope(() => withDailyOneRefresh(f.store, report, async () => {
+   currentDailyOneRefresh()!.jobs.set(grant.id, start + 1000);
+   return f.store.save(report, payloadFor(report), [{ id: grant.id, endedAt: start + 1000 }], null);
+  }, controller.signal, () => controller.abort()));
+  await started; controller.abort(); release(); await expect(pending).rejects.toThrow();
+  expect(f.db.values.get(path)?.state).not.toBe('verified');
+  expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedBytes).toBe(grant.bytes);
+  vi.restoreAllMocks();
+ });
  it('fences the parent report and debits remaining reports to the same cumulative ledger', async () => {
   const f = await continuationFixture(), before = f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedBytes;
   await expect(withLegacyReportScope(`${'b'.repeat(64)}:${f.reports[0]}`, () => f.store.existing(f.query))).rejects.toThrow();
@@ -240,6 +285,14 @@ describe('finite daily One refresh admission', () => {
   const { attempt } = await diagnostic.claim(f.reports[0]); await expect(diagnostic.claim(f.reports[0])).rejects.toThrow();
   await expect(diagnostic.finish(attempt, { stage: 'capture', reason: 'missing-reservation', jobs: 1, maxRows: 2, maxBytes: 3, payloadBytes: 0 })).resolves.toBeUndefined();
   await expect(diagnostic.finish(attempt, { stage: 'capture', reason: 'missing-reservation', jobs: 1, maxRows: 2, maxBytes: 3, payloadBytes: 0 })).rejects.toThrow();
+ });
+ it('limits a closed continuation diagnostic to its first attempted child report', async () => {
+  const f = await continuationFixture(), diagnosticId = 'dailycheck_6666666666666666', path = `metricsDailyClosedDiagnostics/${diagnosticId}`;
+  f.db.values.get(`metricsOneDailyRuns/${f.childId}`).phase = 'closed';
+  f.db.values.set(path, { phase: 'open', source: f.childSource, runId: f.childId, runSource: f.childSource, logicalAsOf: asOf,
+   report: f.reports[1], reportDigest: f.child.reportDigest, createdAt: start, expiresAt: start + 3600_000 });
+  const diagnostic = new DailyClosedDiagnostic(f.db.native(), diagnosticId, f.childSource, f.store, () => start + 1000);
+  await expect(diagnostic.claim(f.reports[0])).rejects.toThrow(); await expect(diagnostic.claim(f.reports[1])).resolves.toBeDefined();
  });
  it('fixes all five windows for both environments and rejects unsupported reports', async () => {
   const f = fixture(); expect(f.reports).toHaveLength(10); expect(new Set(f.reports).size).toBe(10); await expect(f.store.requireOpen(f.reports[0])).resolves.toBeDefined(); await expect(f.store.requireOpen('/api/analytics/all?view=growth')).rejects.toThrow();

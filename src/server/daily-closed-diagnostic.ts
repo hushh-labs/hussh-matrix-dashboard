@@ -14,7 +14,7 @@ export class DailyClosedDiagnostic {
     const { run, id } = await this.daily.closedDescriptor(), ref = this.db.doc(`metricsDailyClosedDiagnostics/${this.id}`);
     const doc = (await ref.get()).data(), now = this.now();
     if (!doc || doc.phase !== 'open' || doc.source !== this.source || doc.runId !== id || doc.runSource !== run.source || doc.logicalAsOf !== run.logicalAsOf
-      || doc.report !== report || report !== run.reports[0] || doc.reportDigest !== run.reportDigest
+      || doc.report !== report || report !== run.reports[run.parentId ? 1 : 0] || doc.reportDigest !== run.reportDigest
       || !Number.isSafeInteger(doc.createdAt) || !Number.isSafeInteger(doc.expiresAt) || now < doc.createdAt || now >= doc.expiresAt
       || doc.expiresAt - doc.createdAt > 3600_000) throw fail();
     const attempt = ref.collection('attempts').doc('one');

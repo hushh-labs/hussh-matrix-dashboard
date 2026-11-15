@@ -2557,10 +2557,17 @@ async function queryOnePlatformCapture(projectId:string, queries:ReturnType<type
   // Planning failures and the normal metadata-attempt budget cannot decide a
   // different SQL branch when the sealed initial plan is later executed.
   if (currentDailyOneMeasurement() || currentDailyOneRefresh() || currentContinuation() || await (await legacyRestoration())?.isPreparing()) {
-    try { const result = await readPlatformCapture(await bigQueryClient(projectId), queries);
-      if (currentDailyOneRefresh() && result.error) noteLegacyQueryFailure();
+    try {
+      const daily = currentDailyOneRefresh();
+      const client = await bigQueryClient(projectId);
+      const proof = daily ? await readCustomerCohort() : null;
+      const remaining = proof ? Math.min(90_000, Math.floor(proof.expiresAt - Date.now() - 15_000)) : 0;
+      if (daily && (remaining < 1 || daily.signal?.aborted)) throw new Error('Daily aggregate deadline unavailable.');
+      const result = await readPlatformCapture(client, queries,
+        daily ? { guardedDeadlineMs: remaining, signal: daily.signal, onAbort: daily.cancel } : {});
+      if (daily && result.error) { daily.cancel?.(); noteLegacyQueryFailure(); }
       return result;
-    } catch { if (currentDailyOneRefresh()) noteLegacyQueryFailure(); return { rows: [], error: 'One platform capture is unavailable.' }; }
+    } catch { const daily = currentDailyOneRefresh(); if (daily) { daily.cancel?.(); noteLegacyQueryFailure(); } return { rows: [], error: 'One platform capture is unavailable.' }; }
   }
   const key = `${projectId}:platform-capture:${crypto.createHash('sha256').update(queries.combined || queries.baseline).digest('hex')}`;
   const baseline = async (capture:unknown):Promise<BigQueryFeedResult> => {
@@ -5978,22 +5985,27 @@ function registerAnalyticsRoutes(app: express.Express): void {
             const daily = await dailyOneRefresh();
             if (!daily) { res.status(409).json({ error: 'Daily One publication is not configured.' }); return; }
             await restoration.closedDescriptor();
+            const controller = new AbortController(), cancel = () => controller.abort();
+            req.once('aborted', cancel); res.once('close', cancel); if (req.aborted) cancel();
             const perform = async () => {
               await daily.verifyMeasuredCohort(await readCustomerCohort());
               const pinned = needsCustomers ? await readCustomerCohort() : null;
               const dailyKey = `${pinned?.cacheKey ?? ''}:${reportUrl}`;
               return withLegacyReportScope(dailyKey, () => withDailyOneRefresh(daily, reportUrl, async () => {
                 const value = await capture(handler, sourceRequest, true);
-                if (legacyReportFailed()) throw new Error('Daily source inputs are incomplete.');
+                if (controller.signal.aborted || legacyReportFailed()) throw new Error('Daily source inputs are incomplete.');
                 const jobs = [...currentDailyOneRefresh()!.jobs].map(([id, endedAt]) => ({ id, endedAt }));
                 const computedAt = await daily.save(reportUrl, value, jobs, pinned);
                 return { computedAt, jobs };
-              }));
+              }, controller.signal, cancel));
             };
-            const gate = cohort ?? await readCustomerCohort();
-            const result = await withCustomerCohort(gate.cacheKey, perform);
-            res.set('Cache-Control', 'no-store');
-            res.status(200).json({ state: 'staged', computedAt: result.computedAt, jobs: result.jobs.length }); return;
+            try {
+              const gate = cohort ?? await readCustomerCohort();
+              const result = await withCustomerCohort(gate.cacheKey, perform);
+              if (controller.signal.aborted) throw new Error('Daily request was interrupted.');
+              res.set('Cache-Control', 'no-store');
+              res.status(200).json({ state: 'staged', computedAt: result.computedAt, jobs: result.jobs.length }); return;
+            } finally { req.off('aborted', cancel); res.off('close', cancel); }
           }
           if (composeContinuation) {
             if (!continuationComposer || !continuation || !restoration || publishContinuation || measureClosed || composePublication || publishRestoration) {

@@ -34,12 +34,12 @@ export function validOnePayload(value: { status?: number; body?: any }, report: 
     && one?.activeUsers?.countingUnit === 'device' && one?.identifiedUsers?.countingUnit === 'account'
     && one?.identifiedUsers?.selectedRange?.startDate === start && one?.identifiedUsers?.selectedRange?.endDate === end;
 }
-const context = new AsyncLocalStorage<{ store: DailyOneRefresh; logicalAsOf: string; report: string; jobs: Map<string, number> }>();
+const context = new AsyncLocalStorage<{ store: DailyOneRefresh; logicalAsOf: string; report: string; jobs: Map<string, number>; signal?: AbortSignal; cancel?: () => void }>();
 export const currentDailyOneRefresh = () => context.getStore();
 /** Internal operator scope only. Ordinary page reads never enter this context. */
-export const withDailyOneRefresh = async <T>(store: DailyOneRefresh, report: string, load: () => Promise<T>) => {
+export const withDailyOneRefresh = async <T>(store: DailyOneRefresh, report: string, load: () => Promise<T>, signal?: AbortSignal, cancel?: () => void) => {
   const { run } = await store.requireOpen(report);
-  return context.run({ store, logicalAsOf: run.logicalAsOf, report, jobs: new Map() }, load);
+  return context.run({ store, logicalAsOf: run.logicalAsOf, report, jobs: new Map(), signal, cancel }, load);
 };
 
 export function dailyOneManifest(dataDate: string): string[] {
@@ -156,7 +156,7 @@ export class DailyOneRefresh {
   async perJobCeiling() { const { run } = await this.permit(); if (!await this.isPreparing()) throw fail(); return run.maxPerJobBytes; }
   async requireOpen(report: string) {
     const value = await this.permit(), now = this.now();
-    if (value.run.phase !== 'open' || now < value.run.createdAt || now >= value.run.expiresAt || now >= value.measurementExpiresAt || new Date(now).toISOString().slice(0, 10) !== value.run.day || !value.run.reports.includes(report)
+    if (currentDailyOneRefresh()?.signal?.aborted || value.run.phase !== 'open' || now < value.run.createdAt || now >= value.run.expiresAt || now >= value.measurementExpiresAt || new Date(now).toISOString().slice(0, 10) !== value.run.day || !value.run.reports.includes(report)
       || (value.run.parentId && report === value.run.reports[0])) throw fail();
     return value;
   }
@@ -214,6 +214,7 @@ export class DailyOneRefresh {
       if (grant.id !== `metrics_${this.id}_${grant.planHash}` || (run.parentId && grant.report === run.reports[0])) throw fail();
       const dayRef = this.db.doc(`metricsOneDailyBudgets/${run.day}`), reservation = this.ref().collection('reservations').doc(grant.planHash);
       const [daySnap, reservationSnap] = await Promise.all([tx.get(dayRef), tx.get(reservation)]), day = daySnap.data();
+      if (currentDailyOneRefresh()?.signal?.aborted) throw fail();
       if (reservationSnap.exists) { const old = reservationSnap.data(); if (old.jobId !== grant.id || old.bytes !== grant.bytes || old.scopeHash !== scopeHash || old.reportHash !== reportHash || !['reserved','started'].includes(old.state)) throw fail(); return; }
       if (!daySnap.exists || day?.day !== run.day || day.policyGeneration !== run.policyGeneration || !Number.isSafeInteger(day.reservedBytes) || day.reservedBytes < 0
         || !Number.isSafeInteger(day.reservedJobs) || day.reservedJobs < 0 || day.reservedBytes !== (run.parentReservedBytes ?? 0) + run.reservedBytes
@@ -228,7 +229,7 @@ export class DailyOneRefresh {
   async save(report: string, value: { status: number; body: unknown }, jobs: Array<{ id: string; endedAt: number }>, cohort: CustomerCohort | null) {
     const active = currentDailyOneRefresh(), scope = currentLegacyReportKey();
     const { run } = await this.requireOpen(report), computedAt = this.now(), json = JSON.stringify(value);
-    if (!active || active.store !== this || active.report !== report || active.jobs.size !== jobs.length
+    if (!active || active.signal?.aborted || active.store !== this || active.report !== report || active.jobs.size !== jobs.length
       || jobs.some(job => active.jobs.get(job.id) !== job.endedAt) || scope !== `${cohort?.cacheKey ?? ''}:${report}`) throw fail();
     const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
     const witness = cohort ? cohortSnapshotWitness(cohort) : null;
@@ -239,6 +240,9 @@ export class DailyOneRefresh {
         || !Number.isSafeInteger(job.endedAt) || job.endedAt < run.createdAt || job.endedAt > computedAt + 10_000)) throw fail();
     const reportHash = hash(report), target = this.ref().collection('snapshots').doc(reportHash);
     if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
+    if (active.signal?.aborted) throw fail();
+    // A Firestore commit already dispatched may complete after a disconnect.
+    // Reads still require a verified payload, current cohort and all-ten activation.
     await this.db.runTransaction(async tx => {
       const { run: live } = await this.checked(ref => tx.get(ref)), now = this.now();
       if (live.phase !== 'open' || now < live.createdAt || now >= live.expiresAt || new Date(now).toISOString().slice(0, 10) !== live.day || !live.reports.includes(report)
@@ -246,6 +250,7 @@ export class DailyOneRefresh {
       if (cohort) requireFreshCohort(cohort);
       const existing = await tx.get(target);
       const reservations = await Promise.all(jobs.map(job => tx.get(this.ref().collection('reservations').doc(job.id.slice(-64)))));
+      if (active.signal?.aborted) throw fail();
       if (existing.exists || reservations.some((snapshot, index) => !snapshot.exists || snapshot.data()?.jobId !== jobs[index].id || snapshot.data()?.state !== 'started' || snapshot.data()?.scopeHash !== hash(scope!) || snapshot.data()?.reportHash !== reportHash || !Number.isSafeInteger(snapshot.data()?.startedAt)
         || snapshot.data()?.startedAt > jobs[index].endedAt)) throw fail();
       tx.create(target, { schema: 1, state: 'pending', source: this.source, measurementId: live.measurementId, measurementSource: live.measurementSource,
@@ -254,8 +259,10 @@ export class DailyOneRefresh {
         ...(live.parentId ? { parentId: live.parentId, parentSource: live.parentSource } : {}), ...(witness ? { witness } : {}) });
     });
     if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
+    if (active.signal?.aborted) throw fail();
     await this.db.runTransaction(async tx => {
       const { run: live } = await this.checked(ref => tx.get(ref)), snapshot = await tx.get(target), now = this.now();
+      if (active.signal?.aborted) throw fail();
       if (live.phase !== 'open' || now < live.createdAt || now >= live.expiresAt || new Date(now).toISOString().slice(0, 10) !== live.day
         || !snapshot.exists || snapshot.data()?.state !== 'pending' || snapshot.data()?.computedAt !== computedAt) throw fail();
       if (cohort) requireFreshCohort(cohort);
@@ -348,6 +355,7 @@ export class DailyOneRefresh {
       if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !grant.report || !run.reports.includes(grant.report)) throw fail();
       if (grant.id !== `metrics_${this.id}_${grant.planHash}` || (run.parentId && grant.report === run.reports[0])) throw fail();
       const ref = this.ref().collection('reservations').doc(grant.planHash), snapshot = await tx.get(ref), row = snapshot.data();
+      if (currentDailyOneRefresh()?.signal?.aborted) throw fail();
       if (!snapshot.exists || row.jobId !== grant.id || row.bytes !== grant.bytes || row.scopeHash !== hash(scope) || row.reportHash !== hash(grant.report!) || !['reserved','started'].includes(row.state)) throw fail();
       if (row.state === 'started') return false;
       tx.update(ref, { state: 'started', startedAt: now }); return true;
