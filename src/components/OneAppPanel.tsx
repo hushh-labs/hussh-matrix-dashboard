@@ -949,7 +949,7 @@ function FunnelDropoffAgentDiagnostic({
                       title="View aggregate device definition"
                     >
                       <Users className="h-3 w-3" />
-                      <span>{formatNumber(cap.devices ?? 0)} devices</span>
+                      <span>{cap.devices === null ? 'Device count unavailable' : `${formatNumber(cap.devices)} devices`}</span>
                       <ChevronDown className={cn('h-3 w-3 transition-transform', expandedCapKey === cap.key && 'rotate-180')} />
                     </button>
                   ) : (
