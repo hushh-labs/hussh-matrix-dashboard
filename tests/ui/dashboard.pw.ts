@@ -308,10 +308,11 @@ test('UAT Location deep links and agent drilldowns keep the selected source', as
   await page.getByRole('button', { name: 'Features', exact: true }).click();
   await page.locator('.feature-directory > button').filter({ hasText: 'Memory' }).click();
   await expect(page.getByRole('tab', { name: 'UAT / Test builds', exact: true })).toHaveAttribute('aria-selected', 'true');
-  const beforeCachedSwitch = urls.length;
+  const revalidated = page.waitForRequest(request => new URL(request.url()).pathname === '/api/analytics/all'
+    && new URL(request.url()).searchParams.get('environment') === 'production');
   await page.getByRole('tab', { name: 'Production', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Production', exact: true })).toHaveAttribute('aria-selected', 'true');
-  expect(urls.length).toBe(beforeCachedSwitch);
+  expect((await revalidated).headers()['x-metrics-passive-read']).toBe('1');
 });
 
 test('overview stays focused and One reports reveal one subject at a time', async ({ page }) => {
