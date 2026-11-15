@@ -49,3 +49,12 @@ it('rejects wrong manifests, missing jobs and oversized publications', async () 
   await expect(f.composer.save(report, `:${report}`, { status: 200, body: { x: 'a'.repeat(800000) } },
     [{ id: `metrics_${f.producer.continuationId}_${'f'.repeat(64)}`, endedAt: now - 1 }])).rejects.toThrow();
 });
+it('accepts the measured overview-sized publication while keeping a strict 800 KB ceiling', async () => {
+  const f = fixture(), job = { id: `metrics_${f.producer.continuationId}_${'f'.repeat(64)}`, endedAt: now - 1 };
+  const value = { status: 200, body: { aggregate: 'x'.repeat(735_591 - 38) } };
+  expect(Buffer.byteLength(JSON.stringify(value))).toBeLessThanOrEqual(735_591);
+  await f.composer.save(report, `:${report}`, value, [job]); f.doc.phase = 'closed';
+  expect((await f.composer.read(report, null))?.value).toEqual(value);
+  const other = fixture();
+  await expect(other.composer.save(report, `:${report}`, { status: 200, body: { aggregate: 'x'.repeat(800_001) } }, [job])).rejects.toThrow();
+});
