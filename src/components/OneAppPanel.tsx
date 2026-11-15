@@ -1164,7 +1164,7 @@ function Health({ metrics }: { metrics: BreakdownMetric[] }) {
     return (
       <div className={cn(dashboardPanel, 'p-6 text-center')}>
         <p className="text-sm font-semibold text-muted">
-          No Cloud Run monitoring data for this window.
+          Cloud Run monitoring is unavailable for this window.
         </p>
       </div>
     );
@@ -1235,6 +1235,7 @@ export function OneAppPanel({
   environment: requestedEnvironment,
   onEnvironmentChange,
   onHealthRequested,
+  retained = false,
 }: {
   loading?: boolean;
   one: OneAppSummary | null;
@@ -1249,6 +1250,7 @@ export function OneAppPanel({
   environment?: 'production' | 'uat';
   onEnvironmentChange?: (environment: 'production' | 'uat') => void;
   onHealthRequested?: (requested: boolean) => void;
+  retained?: boolean;
   /**
    * Owned by Dashboard so the range state lives with every other product's,
    * and rendered here so it sits with the numbers it governs.
@@ -1467,13 +1469,14 @@ export function OneAppPanel({
       </ReportDetails>
       </>}
       {view === 'health' && <>
-      <AndroidAnalyticsPanel one={activeData} environment={environment} />
+      <AndroidAnalyticsPanel one={activeData} environment={environment} retained={retained} />
       <Block
         kicker="App performance"
         title="Is the app up?"
         hint="Availability and response times for the live web service."
       >
-        <Health metrics={healthMetrics} />
+        {retained && <p className="mb-3 text-sm text-muted" role="status">The saved One report does not include Cloud Run monitoring. Live monitoring is unavailable here.</p>}
+        <Health metrics={retained ? [] : healthMetrics} />
       </Block>
 
       </>}

@@ -126,6 +126,7 @@ function WindowHeader({ window }: { window: GrowthCompareWindow }) {
       {window.error && (
         <p className="mt-2 text-xs font-semibold leading-5 text-warning">{window.error}</p>
       )}
+      {window.computedAt && Number.isFinite(Date.parse(window.computedAt)) && <p className="mt-2 text-xs text-muted">Reconstructed {new Date(window.computedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC</p>}
     </div>
   );
 }
@@ -143,11 +144,15 @@ export function ComparePanel({
   loading,
   error,
   onRetry,
+  retained = false,
+  stale = false,
 }: {
   compare: GrowthCompare | null;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  retained?: boolean;
+  stale?: boolean;
 }) {
   const windows = compare?.windows ?? [];
 
@@ -177,7 +182,7 @@ export function ComparePanel({
           <Empty>
             <span className="inline-flex items-center gap-2 font-semibold text-ink">
               <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
-              Reading three windows from BigQuery
+              {retained ? 'Loading retained comparisons' : 'Reading three windows'}
             </span>
             <p className="mt-2">Usually under ten seconds.</p>
           </Empty>
@@ -231,12 +236,14 @@ export function ComparePanel({
       {compare && (
         <section className={dashboardBand}>
           <p className="max-w-3xl text-xs font-semibold leading-5 text-muted">
-            People are counted as devices, not individuals. &ldquo;All time&rdquo; starts where the
-            One app GA4 export does; billing begins a month later, so the all-time spend column
-            covers slightly less than the audience columns.
-            {compare.fetchedAt
-              ? ` Read ${new Date(compare.fetchedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC.`
+            People are counted as devices, not individuals. {compare.publicationAsOf
+              ? 'All-time totals are unavailable; no estimate is inferred.'
+              : '“All time” starts where the One app GA4 export does; billing begins a month later, so the all-time spend column covers slightly less than the audience columns.'}
+            {compare.publicationAsOf && Number.isFinite(Date.parse(compare.publicationAsOf))
+              ? ` Retained reporting anchor ${new Date(compare.publicationAsOf).toISOString().slice(0, 16).replace('T', ' ')} UTC.`
+              : compare.fetchedAt ? ` Read ${new Date(compare.fetchedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC.`
               : ''}
+            {stale ? ' Retained data is more than 24 hours old.' : ''}
           </p>
         </section>
       )}

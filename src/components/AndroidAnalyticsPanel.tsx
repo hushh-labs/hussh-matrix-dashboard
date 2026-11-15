@@ -5,11 +5,11 @@ import { ReportDetails } from './ReportControls';
 
 const count = (value: number | null | undefined) => typeof value === 'number' ? value.toLocaleString('en-US') : 'Not available';
 
-export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one: OneAppSummary; environment?: 'production'|'uat' }) {
+export function AndroidAnalyticsPanel({ one, environment = 'production', retained = false }: { one: OneAppSummary; environment?: 'production'|'uat'; retained?: boolean }) {
   const data = one.androidCapture;
   const startDate = one.range?.startDate;
   const endDate = one.range?.endDate;
-  const resource = useMetricsResource<any>(startDate && endDate && environment === 'production' ? '/api/analytics/one/android?' + new URLSearchParams({ start_date: startDate, end_date: endDate }) : null, {});
+  const resource = useMetricsResource<any>(!retained && startDate && endDate && environment === 'production' ? '/api/analytics/one/android?' + new URLSearchParams({ start_date: startDate, end_date: endDate }) : null, {});
   const { data: report, loading, error } = resource;
   return <section className="mb-5 rounded-2xl border border-stroke bg-surface p-5" aria-label="Android app analytics">
     <h3 className="text-lg font-semibold">Android app analytics</h3>
@@ -36,8 +36,10 @@ export function AndroidAnalyticsPanel({ one, environment = 'production' }: { one
       </>}
     <p className="mt-3 text-xs leading-5 text-muted">Screen activity and feature use below require the selected backend environment. Automatic first_open events without backend provenance cannot establish environment-specific installs or retention. Store downloads are separate; missing historical raw events are not reconstructed.</p>
     </ReportDetails>
-    <MetricsUpdateStatus period={startDate && endDate ? `${startDate} to ${endDate}` : undefined} updatedAt={resource.updatedAt} loading={loading} refreshing={resource.refreshing} error={error} />
-    {environment==='production' ? <AndroidProviderReport report={report} loading={loading} error={error} /> : <p className="mt-4 text-xs text-muted">Play Store and Android history reports are available in Main analytics.</p>}
+    {retained ? <p className="mt-4 text-sm text-muted" role="status">Android provider history and Play reports are unavailable in this saved report.</p> : <>
+      <MetricsUpdateStatus period={startDate && endDate ? `${startDate} to ${endDate}` : undefined} updatedAt={resource.updatedAt} loading={loading} refreshing={resource.refreshing} error={error} />
+      {environment==='production' ? <AndroidProviderReport report={report} loading={loading} error={error} /> : <p className="mt-4 text-xs text-muted">Play Store and Android history reports are available in Main analytics.</p>}
+    </>}
   </section>;
 }
 

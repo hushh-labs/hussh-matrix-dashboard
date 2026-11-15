@@ -1240,12 +1240,14 @@ export interface GrowthCompareWindow {
   range: { startDate: string; endDate: string; days: number };
   data: GrowthSummary | null;
   error: string | null;
+  computedAt?: string;
 }
 
 export interface GrowthCompare {
   windows: GrowthCompareWindow[];
   error: string | null;
   fetchedAt: string;
+  publicationAsOf?: string;
 }
 
 // ---------------------------------------------------------------------------

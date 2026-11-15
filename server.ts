@@ -5955,6 +5955,37 @@ function registerAnalyticsRoutes(app: express.Express): void {
             res.set('X-Metrics-Observed-At', new Date().toISOString());
             res.status(composed.value.status).json(composed.value.body); return;
           }
+          // Compare only exact, already-published whole windows. The witness is
+          // checked inside the server and never returned to the browser.
+          if (req.path === '/api/analytics/growth/compare' && !publishRestoration && continuation && restoration && !await restoration.isPreparing()) {
+            if (!cohort) { res.status(503).json({ error: 'Retained comparison is unavailable.' }); return; }
+            const producer = await continuation.closedDescriptor(), end = parseUtcDate(producer.asOf.slice(0, 10));
+            if (!end) throw new Error('Invalid retained reporting date.');
+            const ranges = [30, 90].map(days => buildDateRange(addUtcDays(end, -(days - 1)), end));
+            const keys = ranges.map(range => canonicalAnalyticsKey(`/api/analytics/all?view=growth&one_start_date=${range.startDate}&one_end_date=${range.endDate}`));
+            const [short, long] = await Promise.all(keys.map(key => continuation.readForComparison(key, cohort)));
+            const first = short?.witness, second = long?.witness;
+            if (!short || !long || !first || !second || first.policyRevision !== second.policyRevision || first.rowsHash !== second.rowsHash
+              || first.asOf !== second.asOf || short.at !== long.at || new Date(short.at).toISOString() !== producer.asOf) {
+              res.status(503).json({ error: 'Retained comparison is unavailable.' }); return;
+            }
+            const publications = [short, long], windows = publications.map((entry, index) => {
+              const body = asRecord(entry.value.body), growth = asRecord(asRecord(body?.growth)?.data), range = asRecord(growth?.range), expected = ranges[index];
+              if (!growth || range?.startDate !== expected.startDate || range.endDate !== expected.endDate || range.days !== expected.days) return null;
+              return { key: index ? '90d' : '30d', label: index ? 'Last 90 days' : 'Last 30 days',
+                range: { startDate: expected.startDate, endDate: expected.endDate, days: expected.days }, data: growth,
+                error: 'Other source freshness is not verified.', computedAt: new Date(entry.computedAt).toISOString() };
+            });
+            if (windows.some(window => !window)) { res.status(503).json({ error: 'Retained comparison is unavailable.' }); return; }
+            await requireCurrentCustomerCohort(cohort.cacheKey);
+            const allStart = parseUtcDate(ORG_ALL_TIME_START_DATE) ?? parseUtcDate('2026-05-01')!;
+            if (allStart > end) { res.status(503).json({ error: 'Retained comparison is unavailable.' }); return; }
+            const allRange = buildDateRange(allStart, end);
+            res.set('X-Metrics-Cache', 'RESTORED'); res.set('X-Metrics-Updated-At', producer.asOf); res.set('X-Metrics-Cohort-As-Of', first.asOf);
+            res.set('X-Metrics-Observed-At', new Date().toISOString());
+            res.json(sanitizePublicPayload({ windows: [...windows, { key: 'all', label: 'All time', range: { startDate: allRange.startDate, endDate: allRange.endDate, days: allRange.days },
+              data: null, error: 'All-time comparison is unavailable.' }], error: null, fetchedAt: new Date().toISOString(), publicationAsOf: producer.asOf })); return;
+          }
           if (await restoration?.expandedPreparing() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Historical recovery requires the trusted release probe.' }); return;
           }
