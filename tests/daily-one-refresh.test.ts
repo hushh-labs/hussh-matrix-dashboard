@@ -5,6 +5,7 @@ import type { Firestore } from '@google-cloud/firestore';
 import { DailyOneRefresh, dailyOneManifest, dailyOnePolicyGeneration, DAILY_ONE_LIMITS, withDailyOneRefresh, currentDailyOneRefresh } from '../src/server/daily-one-refresh';
 import { DailyOneMeasurement, withDailyOneMeasurement } from '../src/server/daily-one-measurement';
 import { restorationReportDigest, withLegacyReportScope } from '../src/server/legacy-restoration';
+import { verifyDailyOneCohortPreflight } from '../src/server/daily-one-cohort-preflight';
 class Database {
  values = new Map<string, any>(); private tail = Promise.resolve();
  doc(path: string): any { return { get: async () => this.snapshot(path), collection: (name: string) => ({ doc: (id: string) => this.doc(`${path}/${name}/${id}`), get: async () => { const prefix = `${path}/${name}/`; const docs = [...this.values.keys()].filter(key => key.startsWith(prefix) && !key.slice(prefix.length).includes('/')).map(key => this.snapshot(key)); return { docs, size: docs.length }; } }), path }; }
@@ -34,6 +35,28 @@ function fixture() {
  const store = new DailyOneRefresh(db.native(), id, source, () => now), scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${'b'.repeat(64)}:${reports[0]}`, fn);
  return { db, run, policy, generation, reports, store, scope, time: (value: number) => { now = value; } };
 }
+describe('private no-query cohort preflight', () => {
+ it('checks the sealed report scopes twice and fails closed on changed membership, missing evidence and expiry', async () => {
+  const f = fixture(), sha = (s: string) => createHash('sha256').update(s).digest('hex');
+  const preflight = 'preflight_20261115_4444444444444444', measurement = f.run.measurementId;
+  const samples = Object.fromEntries(f.reports.map((report, i) => [sha(report), sha(`sample-${i}`)]));
+  const doc = { phase: 'open', source, day, createdAt: start, expiresAt: start + 1000, runId: id, measurementId: measurement,
+   measurementSource: source, measurementDigest: f.run.measurementDigest, logicalAsOf: asOf, reportDigest: f.run.reportDigest,
+   scopes: f.run.measurementScopes, scopeDigest: f.run.scopeDigest, samples };
+  f.db.values.set(`metricsOneDailyPreflights/${preflight}`, doc);
+  Object.assign(f.db.values.get(`metricsOneDailyMeasurements/${measurement}`), { attempted: 10 });
+  Object.assign(f.db.values.get(`metricsOneDailyMeasurements/${id}`), { measuredQueries: 10 });
+  for (const report of f.reports) { const key = sha(report), planHash = samples[key]; f.db.values.set(`metricsOneDailyMeasurements/${measurement}/attempts/${planHash}`, { state: 'measured', planHash, reportHash: key, scopeHash: doc.scopes[key] }); }
+  const cohort = { policyRevision: 'a'.repeat(64), asOf, expiresAt: Date.now() + 60000, cacheKey: 'b'.repeat(64), rows: [] };
+  const verify = (load = async () => cohort, now = () => start) => verifyDailyOneCohortPreflight(f.db.native(), preflight, source, load, now);
+  expect(await verify()).toBe(true);
+  let calls = 0; await expect(verify(async () => ({ ...cohort, cacheKey: ++calls === 1 ? cohort.cacheKey : 'c'.repeat(64) }))).rejects.toThrow();
+  await expect(verify(async () => ({ ...cohort, cacheKey: 'c'.repeat(64) }))).resolves.toBe(false);
+  await expect(verify(undefined, () => start + 1000)).rejects.toThrow();
+  f.db.values.delete(`metricsOneDailyMeasurements/${measurement}/attempts/${Object.values(samples)[0]}`);
+  await expect(verify()).rejects.toThrow();
+ });
+});
 describe('finite daily One refresh admission', () => {
  it('fixes all five windows for both environments and rejects unsupported reports', async () => {
   const f = fixture(); expect(f.reports).toHaveLength(10); expect(new Set(f.reports).size).toBe(10); await expect(f.store.requireOpen(f.reports[0])).resolves.toBeDefined(); await expect(f.store.requireOpen('/api/analytics/all?view=growth')).rejects.toThrow();
