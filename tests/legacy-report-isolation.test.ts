@@ -6,13 +6,16 @@ import { noteLegacyQueryFailure } from '../src/server/legacy-restoration';
 
 const state = vi.hoisted(() => ({ query: vi.fn(), historyFails: true, dailyFails: false, agentsFail: false,
   cohortKey: 'b'.repeat(64), retained: undefined as undefined | { key: string; at: number; value: { status: number; body: unknown } },
-  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), composer: null as any, continuation: null as any, continuationComposer: null as any, previousAsOf: null as string | null, currentAsOf: null as string | null, currentCohortFails: false, cohortPending: false, expanded: false, phase: 'none' as 'none' | 'planning' | 'open' | 'closed' }));
+  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), composer: null as any, continuation: null as any, continuationComposer: null as any, daily: null as any, previousAsOf: null as string | null, currentAsOf: null as string | null, currentCohortFails: false, cohortPending: false, expanded: false, phase: 'none' as 'none' | 'planning' | 'open' | 'closed' }));
 vi.mock('../src/server/legacy-restoration', async original => ({
   ...await original<typeof import('../src/server/legacy-restoration')>(),
   legacyPreviousRestoration: async () => ({ readSnapshot: state.priorSnapshot, publicationAsOf: async () => state.previousAsOf }),
   legacyRestoration: async () => state.retained || state.phase !== 'none' ? {
     readSnapshot: state.readSnapshot, readCompatibleSnapshot: state.compatibleSnapshot, saveSnapshot: state.saveSnapshot, publicationAsOf: async () => state.currentAsOf,
-    isActive: async () => state.phase === 'open', isPreparing: async () => state.phase === 'open' || state.phase === 'planning', expandedPreparing: async () => state.expanded } : null,
+    closedDescriptor: async () => ({ asOf: '2026-11-14T21:34:55.606Z' }), isActive: async () => state.phase === 'open', isPreparing: async () => state.phase === 'open' || state.phase === 'planning', expandedPreparing: async () => state.expanded } : null,
+}));
+vi.mock('../src/server/daily-one-refresh', async original => ({
+  ...await original<typeof import('../src/server/daily-one-refresh')>(), dailyOneRefresh: async () => state.daily,
 }));
 vi.mock('../src/server/closed-composer', () => ({ closedComposer: async () => state.composer }));
 vi.mock('../src/server/closed-continuation-composer', () => ({ closedContinuationComposer: async () => state.continuationComposer }));
@@ -42,7 +45,7 @@ vi.mock('../src/server/one-customer-cohort', async original => {
 const secret = 'legacy-report-isolation-test-session-secret-long-enough';
 const cookie = (email = 'metrics-qa@hushh.ai') => `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email, exp: Math.floor(Date.now() / 1000) + 3600 }), secret))}`;
 const app = () => createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; state.composer = null; state.continuation = null; state.continuationComposer = null; state.previousAsOf = null; state.currentAsOf = null; state.currentCohortFails = false; state.cohortPending = false; });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; state.composer = null; state.continuation = null; state.continuationComposer = null; state.daily = null; state.previousAsOf = null; state.currentAsOf = null; state.currentCohortFails = false; state.cohortPending = false; });
 
 function source() {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('No external calls in route verification'); }));
@@ -94,6 +97,14 @@ describe('legacy report source isolation', () => {
     const mismatch = await readPlgAnchor(); expect(mismatch.body.publicationAsOf).toBeNull();
     state.currentAsOf = null; const priorOnly = await readAuth(); expect(priorOnly.body.publicationAsOf).toBe(state.previousAsOf); expect((await readPlgAnchor()).body.publicationAsOf).toBeNull();
   });
+  it('offers a One-only anchor only after a fresh cohort check', async () => {
+    state.daily = { publicationAsOf: vi.fn().mockResolvedValue('2026-11-15T07:00:00.000Z') };
+    const endpoint = () => request(app()).get('/api/auth/one-publication').set('Cookie', cookie());
+    const result = await endpoint(); expect(result.status).toBe(200); expect(result.body.publicationAsOf).toBe('2026-11-15T07:00:00.000Z');
+    expect(result.headers['cache-control']).toBe('no-store'); expect(JSON.stringify(result.body)).not.toContain(state.cohortKey);
+    state.currentCohortFails = true; expect((await endpoint()).body.publicationAsOf).toBeNull();
+    expect((await request(app()).get('/api/auth/one-publication')).status).toBe(401); expect(state.query).not.toHaveBeenCalled();
+  });
   it('compares only matching retained growth windows without exposing cohort proof or querying', async () => {
     source(); state.phase = 'closed'; const asOf = '2026-11-14T21:34:55.606Z';
     const witness = { policyRevision: 'a'.repeat(64), rowsHash: 'f'.repeat(64), asOf: '2026-11-14T21:53:15.758Z' };
@@ -122,6 +133,39 @@ describe('legacy report source isolation', () => {
     expect((await requestCompare()).status).toBe(503); expect(state.query).not.toHaveBeenCalled();
     state.continuation.readForComparison = original; state.currentCohortFails = true;
     expect((await requestCompare()).status).toBe(503); expect(state.query).not.toHaveBeenCalled();
+  });
+  it('keeps daily publication private and refuses incomplete source results', async () => {
+    source(); state.phase = 'closed'; const save = vi.fn();
+    state.daily = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }), save };
+    const url = '/api/analytics/all?view=one&environment=uat&one_start_date=2026-11-14&one_end_date=2026-11-14';
+    const denied = await request(app()).get(url).set('Cookie', cookie()).set('X-Metrics-Daily-One-Publish', '1');
+    expect(denied.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
+    const deniedMeasure = await request(app()).get(url).set('Cookie', cookie()).set('X-Metrics-Daily-One-Measure', '1');
+    expect(deniedMeasure.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
+    const deniedSeal = await request(app()).get(url).set('Cookie', cookie()).set('X-Metrics-Daily-One-Seal', '1');
+    expect(deniedSeal.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
+    const deniedActivate = await request(app()).get(url).set('Cookie', cookie()).set('X-Metrics-Daily-One-Activate', '1');
+    expect(deniedActivate.status).toBe(403); expect(state.query).not.toHaveBeenCalled();
+    state.query.mockImplementation(async () => { throw new Error('private source details'); });
+    const incomplete = await request(app()).get(url).set('Cookie', cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Daily-One-Publish', '1');
+    expect(incomplete.status).toBe(503); expect(save).not.toHaveBeenCalled();
+    expect(JSON.stringify(incomplete.body)).not.toContain('private source details');
+  });
+  it('serves a closed daily One publication without querying and falls back to retained data on a miss', async () => {
+    source(); state.phase = 'closed'; const asOf = '2026-11-14T23:59:59.999Z';
+    const read = vi.fn().mockResolvedValue({ value: { status: 200, body: { one: { data: { marker: 'daily' } } } }, asOf,
+      computedAt: Date.parse('2026-11-15T07:10:00Z'), warehouseFrom: Date.parse('2026-11-15T07:08:00Z'), warehouseThrough: Date.parse('2026-11-15T07:09:00Z') });
+    state.daily = { read }; state.readSnapshot.mockResolvedValue({ value: { status: 200, body: { marker: 'older' } }, at: Date.parse('2026-11-14T21:00:00Z') });
+    const url = '/api/analytics/all?view=one&environment=uat&one_start_date=2026-11-14&one_end_date=2026-11-14';
+    const result = await request(app()).get(url).set('Cookie', cookie());
+    expect(result.status).toBe(200); expect(result.body.one.data.marker).toBe('daily');
+    expect(result.headers['x-metrics-source-coverage']).toBe('intraday-or-unknown'); expect(result.headers['x-metrics-updated-at']).toBe(asOf);
+    expect(state.query).not.toHaveBeenCalled();
+    state.currentCohortFails = true; const revoked = await request(app()).get(url).set('Cookie', cookie());
+    expect(revoked.status).toBe(503); expect(JSON.stringify(revoked.body)).not.toContain('daily'); state.currentCohortFails = false;
+    read.mockResolvedValue(null); const fallback = await request(app()).get(url).set('Cookie', cookie());
+    expect(fallback.body.marker).toBe('older'); expect(state.query).not.toHaveBeenCalled();
+    expect((await request(app()).get(url)).status).toBe(401);
   });
   it('rejects closed-continuation composition from ordinary viewers before source work', async () => {
     source(); state.phase = 'closed';

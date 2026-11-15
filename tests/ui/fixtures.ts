@@ -166,6 +166,7 @@ export async function mockDashboard(page: Page) {
     const path = new URL(route.request().url()).pathname;
     let data: unknown;
     if (path === '/api/auth/me') data = { authenticated: true, user: { email: 'qa@example.invalid', name: 'QA reviewer', domainAuthorized: true } };
+    else if (path === '/api/auth/one-publication') data = { publicationAsOf: null };
     else if (path === '/api/analytics/founder') data = founder;
     else if (path === '/api/analytics/one/referrals') data = referralFixture(route.request().url());
     else if (path === '/api/analytics/all') data = allAnalytics;

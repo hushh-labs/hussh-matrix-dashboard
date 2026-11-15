@@ -1187,6 +1187,24 @@ export default function Dashboard() {
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
   // Open a bounded current-day report; larger periods require explicit choice.
   const [oneRange, setOneRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
+  const [oneAppRange, setOneAppRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
+  const [onePublicationAsOf, setOnePublicationAsOf] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true; setOnePublicationAsOf(null);
+    void fetch('/api/auth/one-publication', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(35_000) })
+      .then(response => response.ok ? response.json() : null).then(data => {
+        const asOf = data?.publicationAsOf;
+        if (!active || typeof asOf !== 'string' || !Number.isFinite(Date.parse(asOf))) return;
+        const prior = user?.publicationAsOf;
+        if (prior && Date.parse(asOf) <= Date.parse(prior)) return;
+        setOnePublicationAsOf(asOf);
+        const oldDefault = rangeForPreset(1, prior ? new Date(prior) : undefined);
+        setOneAppRange(previous => previous.startDate === oldDefault.startDate && previous.endDate === oldDefault.endDate
+          ? rangeForPreset(1, new Date(asOf)) : previous);
+      }).catch(() => {});
+    return () => { active = false; };
+  }, [user?.email, user?.publicationAsOf]);
+  const onePresetRange = (days: DatePreset) => rangeForPreset(days, onePublicationAsOf ? new Date(onePublicationAsOf) : user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined);
   const [oneEnvironment, setOneEnvironment] = useState<'production' | 'uat'>(locationRoute?.environment ?? 'production');
   const [oneHealthRequested, setOneHealthRequested] = useState(false);
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
@@ -1195,7 +1213,8 @@ export default function Dashboard() {
   const [metricDetail, setMetricDetail] = useState<MetricDetailState | null>(null);
   const scope = ['one', 'growth', 'apps', 'overview', 'platforms'].includes(activeTab) ? activeTab as 'one' | 'growth' | 'apps' | 'overview' | 'platforms' : null;
   const overviewScope = scope === 'overview' || scope === 'platforms';
-  const rangeOptions = (range = oneRange) => ({ view: scope ?? 'one', oneEnvironment: locationRoute?.environment ?? oneEnvironment, includeOneHealth: oneHealthRequested && !locationRoute && !user?.publicationAsOf,
+  const selectedRange = scope === 'one' ? oneAppRange : oneRange;
+  const rangeOptions = (range = selectedRange) => ({ view: scope ?? 'one', oneEnvironment: locationRoute?.environment ?? oneEnvironment, includeOneHealth: oneHealthRequested && !locationRoute && !user?.publicationAsOf,
     ...(overviewScope ? { kaiStartDate: kaiRange.startDate, kaiEndDate: kaiRange.endDate, hushhAiStartDate: hushhAiRange.startDate, hushhAiEndDate: hushhAiRange.endDate }
       : { oneStartDate: range.startDate, oneEndDate: range.endDate }) });
   const resource = useMetricsResource<AllAnalyticsResponse>(scope ? buildAnalyticsUrl(rangeOptions()) : null, {
@@ -1733,7 +1752,7 @@ export default function Dashboard() {
         else if (activeTab === 'compare') loadCompare();
         else loadData();
       }}>
-        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${oneRange.startDate} to ${oneRange.endDate}`} updatedAt={resource.updatedAt} cohortAsOf={resource.cohortAsOf} computedAt={resource.computedAt} warehouseFrom={resource.warehouseFrom} warehouseThrough={resource.warehouseThrough} stale={resource.stale} loading={loading} refreshing={isRefreshing} error={usingMock} />}
+        {scope && <MetricsUpdateStatus period={scope === 'overview' || scope === 'platforms' ? `One web ${kaiRange.startDate} to ${kaiRange.endDate} · hushh.ai ${hushhAiRange.startDate} to ${hushhAiRange.endDate}` : `${selectedRange.startDate} to ${selectedRange.endDate}`} updatedAt={resource.updatedAt} cohortAsOf={resource.cohortAsOf} computedAt={resource.computedAt} warehouseFrom={resource.warehouseFrom} warehouseThrough={resource.warehouseThrough} sourceCoverage={resource.sourceCoverage} stale={resource.stale} loading={loading} refreshing={isRefreshing} error={usingMock} />}
         <Suspense fallback={<MetricsSkeleton label="Opening this metrics section" />} >
         {activeTab === 'briefing' ? (
           <FounderBriefingPanel publicationAsOf={user?.publicationAsOf} refreshKey={briefRefreshKey} onExploreOne={() => changeDashboardTab('one')} />
@@ -1780,17 +1799,17 @@ export default function Dashboard() {
             registrations={data?.oneRegistrations ?? null}
             healthMetrics={data?.oneHealthMetrics ?? []}
             retained={Boolean(user?.publicationAsOf)}
-            rangeLabel={`${oneRange.startDate} to ${oneRange.endDate}`}
+            rangeLabel={`${oneAppRange.startDate} to ${oneAppRange.endDate}`}
             locationRoute={locationRoute}
             onOpenLocation={openLocationAnalytics}
             onCloseLocation={closeLocationAnalytics}
             onLocationRouteChange={changeLocationRoute}
             dateControl={(
-              <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow}
-                range={oneRange}
+              <DateRangeControl presetAsOf={onePublicationAsOf ?? user?.publicationAsOf} referenceNow={resource.serverNow}
+                range={oneAppRange}
                 refreshing={isRefreshing}
-                onPreset={(days) => setOneRange(presetRange(days))}
-                onCustomRange={setOneRange}
+                onPreset={(days) => setOneAppRange(onePresetRange(days))}
+                onCustomRange={setOneAppRange}
                 ariaLabelPrefix="One app" {...dateEditor('One app')}
               />
             )}

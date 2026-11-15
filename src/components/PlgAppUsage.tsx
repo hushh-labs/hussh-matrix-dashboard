@@ -75,7 +75,7 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
         </div>
         <div className="metrics-table-scroll">
           <table className="w-full min-w-[430px] text-left text-sm">
-            <caption className="pb-3 text-left text-muted">Activity through {deviceValid ? device.asOf : accountValid ? accounts.asOf : 'an unavailable measurement day'} · latest finalized GA4 day, with 7-day and 30-day lookbacks.</caption>
+            <caption className="pb-3 text-left text-muted">Activity through {deviceValid ? device.asOf : accountValid ? accounts.asOf : 'an unavailable measurement day'} · {resource.sourceCoverage === 'intraday-or-unknown' ? 'latest source day may be incomplete and can change' : 'latest finalized GA4 day'}, with 7-day and 30-day lookbacks.</caption>
             <thead><tr>{['Counting unit', 'DAU', 'WAU', 'MAU'].map((label) => <th key={label} className="border-b border-stroke p-3">{label}</th>)}</tr></thead>
             <tbody>{activityRows.map(({ label, values }) => <tr key={label}>
               <th className="p-3 font-medium">{label}</th>

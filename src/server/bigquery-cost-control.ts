@@ -4,6 +4,8 @@ import type { BigQuery, Query } from '@google-cloud/bigquery';
 import type { Firestore } from '@google-cloud/firestore';
 import { currentClosedMeasurement } from './closed-measurement';
 import { currentContinuation } from './legacy-continuation';
+import { currentDailyOneRefresh } from './daily-one-refresh';
+import { currentDailyOneMeasurement } from './daily-one-measurement';
 import { legacyRestoration, legacyDiagnosticOnly, noteLegacyQueryFailure, currentClosedComposition, ClosedJobMissingError, freezeRestorationSql, RESTORATION_LIMITS, HISTORICAL_LIMITS, type RestorationGrant } from './legacy-restoration';
 
 // These ceilings cannot be raised through request options or environment variables.
@@ -110,7 +112,7 @@ export class FirestoreQueryBudgetStore implements QueryBudgetStore {
 
   async reserve(reservation: QueryBudgetReservation): Promise<void> {
     if (reservation.restoration) {
-      const restore = currentContinuation()?.store ?? await legacyRestoration();
+      const restore = currentDailyOneRefresh()?.store ?? currentContinuation()?.store ?? await legacyRestoration();
       if (!restore || reservation.statements !== 1 || reservation.id !== reservation.restoration.id
         || reservation.bytes !== reservation.restoration.bytes) throw new BigQueryCostControlError();
       await restore.reserve(reservation.restoration);
@@ -168,6 +170,7 @@ export function createGuardedBigQuery(options: {
   existing?: (request: Query) => Promise<RestorationGrant | undefined>;
   queueLimit?: () => Promise<number>;
   guard?: () => Promise<void>;
+  beforeExecute?: (grant: RestorationGrant | undefined) => Promise<boolean>;
   enabled: () => boolean;
   now?: () => Date;
   newId?: () => string;
@@ -244,6 +247,7 @@ export function createGuardedBigQuery(options: {
       }
       if (!options.enabled()) throw new BigQueryCostControlError();
       await options.guard?.();
+      const reuseOnly = await options.beforeExecute?.(restoration) ?? !!restoration?.reuse;
       // Whitelist request fields; caller-supplied project/job/session/destination
       // options cannot bypass the fixed job identity or expand the billing scope.
       return await options.execute({
@@ -263,7 +267,7 @@ export function createGuardedBigQuery(options: {
           statementTimeoutMs: String(BIGQUERY_COST_LIMITS.timeoutMs),
         } } : {}),
         labels: { application: 'metrics_dashboard', cost_policy: restoration ? 'initial_restore_v1' : 'v1', budget_day: day,
-          ...(restoration ? { restore_permit: restoration.permitId, ...(restoration.reuse ? { reuse_only: 'true' } : {}) } : {}) },
+          ...(restoration ? { restore_permit: restoration.permitId, ...(reuseOnly ? { reuse_only: 'true' } : {}) } : {}) },
       });
     } finally {
       const next = waiting.shift();
@@ -273,7 +277,7 @@ export function createGuardedBigQuery(options: {
   };
 }
 
-const activeRestoration = async () => currentContinuation()?.store ?? await legacyRestoration();
+const activeRestoration = async () => currentDailyOneRefresh()?.store ?? currentContinuation()?.store ?? await legacyRestoration();
 
 const clients = new Map<string, BigQuery>();
 async function nativeClient() {
@@ -284,9 +288,38 @@ async function nativeClient() {
   return client;
 }
 
+async function measureDailyOne(project: string, request: Query) {
+  const scope = currentDailyOneMeasurement();
+  if (!scope || process.env.METRICS_BIGQUERY_ENABLED !== 'true' || project !== BIGQUERY_COST_LIMITS.project
+    || typeof request.query !== 'string' || request.params !== undefined || request.types !== undefined || countBudgetedStatements(request.query) !== 1) throw new BigQueryCostControlError();
+  const query = freezeRestorationSql(request.query, scope.logicalAsOf);
+  const claim = await scope.measurement.claim(scope.report, query);
+  if (claim.existing) return claim.existing.processed as number;
+  let outcome: { processed: number; bound: number; referenceDigest: string } | null = null;
+  try {
+    await scope.measurement.requireOpen(scope.report);
+    const client = await nativeClient();
+    await scope.measurement.requireOpen(scope.report);
+    const [job] = await client.createQueryJob({ query, dryRun: true, useLegacySql: false, useQueryCache: true, location: 'US',
+      maximumBytesBilled: String(64 * 1024 ** 3), jobTimeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
+    const stats = job.metadata.statistics?.query, raw = job.metadata.statistics?.totalBytesProcessed;
+    if (stats?.statementType !== 'SELECT' || !['PRECISE', 'UPPER_BOUND'].includes(String(stats?.totalBytesProcessedAccuracy ?? ''))
+      || typeof raw !== 'string' || !/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new BigQueryCostControlError('No safe native estimate.');
+    const refs = stats.referencedTables ?? [], processed = Number(raw), bound = await conservativeBillingBound(processed, refs, nativeTableCatalog);
+    if (!Number.isSafeInteger(bound) || bound < 1 || bound > 64 * 1024 ** 3) throw new BigQueryCostControlError('The estimated query exceeds the per-job bound.');
+    outcome = { processed, bound, referenceDigest: createHash('sha256').update(JSON.stringify(refs)).digest('hex') };
+    return processed;
+  } finally { await scope.measurement.finish(claim.planHash, outcome); }
+}
+
 /** Estimates never execute SQL. Keep the platform capture's existing scan
  * comparison without exposing native createQueryJob to runtime callers. */
 export async function guardedBigQueryDryRun(project: string, request: Query) {
+  if (currentDailyOneMeasurement()) {
+    if (request.dryRun !== true) throw new BigQueryCostControlError();
+    const processed = await measureDailyOne(project, request);
+    return [{ metadata: { statistics: { totalBytesProcessed: String(processed) } } }];
+  }
   if (currentClosedComposition()) { noteLegacyQueryFailure(); throw new BigQueryCostControlError('Closed-job composition cannot estimate or submit jobs.'); }
   if (process.env.METRICS_BIGQUERY_ENABLED !== 'true') throw new BigQueryCostControlError();
   if (project !== BIGQUERY_COST_LIMITS.project || request.dryRun !== true
@@ -315,7 +348,7 @@ const executeGuardedBigQuery = createGuardedBigQuery({
     if (restoration && !await restoration.isPreparing()) throw new BigQueryCostControlError('No retained report is available for this selection.');
     return restoration?.prepare(request) ?? request;
   },
-  existing: async request => currentContinuation()?.store.existing(request),
+  existing: async request => (currentDailyOneRefresh()?.store ?? currentContinuation()?.store)?.existing(request),
   restoration: async (request, estimated) => {
     const restoration = await activeRestoration();
     const grant = await restoration?.admit(request, estimated);
@@ -326,7 +359,13 @@ const executeGuardedBigQuery = createGuardedBigQuery({
     const restoration = await activeRestoration();
     if (restoration && !await restoration.isPreparing()) throw new BigQueryCostControlError('The restoration is no longer open.');
   },
-  queueLimit: async () => currentContinuation() ? 128 : process.env.METRICS_LEGACY_ABANDONED_ID && await (await legacyRestoration())?.expandedPreparing() ? 128 : BIGQUERY_COST_LIMITS.queuedRequests,
+  beforeExecute: async grant => {
+    const daily = currentDailyOneRefresh();
+    if (!daily) return !!grant?.reuse;
+    if (!grant) throw new BigQueryCostControlError('The daily refresh grant is unavailable.');
+    return !await daily.store.claimSubmission(grant);
+  },
+  queueLimit: async () => (currentContinuation() || currentDailyOneRefresh()) ? 128 : process.env.METRICS_LEGACY_ABANDONED_ID && await (await legacyRestoration())?.expandedPreparing() ? 128 : BIGQUERY_COST_LIMITS.queuedRequests,
   estimate: async request => {
     const client = await nativeClient();
     const restoration = await activeRestoration();
@@ -351,13 +390,14 @@ const executeGuardedBigQuery = createGuardedBigQuery({
   },
   execute: async request => {
     const client = await nativeClient();
-    if (typeof request.jobId === 'string' && request.jobId.startsWith('metrics_restore_')) {
+    if (typeof request.jobId === 'string' && (request.jobId.startsWith('metrics_restore_') || request.jobId.startsWith('metrics_refresh_'))) {
       const job = client.job(request.jobId, { location: 'US' });
       let exists = false;
       try {
         const [metadata] = await job.getMetadata();
         const query = metadata.configuration?.query;
         if (query?.query !== request.query || query?.maximumBytesBilled !== request.maximumBytesBilled
+          || (request.jobId.startsWith('metrics_refresh_') && metadata.jobReference?.jobId !== request.jobId)
           || (request.labels?.reuse_only === 'true' && (metadata.status?.state !== 'DONE' || metadata.status?.errorResult))
           || query.useLegacySql !== false || metadata.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project
           || metadata.jobReference?.location !== 'US') throw new BigQueryCostControlError();
@@ -367,11 +407,14 @@ const executeGuardedBigQuery = createGuardedBigQuery({
       }
       if (!exists) {
         if (request.labels?.reuse_only === 'true') throw new BigQueryCostControlError('A prior job could not be verified.');
+        const daily = currentDailyOneRefresh();
+        if (daily && !await daily.store.isPreparing()) throw new BigQueryCostControlError('The daily refresh is no longer open.');
         try { await client.createQueryJob(request); }
         catch (error) { if ((error as { code?: number }).code !== 409) throw error; }
         // Reconcile the exact stable ID, including any lost acknowledgement.
         const [metadata] = await job.getMetadata();
-        if (metadata.configuration?.query?.query !== request.query
+        if ((request.jobId.startsWith('metrics_refresh_') && metadata.jobReference?.jobId !== request.jobId)
+          || metadata.configuration?.query?.query !== request.query
           || metadata.configuration?.query?.maximumBytesBilled !== request.maximumBytesBilled
           || metadata.configuration?.query?.useLegacySql !== false
           || metadata.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project
@@ -380,13 +423,15 @@ const executeGuardedBigQuery = createGuardedBigQuery({
       const [rows, next] = await job.getQueryResults({ autoPaginate: false, maxResults: 2000, timeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
       if (next?.pageToken || rows.length >= 2000 || Buffer.byteLength(JSON.stringify(rows)) > RESTORATION_LIMITS.snapshotBytes) throw new BigQueryCostControlError('Restored aggregate exceeds its payload bound.');
       const continuation = currentContinuation();
-      if (continuation) {
+      const daily = currentDailyOneRefresh();
+      if (continuation || daily) {
         const [proof] = await job.getMetadata(); const query = proof.configuration?.query, endedAt = Number(proof.statistics?.endTime);
         if (proof.status?.state !== 'DONE' || proof.status?.errorResult || query?.query !== request.query
           || query?.maximumBytesBilled !== request.maximumBytesBilled || query?.useLegacySql !== false
           || proof.jobReference?.jobId !== request.jobId || proof.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project || proof.jobReference?.location !== 'US'
           || !Number.isSafeInteger(endedAt) || endedAt <= 0 || endedAt > Date.now() + 10_000) throw new BigQueryCostControlError('Completed continuation job failed verification.');
-        continuation.jobs.set(request.jobId!, { id: request.jobId!, endedAt });
+        continuation?.jobs.set(request.jobId!, { id: request.jobId!, endedAt });
+        daily?.jobs.set(request.jobId!, endedAt);
       }
       return [rows as Record<string, unknown>[]];
     }
@@ -399,6 +444,7 @@ const executeGuardedBigQuery = createGuardedBigQuery({
 
 export async function guardedBigQuery(project: string, request: Query): Promise<GuardedQueryResult> {
   try {
+    if (currentDailyOneMeasurement()) { await measureDailyOne(project, request); throw new BigQueryCostControlError('Measurement records estimates only.'); }
     const composition = currentClosedComposition();
     if (composition) {
       if (process.env.METRICS_BIGQUERY_ENABLED !== 'true') throw new BigQueryCostControlError();

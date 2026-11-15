@@ -122,10 +122,11 @@ it('refreshes platform rows through one cache owner while reusing bounded captur
     const uncached=vi.fn().mockResolvedValue({rows:[{...platform,events:3}],error:null});
     const nestedCache=vi.fn().mockResolvedValue({rows:[platform],error:null});
     const captureRead=vi.fn().mockResolvedValue({rows:[envelope],error:null});
-    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture','legacyRestoration','currentClosedComposition','currentContinuation',
+    let daily = false;
+    const read=new Function('crypto','analyticsQueryContext','queryCache','queryBigQuerySqlUncached','queryBigQuerySql','bigQueryClient','readPlatformCapture','legacyRestoration','currentClosedComposition','currentContinuation','currentDailyOneRefresh','currentDailyOneMeasurement','noteLegacyQueryFailure',
       ts.transpile(seam,{target:ts.ScriptTarget.ES2022})+';return queryOnePlatformCapture;')(
         crypto,{getStore:()=>({refresh:false})},new AggregateCache({maxAgeMs:30000,maxEntries:128}),
-        uncached,nestedCache,async()=>({}),captureRead,async()=>null,()=>null,()=>null);
+        uncached,nestedCache,async()=>({}),captureRead,async()=>null,()=>null,()=>null,()=>daily ? {} : null,()=>null,()=>{});
     const first=unpackPlatformCapture(await read('project',queries));
     expect(first.platforms.rows[0].events).toBe(2);
     await vi.advanceTimersByTimeAsync(30001);
@@ -135,5 +136,10 @@ it('refreshes platform rows through one cache owner while reusing bounded captur
     expect(captureRead).toHaveBeenCalledTimes(1);
     expect(uncached).toHaveBeenCalledTimes(1);
     expect(nestedCache).not.toHaveBeenCalled();
+    daily = true;
+    const fresh = unpackPlatformCapture(await read('project', queries));
+    expect(fresh.platforms.rows[0].events).toBe(2);
+    expect(captureRead).toHaveBeenCalledTimes(2);
+    expect(uncached).toHaveBeenCalledTimes(1);
   } finally {vi.useRealTimers();}
 });

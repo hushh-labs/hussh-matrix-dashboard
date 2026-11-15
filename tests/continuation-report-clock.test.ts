@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { fetchHushhTechSearchConsole, parseProductDateRange } from '../server';
 import { withContinuation, type LegacyContinuation } from '../src/server/legacy-continuation';
+import { withDailyOneRefresh, type DailyOneRefresh } from '../src/server/daily-one-refresh';
 
 const source = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../src/server/bigquery-cost-control', () => ({
@@ -52,4 +53,20 @@ it('keeps the sealed clock isolated from concurrent ordinary requests', async ()
   expect(parseProductDateRange({}, 'one', 1).endDate).toBe('2026-11-15');
   expect(Date.now()).toBe(Date.parse('2026-11-15T00:00:01.000Z'));
   resume(); expect((await pending).value).toBe('2026-11-14');
+});
+
+
+it('uses only the admitted daily report clock without freezing ordinary time', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-15T07:00:00.000Z'));
+  const store = { requireOpen: async (report: string) => {
+    if (report !== '/fixed') throw new Error('unapproved');
+    return { run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } };
+  } } as unknown as DailyOneRefresh;
+  const result = await withDailyOneRefresh(store, '/fixed', async () => ({
+    range: parseProductDateRange({}, 'one', 7), actual: new Date().toISOString(),
+  }));
+  expect(result.range).toMatchObject({ startDate: '2026-11-08', endDate: '2026-11-14' });
+  expect(result.actual).toBe('2026-11-15T07:00:00.000Z');
+  expect(parseProductDateRange({}, 'one', 1).endDate).toBe('2026-11-15');
+  await expect(withDailyOneRefresh(store, '/other', async () => 1)).rejects.toThrow('unapproved');
 });

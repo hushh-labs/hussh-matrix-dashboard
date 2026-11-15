@@ -1,0 +1,206 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import * as cohorts from '../src/server/one-customer-cohort';
+import type { Firestore } from '@google-cloud/firestore';
+import { DailyOneRefresh, dailyOneManifest, dailyOnePolicyGeneration, DAILY_ONE_LIMITS, withDailyOneRefresh, currentDailyOneRefresh } from '../src/server/daily-one-refresh';
+import { DailyOneMeasurement, withDailyOneMeasurement } from '../src/server/daily-one-measurement';
+import { restorationReportDigest, withLegacyReportScope } from '../src/server/legacy-restoration';
+class Database {
+ values = new Map<string, any>(); private tail = Promise.resolve();
+ doc(path: string): any { return { get: async () => this.snapshot(path), collection: (name: string) => ({ doc: (id: string) => this.doc(`${path}/${name}/${id}`), get: async () => { const prefix = `${path}/${name}/`; const docs = [...this.values.keys()].filter(key => key.startsWith(prefix) && !key.slice(prefix.length).includes('/')).map(key => this.snapshot(key)); return { docs, size: docs.length }; } }), path }; }
+ snapshot(path: string) { return { exists: this.values.has(path), data: () => this.values.get(path) }; }
+ async runTransaction<T>(run: (tx: any) => Promise<T>) { const prior = this.tail; let unlock!: () => void; this.tail = new Promise<void>(r => { unlock = r; }); await prior;
+  const writes = new Map<string, any>(); try { const result = await run({ get: async (ref: any) => this.snapshot(ref.path), update: (ref: any, value: any) => writes.set(ref.path, { ...(writes.get(ref.path) ?? this.values.get(ref.path)), ...value }), create: (ref: any, value: any) => { if (this.values.has(ref.path)) throw new Error('exists'); writes.set(ref.path, value); } }); for (const [key,value] of writes) this.values.set(key,value); return result; } finally { unlock(); } }
+ native() { return this as unknown as Pick<Firestore, 'doc' | 'runTransaction'>; }
+}
+function payloadFor(report: string, count = 1) {
+ const url = new URL(report, 'http://internal'), environment = url.searchParams.get('environment')!, startDate = url.searchParams.get('one_start_date')!, endDate = url.searchParams.get('one_end_date')!;
+ const one = { reportingEnvironment: environment, reportingScopeVersion: 'one-environment-v1', range: { startDate, endDate, days: (Date.parse(endDate) - Date.parse(startDate)) / 86_400_000 + 1 }, activeUsers: { countingUnit: 'device' }, identifiedUsers: { countingUnit: 'account', selectedRange: { startDate, endDate } }, count };
+ return { status: 200, body: { one: { error: null, data: { production: environment === 'production' ? one : null, uat: environment === 'uat' ? one : null } } } };
+}
+const day = '2026-11-15', asOf = '2026-11-14T23:59:59.999Z', start = Date.parse('2026-11-15T07:00:00Z'), source = 'a'.repeat(40), id = 'refresh_20261115_1111111111111111', unit = 1024 ** 2;
+function fixture() {
+ const db = new Database(); let now = start; const reports = dailyOneManifest('2026-11-14'), reportDigest = restorationReportDigest(reports);
+ const policy = { approved: true, source, maxDailyBytes: 200 * unit, maxDailyJobs: 5, maxPerJobBytes: 100 * unit }; const generation = dailyOnePolicyGeneration(source, policy.maxDailyBytes, policy.maxDailyJobs, policy.maxPerJobBytes);
+ const run = { source, policyGeneration: generation, day, logicalAsOf: asOf, phase: 'open', createdAt: start, expiresAt: start + 3600_000, reports, reportDigest, measurementDigest: 'f'.repeat(64), maxBytes: 150 * unit, maxJobs: 4, maxPerJobBytes: 100 * unit, reservedBytes: 0, reservedJobs: 0 };
+ db.values.set(`metricsOneDailyRuns/${id}`, run); db.values.set(`metricsOneDailyPolicies/${generation}`, { ...policy, generation });
+ db.values.set(`metricsOneDailyApprovals/${id}`, { ...run, runId: id, approved: true }); db.values.set(`metricsOneDailySlots/${day}`, { day, runId: id, source, policyGeneration: generation, state: 'sealed' });
+ db.values.set(`metricsOneDailyMeasurements/${id}`, { phase: 'sealed', runId: id, source, day, logicalAsOf: asOf, reportDigest, digest: run.measurementDigest, coverage: 'not exhaustive', sealedAt: start, measuredBytes: 80 * unit, measuredQueries: 3 });
+ db.values.set(`metricsOneDailyBudgets/${day}`, { day, policyGeneration: generation, reservedBytes: 0, reservedJobs: 0 });
+ const store = new DailyOneRefresh(db.native(), id, source, () => now), scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${'b'.repeat(64)}:${reports[0]}`, fn);
+ return { db, run, policy, generation, reports, store, scope, time: (value: number) => { now = value; } };
+}
+describe('finite daily One refresh admission', () => {
+ it('fixes all five windows for both environments and rejects unsupported reports', async () => {
+  const f = fixture(); expect(f.reports).toHaveLength(10); expect(new Set(f.reports).size).toBe(10); await expect(f.store.requireOpen(f.reports[0])).resolves.toBeDefined(); await expect(f.store.requireOpen('/api/analytics/all?view=growth')).rejects.toThrow();
+ });
+ it('rejects a logical clock later than the run creation time', async () => {
+  const f = fixture(); const future = '2026-11-15T23:59:59.999Z';
+  const reports = dailyOneManifest('2026-11-15'), reportDigest = restorationReportDigest(reports);
+  Object.assign(f.run, { logicalAsOf: future, reports, reportDigest });
+  Object.assign(f.db.values.get(`metricsOneDailyApprovals/${id}`), { logicalAsOf: future, reportDigest });
+  Object.assign(f.db.values.get(`metricsOneDailyMeasurements/${id}`), { logicalAsOf: future, reportDigest });
+  await expect(f.store.requireOpen(reports[0])).rejects.toThrow();
+ });
+ it('binds the admitted report scope to the sealed clock', async () => {
+  const f = fixture();
+  await expect(withDailyOneRefresh(f.store, f.reports[0], () => f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)))).resolves.toBeDefined();
+  await expect(withDailyOneRefresh(f.store, f.reports[1], () => f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)))).rejects.toThrow();
+ });
+ it('coalesces atomic reservations and claims a single submission before native work', async () => {
+  const f = fixture(), query = await f.store.prepare({ query: 'SELECT CURRENT_DATE()' }); expect(query.query).toContain('2026-11-14');
+  const grant = await f.scope(() => f.store.admit(query, 20 * unit)); await Promise.all(Array.from({ length: 8 }, () => f.scope(() => f.store.reserve(grant))));
+  expect(f.db.values.get(`metricsOneDailyBudgets/${day}`)).toMatchObject({ reservedBytes: grant.bytes, reservedJobs: 1 });
+  const claims = await Promise.all(Array.from({ length: 8 }, () => f.scope(() => f.store.claimSubmission(grant)))); expect(claims.filter(Boolean)).toHaveLength(1);
+  expect(await f.scope(() => f.store.existing(query))).toMatchObject({ id: grant.id, bytes: grant.bytes, reuse: { priorPlanHash: grant.planHash } });
+ });
+ it('fails closed on changed policy, missing measurement, slot mismatch and UTC rollover', async () => {
+  for (const mutate of [(f: ReturnType<typeof fixture>) => { f.db.values.get(`metricsOneDailyPolicies/${f.generation}`).maxDailyBytes++; }, (f: ReturnType<typeof fixture>) => { f.db.values.delete(`metricsOneDailyMeasurements/${id}`); }, (f: ReturnType<typeof fixture>) => { f.db.values.get(`metricsOneDailySlots/${day}`).runId = 'other'; }, (f: ReturnType<typeof fixture>) => { f.time(Date.parse('2026-11-16T00:00:00Z')); }]) {
+   const f = fixture(), grant = await f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)); mutate(f); await expect(f.store.reserve(grant)).rejects.toThrow(); expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedJobs).toBe(0);
+  }
+ });
+ it('requires completed scoped proof and exposes a write-once UAT publication only after close', async () => {
+  const f = fixture(), report = f.reports[5]; f.time(start + 1000);
+  const grant = await withLegacyReportScope(`:${report}`, () => f.store.admit({ query: 'SELECT 1' }, 1));
+  await withLegacyReportScope(`:${report}`, () => f.store.reserve(grant)); await withLegacyReportScope(`:${report}`, () => f.store.claimSubmission(grant));
+  const jobs = [{ id: grant.id, endedAt: start + 1000 }];
+  await expect(f.store.save(report, payloadFor(report, 3), jobs, null)).rejects.toThrow();
+  await withLegacyReportScope(`:${report}`, () => withDailyOneRefresh(f.store, report, async () => {
+    await expect(f.store.save(report, payloadFor(report, 3), jobs, null)).rejects.toThrow();
+    currentDailyOneRefresh()!.jobs.set(grant.id, start + 1000);
+    const wrong = payloadFor(report, 3); wrong.body.one.data.uat!.reportingEnvironment = 'production';
+    await expect(f.store.save(report, wrong, jobs, null)).rejects.toThrow();
+    await expect(f.store.save(report, payloadFor(report, 3), [{ ...jobs[0], endedAt: start + 999 }], null)).rejects.toThrow();
+    await f.store.save(report, payloadFor(report, 3), jobs, null);
+    await expect(f.store.save(report, payloadFor(report, 4), jobs, null)).rejects.toThrow();
+  }));
+  expect(await f.store.read(report, null)).toBeNull();
+  f.db.values.get(`metricsOneDailyRuns/${id}`).phase = 'closed';
+  expect(await f.store.read(report, null)).toBeNull();
+  expect(await f.store.publicationAsOf({} as cohorts.CustomerCohort)).toBeNull();
+  const activationGate = {} as cohorts.CustomerCohort;
+  const gate = vi.spyOn(cohorts, 'cohortMatchesSnapshotWitness').mockReturnValue(true);
+  f.db.values.set(`metricsOneDailyRuns/${id}/activation/current`, { state: 'active', source, runId: id, reportDigest: f.run.reportDigest, logicalAsOf: asOf, witness: { policyRevision: 'a'.repeat(64), rowsHash: 'b'.repeat(64), asOf } });
+  expect(await f.store.read(report, null, true, activationGate)).toMatchObject({ value: { body: { one: { data: { uat: { count: 3 } } } } }, warehouseFrom: start + 1000 });
+  gate.mockReturnValue(false); expect(await f.store.read(report, null, true, activationGate)).toBeNull(); gate.mockRestore();
+  expect(await f.store.read(f.reports[0], null)).toBeNull();
+  f.time(start + 91 * 86_400_000); expect(await f.store.read(report, null)).toBeNull();
+ });
+ it('activates all ten only together and invalidates both lanes after member removal', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 1000);
+  try {
+    const f = fixture(); f.time(start + 1000); f.db.values.get(`metricsOneDailyRuns/${id}`).phase = 'closed';
+    const policyRevision = 'c'.repeat(64), rows = [{ analyticsUserId: 'd'.repeat(32), registeredAt: '2026-11-01T00:00:00.000Z' }];
+    const keyFor = (members: typeof rows) => createHash('sha256').update(JSON.stringify([policyRevision, members])).digest('hex');
+    const cohort = { policyRevision, rows, cacheKey: keyFor(rows), asOf: '2026-11-15T07:00:01.000Z', expiresAt: start + 600_000 };
+    vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(cohort);
+    const witness = cohorts.cohortSnapshotWitness(cohort), sha = (value: string) => createHash('sha256').update(value).digest('hex');
+    for (const [index, report] of f.reports.entries()) f.db.values.set(`metricsOneDailyRuns/${id}/snapshots/${sha(report)}`, {
+      schema: 1, state: 'verified', source, runId: id, reportHash: sha(report), dataAsOf: asOf, computedAt: start + 1000,
+      sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown', json: JSON.stringify(payloadFor(report, index)),
+      jobs: [{ id: `metrics_${id}_${sha(report)}`, endedAt: start + 500 }], ...(index < 5 ? { witness } : {}),
+    });
+    expect(await f.store.activate(cohort)).toBe(asOf); expect(await f.store.publicationAsOf(cohort)).toBe(asOf);
+    const removed = { ...cohort, rows: [], cacheKey: keyFor([]) };
+    for (const [index, report] of f.reports.entries()) expect(await f.store.read(report, index < 5 ? removed : null, true, removed)).toBeNull();
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('cannot activate a closed run without all ten verified publications', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 1000);
+  try {
+    const f = fixture(); f.time(start + 1000); f.db.values.get(`metricsOneDailyRuns/${id}`).phase = 'closed';
+    const policyRevision = 'c'.repeat(64), rows = [{ analyticsUserId: 'd'.repeat(32), registeredAt: '2026-11-01T00:00:00.000Z' }];
+    const cacheKey = createHash('sha256').update(JSON.stringify([policyRevision, rows])).digest('hex');
+    const cohort = { policyRevision, rows, cacheKey, asOf: '2026-11-15T07:00:01.000Z', expiresAt: start + 600_000 };
+    vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(cohort);
+    await expect(f.store.activate(cohort)).rejects.toThrow();
+    expect(f.db.values.has(`metricsOneDailyRuns/${id}/activation/current`)).toBe(false);
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('rejects reservations and publications borrowed from another report scope', async () => {
+  const f = fixture(), report = f.reports[5], other = f.reports[6]; f.time(start + 1000);
+  const grant = await withLegacyReportScope(`:${report}`, () => f.store.admit({ query: 'SELECT 1' }, 1));
+  await expect(withLegacyReportScope(`:${other}`, () => f.store.reserve(grant))).rejects.toThrow();
+  await withLegacyReportScope(`:${report}`, () => f.store.reserve(grant));
+  await expect(withLegacyReportScope(`:${other}`, () => f.store.claimSubmission(grant))).rejects.toThrow();
+  await withLegacyReportScope(`:${report}`, () => f.store.claimSubmission(grant));
+  await withLegacyReportScope(`:${other}`, () => withDailyOneRefresh(f.store, other, async () => {
+    currentDailyOneRefresh()!.jobs.set(grant.id, start + 1000);
+    await expect(f.store.save(other, payloadFor(report, 1), [{ id: grant.id, endedAt: start + 1000 }], null)).rejects.toThrow();
+  }));
+ });
+ it('keeps a production snapshot pending if current membership changes during staging', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 1000);
+  try {
+    const f = fixture(), report = f.reports[0]; f.time(start + 1000);
+    const policyRevision = 'c'.repeat(64), rows = [{ analyticsUserId: 'd'.repeat(32), registeredAt: '2026-11-01T00:00:00.000Z' }];
+    const cacheKey = createHash('sha256').update(JSON.stringify([policyRevision, rows])).digest('hex');
+    const cohort = { policyRevision, rows, cacheKey, asOf: '2026-11-15T07:00:01.000Z', expiresAt: start + 600_000 };
+    const current = vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValueOnce(cohort).mockRejectedValueOnce(new Error('membership changed'));
+    const scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${cacheKey}:${report}`, fn);
+    const grant = await scope(() => f.store.admit({ query: 'SELECT 1' }, 1));
+    await scope(() => f.store.reserve(grant)); await scope(() => f.store.claimSubmission(grant));
+    await scope(() => withDailyOneRefresh(f.store, report, async () => {
+      currentDailyOneRefresh()!.jobs.set(grant.id, start + 1000);
+      await expect(f.store.save(report, payloadFor(report, 1), [{ id: grant.id, endedAt: start + 1000 }], cohort)).rejects.toThrow('membership changed');
+    }));
+    expect(current).toHaveBeenCalledTimes(2); f.db.values.get(`metricsOneDailyRuns/${id}`).phase = 'closed';
+    expect(await f.store.read(report, cohort)).toBeNull();
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('never refunds an uncertain started job or admits work above approved limits', async () => {
+  const f = fixture(), query = { query: 'SELECT 1' }, grant = await f.scope(() => f.store.admit(query, 90 * unit)); await f.scope(() => f.store.reserve(grant)); expect(await f.scope(() => f.store.claimSubmission(grant))).toBe(true); expect(await f.scope(() => f.store.claimSubmission(grant))).toBe(false);
+  await expect(f.scope(() => f.store.admit({ query: 'SELECT 2' }, DAILY_ONE_LIMITS.perJob))).rejects.toThrow();
+  expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedBytes).toBe(grant.bytes);
+ });
+ it('rejects unscoped, changed-manifest and corrupt reservation records', async () => {
+  const f = fixture(); await expect(f.store.admit({ query: 'SELECT 1' }, 1)).rejects.toThrow();
+  const grant = await f.scope(() => f.store.admit({ query: 'SELECT 1' }, 1)); await f.scope(() => f.store.reserve(grant));
+  f.db.values.get(`metricsOneDailyRuns/${id}/reservations/${grant.planHash}`).jobId = 'wrong'; await expect(f.scope(() => f.store.existing({ query: 'SELECT 1' }))).rejects.toThrow();
+  f.db.values.get(`metricsOneDailyRuns/${id}`).reports = f.reports.slice(1); await expect(f.store.requireOpen(f.reports[1])).rejects.toThrow();
+ });
+});
+
+
+
+
+describe('daily One native-estimate admission', () => {
+ it('seals only completed bounded estimates for every fixed report', async () => {
+  const f = fixture(), measurementId = 'dailymeasure_20261115_2222222222222222';
+  f.db.values.set(`metricsOneDailyMeasurements/${measurementId}`, { source, targetRunId: id, day, logicalAsOf: asOf, reports: f.reports, reportDigest: restorationReportDigest(f.reports), createdAt: start, expiresAt: start + 3600_000, phase: 'open', maxDryRuns: 10, attempted: 0 });
+  const measurement = new DailyOneMeasurement(f.db.native(), measurementId, source, () => start + 1000);
+  f.db.values.delete(`metricsOneDailyMeasurements/${id}`);
+  for (const [index, report] of f.reports.entries()) {
+    const cohort = index < 5 ? 'b'.repeat(64) : '';
+    const attempt = await withLegacyReportScope(`${cohort}:${report}`, () => withDailyOneMeasurement(measurement, report, () => measurement.claim(report, `SELECT ${index}`)));
+    await measurement.finish(attempt.planHash, { processed: index, bound: 10 * unit, referenceDigest: 'e'.repeat(64) });
+    await measurement.noteReport(report);
+  }
+  const seal = await measurement.seal();
+  expect(seal).toMatchObject({ measuredBytes: 100 * unit, measuredQueries: 10, coverage: 'not exhaustive' });
+  expect(f.db.values.get(`metricsOneDailyMeasurements/${id}`)).toMatchObject({ phase: 'sealed', digest: seal.digest });
+  await expect(measurement.requireOpen(f.reports[0])).rejects.toThrow();
+ });
+ it('leaves uncertain estimates unsealed', async () => {
+  const f = fixture(), measurementId = 'dailymeasure_20261115_2222222222222222';
+  f.db.values.set(`metricsOneDailyMeasurements/${measurementId}`, { source, targetRunId: id, day, logicalAsOf: asOf, reports: f.reports, reportDigest: restorationReportDigest(f.reports), createdAt: start, expiresAt: start + 3600_000, phase: 'open', maxDryRuns: 10, attempted: 0 });
+  const measurement = new DailyOneMeasurement(f.db.native(), measurementId, source, () => start + 1000);
+  await f.scope(() => measurement.claim(f.reports[0], 'SELECT 1'));
+  await expect(measurement.seal()).rejects.toThrow();
+  expect(f.db.values.get(`metricsOneDailyMeasurements/${id}`).digest).toBe('f'.repeat(64));
+  expect(f.db.values.get(`metricsOneDailyMeasurements/${measurementId}`).phase).toBe('closing');
+ });
+
+ it('deduplicates bounded attempts and never retries an uncertain estimate', async () => {
+  const f = fixture(), measurementId = 'dailymeasure_20261115_2222222222222222', report = f.reports[0];
+  f.db.values.set(`metricsOneDailyMeasurements/${measurementId}`, { source, targetRunId: id, day, logicalAsOf: asOf, reports: f.reports, reportDigest: restorationReportDigest(f.reports), createdAt: start, expiresAt: start + 3600_000, phase: 'open', maxDryRuns: 2, attempted: 0 });
+  const measurement = new DailyOneMeasurement(f.db.native(), measurementId, source, () => start + 1000);
+  const claim = () => f.scope(() => withDailyOneMeasurement(measurement, report, () => measurement.claim(report, 'SELECT 1')));
+  const first = await claim(); await expect(claim()).rejects.toThrow();
+  await measurement.finish(first.planHash, { processed: 1, bound: 10 * unit, referenceDigest: 'e'.repeat(64) });
+  expect((await claim()).existing).toMatchObject({ state: 'measured', bound: 10 * unit });
+  expect(f.db.values.get(`metricsOneDailyMeasurements/${measurementId}`).attempted).toBe(1);
+  await expect(withLegacyReportScope(`:${report}`, () => measurement.claim(report, 'SELECT 2'))).rejects.toThrow();
+  await expect(measurement.requireOpen('/other')).rejects.toThrow();
+ });
+});
