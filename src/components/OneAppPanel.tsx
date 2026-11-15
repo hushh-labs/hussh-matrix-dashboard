@@ -227,7 +227,6 @@ function RegisteredUsers({ accounts }: { accounts: OneRegistrationTotals | null 
     );
   }
 
-  const disabled = accounts.disabledAccounts ?? 0;
   const snapshotAt = new Date(accounts.generatedAt).toLocaleString(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -236,7 +235,7 @@ function RegisteredUsers({ accounts }: { accounts: OneRegistrationTotals | null 
     {
       label: 'All-One registered accounts',
       value: accounts.totalAccounts,
-      detail: `Current unique account records · ${exactAccountCount(disabled)} disabled · ${snapshotAt}`,
+      detail: `Current unique account records · ${accounts.disabledAccounts === null ? 'disabled count unavailable' : `${exactAccountCount(accounts.disabledAccounts)} disabled`} · ${snapshotAt}`,
     },
     {
       label: 'New All-One accounts',

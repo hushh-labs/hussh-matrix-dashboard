@@ -407,6 +407,24 @@ test('shared registry totals never replace the selected environment customer cou
   await assertFits(page);
 });
 
+test('shared registry distinguishes an unknown disabled count from zero', async ({ page }) => {
+  await mockDashboard(page);
+  let disabledAccounts: number | null = null;
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics,
+    one: { ...allAnalytics.one!, data: { ...allAnalytics.one!.data!, registrations: {
+      ...allAnalytics.one!.data!.registrations!, disabledAccounts,
+    } } },
+  } }));
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByText('Daily, weekly & monthly counts', { exact: true }).click();
+  const tile = page.getByText('All-One registered accounts', { exact: true }).locator('..').locator('..');
+  await expect(tile).toContainText('disabled count unavailable');
+  await expect(tile).not.toContainText('0 disabled');
+  disabledAccounts = 0;
+  await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(tile).toContainText('0 disabled');
+});
+
 for (const width of [390, 1440]) {
   test(`One keeps collection diagnostics out of the report at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
