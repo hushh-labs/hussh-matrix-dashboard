@@ -42,7 +42,7 @@ import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
 import { instagramPublication } from './src/server/instagram/publication';
 import { monitoringPublication, monitoringSend } from './src/server/monitoring-publication';
-import { aggregateSearchDays, buildSearchConsoleDailyRows, searchConsoleCoverageNote } from './src/server/search-console-daily';
+import { aggregateSearchDays, buildSearchConsoleDailyRows, latestCompleteSearchDay, searchConsoleCoverageNote } from './src/server/search-console-daily';
 import { oneSurfaceSql, oneFounderSurfaceSql, oneNonDebugSql, oneFeedEnvironment, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
 import { oneAccountSource, oneIdentityAuthorityId, accountScopeNote, readOneAccountCounts } from './src/server/one-account-scope.mjs';
 import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushhtech-window.mjs';
@@ -4796,7 +4796,7 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
   const overview = asRecord(searchConsole?.overview) ?? {};
   const generatedAt = typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : new Date().toISOString();
   const dailyRows = searchConsoleDailyRows(searchConsole);
-  const latestAvailableDaily = dailyRows.filter(row => row.clicks != null && row.impressions != null).at(-1);
+  const { row: latestAvailableDaily, source: dailySource } = latestCompleteSearchDay(dailyRows);
   const latestMetric = latestAvailableDaily
     ? {
         ...searchConsoleMetric(latestAvailableDaily),
@@ -4813,7 +4813,6 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
       : null;
   const latestIngestedAt = typeof searchConsole?.latestIngestedAt === 'string' ? searchConsole.latestIngestedAt : null;
   const sourceFreshnessAt = latestIngestedAt ?? generatedAt;
-  const dailySource = latestDataDate ? `GCP daily aggregate · data date ${latestDataDate}` : 'GCP daily aggregate';
   const waitingSearchNote = 'Waiting for the next GCP Search Console daily aggregate.';
   return {
     key: 'search_console',
@@ -4855,7 +4854,7 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
         label: 'Last 7 Days',
         status: available ? 'delayed' : 'waiting',
         stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
-        source: dailySource,
+        source: 'GCP daily aggregate · selected range',
         freshness: {
           generatedAt: sourceFreshnessAt,
           expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds ?? 86_400),
