@@ -31,6 +31,7 @@ import { closedMeasurement, currentClosedMeasurement, withClosedMeasurement } fr
 import { currentContinuation, legacyContinuation, withContinuation } from './src/server/legacy-continuation';
 import { currentDailyOneRefresh, dailyOneRefresh, withDailyOneRefresh } from './src/server/daily-one-refresh';
 import { currentDailyOneMeasurement, dailyOneMeasurement, withDailyOneMeasurement } from './src/server/daily-one-measurement';
+import { configuredDailyOneCohortPreflight } from './src/server/daily-one-cohort-preflight';
 import { closedContinuationComposer } from './src/server/closed-continuation-composer';
 import { verifiedPlgPublicationAnchor } from './src/server/plg-publication-anchor';
 import type { FounderBriefingData, FounderPeriod } from './src/lib/founder-briefing';
@@ -9813,6 +9814,18 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
       new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 30_000); }),
     ]).finally(() => { if (timer) clearTimeout(timer); });
     res.json({ publicationAsOf });
+  });
+
+  app.post('/api/auth/daily-one-cohort-preflight', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const user = (req as any).sessionUser as SessionUser | null;
+    if (!user) { res.status(401).json({ error: 'Sign in required.' }); return; }
+    if (user.email !== 'metrics-release-probe@hushh.ai') { res.status(403).json({ error: 'Trusted operator required.' }); return; }
+    try {
+      const matches = await configuredDailyOneCohortPreflight();
+      if (matches === null) { res.status(503).json({ error: 'Preflight unavailable.' }); return; }
+      res.json({ matches });
+    } catch { res.status(503).json({ error: 'Preflight unavailable.' }); }
   });
 
   // Unmatched auth endpoints return 404 Not Found
