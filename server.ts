@@ -29,8 +29,9 @@ import { legacyRestoration, legacyPreviousRestoration, legacyDiagnosticOnly, leg
 import { closedComposer } from './src/server/closed-composer';
 import { closedMeasurement, currentClosedMeasurement, withClosedMeasurement } from './src/server/closed-measurement';
 import { currentContinuation, legacyContinuation, withContinuation } from './src/server/legacy-continuation';
-import { currentDailyOneRefresh, dailyOneRefresh, withDailyOneRefresh } from './src/server/daily-one-refresh';
+import { currentDailyOneRefresh, dailyOneRefresh, withDailyOneRefresh, validOnePayload } from './src/server/daily-one-refresh';
 import { currentDailyOneMeasurement, dailyOneMeasurement, withDailyOneMeasurement } from './src/server/daily-one-measurement';
+import { configuredDailyClosedDiagnostic } from './src/server/daily-closed-diagnostic';
 import { configuredDailyOneCohortPreflight } from './src/server/daily-one-cohort-preflight';
 import { closedContinuationComposer } from './src/server/closed-continuation-composer';
 import { verifiedPlgPublicationAnchor } from './src/server/plg-publication-anchor';
@@ -398,7 +399,7 @@ function buildDateRange(start: Date, end: Date): HushhAiDateRange {
 }
 
 function reportPeriodNow(): Date {
-  const asOf = currentDailyOneMeasurement()?.logicalAsOf ?? currentDailyOneRefresh()?.logicalAsOf ?? currentContinuation()?.dataAsOf;
+  const asOf = currentDailyOneMeasurement()?.logicalAsOf ?? currentDailyOneRefresh()?.logicalAsOf ?? currentClosedComposition()?.logicalAsOf ?? currentContinuation()?.dataAsOf;
   return asOf ? new Date(asOf) : new Date();
 }
 
@@ -2537,6 +2538,7 @@ async function queryOnePlatformCapture(projectId:string, queries:ReturnType<type
         try { await composition.store.closedJob({ query }); }
         catch (error) {
           if (!(error instanceof ClosedJobMissingError)) throw error;
+          if (composition.logicalAsOf) { composition.observation.reason = 'missing-reservation'; throw error; }
           // A fixed diagnostic may measure an unplanned missing combined query;
           // this read-only request cannot submit it as a paid job.
           if (currentClosedMeasurement() && error.plannedBytes === undefined) {
@@ -5819,6 +5821,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
             res.status(403).json({ error: 'Diagnostic planning requires the trusted release probe.' }); return;
           }
           const measureDailyOne = req.get('X-Metrics-Daily-One-Measure') === '1';
+          const diagnoseDailyClosed = req.get('X-Metrics-Daily-Closed-Diagnostic') === '1';
+          if (diagnoseDailyClosed && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
+            res.status(403).json({ error: 'Closed daily diagnostic requires the trusted release probe.' }); return;
+          }
           if (measureDailyOne && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
             res.status(403).json({ error: 'Daily One measurement requires the trusted release probe.' }); return;
           }
@@ -5869,6 +5875,37 @@ function registerAnalyticsRoutes(app: express.Express): void {
           const composer = await closedComposer();
           const continuation = await legacyContinuation();
           const continuationComposer = await closedContinuationComposer();
+          if (diagnoseDailyClosed) {
+            if (activateDailyOne || sealDailyOne || measureDailyOne || publishDailyOne || publishContinuation || composeContinuation || measureClosed || composePublication || publishRestoration || !restoration || !cohort) {
+              res.status(409).json({ error: 'Closed daily diagnostic is not configured.' }); return;
+            }
+            const daily = await dailyOneRefresh(), diagnostic = daily && await configuredDailyClosedDiagnostic(daily);
+            if (!daily || !diagnostic) { res.status(409).json({ error: 'Closed daily diagnostic is not configured.' }); return; }
+            await restoration.closedDescriptor();
+            const { run, attempt } = await diagnostic.claim(reportUrl);
+            const observation = { stage: 'cohort', reason: null as string | null, jobs: 0, maxRows: 0, maxBytes: 0, payloadBytes: 0 };
+            try {
+              await withCustomerCohort(cohort.cacheKey, async () => {
+                const pinned = await readCustomerCohort();
+                await daily.verifyMeasuredCohort(pinned); await requireCurrentCustomerCohort(pinned.cacheKey);
+                await withLegacyReportScope(`${pinned.cacheKey}:${reportUrl}`, () => withClosedComposition(daily, async () => {
+                  const scope = currentClosedComposition()!; observation.stage = 'capture';
+                  try {
+                    const value = await capture(handler, sourceRequest, true);
+                    if (legacyReportFailed()) { observation.reason = scope.observation.reason ?? 'incomplete-source'; return; }
+                    observation.stage = 'payload'; observation.payloadBytes = Buffer.byteLength(JSON.stringify(value));
+                    if (!validOnePayload(value, reportUrl) || observation.payloadBytes > 700_000 || !scope.jobs.size) { observation.reason = 'invalid-payload'; return; }
+                    observation.stage = 'cohort-recheck'; await requireCurrentCustomerCohort(pinned.cacheKey); observation.stage = 'complete';
+                  } finally {
+                    observation.jobs = scope.jobs.size; observation.maxRows = scope.observation.maxRows; observation.maxBytes = scope.observation.maxBytes;
+                    observation.reason ??= scope.observation.reason;
+                  }
+                }, run.logicalAsOf));
+              });
+            } catch { observation.reason ??= ['cohort', 'cohort-recheck'].includes(observation.stage) ? 'cohort-unavailable' : 'source-error'; }
+            await diagnostic.finish(attempt, observation);
+            res.set('Cache-Control', 'no-store'); res.status(200).json(observation); return;
+          }
           if (activateDailyOne) {
             if (sealDailyOne || measureDailyOne || publishDailyOne || publishContinuation || composeContinuation || measureClosed || composePublication || publishRestoration || !restoration) {
               res.status(409).json({ error: 'Daily One activation is not configured.' }); return;

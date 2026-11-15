@@ -481,7 +481,7 @@ export async function guardedBigQuery(project: string, request: Query): Promise<
       const query = metadata.configuration?.query;
       if (metadata.status?.state !== 'DONE' || metadata.status?.errorResult || query?.query !== grant.query
         || query?.maximumBytesBilled !== String(grant.bytes) || query?.useLegacySql !== false
-        || metadata.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project || metadata.jobReference?.location !== 'US') throw new BigQueryCostControlError('Completed job failed verification.');
+        || metadata.jobReference?.jobId !== grant.id || metadata.jobReference?.projectId !== BIGQUERY_COST_LIMITS.project || metadata.jobReference?.location !== 'US') throw new BigQueryCostControlError('Completed job failed verification.');
       const continuation = currentContinuation();
       if (continuation) {
         const endedAt = Number(metadata.statistics?.endTime);
@@ -490,6 +490,8 @@ export async function guardedBigQuery(project: string, request: Query): Promise<
         continuation.jobs.set(grant.id, { id: grant.id, endedAt });
       }
       const [rows, next] = await job.getQueryResults({ autoPaginate: false, maxResults: 2000, timeoutMs: BIGQUERY_COST_LIMITS.timeoutMs });
+      composition.observation.maxRows = Math.max(composition.observation.maxRows, rows.length);
+      composition.observation.maxBytes = Math.max(composition.observation.maxBytes, Buffer.byteLength(JSON.stringify(rows)));
       if (continuation) {
         continuation.observation.maxRows = Math.max(continuation.observation.maxRows, rows.length);
         continuation.observation.maxBytes = Math.max(continuation.observation.maxBytes, Buffer.byteLength(JSON.stringify(rows)));
@@ -501,6 +503,13 @@ export async function guardedBigQuery(project: string, request: Query): Promise<
     return await executeGuardedBigQuery(project, request);
   }
   catch (error) {
+    const closed = currentClosedComposition();
+    if (closed) {
+      const message = error instanceof Error ? error.message : '';
+      closed.observation.reason ??= error instanceof ClosedJobMissingError ? 'missing-reservation'
+        : message.includes('payload bound') ? 'result-bound' : message.includes('verification') ? 'native-verification'
+          : (error as { code?: number })?.code === 403 ? 'native-access' : 'source-error';
+    }
     const continuation = currentContinuation();
     if (continuation && currentClosedComposition()) {
       const message = error instanceof Error ? error.message : '';

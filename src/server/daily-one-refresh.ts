@@ -4,7 +4,7 @@ import type { Firestore } from '@google-cloud/firestore';
 import type { Query } from '@google-cloud/bigquery';
 import { canonicalAnalyticsKey } from './aggregate-cache';
 import { cohortMatchesSnapshotWitness, cohortSnapshotWitness, requireFreshCohort, requireCurrentCustomerCohort, type CustomerCohort } from './one-customer-cohort';
-import { currentLegacyReportKey, freezeRestorationSql, nativeDatabase, restorationReportDigest, type RestorationGrant } from './legacy-restoration';
+import { ClosedJobMissingError, currentLegacyReportKey, freezeRestorationSql, nativeDatabase, restorationReportDigest, type RestorationGrant } from './legacy-restoration';
 
 /** Hard ceilings are safety bounds, not an approval or an operating target. */
 export const DAILY_ONE_LIMITS = Object.freeze({ bytes: 1024 ** 4, jobs: 250, perJob: 64 * 1024 ** 3, lifetimeMs: 60 * 60_000 });
@@ -19,7 +19,7 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 export const dailyOnePolicyGeneration = (source: string, maxDailyBytes: number, maxDailyJobs: number, maxPerJobBytes: number) =>
   hash(JSON.stringify({ schema: 1, source, maxDailyBytes, maxDailyJobs, maxPerJobBytes }));
 const fail = () => new Error('The bounded One refresh is unavailable.');
-function validOnePayload(value: { status?: number; body?: any }, report: string) {
+export function validOnePayload(value: { status?: number; body?: any }, report: string) {
   const url = new URL(report, 'http://analytics.internal'), environment = url.searchParams.get('environment');
   const start = url.searchParams.get('one_start_date'), end = url.searchParams.get('one_end_date');
   const data = value.body?.one?.data, one = environment === 'production' ? data?.production : data?.uat;
@@ -95,6 +95,24 @@ export class DailyOneRefresh {
     return { run, policy, measurementExpiresAt: measurementRun.expiresAt as number };
   }
   private permit() { return this.checked(ref => ref.get()); }
+  /** Read only the original closed run's exact reservation; never admits work. */
+  async closedDescriptor() {
+    const { run } = await this.permit();
+    if (run.phase !== 'closed') throw fail();
+    return { id: this.id, asOf: run.logicalAsOf, run };
+  }
+  async closedJob(request: Query) {
+    const { run } = await this.closedDescriptor();
+    if (typeof request.query !== 'string' || request.params !== undefined || request.types !== undefined) throw fail();
+    const query = freezeRestorationSql(request.query, run.logicalAsOf);
+    const { planHash, report, scopeHash } = this.identity(run, query);
+    const snapshot = await this.ref().collection('reservations').doc(planHash).get();
+    if (!snapshot.exists) throw new ClosedJobMissingError(planHash, undefined);
+    const row = snapshot.data(), id = `metrics_${this.id}_${planHash}`;
+    if (row?.jobId !== id || row.state !== 'started' || row.reportHash !== hash(report) || row.scopeHash !== scopeHash
+      || !Number.isSafeInteger(row.bytes) || row.bytes < 1 || row.bytes > run.maxPerJobBytes) throw fail();
+    return { id, bytes: row.bytes as number, query };
+  }
   async isPreparing() {
     try { const { run, measurementExpiresAt } = await this.permit(), now = this.now();
       return run.phase === 'open' && now >= run.createdAt && now < run.expiresAt && now < measurementExpiresAt && new Date(now).toISOString().slice(0, 10) === run.day;

@@ -6,6 +6,7 @@ import { DailyOneRefresh, dailyOneManifest, dailyOnePolicyGeneration, DAILY_ONE_
 import { DailyOneMeasurement, withDailyOneMeasurement } from '../src/server/daily-one-measurement';
 import { restorationReportDigest, withLegacyReportScope } from '../src/server/legacy-restoration';
 import { verifyDailyOneCohortPreflight } from '../src/server/daily-one-cohort-preflight';
+import { DailyClosedDiagnostic } from '../src/server/daily-closed-diagnostic';
 class Database {
  values = new Map<string, any>(); private tail = Promise.resolve();
  doc(path: string): any { return { get: async () => this.snapshot(path), collection: (name: string) => ({ doc: (id: string) => this.doc(`${path}/${name}/${id}`), get: async () => { const prefix = `${path}/${name}/`; const docs = [...this.values.keys()].filter(key => key.startsWith(prefix) && !key.slice(prefix.length).includes('/')).map(key => this.snapshot(key)); return { docs, size: docs.length }; } }), path }; }
@@ -58,6 +59,25 @@ describe('private no-query cohort preflight', () => {
  });
 });
 describe('finite daily One refresh admission', () => {
+ it('resolves only exact started reservations in a closed run', async () => {
+  const f = fixture(), query = { query: 'SELECT 1' }, grant = await f.scope(() => f.store.admit(query, 1));
+  await f.scope(() => f.store.reserve(grant));
+  await expect(f.scope(() => f.store.closedJob(query))).rejects.toThrow();
+  await f.scope(() => f.store.claimSubmission(grant)); f.db.values.get(`metricsOneDailyRuns/${id}`).phase = 'closed';
+  await expect(f.scope(() => f.store.closedJob(query))).resolves.toMatchObject({ id: grant.id, bytes: grant.bytes, query: query.query });
+  await expect(f.scope(() => f.store.closedJob({ query: 'SELECT 2' }))).rejects.toThrow();
+  f.db.values.get(`metricsOneDailyRuns/${id}/reservations/${grant.planHash}`).jobId = 'wrong';
+  await expect(f.scope(() => f.store.closedJob(query))).rejects.toThrow();
+ });
+ it('claims one diagnostic attempt only for the fixed closed run and stores bounded categories', async () => {
+  const f = fixture(); f.run.phase = 'closed'; const diagnosticId = 'dailycheck_4444444444444444', path = `metricsDailyClosedDiagnostics/${diagnosticId}`;
+  f.db.values.set(path, { phase: 'open', source, runId: id, runSource: source, logicalAsOf: asOf, report: f.reports[0], reportDigest: f.run.reportDigest, createdAt: start, expiresAt: start + 1000 });
+  const diagnostic = new DailyClosedDiagnostic(f.db.native(), diagnosticId, source, f.store, () => start);
+  await expect(diagnostic.claim(f.reports[1])).rejects.toThrow();
+  const { attempt } = await diagnostic.claim(f.reports[0]); await expect(diagnostic.claim(f.reports[0])).rejects.toThrow();
+  await expect(diagnostic.finish(attempt, { stage: 'capture', reason: 'missing-reservation', jobs: 1, maxRows: 2, maxBytes: 3, payloadBytes: 0 })).resolves.toBeUndefined();
+  await expect(diagnostic.finish(attempt, { stage: 'capture', reason: 'missing-reservation', jobs: 1, maxRows: 2, maxBytes: 3, payloadBytes: 0 })).rejects.toThrow();
+ });
  it('fixes all five windows for both environments and rejects unsupported reports', async () => {
   const f = fixture(); expect(f.reports).toHaveLength(10); expect(new Set(f.reports).size).toBe(10); await expect(f.store.requireOpen(f.reports[0])).resolves.toBeDefined(); await expect(f.store.requireOpen('/api/analytics/all?view=growth')).rejects.toThrow();
  });
