@@ -20,7 +20,7 @@ describe('private Metrics worker HTTP boundary', () => {
     const runtime = { read: vi.fn(async () => ({ state: 'unavailable', report: null })), status: vi.fn(async () => ({})),
       request: vi.fn(async () => ({ state: 'accepted', jobId: digest('job'), reportId: null })),
       collect: vi.fn(async () => ({ state: 'delayed', needsAttention: false, retryAfterMs: 1500 })),
-      dispatch: vi.fn(async () => ({ state: 'queued' })), close: vi.fn() };
+      dispatch: vi.fn(async () => ({ state: 'queued' })), periodic: vi.fn(async () => ({ state: 'accepted', jobId: digest('periodic'), reportId: null })), close: vi.fn() };
     const verify = vi.fn(async (token: string) => ({ email: token === 'web' ? config.webInvokerEmail : token === 'task' ? config.taskInvokerEmail : config.dispatcherInvokerEmail, emailVerified: token !== 'unverified' }));
     const server = reportingWorkerServer(config, runtime as unknown as ReportingWorkerRuntime, verify); servers.push(server);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -58,6 +58,17 @@ describe('private Metrics worker HTTP boundary', () => {
     expect(f.runtime.read).toHaveBeenCalledOnce(); expect(f.runtime.request).not.toHaveBeenCalled(); expect(f.runtime.collect).not.toHaveBeenCalled();
     expect((await f.send('read', 'web', { access: { ...access, scopeDigest: digest('other') }, request: {} })).status).toBe(401);
     expect((await f.send('read', 'web', { access: { ...access, email: 'private@example.invalid' }, request: {} })).status).toBe(400);
+  });
+  it('allows only the dispatcher role to trigger a fixed periodic entry', async () => {
+    const f = await fixture();
+    expect((await f.send('periodic', 'web', { entryId: 'one' })).status).toBe(401);
+    expect((await f.send('periodic', 'task', { entryId: 'one' })).status).toBe(401);
+    expect((await f.send('periodic', 'dispatcher', { entryId: 'one', request: {} })).status).toBe(400);
+    expect((await f.send('periodic', 'dispatcher', { entryId: '../other' })).status).toBe(400);
+    const response = await f.send('periodic', 'dispatcher', { entryId: 'one' });
+    expect(response.status).toBe(202); expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(f.runtime.periodic).toHaveBeenCalledOnce(); expect(f.runtime.periodic).toHaveBeenCalledWith('one');
+    expect(f.runtime.collect).not.toHaveBeenCalled(); expect(f.runtime.request).not.toHaveBeenCalled();
   });
   it('rejects oversized or authority-bearing task bodies', async () => {
     const f = await fixture();

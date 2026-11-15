@@ -35,6 +35,7 @@ export function reportingWorkerServer(config: ReportingRuntimeConfig, runtime: R
         '/internal/metrics/status': config.webInvokerEmail, '/internal/metrics/collect': config.taskInvokerEmail,
         '/internal/metrics/dispatch': config.dispatcherInvokerEmail,
         '/internal/metrics/maintain': config.dispatcherInvokerEmail, '/internal/metrics/schedule': config.dispatcherInvokerEmail,
+        '/internal/metrics/periodic': config.dispatcherInvokerEmail,
       };
       if (req.method !== 'POST' || !req.url || !Object.hasOwn(roles, req.url)) return reply(res, 404, { state: 'unavailable' });
       const header = req.headers.authorization;
@@ -45,6 +46,10 @@ export function reportingWorkerServer(config: ReportingRuntimeConfig, runtime: R
       if (req.url.endsWith('/maintain')) {
         if (Object.keys(body).length !== 0) throw new ReportError('invalid');
         return reply(res, 200, await runtime.maintain());
+      }
+      if (req.url.endsWith('/periodic')) {
+        if (Object.keys(body).join() !== 'entryId' || typeof body.entryId !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(body.entryId)) throw new ReportError('invalid');
+        return reply(res, 202, await runtime.periodic(body.entryId));
       }
       if (req.url.endsWith('/schedule')) {
         if (Object.keys(body).join() !== 'request') throw new ReportError('invalid');

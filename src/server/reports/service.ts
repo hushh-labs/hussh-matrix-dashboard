@@ -3,9 +3,19 @@ import { digest, ReportError, reportKey, validateAccess, validateAggregate, vali
   type ReportJob, type ReportingPolicy, type ReportRequest } from './contracts';
 import { reportPath as path, type ReportStore, type ReportTransaction } from './store';
 import type { ReportBodyCache } from './body-cache';
+import { periodicPlan } from './periodic-policy';
 
 type Head = { sequence: number; activeJob: string | null; publication: string | null };
 type Capacity = { active: number };
+type PeriodicDay = { used: number; limit: number; slotLimit: number; slots: string[] };
+type PeriodicCycle = { slotKey: string; policyDigest: string; jobs: string[] };
+type PeriodicReceipt = { slotKey: string; planDigest: string; state: 'accepted' | 'running' | 'delayed' | 'completed'; jobId: string | null; reportId: string | null };
+function validPeriodicDay(day: PeriodicDay, expectedDay: string) {
+  return Object.keys(day).sort().join() === 'limit,slotLimit,slots,used' && Number.isSafeInteger(day.used) && day.used >= 0 && day.used <= 12
+    && Number.isSafeInteger(day.limit) && day.limit >= 1 && day.limit <= 12 && Number.isSafeInteger(day.slotLimit) && day.slotLimit >= 1 && day.slotLimit <= 3
+    && Array.isArray(day.slots) && day.slots.length <= 3 && new Set(day.slots).size === day.slots.length
+    && day.slots.every(slot => typeof slot === 'string' && slot.startsWith(`${expectedDay}:`) && /^\d{4}-\d{2}-\d{2}:\d{1,4}$/.test(slot));
+}
 type Context = { policy: ReportingPolicy; control: ReportControl; request: ReportRequest; key: string };
 
 /** No source SDK, provider callback or enqueue callback exists in this reader. */
@@ -65,42 +75,144 @@ export class MetricsReports {
   async requestScheduled(input: unknown, access: ReportAccess) {
     return this.admit(input, access, 'scheduled');
   }
-  private async admit(input: unknown, access: ReportAccess, lane: ReportJob['lane']) {
+  /** Private fixed-manifest trigger. No policy means no periodic work. */
+  async requestPeriodic(entryId: string, access: ReportAccess) {
+    return this.admit(null, access, 'scheduled', entryId);
+  }
+  private async admit(input: unknown, access: ReportAccess, lane: ReportJob['lane'], entryId?: string) {
     const now = this.now();
-    return this.store.transaction(async tx => {
-      const c = await this.context(tx, input, access);
+    const outcome = await this.store.transaction(async tx => {
+      const periodicPolicy = lane === 'scheduled' ? await tx.get<unknown>(path('policy', 'periodic')) : null;
+      const plan = entryId === undefined ? null : periodicPlan(periodicPolicy, entryId, now);
+      // Manual scheduled admission cannot race an enabled periodic cycle.
+      if (!plan && lane === 'scheduled' && periodicPolicy && (periodicPolicy as { enabled?: unknown }).enabled !== false) throw new ReportError('unavailable');
+      const c = await this.context(tx, plan?.request ?? input, access);
       const head = await tx.get<Head>(path('heads', c.key)) ?? { sequence: 0, activeJob: null, publication: null };
       const publication = head.publication ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
       const active = head.activeJob ? await tx.get<ReportJob>(path('jobs', head.activeJob)) : null;
       const slots = await tx.get<Capacity>(path('capacity', lane)) ?? { active: 0 };
       const subjectSlot = path('subjectCapacity', digest([lane, access.subjectHash]));
       const subject = await tx.get<Capacity>(subjectSlot) ?? { active: 0 };
-      const charge = await this.quota(tx, access, c.policy, 'compute', now);
-      if (publication && publication.key === c.key
-        && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
-        charge(); return { state: 'completed' as const, reportId: publication.id, jobId: null };
+      const receiptRef = plan ? path('periodicReceipts', plan.receiptId) : '';
+      const dayRef = plan ? path('periodicDays', plan.day) : '';
+      const cycleRef = path('periodicCycles', 'current');
+      const receipt = plan ? await tx.get<PeriodicReceipt>(receiptRef) : null;
+      const day = plan ? await tx.get<PeriodicDay>(dayRef) : null;
+      const cycle = lane === 'scheduled' ? await tx.get<PeriodicCycle>(cycleRef) : null;
+      if (cycle && (Object.keys(cycle).sort().join() !== 'jobs,policyDigest,slotKey' || typeof cycle.slotKey !== 'string'
+        || !/^\d{4}-\d{2}-\d{2}:\d{1,4}$/.test(cycle.slotKey) || !/^[a-f0-9]{64}$/.test(cycle.policyDigest) || !Array.isArray(cycle.jobs) || cycle.jobs.length > 4
+        || new Set(cycle.jobs).size !== cycle.jobs.length || cycle.jobs.some(id => !/^[a-f0-9]{64}$/.test(id)))) throw new ReportError('unavailable');
+      if (receipt?.jobId && !/^[a-f0-9]{64}$/.test(receipt.jobId) || receipt?.reportId && !/^[a-f0-9]{64}$/.test(receipt.reportId)) throw new ReportError('unavailable');
+      const cycleJobs = cycle ? await Promise.all(cycle.jobs.map(id => tx.get<ReportJob>(path('jobs', id)))) : [];
+      const receiptJob = receipt?.jobId ? await tx.get<ReportJob>(path('jobs', receipt.jobId)) : null;
+      const receiptPublicationId = receiptJob?.status === 'completed' ? receiptJob.id : receipt?.reportId;
+      const receiptPublication = receiptPublicationId ? await tx.get<PublishedReport>(path('snapshots', receiptPublicationId)) : null;
+      if (plan && day && !validPeriodicDay(day, plan.day)) throw new ReportError('unavailable');
+      let charge: () => void;
+      try { charge = await this.quota(tx, access, c.policy, 'compute', now); }
+      catch (error) {
+        if (plan && day && error instanceof ReportError && error.code === 'quota') {
+          const limit = Math.min(day.limit, plan.maxDailyJobs), slotLimit = Math.min(day.slotLimit, plan.maxDailySlots);
+          if (limit < day.limit || slotLimit < day.slotLimit) tx.set(dayRef, { ...day, limit, slotLimit });
+          return { denied: 'quota' as const };
+        }
+        throw error;
       }
-      if (active && ['accepted', 'running', 'delayed'].includes(active.status)) {
-        charge(); return { state: active.status, reportId: null, jobId: active.id };
+      const planDigest = plan ? digest([plan.policyDigest, plan.request, c.control, access.scopeDigest]) : '';
+      if (plan) {
+        if (receipt && (Object.keys(receipt).sort().join() !== 'jobId,planDigest,reportId,slotKey,state'
+          || receipt.slotKey !== plan.slotKey || !/^[a-f0-9]{64}$/.test(receipt.planDigest)
+          || !['accepted', 'running', 'delayed', 'completed'].includes(receipt.state)
+          || (receipt.jobId !== null && (!/^[a-f0-9]{64}$/.test(receipt.jobId) || !receiptJob || receiptJob.id !== receipt.jobId || receiptJob.key !== c.key
+            || digest(receiptJob.request) !== digest(c.request) || digest(receiptJob.control) !== digest(c.control)
+            || !['accepted', 'running', 'delayed', 'completed', 'failed', 'invalidated'].includes(receiptJob.status)))
+          || (receipt.reportId !== null && !/^[a-f0-9]{64}$/.test(receipt.reportId))
+          || ((receipt.jobId === null) === (receipt.reportId === null)))) throw new ReportError('unavailable');
+        if (cycle && (cycleJobs.length !== cycle.jobs.length || cycleJobs.some((job, index) => !job || job.id !== cycle.jobs[index]))) throw new ReportError('unavailable');
+        if (cycle) {
+          const [cycleDay, cycleMinute] = cycle.slotKey.split(':'), cycleDate = Date.parse(cycleDay), minute = Number(cycleMinute);
+          if (!Number.isFinite(cycleDate) || new Date(cycleDate).toISOString().slice(0, 10) !== cycleDay || !Number.isInteger(minute) || minute < 0 || minute >= 1440
+            || (cycle.slotKey !== plan.slotKey && Date.parse(plan.day) + plan.slot * 60_000 <= cycleDate + minute * 60_000)) throw new ReportError('unavailable');
+        }
+        const limit = Math.min(day?.limit ?? plan.maxDailyJobs, plan.maxDailyJobs), slotLimit = Math.min(day?.slotLimit ?? plan.maxDailySlots, plan.maxDailySlots);
+        const persistTighter = () => { if (day && (limit < day.limit || slotLimit < day.slotLimit)) tx.set(dayRef, { ...day, limit, slotLimit }); };
+        if (receipt && receipt.planDigest !== planDigest) { persistTighter(); return { denied: 'unavailable' as const }; }
+        if (receipt) {
+          const published = receiptPublication;
+          if (receiptJob?.status === 'completed' || receipt.reportId) {
+            if (!published || published.id !== (receiptJob?.id ?? receipt.reportId) || published.key !== c.key
+              || digest(published.request) !== digest(c.request) || digest(published.control) !== digest(c.control)
+              || !Number.isSafeInteger(published.computedAt) || !Number.isSafeInteger(published.publishedAt)
+              || published.computedAt > published.publishedAt || published.publishedAt > now) throw new ReportError('unavailable');
+            validateAggregate(published.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
+          }
+          persistTighter(); charge();
+          return receiptJob ? { state: receiptJob.status, reportId: receiptJob.status === 'completed' ? receiptJob.id : null, jobId: receiptJob.id }
+            : { state: 'completed' as const, reportId: receipt.reportId, jobId: null };
+        }
+        if (cycle?.slotKey === plan.slotKey && cycle.policyDigest !== plan.policyDigest) { persistTighter(); return { denied: 'unavailable' as const }; }
+        if (cycle && cycle.slotKey !== plan.slotKey && cycleJobs.some(job => !['completed', 'failed', 'invalidated'].includes(job!.status))) { persistTighter(); return { denied: 'capacity' as const }; }
+        if ((!cycle || cycle.slotKey !== plan.slotKey) && slots.active !== 0) { persistTighter(); return { denied: 'capacity' as const }; }
+        if (!day?.slots.includes(plan.slotKey) && (day?.slots.length ?? 0) >= slotLimit) { persistTighter(); return { denied: 'capacity' as const }; }
       }
-      if (!c.policy.computeEnabled) throw new ReportError('unavailable');
-      if (!Number.isSafeInteger(slots.active) || slots.active < 0 || slots.active >= c.policy[`${lane}Capacity`]
-        || !Number.isSafeInteger(subject.active) || subject.active < 0
-        || lane === 'custom' && subject.active >= c.policy.customPerSubjectCapacity) throw new ReportError('capacity');
-      if (!Number.isSafeInteger(head.sequence) || head.sequence < 0) throw new ReportError('unavailable');
-      const sequence = head.sequence + 1, id = digest([c.key, sequence]);
-      const job: ReportJob = { id, key: c.key, request: c.request, control: c.control, status: 'accepted', lane, requesterHash: access.subjectHash,
-        acceptedAt: now, startedAt: null, completedAt: null,
-        expiresAt: now + c.policy.jobLifetimeMs, fence: 0, leaseUntil: 0,
-        nextAttemptAt: 0, needsAttention: false,
-        workerHash: null, providerJobId: `metrics_report_${id}`, dispatchIntent: true, sourceStarted: false };
+      if (!plan && lane === 'scheduled' && cycle && (cycleJobs.length !== cycle.jobs.length
+        || cycleJobs.some((job, index) => !job || job.id !== cycle.jobs[index] || !['completed', 'failed', 'invalidated'].includes(job.status)))) throw new ReportError('capacity');
+      let result: { state: 'accepted' | 'running' | 'delayed' | 'completed'; reportId: string | null; jobId: string | null };
+      let jobToCreate: ReportJob | null = null;
+      if (publication && publication.key === c.key && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
+        if (plan) {
+          if (Object.keys(publication).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
+            || publication.id !== head.publication || digest(publication.request) !== digest(c.request) || digest(publication.control) !== digest(c.control)
+            || !Number.isSafeInteger(publication.computedAt) || !Number.isSafeInteger(publication.publishedAt)
+            || publication.computedAt > publication.publishedAt || publication.publishedAt > now) throw new ReportError('unavailable');
+          validateAggregate(publication.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
+        }
+        result = { state: 'completed', reportId: publication.id, jobId: null };
+      } else if (active && ['accepted', 'running', 'delayed'].includes(active.status)) {
+        result = { state: active.status as 'accepted' | 'running' | 'delayed', reportId: null, jobId: active.id };
+      } else {
+        if (!c.policy.computeEnabled) {
+          if (plan && day) { tx.set(dayRef, { ...day, limit: Math.min(day.limit, plan.maxDailyJobs), slotLimit: Math.min(day.slotLimit, plan.maxDailySlots) }); return { denied: 'unavailable' as const }; }
+          throw new ReportError('unavailable');
+        }
+        if (!Number.isSafeInteger(slots.active) || slots.active < 0 || slots.active >= c.policy[`${lane}Capacity`]
+          || !Number.isSafeInteger(subject.active) || subject.active < 0
+          || lane === 'custom' && subject.active >= c.policy.customPerSubjectCapacity) {
+          if (plan && day) { tx.set(dayRef, { ...day, limit: Math.min(day.limit, plan.maxDailyJobs), slotLimit: Math.min(day.slotLimit, plan.maxDailySlots) }); return { denied: 'capacity' as const }; }
+          throw new ReportError('capacity');
+        }
+        if (!Number.isSafeInteger(head.sequence) || head.sequence < 0) throw new ReportError('unavailable');
+        if (plan && (day?.used ?? 0) >= Math.min(day?.limit ?? plan.maxDailyJobs, plan.maxDailyJobs)) {
+          if (day) tx.set(dayRef, { ...day, limit: Math.min(day.limit, plan.maxDailyJobs), slotLimit: Math.min(day.slotLimit, plan.maxDailySlots) });
+          return { denied: 'capacity' as const };
+        }
+        const sequence = head.sequence + 1, id = digest([c.key, sequence]);
+        jobToCreate = { id, key: c.key, request: c.request, control: c.control, status: 'accepted', lane, requesterHash: access.subjectHash,
+          acceptedAt: now, startedAt: null, completedAt: null, expiresAt: now + c.policy.jobLifetimeMs, fence: 0, leaseUntil: 0,
+          nextAttemptAt: 0, needsAttention: false, workerHash: null, providerJobId: `metrics_report_${id}`, dispatchIntent: true, sourceStarted: false };
+        result = { state: 'accepted', reportId: null, jobId: id };
+      }
       charge();
-      tx.create(path('jobs', id), job);
-      tx.set(path('heads', c.key), { ...head, sequence, activeJob: id });
-      tx.set(path('capacity', lane), { active: slots.active + 1 });
-      tx.set(subjectSlot, { active: subject.active + 1 });
-      return { state: 'accepted' as const, reportId: null, jobId: id };
+      if (jobToCreate) {
+        tx.create(path('jobs', jobToCreate.id), jobToCreate);
+        tx.set(path('heads', c.key), { ...head, sequence: head.sequence + 1, activeJob: jobToCreate.id });
+        tx.set(path('capacity', lane), { active: slots.active + 1 });
+        tx.set(subjectSlot, { active: subject.active + 1 });
+      }
+      if (plan) {
+        const limit = Math.min(day?.limit ?? plan.maxDailyJobs, plan.maxDailyJobs), slotLimit = Math.min(day?.slotLimit ?? plan.maxDailySlots, plan.maxDailySlots);
+        const seen = day?.slots.includes(plan.slotKey) ? day.slots : [...(day?.slots ?? []), plan.slotKey];
+        const jobs = cycle?.slotKey === plan.slotKey ? [...cycle.jobs] : [];
+        if (result.jobId && !jobs.includes(result.jobId)) jobs.push(result.jobId);
+        if (jobs.length > 4) throw new ReportError('capacity');
+        tx.set(dayRef, { used: (day?.used ?? 0) + (jobToCreate ? 1 : 0), limit, slotLimit, slots: seen });
+        tx.set(cycleRef, { slotKey: plan.slotKey, policyDigest: plan.policyDigest, jobs });
+        tx.create(receiptRef, { slotKey: plan.slotKey, planDigest, ...result });
+      }
+      return result;
     });
+    if ('denied' in outcome && outcome.denied) throw new ReportError(outcome.denied);
+    return outcome;
   }
 
   async status(jobId: string, access: ReportAccess) {
