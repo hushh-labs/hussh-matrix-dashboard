@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearMetricsCache, peekMetrics, readMetrics } from '../src/lib/metrics-resource';
+import { clearMetricsCache, invalidateMetricsSession, peekMetrics, readMetrics } from '../src/lib/metrics-resource';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { MetricsSkeleton, MetricsUpdateStatus } from '../src/components/MetricsLoading';
@@ -29,6 +29,37 @@ describe('session metrics resources', () => {
   it('authorization failure clears other cached resources', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(reply(7)).mockResolvedValueOnce(new Response('{}', { status: 401 })));
     await readMetrics('/one'); await expect(readMetrics('/growth')).rejects.toThrow(); expect(peekMetrics('/one')).toBeNull();
+  });
+  it('signals reauthentication only for same-origin analytics 401 responses', async () => {
+    const target = new EventTarget(), listener = vi.fn(); target.addEventListener('metrics:session-required', listener);
+    vi.stubGlobal('window', Object.assign(target, { location: { origin: 'https://metrics.example.invalid' } }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('{}', { status: 401 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 403 })).mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 401 })));
+    await expect(readMetrics('/api/analytics/all')).rejects.toThrow(); expect(listener).toHaveBeenCalledTimes(1);
+    await expect(readMetrics('/api/analytics/all')).rejects.toThrow();
+    await expect(readMetrics('/api/analytics/all')).rejects.toThrow();
+    await expect(readMetrics('https://other.example.invalid/api/analytics/all')).rejects.toThrow();
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+  it('does not invalidate a newer session when an old request later returns 401', async () => {
+    const target = new EventTarget(), listener = vi.fn(); target.addEventListener('metrics:session-required', listener);
+    vi.stubGlobal('window', Object.assign(target, { location: { origin: 'https://metrics.example.invalid' } }));
+    let resolve!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn().mockImplementationOnce(() => new Promise<Response>(yes => { resolve = yes; })).mockResolvedValueOnce(reply(9)));
+    const old = readMetrics('/api/analytics/all?old=1'); invalidateMetricsSession();
+    await readMetrics('/api/analytics/all?new=1'); resolve(new Response('{}', { status: 401 }));
+    await expect(old).rejects.toThrow('Session changed'); expect(listener).not.toHaveBeenCalled();
+    expect(peekMetrics('/api/analytics/all?new=1')).toMatchObject({ data: { value: 9 } });
+  });
+  it('does not let an unrelated 403 suppress a same-session analytics 401', async () => {
+    const target = new EventTarget(), listener = vi.fn(); target.addEventListener('metrics:session-required', listener);
+    vi.stubGlobal('window', Object.assign(target, { location: { origin: 'https://metrics.example.invalid' } }));
+    let resolve!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn().mockImplementationOnce(() => new Promise<Response>(yes => { resolve = yes; }))
+      .mockResolvedValueOnce(new Response('{}', { status: 403 })));
+    const pending = readMetrics('/api/analytics/all'); await expect(readMetrics('/api/analytics/instagram')).rejects.toThrow();
+    resolve(new Response('{}', { status: 401 })); await expect(pending).rejects.toThrow(); expect(listener).toHaveBeenCalledOnce();
   });
   it('loading UI has accessible skeletons and never claims unavailable data is a successful update', () => {
     expect(renderToStaticMarkup(createElement(MetricsSkeleton))).toContain('aria-busy="true"');

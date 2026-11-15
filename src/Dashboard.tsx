@@ -1,3 +1,4 @@
+import { clearOneSelection, saveOneSelection, readOneSelection } from './lib/session-recovery';
 import { ReportDetails, ReportTabs } from './components/ReportControls';
 import { DashboardShell } from './components/DashboardShell';
 import { isReferralsPath, referralsPath } from './lib/referrals';
@@ -1168,6 +1169,8 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 
 export default function Dashboard() {
   const { user, signOut } = useAuth();
+  const [recoveredSelection] = useState(() => readOneSelection());
+  useEffect(() => { clearOneSelection(); }, []);
   const presetRange = (days: DatePreset) => rangeForPreset(days, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined);
   // The founder lands on the compact production briefing; diagnostic tabs
   // remain available on demand.
@@ -1180,14 +1183,14 @@ export default function Dashboard() {
     onExpandedChange: (expanded: boolean) => setDateEditors(previous => previous[label] === expanded ? previous : { ...previous, [label]: expanded }),
   });
   const [trafficView, setTrafficView] = useState<'one' | 'hushh-ai' | 'hushhtech'>('one');
-  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : window.location.pathname === '/plg' ? 'plg' : isReferralsPath(window.location.pathname) ? 'referrals' : 'briefing'));
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() => (locationRoute ? 'one' : window.location.pathname === '/plg' ? 'plg' : isReferralsPath(window.location.pathname) ? 'referrals' : recoveredSelection?.tab ?? 'briefing'));
   const [briefRefreshKey, setBriefRefreshKey] = useState(0);
   const [instagramRefreshKey, setInstagramRefreshKey] = useState(0);
   const [plgRefreshKey, setPlgRefreshKey] = useState(0);
   const [kaiRange, setKaiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
   // Open a bounded current-day report; larger periods require explicit choice.
   const [oneRange, setOneRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
-  const [oneAppRange, setOneAppRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
+  const [oneAppRange, setOneAppRange] = useState<HushhAiDateRangeState>(() => recoveredSelection?.range ?? rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
   const [onePublicationAsOf, setOnePublicationAsOf] = useState<string | null>(null);
   useEffect(() => {
     let active = true; setOnePublicationAsOf(null);
@@ -1205,8 +1208,13 @@ export default function Dashboard() {
     return () => { active = false; };
   }, [user?.email, user?.publicationAsOf]);
   const onePresetRange = (days: DatePreset) => rangeForPreset(days, onePublicationAsOf ? new Date(onePublicationAsOf) : user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined);
-  const [oneEnvironment, setOneEnvironment] = useState<'production' | 'uat'>(locationRoute?.environment ?? 'production');
+  const [oneEnvironment, setOneEnvironment] = useState<'production' | 'uat'>(locationRoute?.environment ?? recoveredSelection?.environment ?? 'production');
   const [oneHealthRequested, setOneHealthRequested] = useState(false);
+  useEffect(() => {
+    const preserveSelection = () => { if (activeTab === 'one') saveOneSelection({ tab: 'one', environment: locationRoute?.environment ?? oneEnvironment, range: oneAppRange }); };
+    window.addEventListener('metrics:session-required', preserveSelection);
+    return () => window.removeEventListener('metrics:session-required', preserveSelection);
+  }, [activeTab, locationRoute, oneEnvironment, oneAppRange]);
   const [hushhAiRange, setHushhAiRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(7, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
   const [refreshKey, setRefreshKey] = useState(0);
   const [compareRefreshKey, setCompareRefreshKey] = useState(0);

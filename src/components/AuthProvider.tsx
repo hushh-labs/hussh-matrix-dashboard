@@ -1,4 +1,4 @@
-import { clearMetricsCache } from '../lib/metrics-resource';
+import { invalidateMetricsSession } from '../lib/metrics-resource';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -45,7 +45,7 @@ const AuthContext = createContext<AuthContextType>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -63,8 +63,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    const requireSession = () => { invalidateMetricsSession(); setError('Your session is no longer valid. Sign in again to continue.'); setUser(null); };
+    window.addEventListener('metrics:session-required', requireSession);
+    return () => window.removeEventListener('metrics:session-required', requireSession);
+  }, []);
+
   const signOut = async () => {
-    clearMetricsCache();
+    invalidateMetricsSession();
     await logoutUser();
     setUser(null);
     window.location.href = '/login';
