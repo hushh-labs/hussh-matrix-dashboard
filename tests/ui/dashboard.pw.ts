@@ -180,6 +180,55 @@ test('uses the verified One anchor without changing Growth dates', async ({ page
   await expect.poll(() => urls.some(url => url.searchParams.get('view') === 'growth' && url.searchParams.get('one_end_date') === '2026-11-14')).toBe(true);
 });
 
+test('session loss prompts sign-in and restores the One date and environment', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:00:00.000Z', user: { email: 'qa@example.invalid', name: 'QA' } } }));
+  let unauthorized = false; const urls: URL[] = [];
+  await page.route('**/api/analytics/all?*', route => {
+    const url = new URL(route.request().url()); urls.push(url);
+    return unauthorized ? route.fulfill({ status: 401, json: { error: 'Sign in required' } }) : route.fulfill({ json: allAnalytics });
+  });
+  await page.goto('/location-analytics/uat');
+  await page.getByRole('button', { name: '30 days', exact: true }).click();
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-16');
+  unauthorized = true; await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(page.getByText('Your session is no longer valid. Sign in again to continue.')).toBeVisible();
+  const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('metrics-one-session-selection-v1') || 'null'));
+  expect(saved).toEqual({ tab: 'one', environment: 'uat', range: { preset: 30, startDate: '2026-10-16', endDate: '2026-11-14' } });
+  unauthorized = false; await page.reload();
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-16');
+  expect(urls.at(-1)?.searchParams.get('environment')).toBe('uat');
+  await expect(page.getByRole('heading', { name: 'One Location analytics', exact: true })).toBeVisible();
+});
+
+test('session loss on the One app root preserves the selected production period', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:00:00.000Z', user: { email: 'qa@example.invalid', name: 'QA' } } }));
+  let unauthorized = false; const urls: URL[] = [];
+  await page.route('**/api/analytics/all?*', route => {
+    urls.push(new URL(route.request().url())); return unauthorized ? route.fulfill({ status: 401, json: {} }) : route.fulfill({ json: allAnalytics });
+  });
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: '30 days', exact: true }).click();
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-16');
+  unauthorized = true; await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(page.getByText('Your session is no longer valid. Sign in again to continue.')).toBeVisible();
+  unauthorized = false; await page.reload();
+  await expect(page.locator('.dashboard-page-heading h1')).toHaveText('One app');
+  await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-16');
+  expect(urls.at(-1)?.searchParams.get('environment')).toBe('production');
+});
+
+test('sign-in preserves the local Location return path without an automatic redirect', async ({ page }) => {
+  await mockDashboard(page); await page.route('**/api/analytics/all?*', route => route.fulfill({ status: 401, json: {} }));
+  await page.goto('/location-analytics/uat');
+  await expect(page.getByText('Your session is no longer valid. Sign in again to continue.')).toBeVisible();
+  let target = ''; await page.route('**/api/auth/google?*', route => { target = route.request().url(); return route.fulfill({ status: 200, body: 'test' }); });
+  await page.getByRole('button', { name: 'Continue with Google' }).click();
+  await expect.poll(() => target).not.toBe('');
+  expect(new URL(target).searchParams.get('returnTo')).toBe('/location-analytics/uat');
+});
+
 test('UAT Location deep links and agent drilldowns keep the selected source', async ({ page }) => {
   await mockDashboard(page);
   const urls: URL[] = [];

@@ -9,7 +9,9 @@ interface LoginPageProps { authConfig?: AuthConfig; error?: string | null; loadi
 
 export function LoginPage({ error, loading = false }: LoginPageProps) {
   const handleGoogleSignIn = () => {
-    const returnTo = new URLSearchParams(window.location.search).get('returnTo');
+    const supplied = new URLSearchParams(window.location.search).get('returnTo');
+    const current = window.location.pathname === '/login' ? '/' : `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const returnTo = supplied || current;
     window.location.href = '/api/auth/google' + (returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : '');
   };
   return <AuthPageLayout>

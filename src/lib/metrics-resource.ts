@@ -6,7 +6,9 @@ const MAX_ENTRIES = 48;
 const MAX_AGE_MS = 30 * 60_000;
 
 let generation = 0;
+let sessionGeneration = 0;
 export function clearMetricsCache() { generation++; values.clear(); pending.clear(); }
+export function invalidateMetricsSession() { sessionGeneration++; clearMetricsCache(); }
 export function peekMetrics<T>(url: string | null): MetricsSnapshot<T> | null {
   if (!url) return null;
   const hit = values.get(url);
@@ -20,6 +22,7 @@ export async function readMetrics<T>(url: string, options: { refresh?: boolean }
   const running = pending.get(url);
   if (running) return running as Promise<MetricsSnapshot<T>>;
   const requestGeneration = generation;
+  const requestSession = sessionGeneration;
   const request = (async () => {
     const response = await fetch(url, {
       cache: 'no-store', credentials: 'same-origin',
@@ -27,7 +30,17 @@ export async function readMetrics<T>(url: string, options: { refresh?: boolean }
       signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) clearMetricsCache();
+      if (requestSession !== sessionGeneration) throw new Error('Session changed');
+      let sessionRequired = false;
+      if (response.status === 401 && typeof window !== 'undefined') {
+        const target = new URL(url, window.location.origin);
+        if (target.origin === window.location.origin && target.pathname.startsWith('/api/analytics/')) {
+          sessionRequired = true;
+          invalidateMetricsSession();
+          window.dispatchEvent(new Event('metrics:session-required'));
+        }
+      }
+      if (!sessionRequired && (response.status === 401 || response.status === 403)) clearMetricsCache();
       throw new Error('Metrics temporarily unavailable');
     }
     const data = await response.json();
