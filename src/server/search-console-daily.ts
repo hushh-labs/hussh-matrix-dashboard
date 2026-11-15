@@ -1,4 +1,10 @@
 /** A missing daily source row does not establish that the day had zero activity. */
+export function latestCompleteSearchDay(rows: Record<string, unknown>[]) {
+  const row = rows.filter(item => item.clicks != null && item.impressions != null).at(-1);
+  const date = typeof row?.date === 'string' ? row.date : null;
+  return { row, source: date ? `GCP daily aggregate · data date ${date}` : 'GCP daily aggregate' };
+}
+
 export function buildSearchConsoleDailyRows<T extends Record<string, unknown>>(
   dates: string[], rows: Record<string, unknown>[], metric: (row: Record<string, unknown>) => T,
 ) {

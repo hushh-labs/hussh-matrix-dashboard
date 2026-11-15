@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateSearchDays, buildSearchConsoleDailyRows, searchConsoleCoverageNote } from '../src/server/search-console-daily';
+import { aggregateSearchDays, buildSearchConsoleDailyRows, latestCompleteSearchDay, searchConsoleCoverageNote } from '../src/server/search-console-daily';
 
 describe('Search Console daily coverage', () => {
+  it('labels the latest complete row rather than a newer incomplete source date', () => {
+    const rows = [{ date: '2026-11-01', clicks: 4, impressions: 30 }, { date: '2026-11-02', clicks: null, impressions: 7 }];
+    expect(latestCompleteSearchDay(rows)).toEqual({ row: rows[0], source: 'GCP daily aggregate · data date 2026-11-01' });
+    expect(latestCompleteSearchDay([rows[1]])).toEqual({ row: undefined, source: 'GCP daily aggregate' });
+  });
   it('keeps missing dates unknown while preserving observed zero and nonzero rows', () => {
     const dates = ['2026-11-01', '2026-11-02', '2026-11-03'];
     const rows = [{ date: dates[0], clicks: 0, impressions: 0 }, { date: dates[2], clicks: 4, impressions: 30 }];
