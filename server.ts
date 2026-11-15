@@ -55,6 +55,7 @@ import { oneActiveQueryAvailable } from './src/server/one-active-metrics';
 import { readCustomerCohort, customerEventSql, customerAccountCounts, requireFreshCohort, withCustomerCohort, withWitnessedCustomerCohort, requireCurrentCustomerCohort } from './src/server/one-customer-cohort';
 import { oneAppScope, readOneAppEnvironments } from './src/server/one-app-scope';
 import { onePlatformCaptureQueries, readPlatformCapture, unpackPlatformCapture } from './src/server/one-platform-capture';
+import { prepareOperatorPlatform } from './src/server/one-report-queue';
 import { registrationTotals } from './src/server/one-registration-totals.mjs';
 import type { OneRegistrationTotals } from './src/lib/types';
 
@@ -3300,6 +3301,10 @@ ${capabilitySql.isDeliberate}
   `;
 
   const queryProject = BQ_JOB_PROJECT || projectId;
+  // The operator's optional platform capture has its own bounded deadline.
+  // Complete it before the general report fanout so it cannot spend that
+  // deadline waiting behind unrelated queries in the shared semaphore.
+  const operatorPlatform = await prepareOperatorPlatform(!!currentDailyOneRefresh(), () => queryOnePlatformCapture(queryProject, platformQueries));
   const [
     funnel,
     agents,
@@ -3330,7 +3335,7 @@ ${capabilitySql.isDeliberate}
     queryBigQuerySql(queryProject, surfaceQuery),
     queryBigQuerySql(queryProject, locationFeatureQuery),
     queryBigQuerySql(queryProject, locationBehaviorQuery),
-    queryOnePlatformCapture(queryProject, platformQueries),
+    operatorPlatform ?? queryOnePlatformCapture(queryProject, platformQueries),
     queryBigQuerySql(queryProject, acquisitionQuery),
     queryBigQuerySql(queryProject, dailyQuery),
     queryBigQuerySql(queryProject, reliabilityQuery),
