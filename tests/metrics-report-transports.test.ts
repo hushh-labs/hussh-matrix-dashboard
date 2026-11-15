@@ -92,7 +92,13 @@ describe('collector-only bounded native transports', () => {
     await transport('https://api.uat.hushh.ai/api/one/metrics/adoption', { body, signal: signal() });
     const options = fetcher.mock.calls[0][1] as RequestInit;
     const headers = options.headers as Record<string, string>;
-    expect(headers['X-Metrics-Signature']).toBe(createHmac('sha256', key).update(`metrics-one-aggregate-v1:123456:${JSON.stringify(body)}`).digest('hex'));
+    expect(headers['X-Metrics-Signature']).toBe(createHmac('sha256', key).update(`metrics-one-aggregate-uat-v1:123456:${JSON.stringify(body)}`).digest('hex'));
+    expect(headers['X-Metrics-Signature']).not.toBe(createHmac('sha256', key).update(`metrics-one-aggregate-v1:123456:${JSON.stringify(body)}`).digest('hex'));
+    const production = signedOneAggregateFetch('production', key, fetcher, () => 123456);
+    await production('https://api.hushh.ai/api/one/metrics/adoption', { body, signal: signal() });
+    const productionHeaders = (fetcher.mock.calls[1][1] as RequestInit).headers as Record<string, string>;
+    expect(productionHeaders['X-Metrics-Signature']).toBe(createHmac('sha256', key).update(`metrics-one-aggregate-v1:123456:${JSON.stringify(body)}`).digest('hex'));
+    expect(productionHeaders['X-Metrics-Signature']).not.toBe(headers['X-Metrics-Signature']);
     expect(options.redirect).toBe('error'); expect(headers).not.toHaveProperty('Authorization');
     expect(JSON.stringify(options)).not.toContain(key.toString('base64'));
   });

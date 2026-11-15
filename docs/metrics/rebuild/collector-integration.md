@@ -111,7 +111,9 @@ The One adapter targets the **Dev-merged, not deployed or enabled** narrow endpo
 `POST /api/one/metrics/adoption` on the pinned environment origin. Its request
 contains only period, definition version, source generation and scope digest.
 It signs exact JSON bytes using HMAC-SHA256 over
-`metrics-one-aggregate-v1:{timestamp milliseconds}:{body}`. Backend implementation
+`metrics-one-aggregate-v1:{timestamp milliseconds}:{body}` for production and
+`metrics-one-aggregate-uat-v1:{timestamp milliseconds}:{body}` for UAT, with
+separate environment keys. Backend implementation
 must independently enforce origin/environment, purpose, freshness/replay bounds,
 aggregate-only access and the approved population/outcome definition. It must
 return the exact `AggregateResult` contract with independently reconciled account
