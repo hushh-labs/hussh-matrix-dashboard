@@ -156,6 +156,45 @@ describe('private no-query cohort preflight', () => {
  });
 });
 describe('finite daily One refresh admission', () => {
+ it('serializes local reservations and stops an aborted waiter before its transaction', async () => {
+  const f = fixture(), first = await f.scope(() => f.store.admit({ query: 'SELECT 11' }, 1)), second = await f.scope(() => f.store.admit({ query: 'SELECT 12' }, 1));
+  const original = f.db.runTransaction.bind(f.db); let release!: () => void, entered!: () => void;
+  const barrier = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  let transactions = 0;
+  vi.spyOn(f.db, 'runTransaction').mockImplementation(async run => { transactions++; if (transactions === 1) { entered(); await barrier; } return original(run); });
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {}), controller = new AbortController();
+  try {
+   const one = f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(first)));
+   await started;
+   const two = f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(second), controller.signal));
+   const rejected = expect(two).rejects.toThrow(); controller.abort(); expect(transactions).toBe(1); release(); await one; await rejected;
+   expect(transactions).toBe(1); expect(f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedJobs).toBe(1);
+   expect(warning).toHaveBeenCalledWith('Daily reservation held:', 'window');
+  } finally { release(); vi.restoreAllMocks(); }
+ });
+ it('releases the local reservation queue after failure and logs only a fixed category', async () => {
+  const f = fixture(), grant = await f.scope(() => f.store.admit({ query: 'SELECT 13' }, 1));
+  const original = f.db.runTransaction.bind(f.db), warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(f.db, 'runTransaction').mockRejectedValueOnce(Object.assign(new Error('private provider detail'), { code: 10 })).mockImplementation(run => original(run));
+  try {
+   await expect(f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(grant)))).rejects.toThrow();
+   await expect(f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(grant)))).resolves.toBeUndefined();
+   expect(warning).toHaveBeenCalledWith('Daily reservation held:', 'contention');
+   expect(JSON.stringify(warning.mock.calls)).not.toContain('private provider detail');
+  } finally { vi.restoreAllMocks(); }
+ });
+ it('distinguishes a reached finite limit from an inconsistent ledger', async () => {
+  const f = fixture(), warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+   const grants = await Promise.all([14, 15, 16, 17, 18].map(i => f.scope(() => f.store.admit({ query: `SELECT ${i}` }, 1))));
+   for (const grant of grants.slice(0, 4)) await f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(grant)));
+   await expect(f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(grants[4])))).rejects.toThrow();
+   expect(warning).toHaveBeenLastCalledWith('Daily reservation held:', 'limit');
+   f.db.values.get(`metricsOneDailyBudgets/${day}`).reservedJobs = 0;
+   await expect(f.scope(() => withDailyOneRefresh(f.store, f.reports[0], () => f.store.reserve(grants[4])))).rejects.toThrow();
+   expect(warning).toHaveBeenLastCalledWith('Daily reservation held:', 'ledger');
+  } finally { vi.restoreAllMocks(); }
+ });
  it('reuses only exact closed parent reservations without increasing the shared budget', async () => {
   vi.useFakeTimers(); vi.setSystemTime(start + 3000);
   try {
