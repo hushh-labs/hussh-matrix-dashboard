@@ -57,6 +57,14 @@ describe('fixed periodic collector admission', () => {
     await expect(f.reports.requestPeriodic('one', access)).rejects.toThrow();
     expect([...f.store.data.keys()].filter(key => key.includes('/periodicReceipts/'))).toHaveLength(0);
   });
+  it('rejects a publication whose stored ID does not match its head', async () => {
+    const f = collectionFixture(); await f.initialize(); const manual = await f.reports.request(f.request, f.access);
+    const claim = await f.worker.claim(manual.jobId!, digest('worker')); await f.worker.publish(claim!.job, f.result(claim!.job));
+    const snapshot = (await f.get<any>('snapshots', manual.jobId!))!; snapshot.id = digest('different-publication');
+    await f.put('snapshots', manual.jobId!, snapshot); await f.put('policy', 'periodic', schedule());
+    await expect(f.reports.requestPeriodic('one', access)).rejects.toThrow();
+    expect([...f.store.data.keys()].filter(key => key.includes('/periodicReceipts/'))).toHaveLength(0);
+  });
   it('does not redispatch a terminal receipt', async () => {
     const deliver = vi.fn(async () => ({})), id = digest('periodic-job');
     for (const state of ['completed', 'failed', 'invalidated'] as const) await dispatchPeriodic({ state, jobId: id, reportId: state === 'completed' ? id : null }, deliver);

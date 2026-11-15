@@ -161,7 +161,8 @@ export class MetricsReports {
       let jobToCreate: ReportJob | null = null;
       if (publication && publication.key === c.key && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
         if (plan) {
-          if (digest(publication.request) !== digest(c.request) || digest(publication.control) !== digest(c.control)
+          if (Object.keys(publication).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
+            || publication.id !== head.publication || digest(publication.request) !== digest(c.request) || digest(publication.control) !== digest(c.control)
             || !Number.isSafeInteger(publication.computedAt) || !Number.isSafeInteger(publication.publishedAt)
             || publication.computedAt > publication.publishedAt || publication.publishedAt > now) throw new ReportError('unavailable');
           validateAggregate(publication.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
