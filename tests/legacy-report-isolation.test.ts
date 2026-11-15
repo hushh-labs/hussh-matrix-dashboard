@@ -136,7 +136,7 @@ describe('legacy report source isolation', () => {
   });
   it('keeps daily publication private and refuses incomplete source results', async () => {
     source(); state.phase = 'closed'; const save = vi.fn();
-    state.daily = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }), save };
+    state.daily = { requireOpen: async () => ({ run: { logicalAsOf: '2026-11-14T23:59:59.999Z' } }), verifyMeasuredCohort: async () => {}, save };
     const url = '/api/analytics/all?view=one&environment=uat&one_start_date=2026-11-14&one_end_date=2026-11-14';
     const denied = await request(app()).get(url).set('Cookie', cookie()).set('X-Metrics-Daily-One-Publish', '1');
     expect(denied.status).toBe(403); expect(state.query).not.toHaveBeenCalled();

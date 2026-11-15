@@ -13,7 +13,8 @@ export const DAILY_ONE_LIMITS = Object.freeze({ bytes: 1024 ** 4, jobs: 250, per
 const FIRST_MEASUREMENT_SOURCE = '3c6bb690a538d75b20c6dfc6494b9c0a8ae3bd58';
 type Database = Pick<Firestore, 'doc' | 'runTransaction'>;
 type DailyRun = { source: string; policyGeneration: string; day: string; logicalAsOf: string; phase: 'open' | 'closed'; createdAt: number; expiresAt: number;
-  reports: string[]; reportDigest: string; measurementSource: string; measurementDigest: string; maxBytes: number; maxJobs: number; maxPerJobBytes: number; reservedBytes: number; reservedJobs: number };
+  reports: string[]; reportDigest: string; measurementSource: string; measurementDigest: string; measurementScopes: Record<string, string>; scopeDigest: string;
+  maxBytes: number; maxJobs: number; maxPerJobBytes: number; reservedBytes: number; reservedJobs: number };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export const dailyOnePolicyGeneration = (source: string, maxDailyBytes: number, maxDailyJobs: number, maxPerJobBytes: number) =>
   hash(JSON.stringify({ schema: 1, source, maxDailyBytes, maxDailyJobs, maxPerJobBytes }));
@@ -61,6 +62,10 @@ export class DailyOneRefresh {
       || ![this.source, FIRST_MEASUREMENT_SOURCE].includes(run.measurementSource)
       || !['open', 'closed'].includes(run.phase) || !Array.isArray(run.reports) || run.reportDigest !== restorationReportDigest(run.reports)
       || restorationReportDigest(dailyOneManifest(run.logicalAsOf.slice(0, 10))) !== run.reportDigest
+      || !run.measurementScopes || typeof run.measurementScopes !== 'object' || Array.isArray(run.measurementScopes)
+      || Object.keys(run.measurementScopes).length !== run.reports.length
+      || run.reports.some(report => !/^[a-f0-9]{64}$/.test(run.measurementScopes[hash(report)] ?? ''))
+      || run.scopeDigest !== hash(JSON.stringify(Object.entries(run.measurementScopes).sort(([a], [b]) => a.localeCompare(b))))
       || !Number.isSafeInteger(run.maxBytes) || run.maxBytes < 1 || run.maxBytes > DAILY_ONE_LIMITS.bytes || !Number.isSafeInteger(run.maxJobs) || run.maxJobs < 1 || run.maxJobs > DAILY_ONE_LIMITS.jobs
       || !Number.isSafeInteger(run.maxPerJobBytes) || run.maxPerJobBytes < 1 || run.maxPerJobBytes > DAILY_ONE_LIMITS.perJob
       || !Number.isSafeInteger(run.reservedBytes) || run.reservedBytes < 0 || run.reservedBytes > run.maxBytes || !Number.isSafeInteger(run.reservedJobs) || run.reservedJobs < 0 || run.reservedJobs > run.maxJobs) throw fail();
@@ -68,7 +73,7 @@ export class DailyOneRefresh {
       read(this.db.doc(`metricsOneDailyPolicies/${run.policyGeneration}`)), read(this.db.doc(`metricsOneDailyApprovals/${this.id}`)), read(this.db.doc(`metricsOneDailySlots/${run.day}`)), read(this.db.doc(`metricsOneDailyMeasurements/${this.id}`)),
     ]);
     const policy = policySnap.data(), approval = approvalSnap.data(), slot = slotSnap.data(), measurement = measurementSnap.data();
-    const keys = ['source','policyGeneration','day','logicalAsOf','createdAt','expiresAt','reportDigest','measurementSource','measurementDigest','maxBytes','maxJobs','maxPerJobBytes'] as const;
+    const keys = ['source','policyGeneration','day','logicalAsOf','createdAt','expiresAt','reportDigest','measurementSource','measurementDigest','scopeDigest','maxBytes','maxJobs','maxPerJobBytes'] as const;
     if (!policySnap.exists || policy?.approved !== true || policy.generation !== run.policyGeneration || policy.source !== this.source
       || !Number.isSafeInteger(policy.maxDailyBytes) || policy.maxDailyBytes < run.maxBytes || policy.maxDailyBytes > DAILY_ONE_LIMITS.bytes
       || !Number.isSafeInteger(policy.maxDailyJobs) || policy.maxDailyJobs < run.maxJobs || policy.maxDailyJobs > DAILY_ONE_LIMITS.jobs
@@ -96,12 +101,25 @@ export class DailyOneRefresh {
     if (value.run.phase !== 'open' || now < value.run.createdAt || now >= value.run.expiresAt || new Date(now).toISOString().slice(0, 10) !== value.run.day || !value.run.reports.includes(report)) throw fail();
     return value;
   }
+  /** Check every measured lane before any paid work, without using the
+   * production cohort as the UAT report's data population. */
+  async verifyMeasuredCohort(cohort: CustomerCohort) {
+    requireFreshCohort(cohort);
+    if (!/^[a-f0-9]{64}$/.test(cohort.cacheKey)) throw fail();
+    const { run } = await this.permit();
+    for (const report of run.reports) {
+      const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
+      const prefix = environment === 'production' ? cohort.cacheKey : environment === 'uat' ? '' : null;
+      if (prefix === null || run.measurementScopes[hash(report)] !== hash(`${prefix}:${report}`)) throw fail();
+    }
+  }
   private identity(run: DailyRun, query: string) {
     const scope = currentLegacyReportKey(), separator = scope?.indexOf(':') ?? -1;
     const cohortScope = scope?.slice(0, separator) ?? '', report = scope?.slice(separator + 1) ?? '';
     if (separator < 0 || (currentDailyOneRefresh() && currentDailyOneRefresh()?.report !== report) || !/^(?:[a-f0-9]{64})?$/.test(cohortScope) || !run.reports.includes(report) || !/^(?:SELECT|WITH)\b/i.test(query.trim())) throw fail();
     const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
     if ((environment === 'production' && !/^[a-f0-9]{64}$/.test(cohortScope)) || (environment === 'uat' && cohortScope !== '') || !['production', 'uat'].includes(environment ?? '')) throw fail();
+    if (run.measurementScopes[hash(report)] !== hash(scope!)) throw fail();
     const planHash = hash(JSON.stringify({ schema: 1, run: this.id, source: this.source, cohortScope, report, project: 'hushh-ai-prod', location: 'US', asOf: run.logicalAsOf, query }));
     return { planHash, report, scopeHash: hash(scope!) };
   }
@@ -169,7 +187,7 @@ export class DailyOneRefresh {
       if (existing.exists || reservations.some((snapshot, index) => !snapshot.exists || snapshot.data()?.jobId !== jobs[index].id || snapshot.data()?.state !== 'started' || snapshot.data()?.scopeHash !== hash(scope!) || snapshot.data()?.reportHash !== reportHash || !Number.isSafeInteger(snapshot.data()?.startedAt)
         || snapshot.data()?.startedAt > jobs[index].endedAt)) throw fail();
       tx.create(target, { schema: 1, state: 'pending', source: this.source, measurementSource: live.measurementSource,
-        measurementDigest: live.measurementDigest, runId: this.id, reportHash, dataAsOf: live.logicalAsOf,
+        measurementDigest: live.measurementDigest, scopeDigest: live.scopeDigest, runId: this.id, reportHash, dataAsOf: live.logicalAsOf,
         computedAt, sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown', jobs, json, ...(witness ? { witness } : {}) });
     });
     if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
@@ -195,7 +213,7 @@ export class DailyOneRefresh {
     if (environment === 'production' ? !cohort : environment !== 'uat' || !!cohort) return null;
     const row = (await this.ref().collection('snapshots').doc(hash(report)).get()).data();
     if (!row || row.schema !== 1 || row.state !== 'verified' || row.source !== this.source || row.measurementSource !== run.measurementSource
-      || row.measurementDigest !== run.measurementDigest || row.runId !== this.id || row.reportHash !== hash(report)
+      || row.measurementDigest !== run.measurementDigest || row.scopeDigest !== run.scopeDigest || row.runId !== this.id || row.reportHash !== hash(report)
       || row.dataAsOf !== run.logicalAsOf || row.sourceCoverage !== 'intraday-or-unknown' || row.nonWarehouseFreshness !== 'unknown'
       || !Number.isSafeInteger(row.computedAt) || row.computedAt < run.createdAt || row.computedAt > this.now()
       || this.now() - Date.parse(run.logicalAsOf) > 90 * 86_400_000 || typeof row.json !== 'string' || Buffer.byteLength(row.json) > 700_000
