@@ -5915,6 +5915,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
             if (!daily) { res.status(409).json({ error: 'Daily One publication is not configured.' }); return; }
             await restoration.closedDescriptor();
             const perform = async () => {
+              await daily.verifyMeasuredCohort(await readCustomerCohort());
               const pinned = needsCustomers ? await readCustomerCohort() : null;
               const dailyKey = `${pinned?.cacheKey ?? ''}:${reportUrl}`;
               return withLegacyReportScope(dailyKey, () => withDailyOneRefresh(daily, reportUrl, async () => {
@@ -5925,7 +5926,8 @@ function registerAnalyticsRoutes(app: express.Express): void {
                 return { computedAt, jobs };
               }));
             };
-            const result = cohort ? await withCustomerCohort(cohort.cacheKey, perform) : await perform();
+            const gate = cohort ?? await readCustomerCohort();
+            const result = await withCustomerCohort(gate.cacheKey, perform);
             res.set('Cache-Control', 'no-store');
             res.status(200).json({ state: 'staged', computedAt: result.computedAt, jobs: result.jobs.length }); return;
           }
