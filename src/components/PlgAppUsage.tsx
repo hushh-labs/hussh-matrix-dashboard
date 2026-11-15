@@ -1,32 +1,30 @@
 import { useState } from 'react';
 import { useMetricsResource } from '../lib/use-metrics-resource';
 import { exactCount } from '../lib/feature-measurement';
+import { buildAnalyticsUrl, type AllAnalyticsResponse } from '../lib/analytics-service';
 import { dashboardCard } from '../lib/theme';
 import { cn } from '../lib/utils';
-import type { OneAppSummary } from '../lib/types';
-
-interface AppResponse {
-  environment?: string;
-  data?: { production: OneAppSummary | null; uat: OneAppSummary | null };
-  error?: string | null;
-  fetchedAt?: string;
-}
 const count = (value: number | null | undefined) => value == null ? 'Unavailable' : exactCount(value);
 const timestamp = (value?: string | null) => value && Number.isFinite(Date.parse(value))
-  ? new Date(value).toLocaleString() : 'Not available';
+  ? `${new Date(value).toISOString().slice(0, 19).replace('T', ' ')} UTC` : 'Not available';
 
 /** Aggregate authority is shared with One analytics; never derive app totals from audience pages. */
-export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
+export function PlgAppUsage({ refreshKey = 0, publicationAsOf }: { refreshKey?: number; publicationAsOf?: string | null }) {
   const [days, setDays] = useState(30);
-  const endDate = new Date().toISOString().slice(0, 10);
-  const startDate = new Date(Date.parse(endDate) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
-  const url = `/api/analytics/one/app?environment=production&one_start_date=${startDate}&one_end_date=${endDate}`;
-  const resource = useMetricsResource<AppResponse>(url, { refreshKey });
-  const one = resource.data?.data?.production;
-  const production = resource.data?.environment === 'production' && resource.data?.data?.uat === null
-    && one?.reportingEnvironment === 'production' ? one : null;
+  const anchor = publicationAsOf && Number.isFinite(Date.parse(publicationAsOf)) ? new Date(publicationAsOf) : null;
+  const endDate = anchor?.toISOString().slice(0, 10) ?? '';
+  const startDate = endDate ? new Date(Date.parse(endDate) - (days - 1) * 86_400_000).toISOString().slice(0, 10) : '';
+  const url = anchor ? buildAnalyticsUrl({ view: 'one', oneEnvironment: 'production', oneStartDate: startDate, oneEndDate: endDate }) : null;
+  const resource = useMetricsResource<AllAnalyticsResponse>(url, { refreshKey });
+  const one = resource.data?.one?.data?.production;
+  const periodMatches = one?.range?.startDate === startDate && one.range.endDate === endDate && one.range.days === days
+    && one.identifiedUsers?.selectedRange?.startDate === startDate && one.identifiedUsers.selectedRange.endDate === endDate;
+  const provenanceMatches = Boolean(anchor && resource.cacheState === 'RESTORED' && resource.headerUpdatedAt === publicationAsOf);
+  const production = resource.data?.one?.data?.uat === null && one?.reportingEnvironment === 'production'
+    && one.reportingScopeVersion === 'one-environment-v1' && one.activeUsers?.countingUnit === 'device'
+    && one.identifiedUsers?.countingUnit === 'account' && periodMatches && provenanceMatches ? one : null;
   const registry = production?.registeredAccounts;
-  const registryValid = registry?.available && registry.environment === 'production' &&
+  const registryValid = registry?.available && registry.environment === 'production' && registry.startDate === startDate && registry.endDate === endDate &&
     (registry.registryScope === 'production_contacts' || (registry.registryScope === 'isolated' && !registry.sharedAcrossEnvironments));
   const device = production?.activeUsers;
   const accounts = production?.identifiedUsers;
@@ -56,7 +54,7 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
         </label>
       </div>
       {resource.loading ? <p role="status" className="text-sm text-muted">Loading app-wide measurements…</p> : <>
-        {(resource.error || resource.data?.error) && <p role="status" className="text-sm text-warning">Some source reads failed or could not refresh. Each metric keeps its own availability; the snapshot time below may precede this request.</p>}
+        {(resource.error || resource.data?.one?.error) && <p role="status" className="text-sm text-warning">Some source reads failed or could not refresh. Each metric keeps its own availability; the snapshot time below may precede this request.</p>}
         {!production && <p role="status" className="text-sm text-muted">Production aggregates are unavailable. No zero is inferred.</p>}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {tiles.map(({ label, value }) => <div key={label} className="rounded-xl border border-stroke p-4">
@@ -73,7 +71,7 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
             </tr>)}</tbody>
           </table>
         </div>
-        <p className="text-xs leading-5 text-muted">Requested dates: {startDate} to {endDate}. Read at {timestamp(resource.updatedAt || resource.data?.fetchedAt)}. Registry snapshot: {timestamp(registry?.generatedAt)}.</p>
+        <p className="text-xs leading-5 text-muted">Requested dates: {startDate && endDate ? `${startDate} to ${endDate}` : 'unavailable'}. Reporting anchor: {timestamp(resource.updatedAt || resource.data?.fetchedAt)}. Registry snapshot: {timestamp(registry?.generatedAt)}.{resource.stale ? ' Retained data is more than 24 hours old.' : ''}{resource.computedAt ? ` Reconstructed ${timestamp(resource.computedAt)}; other source freshness is not verified.` : ''}</p>
         <p className="text-xs leading-5 text-muted">Registrations count current eligible production contacts; disabled, deleted and confirmed staff/test accounts are excluded. Active accounts count stable account IDs across devices where tagging exists; anonymous activity is excluded. Device IDs shown belong to these identified events and cannot be added to accounts. DAU is measured activity, not a sign-in count or verified task completion. One person can hold multiple accounts.</p>
       </>}
     </section>
