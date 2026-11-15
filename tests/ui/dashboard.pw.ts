@@ -590,6 +590,22 @@ for (const width of [320, 1440]) {
   });
 }
 
+test('Instagram direct publication labels unavailable reach and media honestly', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/analytics/instagram', route => route.fulfill({ json: {
+    state: 'available', source: 'direct_provider_publication', username: 'fixture', followersCount: 32, mediaCount: 61,
+    sourceObservedAt: '2026-11-15T06:32:09Z', providerBoundary: 'unknown', mediaCoverage: 'unavailable',
+    accountWindows: { 7: { reach: { value: null, status: 'not_yet_available', requestedSince: '2026-11-08T00:00:00Z', requestedUntil: '2026-11-15T00:00:00Z' }, accountMetrics: {} } },
+    media: [], inventory: null, lastSuccessfulSync: null, lastAttempt: null, canSync: false,
+  } }));
+  await page.goto('/'); await navigate(page, 'Instagram');
+  await expect(page.getByText('The 7-day reach total is unavailable.')).toBeVisible();
+  await expect(page.getByText(/provider did not supply its own boundary/)).toBeVisible();
+  await expect(page.getByText(/Meta returned one total/)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Posts & Reels', exact: true }).click();
+  await expect(page.getByText('Detailed media inventory is unavailable.', { exact: true })).toBeVisible();
+});
+
 test('Instagram filters, pagination, campaign links and metrics chat retain their behavior', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 }); await mockDashboard(page); await page.goto('/');
   await navigate(page, 'Instagram');

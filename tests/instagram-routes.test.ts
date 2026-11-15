@@ -18,6 +18,9 @@ describe('Instagram route boundaries', () => {
     const app = createApp(config);
     expect((await request(app).get('/api/analytics/instagram')).status).toBe(401);
     expect((await request(app).post('/api/instagram/sync')).status).toBe(401);
+    expect((await request(app).post('/api/analytics/instagram/initial-publication').set('X-Metrics-Instagram-Initial', '1')).status).toBe(403);
+    expect((await request(app).post('/api/analytics/instagram/initial-publication').set('Cookie', cookie('viewer@hushh.ai')).set('X-Metrics-Instagram-Initial', '1')).status).toBe(403);
+    expect((await request(app).post('/api/analytics/instagram/initial-publication').set('Cookie', cookie('metrics-release-probe@hushh.ai'))).status).toBe(403);
   });
   it('reports not configured without contacting Meta or BigQuery', async () => {
     const app = createApp(config);

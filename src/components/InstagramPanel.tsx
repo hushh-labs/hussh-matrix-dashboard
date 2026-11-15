@@ -30,6 +30,10 @@ interface InstagramReport {
   lastSuccessfulSync: string | null;
   lastAttempt: string | null;
   canSync: boolean;
+  source?: string;
+  sourceObservedAt?: string;
+  providerBoundary?: string;
+  mediaCoverage?: string;
 }
 
 const stateCopy: Record<InstagramReport['state'], string> = {
@@ -112,6 +116,7 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       <p role="status" className="mt-5 text-sm text-muted">
         {loading ? 'Loading Instagram report…' : message || (report ? stateCopy[report.state] : 'Instagram reporting is unavailable.')}
       </p>
+      {report?.source === 'direct_provider_publication' && <p className="mt-2 text-sm text-muted">Instagram account aggregate collection ended at {report.sourceObservedAt || 'an unknown time'}. Requested windows are UTC; the provider did not supply its own boundary. Detailed media inventory is unavailable in this publication.</p>}
     </div>
     <ReportTabs label="Instagram report" value={view} onChange={setView} options={[
       { value: 'overview', label: 'Summary' }, { value: 'content', label: 'Posts & Reels' }, { value: 'campaign', label: 'Campaign links' },
@@ -156,18 +161,18 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       <p className="mt-2 text-4xl font-semibold tabular-nums">
         {metricValue(selectedReach?.value, selectedReach?.status)}
       </p>
-      {selectedReach ? <p className="mt-3 text-sm leading-6 text-muted">
+      {selectedReach?.status === 'available' && selectedReach.value !== null ? <p className="mt-3 text-sm leading-6 text-muted">
         Requested since: {selectedReach.requestedSince}; until: {selectedReach.requestedUntil} (UTC).
         Meta returned one total for this window; provider reporting boundaries and daily values were not returned.
         {selectedReach.fetchedAt ? ` Fetched: ${selectedReach.fetchedAt} (UTC).` : ''}
       </p> : <p role="status" className="mt-3 text-sm text-warning">
-        No stored {accountRange}-day reach total yet. The next sync will request this exact window.
+        The {accountRange}-day reach total is unavailable.
         {report?.metricResults?.[`account.${accountRange}.reach`] ? ` Last attempt: ${report.metricResults[`account.${accountRange}.reach`]}.` : ''}
       </p>}
-      {selectedReach && accountRange !== 7 && report?.metricResults?.[`account.${accountRange}.reach`] &&
+      {selectedReach?.status === 'available' && selectedReach.value !== null && accountRange !== 7 && report?.metricResults?.[`account.${accountRange}.reach`] &&
         report.metricResults[`account.${accountRange}.reach`] !== 'available' &&
         <p className="mt-2 text-sm text-warning">Latest {accountRange}-day refresh: {report.metricResults[`account.${accountRange}.reach`]}. The prior stored total remains visible.</p>}
-      <p className="mt-3 text-sm text-muted">Last successful sync: {report?.lastSuccessfulSync || 'Never'}.</p>
+      <p className="mt-3 text-sm text-muted">Last successful sync: {report?.lastSuccessfulSync || 'Not available'}.</p>
       <p className="mt-1 text-sm text-muted">Last attempt: {report?.lastAttempt || 'Never'}.</p>
       <p className="mt-1 text-xs text-muted">Instagram reach is separate from website visitors, signups, and app installs.</p>
     </div>
@@ -226,7 +231,7 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         Showing {mediaTotals.count} collected items: {mediaTotals.reels} Reels, {mediaTotals.feed} Feed posts, {mediaTotals.stories} Stories.
         {' '}Views across {mediaTotals.views.observed}/{mediaTotals.count} items: {mediaTotals.views.observed ? mediaTotals.views.value.toLocaleString() : '—'} (latest collected lifetime totals; repeat views included).
       </p>
-      {mediaRows.length === 0 ? <p className="mt-5 text-sm text-muted">No collected media matches these filters.</p> :
+      {mediaRows.length === 0 ? <p className="mt-5 text-sm text-muted">{report?.mediaCoverage === 'unavailable' ? 'Detailed media inventory is unavailable.' : 'No collected media matches these filters.'}</p> :
         <div className="mt-5 overflow-x-auto"><div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="min-w-[860px] w-full text-left text-sm">
           <thead><tr className="border-b border-stroke text-muted"><th className="py-3 pr-3">Published (UTC)</th><th className="py-3 pr-3">Type</th>
             <th className="py-3 pr-3">Reach</th><th className="py-3 pr-3">Views</th><th className="py-3 pr-3">Saves</th><th className="py-3 pr-3">Shares</th>
