@@ -46,6 +46,16 @@ test('retained comparison shows exact 30 and 90 day windows and leaves all time 
   await expect(page.getByText('Retained data is more than 24 hours old.', { exact: false })).toBeVisible();
 });
 
+test('Location shows a gap warning when sharing behavior is unavailable', async ({ page }) => {
+  await mockDashboard(page);
+  const production = { ...one, locationBehaviorAvailable: false };
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics,
+    one: { ...allAnalytics.one!, data: { ...allAnalytics.one!.data!, production } },
+  } }));
+  await page.goto('/location-analytics/production/overview');
+  await expect(page.getByText('Live sharing behavior data is unavailable for one or more displayed days.')).toBeVisible();
+});
+
 test('retained app health keeps the dated One report and labels separate provider data unavailable', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
   await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:34:55.606Z',
