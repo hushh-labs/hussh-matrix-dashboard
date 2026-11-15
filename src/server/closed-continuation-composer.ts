@@ -11,6 +11,15 @@ type ComposerDocument = { source: string; continuationId: string; continuationSo
   reports: string[]; reportDigest: string; witnessReport: string; createdAt: number; expiresAt: number; phase: 'open' | 'closed' };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const fail = () => new Error('Closed continuation composition is unavailable.');
+// Overview90 measured 735,591 bytes. Keep this scoped to this passive
+// composer; individual query results and other publications retain 700 KB.
+// 256 bytes per fixed-format job proof plus 8 KiB for names/metadata is a
+// conservative document-size bound below Firestore's 1 MiB document limit.
+const PUBLICATION_BYTES = 800_000, DOCUMENT_BUDGET = 960_000, PROOF_BUDGET = 256, DOCUMENT_OVERHEAD = 8_192;
+const withinPublicationBounds = (json: string, jobs: JobProof[]) => {
+  const bytes = Buffer.byteLength(json);
+  return bytes <= PUBLICATION_BYTES && bytes + jobs.length * PROOF_BUDGET + DOCUMENT_OVERHEAD <= DOCUMENT_BUDGET;
+};
 
 /** Independent write-once publications from exact completed jobs; never admits new work. */
 export class ClosedContinuationComposer {
@@ -38,7 +47,7 @@ export class ClosedContinuationComposer {
   async witness() { const { doc } = await this.descriptor(); return this.continuation.capturedWitness(doc.witnessReport); }
   async save(report: string, key: string, value: { status: number; body: unknown }, jobs: JobProof[], cohort?: CustomerCohort) {
     const { doc, producer } = await this.requireOpen(report), json = JSON.stringify(value), computedAt = this.now();
-    if (value.status !== 200 || !value.body || Buffer.byteLength(json) > RESTORATION_LIMITS.snapshotBytes || !jobs.length || jobs.length > 500
+    if (value.status !== 200 || !value.body || !withinPublicationBounds(json, jobs) || !jobs.length || jobs.length > 500
       || new Set(jobs.map(job => job.id)).size !== jobs.length || jobs.some(job => !/^metrics_restore_[a-f0-9]{16}_[a-f0-9]{64}$/.test(job.id)
         || !Number.isSafeInteger(job.endedAt) || job.endedAt <= 0 || job.endedAt > computedAt + 10_000)) throw fail();
     const witness = cohort ? cohortSnapshotWitness(cohort) : null;
@@ -75,7 +84,7 @@ export class ClosedContinuationComposer {
         || row.producerId !== producer.id || row.producerSource !== producer.source || row.producerAsOf !== producer.asOf || row.nonWarehouseFreshness !== 'unknown'
         || row.reportHash !== reportHash || row.keyHash !== keyHash || !Number.isSafeInteger(row.computedAt) || row.computedAt < doc.createdAt
         || row.computedAt > this.now() || this.now() - producer.createdAt > RESTORATION_LIMITS.snapshotMs || typeof row.json !== 'string'
-        || Buffer.byteLength(row.json) > RESTORATION_LIMITS.snapshotBytes || !Array.isArray(row.jobs) || !row.jobs.length || row.jobs.length > 500
+        || !Array.isArray(row.jobs) || !row.jobs.length || row.jobs.length > 500 || !withinPublicationBounds(row.json, row.jobs)
         || new Set(row.jobs.map((job: JobProof) => job.id)).size !== row.jobs.length || row.jobs.some((job: JobProof) => !/^metrics_restore_[a-f0-9]{16}_[a-f0-9]{64}$/.test(job.id)
           || !Number.isSafeInteger(job.endedAt) || job.endedAt <= 0 || job.endedAt > row.computedAt + 10_000)) continue;
       if (cohort ? !row.witness || !cohortMatchesSnapshotWitness(cohort, row.witness as CohortSnapshotWitness) : row.witness || keyHash !== hash(`:${report}`)) continue;
