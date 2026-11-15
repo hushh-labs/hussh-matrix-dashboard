@@ -174,6 +174,124 @@ async function terminalRecoveryFixture() {
  return { ...f, id4, source4, run4: run, parent4: parent, snapshots4: snapshots, partial4: partial, store4: new DailyOneRefresh(f.db.native(), id4, source4, () => start + 5000) };
 }
 
+async function lastScopesFixture() {
+ const f = await terminalRecoveryFixture(), sha = (value: string) => createHash('sha256').update(value).digest('hex'), report = f.reports[7];
+ const parent = f.run4, prior = f.parent4, budget = f.db.values.get(`metricsOneDailyBudgets/${day}`), oldPlan = 'c'.repeat(64), ownPlan = 'd'.repeat(64);
+ const oldId = `metrics_${f.id3}_${oldPlan}`, ownId = `metrics_${f.id4}_${ownPlan}`, scopeHash = parent.measurementScopes[sha(report)];
+ f.db.values.set(`metricsOneDailyRuns/${f.id3}/reservations/${oldPlan}`, { jobId: oldId, bytes: unit, state: 'started', startedAt: start + 3000, reportHash: sha(report), scopeHash });
+ prior.reservedBytes += unit; prior.reservedJobs++; budget.reservedBytes += unit; budget.reservedJobs++;
+ Object.assign(parent, { parentReservedBytes: budget.reservedBytes, parentReservedJobs: budget.reservedJobs, parentOwnReservedBytes: prior.reservedBytes, parentOwnReservedJobs: prior.reservedJobs, maxBytes: parent.maxBytes - unit, maxJobs: parent.maxJobs - 1 });
+ for (const path of [`metricsOneDailyApprovals/${f.id4}`, `metricsOneDailyContinuationClaims/${f.id3}`]) Object.assign(f.db.values.get(path), parent, { runId: f.id4, approved: true });
+ f.db.values.set(`metricsOneDailyRuns/${f.id4}/reservations/${ownPlan}`, { jobId: ownId, bytes: unit, state: 'started', startedAt: start + 5000, reportHash: sha(report), scopeHash });
+ parent.reservedBytes = unit; parent.reservedJobs = 1; parent.phase = 'closed'; budget.reservedBytes += unit; budget.reservedJobs++;
+ const snapshot = { schema: 1, state: 'verified', source: f.source4, runId: f.id4, reportHash: sha(report), dataAsOf: asOf,
+  scopeDigest: parent.scopeDigest, measurementId: parent.measurementId, measurementSource: parent.measurementSource, measurementDigest: parent.measurementDigest,
+  parentId: parent.parentId, parentSource: parent.parentSource, sourceCoverage: 'intraday-or-unknown', nonWarehouseFreshness: 'unknown',
+  computedAt: start + 6000, json: JSON.stringify(payloadFor(report)), jobs: [{ id: oldId, endedAt: start + 4000, bytes: unit }, { id: ownId, endedAt: start + 6000, bytes: unit }] };
+ f.db.values.set(`metricsOneDailyRuns/${f.id4}/snapshots/${sha(report)}`, snapshot);
+ const partial = { state: 'active', source: f.source4, runId: f.id4, reportDigest: parent.reportDigest, logicalAsOf: asOf, witness: cohorts.cohortSnapshotWitness(f.cohort), reports: [0,1,2,3,5,6,7].map(i => sha(f.reports[i])) };
+ f.db.values.set(`metricsOneDailyRuns/${f.id4}/activation/partial`, partial);
+ const id5 = 'refresh_20261115_bbbbbbbbbbbbbbbb', source5 = '8'.repeat(40), measurementId = 'dailymeasure_20261115_cccccccccccccccc';
+ const run: any = { ...parent, source: source5, phase: 'open', createdAt: start + 7000, expiresAt: start + 3600_000,
+  measurementId, measurementSource: source5, measurementDigest: '5'.repeat(64), maxBytes: 1024 * unit - budget.reservedBytes, maxJobs: 20 - budget.reservedJobs,
+  reservedBytes: 0, reservedJobs: 0, parentId: f.id4, parentSource: f.source4, parentDepth: 5, parentCreatedAt: parent.createdAt,
+  parentReservedBytes: budget.reservedBytes, parentReservedJobs: budget.reservedJobs, parentOwnReservedBytes: parent.reservedBytes, parentOwnReservedJobs: parent.reservedJobs,
+  parentPartialDigest: dailyPartialDigest(partial), ancestorId: parent.parentId, ancestorSource: parent.parentSource,
+  legacyAncestorId: parent.ancestorId, legacyAncestorSource: parent.ancestorSource,
+  parentSnapshotsDigest: sha(JSON.stringify([dailySnapshotDigest(snapshot)])), newReportsDigest: restorationReportDigest([4,8,9].map(i => f.reports[i])) };
+ f.db.values.set(`metricsOneDailyRuns/${id5}`, run); f.db.values.set(`metricsOneDailyApprovals/${id5}`, { ...run, runId: id5, approved: true });
+ f.db.values.set(`metricsOneDailyContinuationClaims/${f.id4}`, { ...run, runId: id5, approved: true });
+ f.db.values.set(`metricsOneDailyMeasurements/${id5}`, { phase: 'sealed', runId: id5, source: source5, day, logicalAsOf: asOf, reportDigest: run.reportDigest,
+  digest: run.measurementDigest, coverage: 'not exhaustive', sealedAt: start + 7000, measuredBytes: 80 * unit, measuredQueries: 4 });
+ f.db.values.set(`metricsOneDailyMeasurements/${measurementId}`, { phase: 'closed', source: source5, targetRunId: id5, day, logicalAsOf: asOf, reportDigest: run.reportDigest, expiresAt: start + 3600_000 });
+ return { ...f, id5, source5, run5: run, snapshot5: snapshot, partial5: partial, store5: new DailyOneRefresh(f.db.native(), id5, source5, () => start + 7000) };
+}
+
+describe('last three fixed daily scopes', () => {
+ it('permits only the missing scopes and verifies the mixed-origin retained snapshot', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 7000);
+  try {
+   const f = await lastScopesFixture();
+   for (const index of [4,8,9]) await expect(f.store5.requireOpen(f.reports[index])).resolves.toBeDefined();
+   for (const index of [0,1,2,3,5,6,7]) await expect(f.store5.requireOpen(f.reports[index])).rejects.toThrow();
+   await expect(f.store5.verifyMeasuredCohort(f.cohort)).resolves.toBeUndefined();
+   f.snapshot5.jobs[0].bytes++;
+   await expect(f.store5.requireOpen(f.reports[8])).rejects.toThrow();
+  } finally { vi.useRealTimers(); }
+ });
+ it('reuses only the designated prior owners and never replaces a conflicting record', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 7000);
+  try {
+   const f = await lastScopesFixture(), report = f.reports[4], scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${f.cacheKey}:${report}`, fn);
+   const prior = await withDailyOneRefresh(f.store5, report, () => scope(() => f.store5.existing(f.query3)), undefined, undefined, f.cohort);
+   expect(prior?.id).toBe(f.prior3.id); const before = { ...f.db.values.get(`metricsOneDailyBudgets/${day}`) };
+   await withDailyOneRefresh(f.store5, report, () => scope(() => f.store5.reserve(prior!)), undefined, undefined, f.cohort);
+   expect(f.db.values.get(`metricsOneDailyBudgets/${day}`)).toEqual(before);
+   f.db.values.get(`metricsOneDailyRuns/${f.id2}/reservations/${f.prior3.planHash}`).state = 'reserved';
+   await expect(withDailyOneRefresh(f.store5, report, () => scope(() => f.store5.existing(f.query3)), undefined, undefined, f.cohort)).rejects.toThrow();
+   expect(f.db.values.get(`metricsOneDailyBudgets/${day}`)).toEqual(before);
+  } finally { vi.useRealTimers(); }
+ });
+ it('validates a new snapshot with both prior and current producer reservations', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 7000);
+  try {
+   const f = await lastScopesFixture(), report = f.reports[8], query = { query: 'SELECT prior_uat30' }, sha = (value: string) => createHash('sha256').update(value).digest('hex');
+   const planHash = sha(JSON.stringify({ schema: 1, run: f.id4, source: f.source4, cohortScope: '', report, project: 'hushh-ai-prod', location: 'US', asOf, query: query.query }));
+   const priorRow = { jobId: `metrics_${f.id4}_${planHash}`, bytes: unit, state: 'started', startedAt: start + 5000, reportHash: sha(report), scopeHash: f.run4.measurementScopes[sha(report)] };
+   f.db.values.set(`metricsOneDailyRuns/${f.id4}/reservations/${planHash}`, priorRow); f.run4.reservedBytes += unit; f.run4.reservedJobs++;
+   const budget = f.db.values.get(`metricsOneDailyBudgets/${day}`); budget.reservedBytes += unit; budget.reservedJobs++;
+   Object.assign(f.run5, { maxBytes: f.run5.maxBytes - unit, maxJobs: f.run5.maxJobs - 1, parentReservedBytes: budget.reservedBytes, parentReservedJobs: budget.reservedJobs, parentOwnReservedBytes: f.run4.reservedBytes, parentOwnReservedJobs: f.run4.reservedJobs });
+   for (const path of [`metricsOneDailyApprovals/${f.id5}`, `metricsOneDailyContinuationClaims/${f.id4}`]) Object.assign(f.db.values.get(path), f.run5, { runId: f.id5, approved: true });
+   vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(f.cohort);
+   const scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`:${report}`, fn);
+   await withDailyOneRefresh(f.store5, report, () => scope(async () => {
+    const reused = await f.store5.existing(query); expect(reused?.id).toBe(priorRow.jobId); await f.store5.reserve(reused!);
+    const fresh = await f.store5.admit({ query: 'SELECT new_uat30' }, 1); await f.store5.reserve(fresh); await f.store5.claimSubmission(fresh);
+    const jobs = [{ id: priorRow.jobId, endedAt: start + 6000, bytes: unit }, { id: fresh.id, endedAt: start + 7000, bytes: fresh.bytes }];
+    for (const job of jobs) { currentDailyOneRefresh()!.jobs.set(job.id, job.endedAt); currentDailyOneRefresh()!.bounds.set(job.id, job.bytes); }
+    await f.store5.save(report, payloadFor(report), jobs, null);
+   }), undefined, undefined, f.cohort);
+   f.db.values.get(`metricsOneDailyRuns/${f.id5}`).phase = 'closed';
+   expect((await f.store5.read(report, null, false, f.cohort))?.value).toEqual(payloadFor(report));
+   priorRow.startedAt = f.run4.expiresAt; expect(await f.store5.read(report, null, false, f.cohort)).toBeNull();
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('fails closed when retained data changes during a reservation transaction', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 7000);
+  try {
+   const f = await lastScopesFixture(), report = f.reports[8], scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`:${report}`, fn);
+   const grant = await scope(() => f.store5.admit({ query: 'SELECT changing_proof' }, 1)), before = { ...f.db.values.get(`metricsOneDailyBudgets/${day}`) };
+   const original = f.db.runTransaction.bind(f.db), warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+   vi.spyOn(f.db, 'runTransaction').mockImplementationOnce(async run => { f.snapshot5.json = JSON.stringify(payloadFor(f.reports[7], 99)); return original(run); });
+   await expect(withDailyOneRefresh(f.store5, report, () => scope(() => f.store5.reserve(grant)), undefined, undefined, f.cohort)).rejects.toThrow();
+   expect(f.db.values.get(`metricsOneDailyBudgets/${day}`)).toEqual(before); expect(warning).toHaveBeenCalledWith('Daily reservation held:', 'lineage');
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+ it('rejects changed cohort and unbound further continuation', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 7000);
+  try {
+   const f = await lastScopesFixture(), changed = { ...f.cohort, rows: [], cacheKey: createHash('sha256').update(JSON.stringify([f.cohort.policyRevision, []])).digest('hex') };
+   await expect(f.store5.verifyMeasuredCohort(changed)).rejects.toThrow();
+   f.run5.parentDepth = 6; await expect(f.store5.requireOpen(f.reports[8])).rejects.toThrow();
+  } finally { vi.useRealTimers(); }
+ });
+ it('activates only after all three missing scopes are verified', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(start + 7000);
+  try {
+   const f = await lastScopesFixture(); vi.spyOn(cohorts, 'requireCurrentCustomerCohort').mockResolvedValue(f.cohort);
+   for (const index of [4,8,9]) {
+    const report = f.reports[index], production = index === 4, scope = <T>(fn: () => Promise<T>) => withLegacyReportScope(`${production ? f.cacheKey : ''}:${report}`, fn);
+    await withDailyOneRefresh(f.store5, report, () => scope(async () => {
+     const grant = await f.store5.admit({ query: `SELECT last_${index}` }, 1); await f.store5.reserve(grant); await f.store5.claimSubmission(grant);
+     currentDailyOneRefresh()!.jobs.set(grant.id, start + 7000); currentDailyOneRefresh()!.bounds.set(grant.id, grant.bytes);
+     await f.store5.save(report, payloadFor(report), [{ id: grant.id, endedAt: start + 7000, bytes: grant.bytes }], production ? f.cohort : null);
+    }), undefined, undefined, f.cohort);
+   }
+   f.db.values.get(`metricsOneDailyRuns/${f.id5}`).phase = 'closed'; expect(await f.store5.activate(f.cohort)).toBe(asOf);
+   for (let index = 0; index < 10; index++) expect((await f.store5.read(f.reports[index], index < 5 ? f.cohort : null, true, f.cohort))?.value).toEqual(payloadFor(f.reports[index]));
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+ });
+});
 describe('terminal bounded recovery', () => {
  it('admits exactly four missing scopes and fails closed when preserved UAT data changes', async () => {
   vi.useFakeTimers(); vi.setSystemTime(start + 5000);
@@ -266,7 +384,7 @@ describe('terminal bounded recovery', () => {
    }
   } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
  });
- it('separates all-report free estimates from the remaining paid limit and has no fifth link', async () => {
+ it('separates all-report free estimates from the remaining paid limit and rejects an unbound successor', async () => {
   vi.useFakeTimers(); vi.setSystemTime(start + 5000);
   try {
    const f = await terminalRecoveryFixture(), summary = f.db.values.get(`metricsOneDailyMeasurements/${f.id4}`);

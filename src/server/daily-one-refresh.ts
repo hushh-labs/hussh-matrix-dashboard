@@ -17,21 +17,26 @@ export type DailyRun = { source: string; policyGeneration: string; day: string; 
   reports: string[]; reportDigest: string; measurementId: string; measurementSource: string; measurementDigest: string; measurementScopes: Record<string, string>; scopeDigest: string;
   maxBytes: number; maxJobs: number; maxPerJobBytes: number; reservedBytes: number; reservedJobs: number;
   parentId?: string; parentSource?: string; parentReservedBytes?: number; parentReservedJobs?: number; parentCreatedAt?: number;
-  parentDepth?: 2 | 3 | 4; parentOwnReservedBytes?: number; parentOwnReservedJobs?: number; parentPartialDigest?: string;
-  ancestorId?: string; ancestorSource?: string; parentSnapshotsDigest?: string;
+  parentDepth?: 2 | 3 | 4 | 5; parentOwnReservedBytes?: number; parentOwnReservedJobs?: number; parentPartialDigest?: string;
+  ancestorId?: string; ancestorSource?: string; legacyAncestorId?: string; legacyAncestorSource?: string; parentSnapshotsDigest?: string;
   newReportsDigest?: string; composerId?: string; composerSource?: string };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const recoveredReports = (run: DailyRun) => run.parentId ? run.parentDepth === 4 ? [0, 1, 2, 3, 5, 6].map(index => run.reports[index]) : run.reports.slice(0, (run.parentDepth ?? 0) >= 3 ? 4 : run.parentDepth ?? 1) : [];
+const recoveredReports = (run: DailyRun) => run.parentId ? (run.parentDepth === 5 ? [0, 1, 2, 3, 5, 6, 7] : run.parentDepth === 4 ? [0, 1, 2, 3, 5, 6] : Array.from({ length: (run.parentDepth ?? 0) >= 3 ? 4 : run.parentDepth ?? 1 }, (_, index) => index)).map(index => run.reports[index]) : [];
 const newReports = (run: DailyRun) => run.reports.filter(report => !recoveredReports(run).includes(report));
 const jobOwner = (run: DailyRun, id: string, runId: string, report: string) => {
   if (new RegExp(`^metrics_${runId}_[a-f0-9]{64}$`).test(id)) return runId;
-  const prior = run.parentDepth === 4 ? report === run.reports[4] ? run.ancestorId : report === run.reports[7] ? run.parentId : undefined
+  const prior = run.parentDepth === 5 ? report === run.reports[4] ? run.legacyAncestorId : report === run.reports[8] ? run.parentId : undefined
+    : run.parentDepth === 4 ? report === run.reports[4] ? run.ancestorId : report === run.reports[7] ? run.parentId : undefined
     : run.parentDepth === 3 && report === run.reports[4] ? run.parentId : undefined;
   if (prior && new RegExp(`^metrics_${prior}_[a-f0-9]{64}$`).test(id)) return prior;
   return null;
 };
-const ownerRun = (run: DailyRun, parent: DailyRun | undefined, grandparent: DailyRun | undefined, owner: string | null, current: string) =>
-  owner === current ? run : owner === run.parentId ? parent : owner === run.ancestorId ? grandparent : undefined;
+const ownerRun = (run: DailyRun, parent: DailyRun | undefined, grandparent: DailyRun | undefined, greatGrandparent: DailyRun | undefined, owner: string | null, current: string) =>
+  owner === current ? run : owner === run.parentId ? parent : owner === run.ancestorId ? grandparent : owner === run.legacyAncestorId ? greatGrandparent : undefined;
+const matchesLineage = (run: DailyRun, gate: CustomerCohort | undefined, parentPartial: any, inheritedPartial: any, olderPartial: any) =>
+  !!gate && cohortMatchesSnapshotWitness(gate, parentPartial?.witness)
+  && ((run.parentDepth ?? 0) < 4 || cohortMatchesSnapshotWitness(gate, inheritedPartial?.witness))
+  && ((run.parentDepth ?? 0) < 5 || cohortMatchesSnapshotWitness(gate, olderPartial?.witness));
 export const dailyPartialDigest = (activation: any) => hash(JSON.stringify([
   activation?.source, activation?.runId, activation?.reportDigest, activation?.logicalAsOf,
   activation?.witness?.policyRevision, activation?.witness?.rowsHash, activation?.witness?.asOf,
@@ -95,7 +100,7 @@ export class DailyOneRefresh {
     if (!/^refresh_\d{8}_[a-f0-9]{16}$/.test(id) || !/^[a-f0-9]{40}$/.test(source)) throw fail();
   }
   private ref() { return this.db.doc(`metricsOneDailyRuns/${this.id}`); }
-  private async checked(read: (ref: any) => Promise<any>, remainingDepth = 4, requireComposer = true, readMany: (refs: any[]) => Promise<any[]> = refs => Promise.all(refs.map(read))): Promise<{ run: DailyRun; policy: any; parent?: DailyRun; grandparent?: DailyRun; parentPartial?: any; inheritedPartial?: any; depth: number; rootId: string; rootSource: string; measurementExpiresAt: number }> {
+  private async checked(read: (ref: any) => Promise<any>, remainingDepth = 5, requireComposer = true, readMany: (refs: any[]) => Promise<any[]> = refs => Promise.all(refs.map(read))): Promise<{ run: DailyRun; policy: any; parent?: DailyRun; grandparent?: DailyRun; greatGrandparent?: DailyRun; parentPartial?: any; inheritedPartial?: any; olderPartial?: any; depth: number; rootId: string; rootSource: string; measurementExpiresAt: number }> {
     const run = (await read(this.ref())).data() as DailyRun | undefined;
     if (!run || run.source !== this.source || !/^[a-f0-9]{64}$/.test(run.policyGeneration ?? '') || !/^\d{4}-\d{2}-\d{2}$/.test(run.day ?? '')
       || this.id.slice(8, 16) !== run.day.replaceAll('-', '') || !Number.isFinite(Date.parse(run.logicalAsOf)) || new Date(run.logicalAsOf).toISOString() !== run.logicalAsOf
@@ -113,13 +118,14 @@ export class DailyOneRefresh {
       || !Number.isSafeInteger(run.maxBytes) || run.maxBytes < 1 || run.maxBytes > DAILY_ONE_LIMITS.bytes || !Number.isSafeInteger(run.maxJobs) || run.maxJobs < 1 || run.maxJobs > DAILY_ONE_LIMITS.jobs
       || !Number.isSafeInteger(run.maxPerJobBytes) || run.maxPerJobBytes < 1 || run.maxPerJobBytes > DAILY_ONE_LIMITS.perJob
       || !Number.isSafeInteger(run.reservedBytes) || run.reservedBytes < 0 || run.reservedBytes > run.maxBytes || !Number.isSafeInteger(run.reservedJobs) || run.reservedJobs < 0 || run.reservedJobs > run.maxJobs) throw fail();
-    let parent: DailyRun | undefined, grandparent: DailyRun | undefined, inheritedPartial: any, depth = 0, rootId = this.id, rootSource = this.source;
+    let parent: DailyRun | undefined, grandparent: DailyRun | undefined, greatGrandparent: DailyRun | undefined, inheritedPartial: any, olderPartial: any, depth = 0, rootId = this.id, rootSource = this.source;
     if (run.parentId !== undefined) {
       if (remainingDepth < 1) throw fail();
       if (!/^refresh_\d{8}_[a-f0-9]{16}$/.test(run.parentId) || run.parentId === this.id || !/^[a-f0-9]{40}$/.test(run.parentSource ?? '')) throw fail();
       const lineage = await new DailyOneRefresh(this.db, run.parentId, run.parentSource!, this.now).checked(read, remainingDepth - 1, true, readMany);
-      parent = lineage.run; grandparent = lineage.parent; inheritedPartial = lineage.parentPartial; depth = lineage.depth + 1; rootId = lineage.rootId; rootSource = lineage.rootSource;
-      if (depth > 4 || (depth === 4 ? run.ancestorId !== parent.parentId || run.ancestorSource !== parent.parentSource || !grandparent || !/^[a-f0-9]{64}$/.test(run.parentSnapshotsDigest ?? '') : run.ancestorId !== undefined || run.ancestorSource !== undefined || run.parentSnapshotsDigest !== undefined)
+      parent = lineage.run; grandparent = lineage.parent; greatGrandparent = lineage.grandparent; inheritedPartial = lineage.parentPartial; olderPartial = lineage.inheritedPartial; depth = lineage.depth + 1; rootId = lineage.rootId; rootSource = lineage.rootSource;
+      if (depth > 5 || (depth >= 4 ? run.ancestorId !== parent.parentId || run.ancestorSource !== parent.parentSource || !grandparent || !/^[a-f0-9]{64}$/.test(run.parentSnapshotsDigest ?? '') : run.ancestorId !== undefined || run.ancestorSource !== undefined || run.parentSnapshotsDigest !== undefined)
+        || (depth === 5 ? run.legacyAncestorId !== grandparent?.parentId || run.legacyAncestorSource !== grandparent?.parentSource || !greatGrandparent : run.legacyAncestorId !== undefined || run.legacyAncestorSource !== undefined)
         || (depth === 1 ? run.parentDepth !== undefined || run.parentOwnReservedBytes !== undefined || run.parentOwnReservedJobs !== undefined || run.parentPartialDigest !== undefined
         : run.parentDepth !== depth || run.parentOwnReservedBytes !== parent.reservedBytes || run.parentOwnReservedJobs !== parent.reservedJobs || (depth === 2 && run.parentPartialDigest !== undefined))
         || parent.phase !== 'closed' || parent.day !== run.day || parent.logicalAsOf !== run.logicalAsOf
@@ -132,7 +138,7 @@ export class DailyOneRefresh {
         || run.maxBytes + run.parentReservedBytes! > DAILY_ONE_LIMITS.bytes || run.maxJobs + run.parentReservedJobs! > DAILY_ONE_LIMITS.jobs) throw fail();
     } else if (run.parentSource !== undefined || run.parentReservedBytes !== undefined || run.parentReservedJobs !== undefined || run.parentCreatedAt !== undefined
       || run.parentDepth !== undefined || run.parentOwnReservedBytes !== undefined || run.parentOwnReservedJobs !== undefined || run.parentPartialDigest !== undefined
-      || run.newReportsDigest !== undefined || run.composerId !== undefined || run.composerSource !== undefined || run.ancestorId !== undefined || run.ancestorSource !== undefined || run.parentSnapshotsDigest !== undefined) throw fail();
+      || run.newReportsDigest !== undefined || run.composerId !== undefined || run.composerSource !== undefined || run.ancestorId !== undefined || run.ancestorSource !== undefined || run.legacyAncestorId !== undefined || run.legacyAncestorSource !== undefined || run.parentSnapshotsDigest !== undefined) throw fail();
     const [policySnap, approvalSnap, slotSnap, measurementSnap, measurementRunSnap] = await Promise.all([
       read(this.db.doc(`metricsOneDailyPolicies/${run.policyGeneration}`)), read(this.db.doc(`metricsOneDailyApprovals/${this.id}`)), read(this.db.doc(`metricsOneDailySlots/${run.day}`)), read(this.db.doc(`metricsOneDailyMeasurements/${this.id}`)),
       read(this.db.doc(`metricsOneDailyMeasurements/${run.measurementId}`)),
@@ -152,13 +158,13 @@ export class DailyOneRefresh {
       || measurementRun.targetRunId !== this.id || measurementRun.day !== run.day || measurementRun.logicalAsOf !== run.logicalAsOf
       || measurementRun.reportDigest !== run.reportDigest || !Number.isSafeInteger(measurementRun.expiresAt)
       || measurement.sealedAt > measurementRun.expiresAt || run.expiresAt > measurementRun.expiresAt
-      || !Number.isSafeInteger(measurement.measuredBytes) || measurement.measuredBytes < 0 || measurement.measuredBytes > (depth === 4 ? DAILY_ONE_LIMITS.bytes : run.maxBytes)
+      || !Number.isSafeInteger(measurement.measuredBytes) || measurement.measuredBytes < 0 || measurement.measuredBytes > (depth >= 4 ? DAILY_ONE_LIMITS.bytes : run.maxBytes)
       || !Number.isSafeInteger(measurement.measuredQueries) || measurement.measuredQueries < 1 || measurement.measuredQueries > (parent ? DAILY_ONE_LIMITS.jobs : run.maxJobs)
       || !slotSnap.exists || slot?.state !== 'sealed' || slot?.runId !== rootId || slot.day !== run.day || slot.source !== rootSource || slot.policyGeneration !== run.policyGeneration) throw fail();
     let parentPartial: any;
     if (parent) {
       const claim = (await read(this.db.doc(`metricsOneDailyContinuationClaims/${run.parentId}`))).data();
-      const fields = ['source','day','logicalAsOf','createdAt','expiresAt','reportDigest','newReportsDigest','composerId','composerSource','scopeDigest','measurementId','measurementSource','measurementDigest','maxBytes','maxJobs','maxPerJobBytes','parentId','parentSource','parentReservedBytes','parentReservedJobs','parentCreatedAt','parentDepth','parentOwnReservedBytes','parentOwnReservedJobs','parentPartialDigest','ancestorId','ancestorSource','parentSnapshotsDigest'] as const;
+      const fields = ['source','day','logicalAsOf','createdAt','expiresAt','reportDigest','newReportsDigest','composerId','composerSource','scopeDigest','measurementId','measurementSource','measurementDigest','maxBytes','maxJobs','maxPerJobBytes','parentId','parentSource','parentReservedBytes','parentReservedJobs','parentCreatedAt','parentDepth','parentOwnReservedBytes','parentOwnReservedJobs','parentPartialDigest','ancestorId','ancestorSource','legacyAncestorId','legacyAncestorSource','parentSnapshotsDigest'] as const;
       if (!claim || claim.runId !== this.id || claim.approved !== true || fields.some(key => claim[key] !== run[key] || approval[key] !== run[key])) throw fail();
       if (depth >= 3) {
         parentPartial = (await read(this.db.doc(`metricsOneDailyRuns/${run.parentId}/activation/partial`))).data();
@@ -182,11 +188,12 @@ export class DailyOneRefresh {
               || job.endedAt < parent.createdAt || job.endedAt > snapshot.computedAt + 10_000)) throw fail();
           try { if (!validOnePayload(JSON.parse(snapshot.json), report)) throw fail(); } catch { throw fail(); }
         }
-        if (depth === 4) {
-          const preserved = await Promise.all([5, 6].map(index => read(this.db.doc(`metricsOneDailyRuns/${run.parentId}/snapshots/${hash(run.reports[index])}`))));
+        if (depth >= 4) {
+          const indices = depth === 4 ? [5, 6] : [7];
+          const preserved = await Promise.all(indices.map(index => read(this.db.doc(`metricsOneDailyRuns/${run.parentId}/snapshots/${hash(run.reports[index])}`))));
           const snapshots = preserved.map(snapshot => snapshot.data());
           if (preserved.some(snapshot => !snapshot.exists) || snapshots.some((snapshot, index) => {
-            const report = run.reports[index + 5];
+            const report = run.reports[indices[index]];
             if (!snapshot || snapshot.schema !== 1 || snapshot.state !== 'verified' || snapshot.source !== run.parentSource || snapshot.runId !== run.parentId
               || snapshot.reportHash !== hash(report) || snapshot.dataAsOf !== run.logicalAsOf || snapshot.scopeDigest !== parent!.scopeDigest
               || snapshot.parentId !== parent!.parentId || snapshot.parentSource !== parent!.parentSource
@@ -195,23 +202,31 @@ export class DailyOneRefresh {
               || !Number.isSafeInteger(snapshot.computedAt) || snapshot.computedAt < parent!.createdAt || snapshot.computedAt > this.now()
               || typeof snapshot.json !== 'string' || Buffer.byteLength(snapshot.json) > 700_000 || !Array.isArray(snapshot.jobs) || !snapshot.jobs.length || snapshot.jobs.length > DAILY_ONE_LIMITS.jobs
               || new Set(snapshot.jobs.map((job: any) => job.id)).size !== snapshot.jobs.length
-              || snapshot.jobs.some((job: any) => typeof job.id !== 'string' || !new RegExp(`^metrics_${run.parentId}_[a-f0-9]{64}$`).test(job.id)
-                || !Number.isSafeInteger(job.bytes) || job.bytes < 1 || !Number.isSafeInteger(job.endedAt) || job.endedAt < parent!.createdAt || job.endedAt > snapshot.computedAt + 10_000)) return true;
+              || snapshot.jobs.some((job: any) => {
+                const owner = typeof job.id === 'string' ? jobOwner(parent!, job.id, run.parentId!, report) : null;
+                const producer = ownerRun(parent!, grandparent, greatGrandparent, undefined, owner, run.parentId!);
+                return !producer || !Number.isSafeInteger(job.bytes) || job.bytes < 1 || job.bytes > producer.maxPerJobBytes
+                  || !Number.isSafeInteger(job.endedAt) || job.endedAt < producer.createdAt || job.endedAt > snapshot.computedAt + 10_000;
+              })) return true;
             try { return !validOnePayload(JSON.parse(snapshot.json), report); } catch { return true; }
           }) || hash(JSON.stringify(snapshots.map(dailySnapshotDigest))) !== run.parentSnapshotsDigest) throw fail();
-          const preservedJobs = snapshots.flatMap((snapshot, index) => snapshot.jobs.map((job: any) => ({ job, report: run.reports[index + 5] })));
-          if (preservedJobs.length > parent!.reservedJobs || preservedJobs.length > DAILY_ONE_LIMITS.jobs || new Set(preservedJobs.map(({ job }) => job.id)).size !== preservedJobs.length) throw fail();
-          const reservations = await readMany(preservedJobs.map(({ job }) => this.db.doc(`metricsOneDailyRuns/${run.parentId}/reservations/${job.id.slice(-64)}`)));
+          const preservedJobs = snapshots.flatMap((snapshot, index) => snapshot.jobs.map((job: any) => {
+            const report = run.reports[indices[index]], owner = jobOwner(parent!, job.id, run.parentId!, report);
+            return { job, report, owner, producer: ownerRun(parent!, grandparent, greatGrandparent, undefined, owner, run.parentId!) };
+          }));
+          if (preservedJobs.length > parent!.reservedJobs + (parent!.parentReservedJobs ?? 0) || preservedJobs.length > DAILY_ONE_LIMITS.jobs
+            || new Set(preservedJobs.map(({ job }) => job.id)).size !== preservedJobs.length) throw fail();
+          const reservations = await readMany(preservedJobs.map(({ job, owner }) => this.db.doc(`metricsOneDailyRuns/${owner}/reservations/${job.id.slice(-64)}`)));
           if (reservations.length !== preservedJobs.length || reservations.some((reservation, index) => {
-            const row = reservation.data(), { job, report } = preservedJobs[index];
-            return !reservation.exists || row?.jobId !== job.id || row.state !== 'started' || row.bytes !== job.bytes
+            const row = reservation.data(), { job, report, producer } = preservedJobs[index];
+            return !producer || !reservation.exists || row?.jobId !== job.id || row.state !== 'started' || row.bytes !== job.bytes
               || row.reportHash !== hash(report) || row.scopeHash !== run.measurementScopes[hash(report)]
-              || !Number.isSafeInteger(row.startedAt) || row.startedAt < parent!.createdAt || row.startedAt >= parent!.expiresAt || row.startedAt > job.endedAt;
+              || !Number.isSafeInteger(row.startedAt) || row.startedAt < producer.createdAt || row.startedAt >= producer.expiresAt || row.startedAt > job.endedAt;
           })) throw fail();
         }
       } else if (requireComposer) await verifiedDailyComposer(read, this.db, this.id, run, validOnePayload, this.now());
     }
-    return { run, policy, parent, grandparent, parentPartial, inheritedPartial, depth, rootId, rootSource, measurementExpiresAt: measurementRun.expiresAt as number };
+    return { run, policy, parent, grandparent, greatGrandparent, parentPartial, inheritedPartial, olderPartial, depth, rootId, rootSource, measurementExpiresAt: measurementRun.expiresAt as number };
   }
   private permit() { return this.checked(ref => ref.get()); }
   async compositionIn(read: (ref: any) => Promise<any>) {
@@ -260,9 +275,8 @@ export class DailyOneRefresh {
   async verifyMeasuredCohort(cohort: CustomerCohort) {
     requireFreshCohort(cohort);
     if (!/^[a-f0-9]{64}$/.test(cohort.cacheKey)) throw fail();
-    const { run, parentPartial, inheritedPartial } = await this.permit();
-    if ((run.parentDepth ?? 0) >= 3 && !cohortMatchesSnapshotWitness(cohort, parentPartial?.witness)) throw fail();
-    if (run.parentDepth === 4 && !cohortMatchesSnapshotWitness(cohort, inheritedPartial?.witness)) throw fail();
+    const { run, parentPartial, inheritedPartial, olderPartial } = await this.permit();
+    if ((run.parentDepth ?? 0) >= 3 && !matchesLineage(run, cohort, parentPartial, inheritedPartial, olderPartial)) throw fail();
     for (const report of run.reports) {
       const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
       const prefix = environment === 'production' ? cohort.cacheKey : environment === 'uat' ? '' : null;
@@ -289,9 +303,10 @@ export class DailyOneRefresh {
     const { planHash, report, scopeHash } = this.identity(run, request.query); await this.requireOpen(report);
     const ref = this.ref().collection('reservations').doc(planHash), snapshot = await ref.get();
     if (!snapshot.exists) {
-      const priorId = run.parentDepth === 4 ? report === run.reports[4] ? run.ancestorId : report === run.reports[7] ? run.parentId : undefined
+      const priorId = run.parentDepth === 5 ? report === run.reports[4] ? run.legacyAncestorId : report === run.reports[8] ? run.parentId : undefined
+        : run.parentDepth === 4 ? report === run.reports[4] ? run.ancestorId : report === run.reports[7] ? run.parentId : undefined
         : run.parentDepth === 3 && report === run.reports[4] ? run.parentId : undefined;
-      const priorSource = priorId === run.ancestorId ? run.ancestorSource : run.parentSource;
+      const priorSource = priorId === run.legacyAncestorId ? run.legacyAncestorSource : priorId === run.ancestorId ? run.ancestorSource : run.parentSource;
       if (!priorId || !priorSource) return undefined;
       try {
         const prior = await new DailyOneRefresh(this.db, priorId, priorSource, this.now).closedJob(request);
@@ -333,19 +348,19 @@ export class DailyOneRefresh {
     const scopeHash = hash(scope), reportHash = hash(grant.report);
     if ((grant as RestorationGrant & { scopeHash?: string }).scopeHash !== scopeHash) throw new ReservationHold('scope');
     const check = async (tx: any) => {
-      try { return await this.checked(ref => tx.get(ref), 4, true, refs => tx.getAll(...refs)); }
+      try { return await this.checked(ref => tx.get(ref), 5, true, refs => tx.getAll(...refs)); }
       catch (error) { if (error instanceof Error && error.message === 'The bounded One refresh is unavailable.') throw new ReservationHold('lineage'); throw error; }
     };
     if (grant.reuse?.priorPermitId) {
       await this.db.runTransaction(async tx => {
-        const { run, parent, grandparent, parentPartial, inheritedPartial } = await check(tx), now = this.now();
+        const { run, parent, grandparent, greatGrandparent, parentPartial, inheritedPartial, olderPartial } = await check(tx), now = this.now();
         const gate = active?.gateCohort;
         const ownerId = jobOwner(run, grant.id, this.id, grant.report!);
-        const owner = ownerId === run.parentId ? parent : ownerId === run.ancestorId ? grandparent : undefined;
+        const owner = ownerRun(run, parent, grandparent, greatGrandparent, ownerId, this.id);
         if (!owner || ownerId !== grant.reuse?.priorPermitId || grant.reuse.priorPlanHash !== grant.planHash
           || grant.id !== `metrics_${ownerId}_${grant.planHash}` || grant.bytes > run.maxPerJobBytes) throw new ReservationHold('scope');
         if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day) throw new ReservationHold('window');
-        if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness) || (run.parentDepth === 4 && !cohortMatchesSnapshotWitness(gate, inheritedPartial?.witness))) throw new ReservationHold('cohort');
+        if (!gate || !matchesLineage(run, gate, parentPartial, inheritedPartial, olderPartial)) throw new ReservationHold('cohort');
         requireFreshCohort(gate);
         const [rowSnap, daySnap] = await Promise.all([
           tx.get(this.db.doc(`metricsOneDailyRuns/${ownerId}/reservations/${grant.planHash}`)),
@@ -361,9 +376,9 @@ export class DailyOneRefresh {
       return;
     }
     await this.db.runTransaction(async tx => {
-      const { run, policy, parentPartial, inheritedPartial } = await check(tx), now = this.now();
+      const { run, policy, parentPartial, inheritedPartial, olderPartial } = await check(tx), now = this.now();
       const gate = active?.gateCohort;
-      if ((run.parentDepth ?? 0) >= 3) { if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness) || (run.parentDepth === 4 && !cohortMatchesSnapshotWitness(gate, inheritedPartial?.witness))) throw new ReservationHold('cohort'); requireFreshCohort(gate); }
+      if ((run.parentDepth ?? 0) >= 3) { if (!gate || !matchesLineage(run, gate, parentPartial, inheritedPartial, olderPartial)) throw new ReservationHold('cohort'); requireFreshCohort(gate); }
       if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !run.reports.includes(grant.report!) || grant.bytes > run.maxPerJobBytes) throw new ReservationHold('window');
       if (grant.id !== `metrics_${this.id}_${grant.planHash}` || recoveredReports(run).includes(grant.report!)) throw new ReservationHold('scope');
       const dayRef = this.db.doc(`metricsOneDailyBudgets/${run.day}`), reservation = this.ref().collection('reservations').doc(grant.planHash);
@@ -383,7 +398,7 @@ export class DailyOneRefresh {
   /** Stage a write-once aggregate; readers only use it after this run closes. */
   async save(report: string, value: { status: number; body: unknown }, jobs: Array<{ id: string; endedAt: number; bytes?: number }>, cohort: CustomerCohort | null) {
     const active = currentDailyOneRefresh(), scope = currentLegacyReportKey();
-    const { run, parent: initialParent, grandparent: initialGrandparent } = await this.requireOpen(report), computedAt = this.now(), json = JSON.stringify(value);
+    const { run, parent: initialParent, grandparent: initialGrandparent, greatGrandparent: initialGreatGrandparent } = await this.requireOpen(report), computedAt = this.now(), json = JSON.stringify(value);
     if (!active || active.signal?.aborted || active.store !== this || active.report !== report || active.jobs.size !== jobs.length
       || jobs.some(job => active.jobs.get(job.id) !== job.endedAt || ((run.parentDepth ?? 0) >= 3 && (!Number.isSafeInteger(job.bytes) || job.bytes! < 1 || active.bounds.get(job.id) !== job.bytes))) || scope !== `${cohort?.cacheKey ?? ''}:${report}`) throw fail();
     const environment = new URL(report, 'http://analytics.internal').searchParams.get('environment');
@@ -392,7 +407,7 @@ export class DailyOneRefresh {
       || (environment === 'production' ? !witness : environment !== 'uat' || !!cohort)
       || new Set(jobs.map(job => job.id)).size !== jobs.length
       || jobs.some(job => !jobOwner(run, job.id, this.id, report)
-        || !Number.isSafeInteger(job.endedAt) || job.endedAt < (ownerRun(run, initialParent, initialGrandparent, jobOwner(run, job.id, this.id, report), this.id)?.createdAt ?? Infinity) || job.endedAt > computedAt + 10_000)) throw fail();
+        || !Number.isSafeInteger(job.endedAt) || job.endedAt < (ownerRun(run, initialParent, initialGrandparent, initialGreatGrandparent, jobOwner(run, job.id, this.id, report), this.id)?.createdAt ?? Infinity) || job.endedAt > computedAt + 10_000)) throw fail();
     const reportHash = hash(report), target = this.ref().collection('snapshots').doc(reportHash);
     if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
     if ((run.parentDepth ?? 0) >= 3) { if (!active.gateCohort) throw fail(); await this.verifyMeasuredCohort(active.gateCohort); await requireCurrentCustomerCohort(active.gateCohort.cacheKey); }
@@ -400,17 +415,17 @@ export class DailyOneRefresh {
     // A Firestore commit already dispatched may complete after a disconnect.
     // Reads still require a verified payload, current cohort and all-ten activation.
     await this.db.runTransaction(async tx => {
-      const { run: live, parent, grandparent, parentPartial, inheritedPartial } = await this.checked(ref => tx.get(ref), 4, true, refs => tx.getAll(...refs)), now = this.now();
+      const { run: live, parent, grandparent, greatGrandparent, parentPartial, inheritedPartial, olderPartial } = await this.checked(ref => tx.get(ref), 5, true, refs => tx.getAll(...refs)), now = this.now();
       if (live.phase !== 'open' || now < live.createdAt || now >= live.expiresAt || new Date(now).toISOString().slice(0, 10) !== live.day || !live.reports.includes(report)
         || recoveredReports(live).includes(report)) throw fail();
       if (cohort) requireFreshCohort(cohort);
-      if ((live.parentDepth ?? 0) >= 3) { if (!active.gateCohort || !cohortMatchesSnapshotWitness(active.gateCohort, parentPartial?.witness) || (live.parentDepth === 4 && !cohortMatchesSnapshotWitness(active.gateCohort, inheritedPartial?.witness))) throw fail(); requireFreshCohort(active.gateCohort); }
+      if ((live.parentDepth ?? 0) >= 3) { if (!matchesLineage(live, active.gateCohort, parentPartial, inheritedPartial, olderPartial)) throw fail(); requireFreshCohort(active.gateCohort); }
       const existing = await tx.get(target);
       const reservations = await Promise.all(jobs.map(job => tx.get(this.db.doc(`metricsOneDailyRuns/${jobOwner(live, job.id, this.id, report)}/reservations/${job.id.slice(-64)}`))));
       if (active.signal?.aborted) throw fail();
       if (existing.exists || reservations.some((snapshot, index) => !snapshot.exists || snapshot.data()?.jobId !== jobs[index].id || snapshot.data()?.state !== 'started' || snapshot.data()?.scopeHash !== hash(scope!) || snapshot.data()?.reportHash !== reportHash || ((live.parentDepth ?? 0) >= 3 && snapshot.data()?.bytes !== jobs[index].bytes) || !Number.isSafeInteger(snapshot.data()?.startedAt)
-        || ((live.parentDepth ?? 0) >= 3 && snapshot.data()?.startedAt < (ownerRun(live, parent, grandparent, jobOwner(live, jobs[index].id, this.id, report), this.id)?.createdAt ?? Infinity))
-        || ((live.parentDepth ?? 0) >= 3 && snapshot.data()?.startedAt >= (ownerRun(live, parent, grandparent, jobOwner(live, jobs[index].id, this.id, report), this.id)?.expiresAt ?? -Infinity))
+        || ((live.parentDepth ?? 0) >= 3 && snapshot.data()?.startedAt < (ownerRun(live, parent, grandparent, greatGrandparent, jobOwner(live, jobs[index].id, this.id, report), this.id)?.createdAt ?? Infinity))
+        || ((live.parentDepth ?? 0) >= 3 && snapshot.data()?.startedAt >= (ownerRun(live, parent, grandparent, greatGrandparent, jobOwner(live, jobs[index].id, this.id, report), this.id)?.expiresAt ?? -Infinity))
         || snapshot.data()?.startedAt > jobs[index].endedAt)) throw fail();
       tx.create(target, { schema: 1, state: 'pending', source: this.source, measurementId: live.measurementId, measurementSource: live.measurementSource,
         measurementDigest: live.measurementDigest, scopeDigest: live.scopeDigest, runId: this.id, reportHash, dataAsOf: live.logicalAsOf,
@@ -421,18 +436,18 @@ export class DailyOneRefresh {
     if ((run.parentDepth ?? 0) >= 3) { if (!active.gateCohort) throw fail(); await requireCurrentCustomerCohort(active.gateCohort.cacheKey); }
     if (active.signal?.aborted) throw fail();
     await this.db.runTransaction(async tx => {
-      const { run: live, parentPartial, inheritedPartial } = await this.checked(ref => tx.get(ref), 4, true, refs => tx.getAll(...refs)), snapshot = await tx.get(target), now = this.now();
+      const { run: live, parentPartial, inheritedPartial, olderPartial } = await this.checked(ref => tx.get(ref), 5, true, refs => tx.getAll(...refs)), snapshot = await tx.get(target), now = this.now();
       if (active.signal?.aborted) throw fail();
       if (live.phase !== 'open' || now < live.createdAt || now >= live.expiresAt || new Date(now).toISOString().slice(0, 10) !== live.day
         || !snapshot.exists || snapshot.data()?.state !== 'pending' || snapshot.data()?.computedAt !== computedAt) throw fail();
       if (cohort) requireFreshCohort(cohort);
-      if ((live.parentDepth ?? 0) >= 3) { if (!active.gateCohort || !cohortMatchesSnapshotWitness(active.gateCohort, parentPartial?.witness) || (live.parentDepth === 4 && !cohortMatchesSnapshotWitness(active.gateCohort, inheritedPartial?.witness))) throw fail(); requireFreshCohort(active.gateCohort); }
+      if ((live.parentDepth ?? 0) >= 3) { if (!matchesLineage(live, active.gateCohort, parentPartial, inheritedPartial, olderPartial)) throw fail(); requireFreshCohort(active.gateCohort); }
       tx.update(target, { state: 'verified' });
     });
     return computedAt;
   }
   async read(report: string, cohort: CustomerCohort | null, requireActive = true, activationCohort: CustomerCohort | null = cohort) {
-    const { run, parent, grandparent } = await this.permit();
+    const { run, parent, grandparent, greatGrandparent } = await this.permit();
     if (run.phase !== 'closed' || !run.reports.includes(report)) return null;
     if (requireActive) {
       const full = (await this.ref().collection('activation').doc('current').get()).data();
@@ -469,7 +484,7 @@ export class DailyOneRefresh {
       || !Array.isArray(row.jobs) || !row.jobs.length || row.jobs.length > DAILY_ONE_LIMITS.jobs
       || new Set(row.jobs.map((job: any) => job.id)).size !== row.jobs.length
       || row.jobs.some((job: any) => typeof job.id !== 'string' || !jobOwner(run, job.id, this.id, report)
-        || !Number.isSafeInteger(job.endedAt) || job.endedAt < (ownerRun(run, parent, grandparent, jobOwner(run, job.id, this.id, report), this.id)?.createdAt ?? Infinity) || job.endedAt > row.computedAt + 10_000)
+        || !Number.isSafeInteger(job.endedAt) || job.endedAt < (ownerRun(run, parent, grandparent, greatGrandparent, jobOwner(run, job.id, this.id, report), this.id)?.createdAt ?? Infinity) || job.endedAt > row.computedAt + 10_000)
       || (cohort ? !row.witness || !cohortMatchesSnapshotWitness(cohort, row.witness) : !!row.witness)) return null;
     if ((run.parentDepth ?? 0) >= 3) {
       const reservations = await Promise.all(row.jobs.map((job: any) => this.db.doc(`metricsOneDailyRuns/${jobOwner(run, job.id, this.id, report)}/reservations/${job.id.slice(-64)}`).get()));
@@ -477,8 +492,8 @@ export class DailyOneRefresh {
         || snapshot.data()?.state !== 'started' || snapshot.data()?.reportHash !== hash(report)
         || snapshot.data()?.scopeHash !== run.measurementScopes[hash(report)] || !Number.isSafeInteger(row.jobs[index].bytes) || row.jobs[index].bytes < 1
         || snapshot.data()?.bytes !== row.jobs[index].bytes || !Number.isSafeInteger(snapshot.data()?.startedAt)
-        || snapshot.data()?.startedAt < (ownerRun(run, parent, grandparent, jobOwner(run, row.jobs[index].id, this.id, report), this.id)?.createdAt ?? Infinity)
-        || snapshot.data()?.startedAt >= (ownerRun(run, parent, grandparent, jobOwner(run, row.jobs[index].id, this.id, report), this.id)?.expiresAt ?? -Infinity)
+        || snapshot.data()?.startedAt < (ownerRun(run, parent, grandparent, greatGrandparent, jobOwner(run, row.jobs[index].id, this.id, report), this.id)?.createdAt ?? Infinity)
+        || snapshot.data()?.startedAt >= (ownerRun(run, parent, grandparent, greatGrandparent, jobOwner(run, row.jobs[index].id, this.id, report), this.id)?.expiresAt ?? -Infinity)
         || snapshot.data()?.startedAt > row.jobs[index].endedAt)) return null;
     }
     let value: { status?: number; body?: unknown };
@@ -500,15 +515,15 @@ export class DailyOneRefresh {
         : (run.parentDepth ?? 0) >= 3 && environment === 'uat' ? this.read(report, null, false, cohort) : null;
     }));
     const reports = run.reports.filter((_, index) => values[index]?.asOf === run.logicalAsOf).map(hash);
-    if (!reports.length || reports.length === run.reports.length || (run.parentDepth === 4 && recoveredReports(run).some(report => !reports.includes(hash(report))))) throw fail();
+    if (!reports.length || reports.length === run.reports.length || ((run.parentDepth ?? 0) >= 4 && recoveredReports(run).some(report => !reports.includes(hash(report))))) throw fail();
     await requireCurrentCustomerCohort(cohort.cacheKey);
     const activation = this.ref().collection('activation').doc('partial');
     await this.db.runTransaction(async tx => {
-      const { run: live, parentPartial, inheritedPartial } = await this.checked(ref => tx.get(ref), 4, true, refs => tx.getAll(...refs)), existing = await tx.get(activation);
+      const { run: live, parentPartial, inheritedPartial, olderPartial } = await this.checked(ref => tx.get(ref), 5, true, refs => tx.getAll(...refs)), existing = await tx.get(activation);
       const own = newReports(live).filter(report => reports.includes(hash(report)));
       const snapshots = await Promise.all(own.map(report => tx.get(this.ref().collection('snapshots').doc(hash(report)))));
       if (live.phase !== 'closed' || live.logicalAsOf !== run.logicalAsOf || live.reportDigest !== run.reportDigest || existing.exists
-        || (live.parentDepth === 4 && (!cohortMatchesSnapshotWitness(cohort, parentPartial?.witness) || !cohortMatchesSnapshotWitness(cohort, inheritedPartial?.witness)
+        || ((live.parentDepth ?? 0) >= 4 && (!matchesLineage(live, cohort, parentPartial, inheritedPartial, olderPartial)
           || recoveredReports(live).some(report => !reports.includes(hash(report)))))
         || snapshots.some((snapshot, index) => !snapshot.exists || snapshot.data()?.state !== 'verified'
           || snapshot.data()?.source !== this.source || snapshot.data()?.reportHash !== hash(own[index]))) throw fail();
@@ -543,13 +558,13 @@ export class DailyOneRefresh {
     await requireCurrentCustomerCohort(cohort.cacheKey);
     const activation = this.ref().collection('activation').doc('current');
     await this.db.runTransaction(async tx => {
-      const { run: live, parentPartial, inheritedPartial } = await this.checked(ref => tx.get(ref), 4, true, refs => tx.getAll(...refs)), existing = await tx.get(activation);
+      const { run: live, parentPartial, inheritedPartial, olderPartial } = await this.checked(ref => tx.get(ref), 5, true, refs => tx.getAll(...refs)), existing = await tx.get(activation);
       const reports = newReports(live);
       const snapshots = await Promise.all(reports.map(report => tx.get(this.ref().collection('snapshots').doc(hash(report)))));
       const prior = live.parentDepth === 3 ? await Promise.all(live.reports.slice(2, 4).map(report => tx.get(this.db.doc(`metricsOneDailyRuns/${live.parentId}/snapshots/${hash(report)}`)))) : [];
       if (live.phase !== 'closed' || live.logicalAsOf !== run.logicalAsOf || live.reportDigest !== run.reportDigest || existing.exists
         || ((live.parentDepth ?? 0) >= 3 && (!cohortMatchesSnapshotWitness(cohort, parentPartial?.witness)
-          || (live.parentDepth === 4 && !cohortMatchesSnapshotWitness(cohort, inheritedPartial?.witness)) || prior.some((snapshot, index) => !snapshot.exists || snapshot.data()?.state !== 'verified' || snapshot.data()?.source !== live.parentSource || snapshot.data()?.reportHash !== hash(live.reports[index + 2]))))
+          || ((live.parentDepth ?? 0) >= 4 && !matchesLineage(live, cohort, parentPartial, inheritedPartial, olderPartial)) || prior.some((snapshot, index) => !snapshot.exists || snapshot.data()?.state !== 'verified' || snapshot.data()?.source !== live.parentSource || snapshot.data()?.reportHash !== hash(live.reports[index + 2]))))
         || snapshots.some((snapshot, index) => !snapshot.exists || snapshot.data()?.state !== 'verified'
           || snapshot.data()?.source !== this.source || snapshot.data()?.reportHash !== hash(reports[index]))) throw fail();
       requireFreshCohort(cohort);
@@ -577,9 +592,9 @@ export class DailyOneRefresh {
     if ((grant as RestorationGrant & { scopeHash?: string }).scopeHash !== hash(scope)) throw fail();
     if (grant.reuse?.priorPermitId) { await this.reserve(grant); return false; }
     return this.db.runTransaction(async tx => {
-      const { run, parentPartial, inheritedPartial } = await this.checked(ref => tx.get(ref), 4, true, refs => tx.getAll(...refs)), now = this.now();
+      const { run, parentPartial, inheritedPartial, olderPartial } = await this.checked(ref => tx.get(ref), 5, true, refs => tx.getAll(...refs)), now = this.now();
       const gate = active?.gateCohort;
-      if ((run.parentDepth ?? 0) >= 3) { if (!gate || !cohortMatchesSnapshotWitness(gate, parentPartial?.witness) || (run.parentDepth === 4 && !cohortMatchesSnapshotWitness(gate, inheritedPartial?.witness))) throw fail(); requireFreshCohort(gate); }
+      if ((run.parentDepth ?? 0) >= 3) { if (!matchesLineage(run, gate, parentPartial, inheritedPartial, olderPartial)) throw fail(); requireFreshCohort(gate); }
       if (run.phase !== 'open' || now < run.createdAt || now >= run.expiresAt || new Date(now).toISOString().slice(0, 10) !== run.day || !grant.report || !run.reports.includes(grant.report)) throw fail();
       if (grant.id !== `metrics_${this.id}_${grant.planHash}` || recoveredReports(run).includes(grant.report!)) throw fail();
       const ref = this.ref().collection('reservations').doc(grant.planHash), snapshot = await tx.get(ref), row = snapshot.data();
