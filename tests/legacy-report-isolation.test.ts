@@ -6,7 +6,7 @@ import { noteLegacyQueryFailure } from '../src/server/legacy-restoration';
 
 const state = vi.hoisted(() => ({ query: vi.fn(), historyFails: true, dailyFails: false, agentsFail: false,
   cohortKey: 'b'.repeat(64), retained: undefined as undefined | { key: string; at: number; value: { status: number; body: unknown } },
-  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), composer: null as any, continuation: null as any, continuationComposer: null as any, previousAsOf: null as string | null, currentAsOf: null as string | null, currentCohortFails: false, expanded: false, phase: 'none' as 'none' | 'planning' | 'open' | 'closed' }));
+  readSnapshot: vi.fn(), compatibleSnapshot: vi.fn(), priorSnapshot: vi.fn(), saveSnapshot: vi.fn(), composer: null as any, continuation: null as any, continuationComposer: null as any, previousAsOf: null as string | null, currentAsOf: null as string | null, currentCohortFails: false, cohortPending: false, expanded: false, phase: 'none' as 'none' | 'planning' | 'open' | 'closed' }));
 vi.mock('../src/server/legacy-restoration', async original => ({
   ...await original<typeof import('../src/server/legacy-restoration')>(),
   legacyPreviousRestoration: async () => ({ readSnapshot: state.priorSnapshot, publicationAsOf: async () => state.previousAsOf }),
@@ -36,13 +36,13 @@ vi.mock('../src/server/one-customer-cohort', async original => {
   const actual = await original<typeof import('../src/server/one-customer-cohort')>();
   const cohort = () => ({ policyRevision: 'a'.repeat(64), asOf: new Date().toISOString(), expiresAt: Date.now() + 600_000,
     cacheKey: state.cohortKey, rows: [{ analyticsUserId: 'c'.repeat(32), registeredAt: '2026-11-01T00:00:00Z' }] });
-  return { ...actual, readCustomerCohort: async () => cohort(), requireCurrentCustomerCohort: async () => { if (state.currentCohortFails) throw new Error('membership changed'); return cohort(); },
+  return { ...actual, readCustomerCohort: async () => state.cohortPending ? await new Promise<ReturnType<typeof cohort>>(() => {}) : cohort(), requireCurrentCustomerCohort: async () => { if (state.currentCohortFails) throw new Error('membership changed'); return cohort(); },
     withCustomerCohort: async (_key: string, load: () => Promise<unknown>) => load() };
 });
 const secret = 'legacy-report-isolation-test-session-secret-long-enough';
 const cookie = (email = 'metrics-qa@hushh.ai') => `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email, exp: Math.floor(Date.now() / 1000) + 3600 }), secret))}`;
 const app = () => createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; state.composer = null; state.continuation = null; state.continuationComposer = null; state.previousAsOf = null; state.currentAsOf = null; state.currentCohortFails = false; });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.query.mockReset(); state.retained = undefined; state.cohortKey = 'b'.repeat(64); state.readSnapshot.mockReset(); state.compatibleSnapshot.mockReset(); state.priorSnapshot.mockReset(); state.saveSnapshot.mockReset(); state.expanded = false; state.phase = 'none'; state.composer = null; state.continuation = null; state.continuationComposer = null; state.previousAsOf = null; state.currentAsOf = null; state.currentCohortFails = false; state.cohortPending = false; });
 
 function source() {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('No external calls in route verification'); }));
@@ -69,6 +69,12 @@ function source() {
 }
 
 describe('legacy report source isolation', () => {
+  it('fails closed without a warehouse query when the cohort check exceeds the deadline', async () => {
+    state.phase = 'closed'; state.currentAsOf = '2026-11-14T21:34:55.606Z'; state.cohortPending = true;
+    const response = await request(app()).get('/api/auth/plg-publication').set('Cookie', cookie());
+    expect(response.status).toBe(200); expect(response.body.publicationAsOf).toBeNull();
+    expect(state.compatibleSnapshot).not.toHaveBeenCalled(); expect(state.query).not.toHaveBeenCalled();
+  }, 40_000);
   it('preserves the older global calendar anchor while granting PLG only a witnessed production publication', async () => {
     state.phase = 'closed'; state.previousAsOf = '2026-11-14T19:33:10.257Z'; state.currentAsOf = '2026-11-14T21:34:55.606Z';
     const range = { startDate: '2026-10-16', endDate: '2026-11-14', days: 30 };

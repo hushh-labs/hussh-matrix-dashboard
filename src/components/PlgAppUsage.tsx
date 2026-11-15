@@ -15,7 +15,7 @@ export function PlgAppUsage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [anchorLoading, setAnchorLoading] = useState(true);
   useEffect(() => {
     let active = true; const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12_000);
+    const timeout = setTimeout(() => controller.abort(), 35_000);
     setPublicationAsOf(null); setAnchorLoading(true);
     void fetch('/api/auth/plg-publication', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
       .then(response => response.ok ? response.json() : null)
