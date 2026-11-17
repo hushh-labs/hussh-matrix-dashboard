@@ -231,10 +231,11 @@ test('offers explicit newer partial production dates without changing the old de
   const urls: URL[] = [];
   page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
   await page.goto('/location-analytics/production');
-  const choice = page.getByRole('button', { name: '2026-10-17 to 2026-11-15' });
+  const choice = page.getByLabel('Newer saved report dates');
   await expect(choice).toBeVisible();
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_end_date')).toBe('2026-11-14');
-  await choice.click();
+  await choice.selectOption('2026-10-17/2026-11-15');
+  await expect(choice).toHaveValue('2026-10-17/2026-11-15');
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-17');
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_end_date')).toBe('2026-11-15');
   await page.goto('/location-analytics/uat');
@@ -249,10 +250,23 @@ test('offers only the matching environment partial dates', async ({ page }) => {
   ] } }));
   const urls: URL[] = []; page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
   await page.goto('/location-analytics/uat');
-  await expect(page.getByRole('button', { name: '2026-10-17 to 2026-11-15' })).toHaveCount(0);
-  await page.getByRole('button', { name: '2026-11-09 to 2026-11-15' }).click();
+  const saved = page.getByLabel('Newer saved report dates');
+  await expect(saved.locator('option')).toHaveCount(2);
+  await expect(saved.locator('option[value="2026-10-17/2026-11-15"]')).toHaveCount(0);
+  await saved.selectOption('2026-11-09/2026-11-15');
   await expect.poll(() => urls.at(-1)?.searchParams.get('environment')).toBe('uat');
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-11-09');
+});
+
+for (const width of [320, 1440]) test(`saved Location ranges remain accessible at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 }); await mockDashboard(page);
+  const reports = ['2026-11-15', '2026-11-09', '2026-11-02', '2026-10-17'].map(startDate => ({ startDate, endDate: '2026-11-15', environment: 'production' }));
+  await page.route('**/api/auth/one-partial-publications-v2', route => route.fulfill({ json: { reports } }));
+  await page.goto('/location-analytics/production');
+  const saved = page.getByLabel('Newer saved report dates');
+  await expect(saved.locator('option')).toHaveCount(5);
+  for (const report of reports) await expect(saved.locator(`option[value="${report.startDate}/${report.endDate}"]`)).toHaveText(`${report.startDate} to ${report.endDate}`);
+  await assertFits(page);
 });
 
 test('session loss prompts sign-in and restores the One date and environment', async ({ page }) => {
