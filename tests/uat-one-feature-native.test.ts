@@ -19,7 +19,7 @@ function setup() {
  const client={createQueryJob:create,dataset:vi.fn(()=>({getTables:vi.fn(async()=>[tables,null])})),job:vi.fn()};
  const factory=vi.fn(()=>client as any), budget={confirmBound:vi.fn(async()=>{})}, store=new MemoryReportStore();
  const control={enabled:true,revision:1,sourceGeneration:'a'.repeat(64),scopeDigest:'b'.repeat(64),definitionVersion:'1',freshnessMs:1000,staleMs:2000};
- const job={id:'c'.repeat(64),key:'d'.repeat(64),status:'running',fence:1,workerHash:'e'.repeat(64),leaseUntil:now+60000,expiresAt:now+120000,control,
+ const job={id:'c'.repeat(64),key:'d'.repeat(64),status:'running',fence:1,workerHash:'e'.repeat(64),leaseUntil:now+60000,expiresAt:now+120000,sourceStarted:true,control,
   request:{reportId:'one.agent-detail-uat',startDate:config.startDate,endDate:config.endDate,timezone:config.timezone}} as any;
  const policy={approved:true,enabled:true,environment:'uat',project,location:'US',queryHash:plan.queryHash,referenceDigest,sourceGeneration:control.sourceGeneration,
   scopeDigest:control.scopeDigest,startDate:config.startDate,endDate:config.endDate,timezone:config.timezone,expiresAt:now+60000,maxBytes:30*1024**2};
