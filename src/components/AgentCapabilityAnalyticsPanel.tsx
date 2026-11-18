@@ -428,12 +428,12 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'profile_viewed',
-      label: 'Data Profile & Card View',
+      label: 'Marketplace profile views',
       icon: User,
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_marketplace_profile_viewed"). Data deal details view.',
+      explanation: 'Includes marketplace profile view records; a view does not establish a data-deal subscription.',
     },
     {
       key: 'deal_subscribed',

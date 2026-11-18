@@ -141,7 +141,7 @@ const featureNotes: Record<string, string> = {
   workspace_visited: 'Counts advisor-workspace views. Repeat visits count again.',
   strategy_requested: 'Counts ria_request_created access-request or request-bundle outcomes, including failures, and legacy one_ria_strategy_requested records. It does not count delivered strategies.',
   marketplace_browsed: 'Counts marketplace-browsing records. Repeated exploration counts again.',
-  profile_viewed: 'Counts marketplace-profile views. A view does not prove a subscription or sale.',
+  profile_viewed: 'Counts marketplace_profile_viewed and legacy one_marketplace_profile_viewed records. The former can include advisor profile views; a view does not prove a subscription or sale.',
 };
 
 export function featureMeasurementNote(key: string): string {

@@ -149,6 +149,14 @@ for (const outcome of ['success', 'error'] as const) {
   assert.doesNotMatch(markup, /Investment Strategy Request/);
 }
 
+const marketplace = { ...summary, capabilities: [{ key: 'marketplace', instrumented: true, observed: true, devices: 2, accounts: 1, deliberateEvents: 3 }],
+  featureUsage: { profile_viewed: { accounts: 1, devices: 2, signals: 3, successes: 3, expectedErrors: 0, failures: 0, outcomeSignals: 3 } },
+} as unknown as OneAppSummary;
+const marketplaceMarkup = renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, { capabilityKey: 'marketplace', one: marketplace, uat: null, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {} }));
+assert.match(marketplaceMarkup, /Marketplace profile views/);
+assert.match(marketplaceMarkup, /3 records from 2 device\/browser IDs/);
+assert.doesNotMatch(marketplaceMarkup, /Data Profile &amp; Card View/);
+
 const measuredGmail = renderGmail(gmailSummary);
 assert.match(measuredGmail, /292 records from 9 device\/browser IDs/);
 assert.match(measuredGmail, /Inbox visits are not separately tracked yet/);
