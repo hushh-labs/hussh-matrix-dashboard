@@ -1,5 +1,7 @@
 import { AGENT_MEASUREMENTS } from '../../lib/agent-measurement-contract.mjs';
 import { digest, reportingTimezone, ReportError } from './contracts';
+import type { OneAgentDetailV1 } from '../../lib/one-agent-detail-types';
+export type { OneAgentDetailV1 } from '../../lib/one-agent-detail-types';
 
 /** Proposal only. This is a feature-record contract, not the complete legacy One
  * dashboard response and not the separately defined one.adoption report. */
@@ -7,12 +9,6 @@ export const ONE_AGENT_DETAIL_VERSION = '1';
 export const ONE_AGENT_DETAIL_MANIFEST = AGENT_MEASUREMENTS.map(({ agent, key }) => ({ agent, key }));
 export const ONE_AGENT_DETAIL_MANIFEST_DIGEST = digest(ONE_AGENT_DETAIL_MANIFEST);
 type Environment = 'production' | 'uat';
-type Counts = { accounts: number | null; devices: number | null; signals: number | null; successes: number | null; expectedErrors: number | null; failures: number | null; outcomeSignals: number | null };
-type EventCount = { eventName:string; signals:number; successes:number; expectedErrors:number; failures:number };
-type Row = { agent: string; key: string; state: 'measured' | 'unavailable' | 'not_tracked'; counts: Counts | null; eventBreakdown:EventCount[] | null };
-export type OneAgentDetailV1 = { version: '1'; environment: Environment; scopeDigest: string; manifestDigest: string;
-  period: { startDate: string; endDate: string; timezone: string }; source: { kind: 'ga4_export'; coverage: 'intraday_or_unknown'; watermark: string | null; checkedAt: string | null };
-  rows: Row[] };
 const fields = ['accounts', 'devices', 'signals', 'successes', 'expectedErrors', 'failures', 'outcomeSignals'];
 const keys = (value: unknown, names: string[]) => !!value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).sort().join() === [...names].sort().join();

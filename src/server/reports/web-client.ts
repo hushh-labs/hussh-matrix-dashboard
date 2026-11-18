@@ -1,7 +1,11 @@
 import { digest, ReportError, reportKey, validateAccess, validateAggregate, validateControl, validateRequest,
   type ReportAccess, type PublishedReport, type ReportJob } from './contracts';
-import type { MetricsReports } from './service';
 import { withinDeadline } from './deadline';
+
+type ReadResult = {state:'unavailable';report:null}|{state:'completed'|'stale'|'unknown_freshness';report:PublishedReport};
+type RequestResult = {state:'accepted'|'running'|'delayed'|'completed';reportId:string|null;jobId:string|null};
+type StatusResult = {state:'accepted'|'running'|'delayed'|'completed'|'failed'|'invalidated';jobId:string;acceptedAt:number;
+  needsAttention:boolean;queueWaitMs:number;executionMs:number;retryAfterMs:number};
 
 export type ReportWebConfig = { audience: string; timeoutMs: number; maxResponseBytes: number };
 export type ReportingIdentityHeaders = (audience: string, signal: AbortSignal) => Promise<Record<string, string>>;
@@ -62,7 +66,7 @@ export class MetricsReportWebClient {
       try { return JSON.parse(text + decoder.decode()); } catch { throw new ReportError('unavailable'); }
     } finally { await reader.cancel(); }
   }
-  async read(input: unknown, access: ReportAccess): Promise<Awaited<ReturnType<MetricsReports['read']>>> {
+  async read(input: unknown, access: ReportAccess): Promise<ReadResult> {
     const value = await this.call('read', { request: input, access }, access);
     if (!exact(value, 'report,state')) throw new ReportError('unavailable');
     if (value.state === 'unavailable' && value.report === null) return { state: 'unavailable', report: null };
@@ -77,14 +81,14 @@ export class MetricsReportWebClient {
     if ((r.result.sourceWatermark === null) !== (value.state === 'unknown_freshness')) throw new ReportError('unavailable');
     return { state: value.state, report: r };
   }
-  async request(input: unknown, access: ReportAccess): Promise<Awaited<ReturnType<MetricsReports['request']>>> {
+  async request(input: unknown, access: ReportAccess): Promise<RequestResult> {
     const value = await this.call('request', { request: input, access }, access);
     if (!exact(value, 'jobId,reportId,state') || (value.state === 'completed'
       ? !hash(value.reportId) || value.jobId !== null
       : !['accepted', 'running', 'delayed'].includes(value.state) || !hash(value.jobId) || value.reportId !== null)) throw new ReportError('unavailable');
-    return value as Awaited<ReturnType<MetricsReports['request']>>;
+    return value as RequestResult;
   }
-  async status(jobId: string, access: ReportAccess): Promise<Awaited<ReturnType<MetricsReports['status']>>> {
+  async status(jobId: string, access: ReportAccess): Promise<StatusResult> {
     if (!hash(jobId)) throw new ReportError('invalid');
     const value = await this.call('status', { jobId, access }, access);
     if (!exact(value, 'acceptedAt,executionMs,jobId,needsAttention,queueWaitMs,retryAfterMs,state')
@@ -92,6 +96,6 @@ export class MetricsReportWebClient {
       || typeof value.needsAttention !== 'boolean'
       || ![value.acceptedAt, value.executionMs, value.queueWaitMs, value.retryAfterMs].every(v => Number.isSafeInteger(v) && v >= 0)
       || (value.needsAttention || ['completed', 'failed', 'invalidated'].includes(value.state)) && value.retryAfterMs !== 0) throw new ReportError('unavailable');
-    return value as Awaited<ReturnType<MetricsReports['status']>>;
+    return value as StatusResult;
   }
 }

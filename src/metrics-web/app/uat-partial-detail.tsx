@@ -1,4 +1,4 @@
-import type { OneAgentDetailV1 } from '../../../src/server/reports/one-agent-detail-contract';
+import type { OneAgentDetailV1 } from '../../../src/lib/one-agent-detail-types';
 
 /** Presentation only. A future caller must supply an authorized verified
  * publication; this component performs no network or collection work. */
