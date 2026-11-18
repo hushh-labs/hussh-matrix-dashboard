@@ -27,7 +27,8 @@ export class UatFeaturePartialPublisher {
       const now=this.now(), policy=validatePolicy(global), source=validateUatDetailPolicy(rawPolicy,now);
       if (!Number.isSafeInteger(now) || !policy.computeEnabled || !live || live.status!=='running' || live.id!==job.id
         || live.key!==job.key || live.fence!==job.fence || live.workerHash!==job.workerHash || live.leaseUntil<=now
-        || live.expiresAt<=now || live.sourceStarted!==true || job.control.enabled!==true || String(live.request.reportId)!=='one.agent-detail-uat'
+        || live.expiresAt<=now || live.sourceStarted!==true || !Number.isSafeInteger(job.acceptedAt) || job.acceptedAt>now
+        || live.acceptedAt!==job.acceptedAt || job.control.enabled!==true || String(live.request.reportId)!=='one.agent-detail-uat'
         || digest(live.request)!==digest(job.request) || digest(live.control)!==digest(job.control) || digest(control)!==digest(job.control)
         || source.scopeDigest!==job.control.scopeDigest || source.sourceGeneration!==job.control.sourceGeneration
         || source.startDate!==job.request.startDate || source.endDate!==job.request.endDate || source.timezone!==job.request.timezone
@@ -42,7 +43,8 @@ export class UatFeaturePartialPublisher {
         || detail.rows.some(row=>row.agent==='location' && row.state!=='unavailable')) throw new ReportError('invalid');
       const binding=digest([job.id,job.key,job.request,job.control,digest(source),digest(proof)]);
       if (existing) {
-        if (existing.schema!==1 || existing.kind!=='uat-feature-subset' || existing.coverage!=='partial'
+        if (Object.keys(existing).sort().join()!=='binding,computedAt,coverage,detail,kind,schema'
+          || existing.schema!==1 || existing.kind!=='uat-feature-subset' || existing.coverage!=='partial'
           || existing.binding!==binding || digest(existing.detail)!==digest(detail)) throw new ReportError('unavailable');
         return {state:'partial' as const, id:job.id};
       }

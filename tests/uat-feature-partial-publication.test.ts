@@ -2,11 +2,12 @@ import { expect, it, vi } from 'vitest';
 import { digest } from '../src/server/reports/contracts';
 import { reportPath } from '../src/server/reports/store';
 import { UatFeaturePartialPublisher } from '../src/server/reports/uat-feature-partial-publication';
+import { UatFeaturePartialReader } from '../src/server/reports/uat-feature-partial-reader';
 import { MemoryReportStore } from './helpers/metrics-report-memory-store';
 const now=Date.parse('2026-11-19T12:00:00Z');
 function fixture() {
  const store=new MemoryReportStore(), control={enabled:true,revision:1,sourceGeneration:'a'.repeat(64),scopeDigest:'b'.repeat(64),definitionVersion:'1',freshnessMs:1000,staleMs:2000};
- const job={id:'c'.repeat(64),key:'d'.repeat(64),status:'running',fence:1,workerHash:'e'.repeat(64),leaseUntil:now+60000,expiresAt:now+120000,sourceStarted:true,control,
+ const job={id:'c'.repeat(64),key:'d'.repeat(64),status:'running',fence:1,workerHash:'e'.repeat(64),leaseUntil:now+60000,expiresAt:now+120000,acceptedAt:now-1000,sourceStarted:true,control,
   request:{reportId:'one.agent-detail-uat',startDate:'2026-11-18',endDate:'2026-11-18',timezone:'UTC'}} as any;
  const global={approved:true,computeEnabled:true,quotaWindowMs:60000,readRequests:10,statusRequests:10,computeRequests:10,customCapacity:2,scheduledCapacity:0,customPerSubjectCapacity:1,maxPeriodDays:90,leaseMs:60000,jobLifetimeMs:120000,maxSnapshotBytes:900000};
  const source={approved:true,enabled:true,environment:'uat',project:'hushh-ai-prod',location:'US',queryHash:'1'.repeat(64),referenceDigest:'2'.repeat(64),
@@ -53,4 +54,25 @@ it('withholds a response if authority changes after commit; private snapshot is 
  await expect(f.publisher.publish(f.job,new AbortController().signal)).rejects.toThrow();
  expect(f.store.data.has(reportPath('uatDetailPartialSnapshots',f.job.id))).toBe(true);
  expect(f.store.data.get(reportPath('heads','legacy-sentinel'))).toEqual({publication:'unchanged'});
+});
+
+it('reads only an authorized, scope-matching private subset with unknown freshness',async()=>{
+ const f=fixture(), access={subjectHash:'9'.repeat(64),scopeDigest:f.job.control.scopeDigest};
+ await f.publisher.publish(f.job,new AbortController().signal);
+ const authorize=vi.fn(async()=>true), reader=new UatFeaturePartialReader(f.store,f.saga,authorize,()=>now,true);
+ const result=await reader.read(f.job,access);expect(result).toMatchObject({state:'partial',freshness:'unknown',computedAt:now});
+ expect(result.detail.rows.find(r=>r.key==='sms_safety')).toMatchObject({state:'unavailable',counts:null});
+ expect(JSON.stringify(result)).not.toContain('nativeId');expect(authorize).toHaveBeenCalledTimes(2);
+ expect(f.store.data.get(reportPath('heads','legacy-sentinel'))).toEqual({publication:'unchanged'});
+});
+it('fails closed on disabled, wrong scope, stale publication, proof drift or revoked authority',async()=>{
+ for(const mode of ['disabled','scope','stale','proof','revoked']) {
+  const f=fixture(), access={subjectHash:'9'.repeat(64),scopeDigest:f.job.control.scopeDigest};
+  await f.publisher.publish(f.job,new AbortController().signal);
+  const authorize=vi.fn(async()=>true); if(mode==='revoked') authorize.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  if(mode==='proof') f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),{...f.proof,binding:'4'.repeat(64)});
+  const reader=new UatFeaturePartialReader(f.store,f.saga,authorize,()=>mode==='stale'?now+3000:now,mode!=='disabled');
+  await expect(reader.read(f.job,mode==='scope'?{...access,scopeDigest:'8'.repeat(64)}:access)).rejects.toThrow();
+  expect(f.store.data.get(reportPath('heads','legacy-sentinel'))).toEqual({publication:'unchanged'});
+ }
 });
