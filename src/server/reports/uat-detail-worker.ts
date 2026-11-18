@@ -9,9 +9,10 @@ import type { StagedUatDetailQuery } from './staged-uat-detail-query';
 export class UatDetailWorker {
   constructor(private saga:Pick<StagedUatDetailQuery,'inspect'|'prepare'|'reserve'|'confirm'|'submit'|'recover'|'readProof'>,
     private source:Parameters<typeof buildUatFeaturePlan>[0], private enabled=false) {}
-  async advance(job:ReportJob, signal:AbortSignal) {
+  async advance(job:ReportJob, signal:AbortSignal, recoverOnly=false) {
     if (!this.enabled) throw new ReportError('unavailable');
     signal.throwIfAborted(); const state=await this.saga.inspect(job); signal.throwIfAborted();
+    if (recoverOnly && !['started','dispatching','complete'].includes(state)) throw new ReportError('unavailable');
     if (state==='new') { await this.saga.prepare(job,buildUatFeaturePlan(this.source).query,signal); return {state:'prepared' as const}; }
     if (state==='prepared') return this.saga.reserve(job);
     if (state==='reserving') return this.saga.confirm(job);
