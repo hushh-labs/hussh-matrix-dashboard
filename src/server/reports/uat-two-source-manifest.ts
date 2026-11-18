@@ -1,7 +1,7 @@
 import { digest, ReportError } from './contracts';
 import { uatFeatureManifest } from './uat-feature-manifest';
 import { buildUatLocationPlan, type buildUatFeaturePlan } from '../uat-one-feature-plan';
-import { BIGQUERY_COST_LIMITS } from '../bigquery-cost-control';
+import { BIGQUERY_COST_LIMITS } from '../bigquery-cost-limits';
 import { validateUatDetailPolicy } from './staged-uat-detail-query';
 
 /** Proposal only: approval and the two independent canonical reservations are
@@ -22,14 +22,14 @@ export function uatTwoSourceChildIds(jobId:string, manifestDigest:string) {
 
 /** Validates two independently bounded policies against one approved manifest.
  * Validation is not reservation: each child must reserve in the canonical ledger. */
-export function validateUatTwoSourcePolicies(value:unknown, now:number) {
+export function validateUatTwoSourcePolicies(value:unknown, now:number, recovery=false) {
   if (!value || typeof value!=='object' || Array.isArray(value)) throw new ReportError('unavailable');
   const v=value as any;
   if (Object.keys(v).sort().join()!=='approved,config,enabled,feature,location,manifestDigest,scopeDigest,sourceGeneration'
     || v.approved!==true || v.enabled!==true) throw new ReportError('unavailable');
   const binding=uatTwoSourceManifest(v.config,v.scopeDigest,v.sourceGeneration);
   if (binding.manifestDigest!==v.manifestDigest) throw new ReportError('unavailable');
-  const feature=validateUatDetailPolicy(v.feature,now), location=validateUatDetailPolicy(v.location,now), m=binding.manifest;
+  const feature=validateUatDetailPolicy(v.feature,now,recovery), location=validateUatDetailPolicy(v.location,now,recovery), m=binding.manifest;
   if (feature.queryHash!==m.featureQueryHash || location.queryHash!==m.locationQueryHash
     || [feature,location].some(p=>p.scopeDigest!==m.scopeDigest || p.sourceGeneration!==m.sourceGeneration
       || p.environment!=='uat' || p.startDate!==m.startDate || p.endDate!==m.endDate || p.timezone!==m.timezone)

@@ -1,5 +1,6 @@
 import { digest, ReportError, type ReportJob } from './contracts';
 import { reportPath as path, type ReportStore, type ReportTransaction } from './store';
+import { uatTwoSourceChildIds } from './uat-two-source-manifest';
 
 export interface ReportMaintenanceStore extends ReportStore {
   scan(collection: 'jobs' | 'quotas', afterId: string | null, limit: number): Promise<string[]>;
@@ -88,6 +89,16 @@ export class MetricsReportMaintenance {
       const cycle = await tx.get<{ jobs: string[] }>(path('periodicCycles', 'current'));
       const detailIntent = String(job.request.reportId) === 'one.agent-detail-uat'
         ? await tx.get<{ state: string }>(path('uatDetailIntents', id)) : null;
+      const twoIntent = String(job.request.reportId) === 'one.agent-detail-uat'
+        ? await tx.get<any>(path('uatTwoSourceIntents', id)) : null;
+      if (twoIntent) {
+        let ids:{feature:string;location:string};
+        try { ids=uatTwoSourceChildIds(id,twoIntent.manifestDigest); } catch { return 0; }
+        const [a,b,pa,pb]=await Promise.all([tx.get<any>(path('uatTwoSourceChildren',ids.feature)),tx.get<any>(path('uatTwoSourceChildren',ids.location)),
+          tx.get<any>(path('uatTwoSourceProofs',ids.feature)),tx.get<any>(path('uatTwoSourceProofs',ids.location))]);
+        if (twoIntent.state!=='confirmed' || twoIntent.parentId!==id || a?.state!=='complete' || b?.state!=='complete'
+          || a?.parentId!==id || b?.parentId!==id || pa?.parentId!==id || pb?.parentId!==id || pa?.role!=='feature' || pb?.role!=='location') return 0;
+      }
       if (!head || head.activeJob === id || head.publication === id || receipt && receipt.state !== 'completed'
         || detailIntent && detailIntent.state !== 'complete'
         || cycle && (!Array.isArray(cycle.jobs) || cycle.jobs.length > 4 || cycle.jobs.some(jobId => !/^[a-f0-9]{64}$/.test(jobId)) || cycle.jobs.includes(id))) return 0;
@@ -98,7 +109,9 @@ export class MetricsReportMaintenance {
         // Only an unreachable publication and its private payload are pruned.
         tx.delete(path('uatDetailPublications', id));
         tx.delete(path('uatDetailPartialSnapshots', id));
-        return 6;
+        tx.delete(path('uatCombinedPublications', id));
+        tx.delete(path('uatCombinedDrafts', id));
+        return 8;
       }
       return 4; // Document delete operations, not claimed reclaimed bytes or savings.
     });

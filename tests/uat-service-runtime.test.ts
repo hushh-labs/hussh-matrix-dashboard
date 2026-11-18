@@ -1,0 +1,52 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { createServiceOwnedUatRuntime } from '../src/server/bigquery-cost-control';
+import { createHmac } from 'node:crypto';
+import { uatTwoSourceManifest } from '../src/server/reports/uat-two-source-manifest';
+import { reportPath } from '../src/server/reports/store';
+import { reportKey } from '../src/server/reports/contracts';
+const calls=vi.hoisted(()=>({construct:vi.fn(),terminate:vi.fn(),verify:vi.fn(),native:vi.fn(),onTransaction:vi.fn(),docs:new Map<string,unknown>()}));
+vi.mock('@google-cloud/firestore',()=>({Firestore:class {
+ constructor(options:unknown){calls.construct(options);} doc(path:string){return {path};} terminate=calls.terminate;
+ async runTransaction(fn:any){calls.onTransaction();return fn({get:async(ref:any)=>({exists:calls.docs.has(ref.path),data:()=>calls.docs.get(ref.path)}),set:(ref:any,value:any)=>calls.docs.set(ref.path,value)});}
+}}));
+vi.mock('google-auth-library',()=>({OAuth2Client:class { verifyIdToken=calls.verify; }}));
+vi.mock('@google-cloud/bigquery',()=>({BigQuery:class {constructor(){calls.native();}}}));
+afterEach(()=>{vi.useRealTimers();vi.unstubAllEnvs();calls.onTransaction.mockReset();});
+it('fails closed without constructing a client when the service gate is absent',async()=>{
+ vi.stubEnv('METRICS_UAT_SERVICE_ENABLED','false'); calls.construct.mockClear();
+ await expect(createServiceOwnedUatRuntime()).rejects.toThrow(); expect(calls.construct).not.toHaveBeenCalled();
+});
+it('checks the existing signed staff session and exact Google worker identity against current policy',async()=>{
+ const now=Date.now(),scopeDigest='a'.repeat(64),sourceGeneration='b'.repeat(64),secret='s'.repeat(40);
+ const config={project:'hushh-pda-uat',dataset:'analytics_533362555',webHost:'uat.one.hushh.ai',timezone:'UTC',startDate:'2026-11-18',endDate:'2026-11-18',maxPeriodDays:7};
+ const {manifest,manifestDigest}=uatTwoSourceManifest(config,scopeDigest,sourceGeneration);
+ const base={approved:true,enabled:true,environment:'uat',project:'hushh-ai-prod',location:'US',referenceDigest:'c'.repeat(64),scopeDigest,sourceGeneration,startDate:config.startDate,endDate:config.endDate,timezone:'UTC',expiresAt:now+60000,maxBytes:1000};
+ const source={approved:true,enabled:true,config,scopeDigest,sourceGeneration,manifestDigest,feature:{...base,queryHash:manifest.featureQueryHash},location:{...base,queryHash:manifest.locationQueryHash}};
+ const tuple={reportingProject:'hushh-ai-prod',reportingDatabase:'metrics-reports',workerAudience:'https://detail-worker.run.app',taskInvoker:'metrics-report-task-invoker@hushh-ai-prod.iam.gserviceaccount.com'};
+ const service={approved:true,enabled:true,expiresAt:now+60000,manifestDigest,scopeDigest,sourceGeneration,...tuple};
+ calls.docs.set(reportPath('policy','one-agent-detail-service'),service);calls.docs.set(reportPath('policy','one-agent-detail-two-source'),source);
+ vi.stubEnv('METRICS_UAT_SERVICE_ENABLED','true');vi.stubEnv('METRICS_BIGQUERY_ENABLED','true');vi.stubEnv('METRICS_UAT_DETAIL_ENABLED','true');
+ vi.stubEnv('METRICS_UAT_SERVICE_CONFIG',JSON.stringify(tuple));vi.stubEnv('SESSION_SECRET',secret);vi.stubEnv('METRICS_SCOPE_DIGEST',scopeDigest);vi.stubEnv('ALLOWED_EMAIL_DOMAINS','hushh.ai');
+ calls.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:tuple.taskInvoker})});calls.terminate.mockResolvedValue(undefined);
+ const body=JSON.stringify({email:'staff@hushh.ai',exp:Math.floor(now/1000)+60}),signature=createHmac('sha256',secret).update(body).digest('base64url');
+ const runtime=await createServiceOwnedUatRuntime(); expect(await runtime.checkStaff(`s:${body}.${signature}`)).toBe(true);
+ const request={reportId:'one.agent-detail-uat' as const,startDate:config.startDate,endDate:config.endDate,timezone:'UTC'},
+  control={enabled:true,revision:1,scopeDigest,sourceGeneration,definitionVersion:'1',freshnessMs:1000,staleMs:2000};
+ calls.docs.set(reportPath('policy','current'),{approved:true,computeEnabled:true,quotaWindowMs:60000,readRequests:10,statusRequests:10,computeRequests:10,customCapacity:2,scheduledCapacity:0,customPerSubjectCapacity:1,maxPeriodDays:90,leaseMs:1000,jobLifetimeMs:2000,maxSnapshotBytes:900000});
+ calls.docs.set(reportPath('controls',request.reportId),control);
+ expect(await runtime.read(`s:${body}.${signature}`,request)).toEqual({state:'unavailable'});expect(calls.native).not.toHaveBeenCalled();
+ const id='f'.repeat(64),key=reportKey(request,control); calls.docs.set(reportPath('jobs',id),{id,key,request,control,status:'accepted',needsAttention:false});
+ expect(await runtime.status(`s:${body}.${signature}`,id)).toEqual({state:'accepted',needsAttention:false});expect(calls.native).not.toHaveBeenCalled();
+ expect(await runtime.checkWorker('synthetic-token')).toBe(true);expect(calls.verify).toHaveBeenCalledWith({idToken:'synthetic-token',audience:tuple.workerAudience});
+ calls.verify.mockResolvedValueOnce({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'other@example.com'})});
+ await expect(runtime.checkWorker('other-token')).rejects.toThrow();
+ calls.verify.mockResolvedValueOnce({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'other@example.com'})});
+ await expect(runtime.collect('other-token','9'.repeat(64),new AbortController().signal)).rejects.toThrow();
+ expect(calls.docs.has(reportPath('jobs','9'.repeat(64)))).toBe(false);
+ vi.useFakeTimers();vi.setSystemTime(now);const shortBody=JSON.stringify({email:'staff@hushh.ai',exp:Math.floor(now/1000)+1});
+ const shortSignature=createHmac('sha256',secret).update(shortBody).digest('base64url');let policyReads=0;
+ calls.onTransaction.mockImplementation(()=>{if(++policyReads===2)vi.setSystemTime(now+2000);});
+ await expect(runtime.checkStaff(`s:${shortBody}.${shortSignature}`)).rejects.toThrow();calls.onTransaction.mockReset();vi.useRealTimers();
+ policyReads=0;calls.onTransaction.mockImplementation(()=>{if(++policyReads===2)calls.docs.set(reportPath('policy','one-agent-detail-service'),{...service,enabled:false});});
+ await expect(runtime.checkStaff(`s:${body}.${signature}`)).rejects.toThrow(); await runtime.close();
+});

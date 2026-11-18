@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { BIGQUERY_COST_LIMITS, type QueryBudgetReservation } from '../bigquery-cost-control';
+import { BIGQUERY_COST_LIMITS } from '../bigquery-cost-limits';
+import type { QueryBudgetReservation } from '../bigquery-cost-control';
 import { digest, ReportError, validatePolicy, type ReportControl, type ReportJob, type ReportingPolicy } from './contracts';
 import { reportPath, type ReportStore } from './store';
 
@@ -16,7 +17,7 @@ type Budget = { reserve:(reservation:QueryBudgetReservation)=>Promise<void>; con
 type Estimate = { queryHash:string; project:string; location:string; statementType:string; referenceDigest:string; accuracy:string; processed:number; referencedFloor:number; bound:number };
 type Metadata = { id:string; queryHash:string; project:string; location:string; useLegacySql:boolean; maximumBytesBilled:number;
   state:string; error:boolean; billed:number; endedAt:number };
-type Native = { estimate:(sql:string,signal:AbortSignal)=>Promise<Estimate>; submit:(request:{sql:string;id:string;jobId:string;day:string;binding:string;project:string;location:'US';queryHash:string;useLegacySql:false;maximumBytesBilled:number;signal:AbortSignal})=>Promise<void>; lookup:(id:string)=>Promise<Metadata|null> };
+type Native = { estimate:(job:ReportJob,signal:AbortSignal)=>Promise<Estimate>; submit:(request:{id:string;jobId:string;day:string;binding:string;project:string;location:'US';queryHash:string;useLegacySql:false;maximumBytesBilled:number;signal:AbortSignal})=>Promise<void>; lookup:(job:ReportJob,id:string)=>Promise<Metadata|null> };
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const isHash=(v:unknown):v is string=>typeof v==='string' && /^[a-f0-9]{64}$/.test(v);
 const fail=()=>{ throw new ReportError('unavailable'); };
@@ -75,7 +76,7 @@ export class StagedUatDetailQuery {
       if (prior) return fail(); return g;
     });
     if (hash(sql)!==initial.p.queryHash) return fail();
-    signal.throwIfAborted(); await this.authority(job); signal.throwIfAborted(); const e=await this.native.estimate(sql,signal); signal.throwIfAborted();
+    signal.throwIfAborted(); await this.authority(job); signal.throwIfAborted(); const e=await this.native.estimate(job,signal); signal.throwIfAborted();
     if (e.queryHash!==initial.p.queryHash || e.project!==initial.p.project || e.location!=='US'
       || e.statementType!=='SELECT' || e.referenceDigest!==initial.p.referenceDigest || !['PRECISE','UPPER_BOUND'].includes(e.accuracy) || !Number.isSafeInteger(e.processed) || e.processed<0
       || !positive(e.referencedFloor) || !positive(e.bound) || e.bound<Math.max(e.processed,e.referencedFloor) || e.bound>initial.p.maxBytes) return fail();
@@ -144,7 +145,7 @@ export class StagedUatDetailQuery {
       if (currentIntent!.state!=='started' || currentIntent!.binding!==i.binding) return fail();
     });
     signal.throwIfAborted();
-    await this.native.submit({sql,id:i.nativeId,jobId:i.jobId,day:i.day,binding:i.binding,project:i.project,location:'US',queryHash:i.queryHash,useLegacySql:false,maximumBytesBilled:i.bytes,signal});
+    await this.native.submit({id:i.nativeId,jobId:i.jobId,day:i.day,binding:i.binding,project:i.project,location:'US',queryHash:i.queryHash,useLegacySql:false,maximumBytesBilled:i.bytes,signal});
     return {state:'started' as const};
   }
   /** Read the exact stable native ID only. A 404, error, mismatch or unfinished
@@ -163,7 +164,7 @@ export class StagedUatDetailQuery {
       this.validateIntent(currentIntent,job,g.p,g.now,true);
       if (currentIntent!.state!==i.state || currentIntent!.binding!==i.binding) return fail();
     });
-    const m=await this.native.lookup(i.nativeId);
+    const m=await this.native.lookup(job,i.nativeId);
     if (!m || m.id!==i.nativeId || m.queryHash!==i.queryHash || m.project!==i.project || m.location!=='US'
       || m.useLegacySql!==false || m.maximumBytesBilled!==i.bytes || m.state!=='DONE' || m.error!==false
       || !Number.isSafeInteger(m.billed) || m.billed<0 || m.billed>i.bytes || !positive(m.endedAt)

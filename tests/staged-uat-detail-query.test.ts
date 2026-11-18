@@ -31,7 +31,7 @@ describe('isolated staged UAT detail query prototype',()=>{
  it('reserves the canonical ledger before a single submission and never resubmits on 404',async()=>{
   const f=fixture();await f.saga.prepare(f.job,sql,new AbortController().signal);await expect(f.saga.reserve(f.job)).resolves.toEqual({state:'reserved'});
   await f.saga.submit(f.job,sql,new AbortController().signal);expect(f.native.submit).toHaveBeenCalledOnce();
-  expect(f.native.submit).toHaveBeenCalledWith({sql,id:expect.stringMatching(/^metrics_detail_/),jobId:f.job.id,day:'2026-11-19',binding:expect.stringMatching(/^[a-f0-9]{64}$/),project:'hushh-ai-prod',location:'US',queryHash:hash(sql),useLegacySql:false,maximumBytesBilled:100,signal:expect.any(AbortSignal)});
+  expect(f.native.submit).toHaveBeenCalledWith({id:expect.stringMatching(/^metrics_detail_/),jobId:f.job.id,day:'2026-11-19',binding:expect.stringMatching(/^[a-f0-9]{64}$/),project:'hushh-ai-prod',location:'US',queryHash:hash(sql),useLegacySql:false,maximumBytesBilled:100,signal:expect.any(AbortSignal)});
   await expect(f.saga.recover(f.job)).resolves.toEqual({state:'uncertain'});expect(f.native.submit).toHaveBeenCalledOnce();
   await expect(f.saga.submit(f.job,sql,new AbortController().signal)).rejects.toThrow();
   expect(f.db.values.get('metricsQueryBudgetDays/2026-11-19')).toMatchObject({bytes:100,statements:1});

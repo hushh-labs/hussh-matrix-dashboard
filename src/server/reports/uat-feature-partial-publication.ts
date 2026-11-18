@@ -15,7 +15,7 @@ export class UatFeaturePartialPublisher {
   async publish(job:ReportJob, signal:AbortSignal) {
     if (!this.enabled) throw new ReportError('unavailable');
     signal.throwIfAborted(); if (!await this.authorize(job)) throw new ReportError('unauthorized'); signal.throwIfAborted();
-    const detail=await readUatFeatureDetail(job,this.saga,this.native,signal); signal.throwIfAborted();
+    const detail=await readUatFeatureDetail(job,this.native,signal); signal.throwIfAborted();
     const proof=await this.saga.readProof(job); signal.throwIfAborted();
     if (!await this.authorize(job)) throw new ReportError('unauthorized'); signal.throwIfAborted();
     const result=await this.store.transaction(async tx=>{
