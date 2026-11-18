@@ -3,7 +3,9 @@ import { adaptRetainedOneAgentDetail } from '../src/server/reports/one-agent-det
 const period = {startDate:'2026-11-01',endDate:'2026-11-18',timezone:'UTC'};
 const context = {environment:'uat' as const,scopeDigest:'a'.repeat(64),period,checkedAt:'2026-11-19T00:00:00Z',watermark:null};
 const feature = {accounts:2,devices:3,signals:4,successes:1,expectedErrors:0,failures:1,outcomeSignals:2};
-const summary = () => ({reportingEnvironment:'uat',range:{startDate:period.startDate,endDate:period.endDate},
+const summary = () => ({reportingEnvironment:'uat',reportingScopeVersion:'one-environment-v1',
+  range:{startDate:period.startDate,endDate:period.endDate,days:18},activeUsers:{countingUnit:'device'},
+  identifiedUsers:{countingUnit:'account',selectedRange:{startDate:period.startDate,endDate:period.endDate}},
   featureUsageAvailable:true,locationBehaviorAvailable:true,featureUsage:{daily_signin:feature, sms_safety:{...feature,accounts:5}},
   locationAnalytics:{features:[{key:'sms_safety',users:8,events:9,successes:2,expectedErrors:null,failures:1}]}});
 describe('retained One feature subset adapter', () => {
@@ -17,6 +19,8 @@ describe('retained One feature subset adapter', () => {
   it('fails closed across environments, ranges and malformed counts', () => {
     expect(() => adaptRetainedOneAgentDetail(summary(),{...context,environment:'production'})).toThrow();
     expect(() => adaptRetainedOneAgentDetail(summary(),{...context,period:{...period,endDate:'2026-11-17'}})).toThrow();
+    const bad=summary(); bad.reportingScopeVersion='wrong'; expect(() => adaptRetainedOneAgentDetail(bad,context)).toThrow();
+    const unit=summary(); unit.activeUsers.countingUnit='account'; expect(() => adaptRetainedOneAgentDetail(unit,context)).toThrow();
     const s=summary(); s.featureUsage.daily_signin={...feature,signals:-1}; expect(() => adaptRetainedOneAgentDetail(s,context)).toThrow();
   });
   it('does not turn source failure or absent sparse rows into zero', () => {

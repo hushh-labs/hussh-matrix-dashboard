@@ -10,8 +10,12 @@ export function adaptRetainedOneAgentDetail(summary: unknown, context: {
 }) {
   if (!summary || typeof summary !== 'object' || Array.isArray(summary)) throw new Error('One agent detail unavailable');
   const s = summary as Record<string, any>;
-  if (s.reportingEnvironment !== context.environment || s.range?.startDate !== context.period.startDate
-    || s.range?.endDate !== context.period.endDate || typeof s.featureUsageAvailable !== 'boolean'
+  const days = (Date.parse(context.period.endDate) - Date.parse(context.period.startDate)) / 86_400_000 + 1;
+  if (s.reportingEnvironment !== context.environment || s.reportingScopeVersion !== 'one-environment-v1'
+    || s.range?.startDate !== context.period.startDate || s.range?.endDate !== context.period.endDate
+    || s.range?.days !== days || s.activeUsers?.countingUnit !== 'device' || s.identifiedUsers?.countingUnit !== 'account'
+    || s.identifiedUsers?.selectedRange?.startDate !== context.period.startDate
+    || s.identifiedUsers?.selectedRange?.endDate !== context.period.endDate || typeof s.featureUsageAvailable !== 'boolean'
     || typeof s.locationBehaviorAvailable !== 'boolean' || !s.featureUsage || typeof s.featureUsage !== 'object'
     || Array.isArray(s.featureUsage) || !Array.isArray(s.locationAnalytics?.features)) throw new Error('One agent detail unavailable');
   const location = new Map<string, any>();
