@@ -6,6 +6,7 @@ import { canonicalAnalyticsKey } from './aggregate-cache';
 import { cohortMatchesSnapshotWitness, cohortSnapshotWitness, requireFreshCohort, requireCurrentCustomerCohort, type CustomerCohort } from './one-customer-cohort';
 import { ClosedJobMissingError, currentLegacyReportKey, freezeRestorationSql, nativeDatabase, restorationReportDigest, type RestorationGrant } from './legacy-restoration';
 import { composerMatchesCohort, verifiedDailyComposer } from './daily-one-composer';
+import { dailyOneScopeProvenance } from './daily-one-scope-provenance';
 
 /** Hard ceilings are safety bounds, not an approval or an operating target. */
 export const DAILY_ONE_LIMITS = Object.freeze({ bytes: 1024 ** 4, jobs: 250, perJob: 64 * 1024 ** 3, lifetimeMs: 60 * 60_000 });
@@ -472,7 +473,7 @@ export class DailyOneRefresh {
       let value: { status?: number; body?: unknown }; try { value = JSON.parse(snapshot.json); } catch { return null; }
       if (!validOnePayload(value, report)) return null;
       const times = snapshot.jobs.map((job: { endedAt: number }) => job.endedAt);
-      return { value, asOf: run.logicalAsOf, computedAt: snapshot.computedAt as number, warehouseFrom: Math.min(...times), warehouseThrough: Math.max(...times), cohortAsOf: snapshot.witness.asOf as string };
+      return { value, asOf: run.logicalAsOf, computedAt: snapshot.computedAt as number, warehouseFrom: Math.min(...times), warehouseThrough: Math.max(...times), cohortAsOf: snapshot.witness.asOf as string, scopeProvenance: dailyOneScopeProvenance(run, report) };
     }
     const row = (await this.ref().collection('snapshots').doc(hash(report)).get()).data();
     if (!row || row.schema !== 1 || row.state !== 'verified' || row.source !== this.source || row.measurementId !== run.measurementId || row.measurementSource !== run.measurementSource
@@ -501,7 +502,7 @@ export class DailyOneRefresh {
     if (!validOnePayload(value, report)) return null;
     const times = row.jobs.map((job: { endedAt: number }) => job.endedAt);
     return { value, asOf: row.dataAsOf as string, computedAt: row.computedAt as number, warehouseFrom: Math.min(...times), warehouseThrough: Math.max(...times),
-      ...(row.witness ? { cohortAsOf: row.witness.asOf as string } : {}) };
+      scopeProvenance: dailyOneScopeProvenance(run, report), ...(row.witness ? { cohortAsOf: row.witness.asOf as string } : {}) };
   }
   /** Publish only independently verified reports, without changing the complete-set anchor. */
   async activatePartial(cohort: CustomerCohort) {

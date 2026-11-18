@@ -6,7 +6,7 @@ import { ONE_AGENT_DETAIL_MANIFEST, ONE_AGENT_DETAIL_MANIFEST_DIGEST, validateOn
 export function adaptRetainedOneAgentDetail(summary: unknown, context: {
   environment: 'production' | 'uat'; scopeDigest: string;
   period: { startDate: string; endDate: string; timezone: string };
-  checkedAt: string; watermark: string | null;
+  checkedAt: string | null; watermark: string | null;
 }) {
   if (!summary || typeof summary !== 'object' || Array.isArray(summary)) throw new Error('One agent detail unavailable');
   const s = summary as Record<string, any>;

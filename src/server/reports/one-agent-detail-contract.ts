@@ -10,7 +10,7 @@ type Environment = 'production' | 'uat';
 type Counts = { accounts: number | null; devices: number | null; signals: number | null; successes: number | null; expectedErrors: number | null; failures: number | null; outcomeSignals: number | null };
 type Row = { agent: string; key: string; state: 'measured' | 'unavailable' | 'not_tracked'; counts: Counts | null };
 export type OneAgentDetailV1 = { version: '1'; environment: Environment; scopeDigest: string; manifestDigest: string;
-  period: { startDate: string; endDate: string; timezone: string }; source: { kind: 'ga4_export'; coverage: 'intraday_or_unknown'; watermark: string | null; checkedAt: string };
+  period: { startDate: string; endDate: string; timezone: string }; source: { kind: 'ga4_export'; coverage: 'intraday_or_unknown'; watermark: string | null; checkedAt: string | null };
   rows: Row[] };
 const fields = ['accounts', 'devices', 'signals', 'successes', 'expectedErrors', 'failures', 'outcomeSignals'];
 const keys = (value: unknown, names: string[]) => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -36,8 +36,8 @@ export function validateOneAgentDetail(value: unknown, expected: { environment: 
     || p.period.startDate !== expected.period?.startDate || p.period.endDate !== expected.period?.endDate
     || p.period.timezone !== expected.period?.timezone || reportingTimezone(p.period.timezone) !== p.period.timezone
     || !keys(p.source,['kind','coverage','watermark','checkedAt']) || p.source.kind !== 'ga4_export'
-    || p.source.coverage !== 'intraday_or_unknown' || !timestamp(p.source.checkedAt)
-    || (p.source.watermark !== null && (!timestamp(p.source.watermark) || Date.parse(p.source.watermark) > Date.parse(p.source.checkedAt)))
+    || p.source.coverage !== 'intraday_or_unknown' || (p.source.checkedAt !== null && !timestamp(p.source.checkedAt))
+    || (p.source.watermark !== null && (!timestamp(p.source.watermark) || p.source.checkedAt === null || Date.parse(p.source.watermark) > Date.parse(p.source.checkedAt)))
     || !Array.isArray(p.rows) || p.rows.length !== ONE_AGENT_DETAIL_MANIFEST.length) return bad();
   const expectedKeys = new Set(ONE_AGENT_DETAIL_MANIFEST.map(({ agent, key }) => `${agent}:${key}`)), seen = new Set<string>();
   for (const row of p.rows) {
