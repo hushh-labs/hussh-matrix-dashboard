@@ -796,7 +796,7 @@ export function AgentCapabilityAnalyticsPanel({
         <div className={cn(dashboardCard, 'p-5')}>
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-muted">Data status</p>
-            {observed ? (
+            {capabilitySourceAvailable && instrumented && observed ? (
               <CheckCircle2 className="h-4 w-4 text-success" />
             ) : (
               <AlertTriangle className="h-4 w-4 text-warning" />
@@ -806,19 +806,19 @@ export function AgentCapabilityAnalyticsPanel({
             <span
               className={cn(
                 'inline-block rounded-full px-2.5 py-1 text-xs font-bold',
-                observed
+                capabilitySourceAvailable && instrumented && observed
                   ? 'bg-[#12b76a]/10 text-success'
                   : 'bg-[#ff9500]/10 text-[#b36b00]'
               )}
             >
-              {!instrumented ? 'Not tracked yet' : !capabilitySourceAvailable ? 'Data unavailable' : observed ? 'Data available' : 'No activity recorded'}
+              {!capabilitySourceAvailable ? 'Data unavailable' : !instrumented ? 'Not tracked yet' : observed ? 'Data available' : 'No activity recorded'}
             </span>
           </div>
           <p className="mt-2 text-xs font-semibold text-muted">
-            {!instrumented
-              ? 'Activity tracking is not available yet'
-              : !capabilitySourceAvailable
-                ? 'We could not read this count'
+            {!capabilitySourceAvailable
+              ? 'We could not read this count'
+              : !instrumented
+                ? 'Activity tracking is not available yet'
                 : observed
                   ? 'Activity was recorded in this period'
                   : 'No matching activity was recorded in this period'}

@@ -100,6 +100,18 @@ assert.match(uatOnboarding, /31 records from 3 device\/browser IDs/);
 assert.doesNotMatch(uatOnboarding, /17 records from 3 device\/browser IDs/);
 assert.match(renderOnboarding('uat', false), /Data unavailable/);
 
+const unavailableCapability = renderGmail({
+  ...gmailSummary, capabilitiesAvailable: false,
+  capabilities: [{ key: 'gmail', instrumented: false, observed: true }],
+} as unknown as OneAppSummary);
+const statusCard = unavailableCapability.match(/Data status[\s\S]*?We could not read this count/)?.[0] ?? '';
+assert.match(statusCard, /Data unavailable/);
+assert.doesNotMatch(statusCard, /Not tracked yet|text-success/);
+const uninstrumentedCapability = renderGmail({
+  ...gmailSummary, capabilities: [{ key: 'gmail', instrumented: false, observed: false }],
+} as unknown as OneAppSummary);
+assert.match(uninstrumentedCapability, /Activity tracking is not available yet/);
+
 const measuredGmail = renderGmail(gmailSummary);
 assert.match(measuredGmail, /292 records from 9 device\/browser IDs/);
 assert.match(measuredGmail, /Inbox visits are not separately tracked yet/);
