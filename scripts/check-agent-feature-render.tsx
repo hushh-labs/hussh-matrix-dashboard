@@ -5,6 +5,7 @@ import { AgentCapabilityAnalyticsPanel, featureAuditSpecs } from '../src/compone
 import { AGENT_MEASUREMENTS } from '../src/lib/agent-measurement-contract.mjs';
 import { OneLocationAnalyticsPanel } from '../src/components/OneLocationAnalyticsPanel';
 import { Retention } from '../src/components/OneAppPanel';
+import { LocationAgentByPlatform } from '../src/components/AppsPanel';
 import { FeatureUserBreakdownPanel } from '../src/components/FeatureUserBreakdownPanel';
 import type { OneAppSummary } from '../src/lib/types';
 
@@ -157,12 +158,45 @@ function renderLocation(one: OneAppSummary) {
     onBack: () => {}, onEnvironmentChange: () => {}, onTabChange: () => {},
   }));
 }
+const zeroJourney = { ...summary, locationBehaviorAvailable: true,
+  locationAnalytics: { ...summary.locationAnalytics, journey: [{ key: 'opened', label: 'Opened', instrumented: true, observed: true, users: 0, events: 0, successes: 0, failures: 0 }] },
+} as OneAppSummary;
+const zeroJourneyMarkup = renderToStaticMarkup(createElement(OneLocationAnalyticsPanel, {
+  one: zeroJourney, uat: null, environment: 'production', tab: 'journey', rangeLabel: 'Selected dates', dateControl: null,
+  onBack: () => {}, onEnvironmentChange: () => {}, onTabChange: () => {},
+}));
+assert.doesNotMatch(zeroJourneyMarkup, /Journey reach is unavailable/);
+assert.match(zeroJourneyMarkup, /Opened/);
+assert.match(zeroJourneyMarkup, /width:2%/);
+
 const measuredLocation = renderLocation(summary);
 assert.match(measuredLocation, /6,653 records from 11 device\/browser IDs/);
 assert.match(measuredLocation, /25 records from 6 device\/browser IDs/);
 assert.doesNotMatch(measuredLocation, /604\.8/); // The average belongs in the optional details.
 assert.doesNotMatch(measuredLocation, /Non-error share|100%/);
 assert.match(renderLocation({ ...summary, locationBehaviorAvailable: false }), /Data unavailable/);
+const unavailablePlatform = renderToStaticMarkup(createElement(LocationAgentByPlatform, { rows: [], available: false }));
+assert.match(unavailablePlatform, /activity is unavailable/);
+assert.doesNotMatch(unavailablePlatform, /No Location Agent activity recorded/);
+const emptyPlatform = renderToStaticMarkup(createElement(LocationAgentByPlatform, { rows: [], available: true }));
+assert.match(emptyPlatform, /No Location Agent activity recorded/);
+
+for (const environment of ['production', 'uat'] as const) {
+  const broken = { ...summary, locationBehaviorAvailable: false,
+    locationAnalytics: { ...summary.locationAnalytics, journey: [{ key: 'opened', label: 'Opened', instrumented: true, observed: false, users: 0, events: 0, successes: 0, failures: 0 }], circleKinds: [], platforms: [] },
+  } as OneAppSummary;
+  for (const tab of ['overview', 'circles', 'journey', 'features'] as const) {
+    const markup = renderToStaticMarkup(createElement(OneLocationAnalyticsPanel, {
+      one: environment === 'production' ? broken : null, uat: environment === 'uat' ? broken : null,
+      environment, tab, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {}, onEnvironmentChange: () => {}, onTabChange: () => {},
+    }));
+    if (tab === 'overview' || tab === 'journey') assert.match(markup, /Journey reach is unavailable/);
+    assert.doesNotMatch(markup, /No fulfilment records found in this period/);
+    if (tab === 'overview' || tab === 'circles') assert.match(markup, /Circle activity is unavailable/);
+    if (tab === 'overview' || tab === 'features') assert.match(markup, /Location platform coverage is unavailable/);
+  }
+}
+
 const detail = renderToStaticMarkup(createElement(FeatureUserBreakdownPanel, {
   featureLabel: 'Shared location views', totalDevices: 11, totalEvents: 6653,
   successes: 6650, expectedErrors: 1, failures: 1,
