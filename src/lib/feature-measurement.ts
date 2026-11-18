@@ -111,6 +111,8 @@ const featureNotes: Record<string, string> = {
   auth_started: 'Counts auth_started and one_auth_started records. These are sign-in starts, not new registered accounts.',
   daily_signin: 'Counts auth_completed, one_auth_login_completed and auth_succeeded records. Repeat sign-ins count again.',
   context_resolved: 'Counts agent_pkm_context_resolved and one_memory_context_resolved records. It does not count saved memories.',
+  wallet_card_added: 'Counts card-add action records, including successful and failed results. It is not a count of cards added.',
+  wallet_card_deleted: 'Counts card-removal action records, including successful and failed results. It is not a count of cards removed.',
   phone_verified: 'Counts phone-verification starts and completions, including one_auth_phone_verified and one_phone_verified. The total includes multiple stages.',
   google_signin: 'Counts auth_started, auth_succeeded and auth_failed only with action=google, plus legacy Google sign-in events. These overlap general authentication rows. Starts and results are different records, not unique attempts or new accounts.',
   profile_created: 'Counts profile_created and one_auth_profile_created records. Registration totals come separately from Firebase Authentication.',
@@ -146,7 +148,7 @@ export function featureMeasurementNote(key: string): string {
   if (featureNotes[key]) return featureNotes[key];
   for (const agent of ['memory', 'wallet', 'calendar', 'kyc', 'crm']) {
     if (key.startsWith(`${agent}_`)) {
-      return `Counts one_${agent}_action with action=${key.slice(agent.length + 1)}. Repeated action records count again; result describes this action only.`;
+      return `Counts one_${agent}_action with action=${key.slice(agent.length + 1)}. Repeated action records count again, including successful, expected-error and failed results when recorded.`;
     }
   }
   return 'Only matching exported events are counted. No recorded event does not prove no product use.';

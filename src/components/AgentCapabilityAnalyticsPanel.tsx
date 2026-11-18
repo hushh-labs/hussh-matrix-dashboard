@@ -447,16 +447,16 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
   ],
   memory: [
     actionSpec('context_resolved', 'Context resolutions recorded', Database),
-    actionSpec('memory_capture_prepared', 'Prepared a memory for review', Database),
-    actionSpec('memory_capture_saved', 'Saved a reviewed memory', Database),
-    actionSpec('memory_detail_edited', 'Corrected a saved detail', Database),
-    actionSpec('memory_detail_deleted', 'Removed a saved detail', Database),
-    actionSpec('memory_export_saved', 'Exported saved memories', Download),
-    actionSpec('memory_auto_save_changed', 'Changed automatic saving', Sliders),
+    actionSpec('memory_capture_prepared', 'Memory preparation activity', Database),
+    actionSpec('memory_capture_saved', 'Memory save activity', Database),
+    actionSpec('memory_detail_edited', 'Memory detail edit activity', Database),
+    actionSpec('memory_detail_deleted', 'Memory detail removal activity', Database),
+    actionSpec('memory_export_saved', 'Memory export activity', Download),
+    actionSpec('memory_auto_save_changed', 'Automatic saving changes', Sliders),
   ],
   wallet: [
-    actionSpec('wallet_card_added', 'Added a card securely', Wallet),
-    actionSpec('wallet_card_deleted', 'Removed a card', Wallet),
+    actionSpec('wallet_card_added', 'Card addition activity', Wallet),
+    actionSpec('wallet_card_deleted', 'Card removal activity', Wallet),
   ],
   calendar: [
     actionSpec('calendar_connected', 'Calendar connection results', Calendar),
@@ -472,9 +472,9 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     actionSpec('kyc_workflow_refreshed', 'Refreshed a request', RefreshCw),
   ],
   connected_systems: [
-    actionSpec('crm_record_created', 'Created a CRM record', Layers),
-    actionSpec('crm_record_updated', 'Updated a CRM record', Layers),
-    actionSpec('crm_record_deleted', 'Deleted a CRM record', Layers),
+    actionSpec('crm_record_created', 'CRM record creation activity', Layers),
+    actionSpec('crm_record_updated', 'CRM record update activity', Layers),
+    actionSpec('crm_record_deleted', 'CRM record removal activity', Layers),
   ],
   location: [
     {
