@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
-import { AgentCapabilityAnalyticsPanel } from '../src/components/AgentCapabilityAnalyticsPanel';
+import { AgentCapabilityAnalyticsPanel, featureAuditSpecs } from '../src/components/AgentCapabilityAnalyticsPanel';
+import { AGENT_MEASUREMENTS } from '../src/lib/agent-measurement-contract.mjs';
 import { OneLocationAnalyticsPanel } from '../src/components/OneLocationAnalyticsPanel';
 import { FeatureUserBreakdownPanel } from '../src/components/FeatureUserBreakdownPanel';
 import type { OneAppSummary } from '../src/lib/types';
+
+// Compare the actual rendered spec collection (including actionSpec-generated rows)
+// to the catalog; neither declarations nor rendering prove source coverage.
+for (const { agent, key } of AGENT_MEASUREMENTS) {
+  assert.equal(featureAuditSpecs[agent]?.filter(spec => spec.key === key).length, 1, `${agent}/${key} must have exactly one detail row`);
+}
 
 function render(capabilityKey: string): string {
   return renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, {

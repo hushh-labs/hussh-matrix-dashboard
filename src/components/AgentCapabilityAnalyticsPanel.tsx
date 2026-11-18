@@ -167,7 +167,7 @@ function actionSpec(key: string, label: string, icon: typeof Activity): FeatureA
   };
 }
 
-const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
+export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
   onboarding: [
     actionSpec('daily_signin', 'Sign-ins recorded', UserCheck),
     {
