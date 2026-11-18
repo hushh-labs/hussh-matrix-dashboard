@@ -12,7 +12,9 @@ const cases = [
 describe('One feature SQL extraction', () => {
   it.each(cases)('preserves the prior complete query for %s / %s', (table,dateFilter,expected) => {
     const sql=oneFeatureUsageQuery({deviceKeySql,table,dateFilter});
-    expect(createHash('sha256').update(sql).digest('hex')).toBe(expected);
+    const addition="          WHEN event_name = 'mail_receipts_workspace_viewed' THEN 'receipts_workspace_viewed'\n";
+    expect(sql.split(addition)).toHaveLength(2);
+    expect(createHash('sha256').update(sql.replace(addition,'')).digest('hex')).toBe(expected);
     expect(sql).toContain(`FROM ${table}`); expect(sql).toContain(`WHERE ${dateFilter}`);
   });
 });

@@ -360,6 +360,15 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       explanation: 'A sign-in screen view is separate from an authenticated inbox view.',
     },
     {
+      key: 'receipts_workspace_viewed',
+      label: 'Receipts workspace views',
+      icon: Mail,
+      status: 'active',
+      badgeLabel: 'Awaiting live signal',
+      badgeClass: 'bg-warning-soft text-warning',
+      explanation: 'Counts recorded transitions into the visible Receipts workspace. This is separate from inbox views and receipt reads; earlier visits cannot be inferred.',
+    },
+    {
       key: 'inbox_viewed',
       label: 'Hussh Mail Inbox View',
       icon: Mail,

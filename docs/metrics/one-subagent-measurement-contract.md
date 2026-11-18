@@ -151,7 +151,7 @@ and 5 save records; they are separate stages, not 11 saved memories.
 ## Verification
 
 - `npm run audit:metrics:agent-signals -- --repeat 3`: independent numeric
-  reconciliation of all 64 feature/diagnostic metrics (62 displayed rows)
+  reconciliation of the then-current 64 feature/diagnostic metrics (62 displayed rows); this historical evidence does not cover the later Receipts workspace event
   and all 12 agent account/device/activity totals and daily charts, in both
   properties. Supply a protected release session privately. Use `--app-repo`
   and `--app-ref` to capture source references; definitions are excluded from

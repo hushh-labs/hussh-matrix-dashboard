@@ -52,6 +52,7 @@ export function oneFeatureUsageQuery({ deviceKeySql, table, dateFilter }: { devi
           WHEN event_name = 'gmail_sync_result' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'complete' THEN 'receipt_sync_completed'
           WHEN event_name = 'one_gmail_receipt_synced' THEN 'receipt_sync_completed'
           WHEN event_name = 'hushh_mail_signin_screen_view' THEN 'mail_signin_screen_view'
+          WHEN event_name = 'mail_receipts_workspace_viewed' THEN 'receipts_workspace_viewed'
           WHEN event_name = 'one_gmail_inbox_viewed' THEN 'inbox_viewed'
           WHEN event_name IN ('autocategory_applied', 'receipt_categorized', 'one_gmail_receipt_categorized') THEN 'autocategory_applied'
           WHEN event_name IN ('ria_verification_status_changed', 'one_ria_verification_checked') THEN 'verification_checked'

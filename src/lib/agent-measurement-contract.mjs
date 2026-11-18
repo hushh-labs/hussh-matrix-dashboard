@@ -45,6 +45,7 @@ export const AGENT_MEASUREMENTS = [
   entry('gmail', 'receipt_sync', action('gmail_sync_result','queue'), ['gmail_sync_result']),
   entry('gmail', 'receipt_sync_completed', `(${action('gmail_sync_result','complete')}) OR ${event('one_gmail_receipt_synced')}`, ['gmail_sync_result','one_gmail_receipt_synced']),
   entry('gmail', 'mail_signin_screen_view', event('hushh_mail_signin_screen_view'), ['hushh_mail_signin_screen_view'], 'Mail sign-in screen visits are not tracked in One yet.'),
+  entry('gmail', 'receipts_workspace_viewed', event('mail_receipts_workspace_viewed'), ['mail_receipts_workspace_viewed'], 'Receipts workspace views await a verified event from the new instrumentation; earlier visits cannot be inferred.'),
   entry('gmail', 'inbox_viewed', event('one_gmail_inbox_viewed'), ['one_gmail_inbox_viewed'], 'Inbox visits are not separately tracked yet. A receipt-load or sync result does not count as an inbox visit.'),
   entry('gmail', 'autocategory_applied', any('autocategory_applied','receipt_categorized','one_gmail_receipt_categorized'), ['autocategory_applied','receipt_categorized','one_gmail_receipt_categorized'], 'Receipt categorization is not tracked yet. Sync results do not tell us how many receipts were categorized.'),
   entry('ria', 'verification_checked', any('ria_verification_status_changed','one_ria_verification_checked'), ['ria_verification_status_changed','one_ria_verification_checked']),

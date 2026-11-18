@@ -19,6 +19,15 @@ describe('feature metric units', () => {
     expect(featureMeasurementState('revocation_submitted', false, true, undefined)).toBe('unavailable');
     expect(featureMeasurementNote('revocation_submitted')).toContain('Submitted attempts are excluded');
   });
+  it('keeps Receipts workspace observations separate from Inbox and absent history', () => {
+    const row=AGENT_MEASUREMENTS.find(item=>item.key==='receipts_workspace_viewed')!;
+    expect(row.events).toEqual(['mail_receipts_workspace_viewed']);
+    expect(featureMeasurementState(row.key,true,true,0)).toBe('not_tracked');
+    expect(featureMeasurementState(row.key,false,true,1)).toBe('unavailable');
+    expect(featureMeasurementState(row.key,true,true,1)).toBe('observed');
+    expect(AGENT_MEASUREMENTS.find(item=>item.key==='inbox_viewed')!.events).not.toContain(row.events[0]);
+  });
+
   it('distinguishes missing emitters, real empty results and unreadable sources', () => {
     for (const key of ['mail_signin_screen_view', 'inbox_viewed', 'autocategory_applied', 'kyc_reply_sent', 'preferences_updated']) {
       expect(featureMeasurementState(key, true, true, undefined)).toBe('not_tracked');
