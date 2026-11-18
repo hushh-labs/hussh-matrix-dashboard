@@ -9,6 +9,9 @@ type DetailPolicy = { approved:true; enabled:true; environment:'uat'; project:st
   sourceGeneration:string; scopeDigest:string; referenceDigest:string; startDate:string; endDate:string; timezone:string; expiresAt:number; maxBytes:number };
 type Intent = { state:'prepared'|'reserving'|'reserved'|'started'|'dispatching'|'complete'; jobId:string; fence:number; workerHash:string;
   day:string; binding:string; nativeId:string; queryHash:string; project:string; bytes:number; policyDigest:string; startedAt:number|null };
+type NativeProof = { schema:1; jobId:string; binding:string; nativeId:string; queryHash:string; project:string; location:'US'; day:string;
+  policyDigest:string; sourceGeneration:string; scopeDigest:string; originalFence:number; originalWorkerHash:string;
+  verifiedFence:number; verifiedWorkerHash:string; bytes:number; billed:number; endedAt:number };
 type Budget = { reserve:(reservation:QueryBudgetReservation)=>Promise<void>; confirmBound:(reservation:QueryBudgetReservation)=>Promise<void> };
 type Estimate = { queryHash:string; project:string; location:string; statementType:string; referenceDigest:string; accuracy:string; processed:number; referencedFloor:number; bound:number };
 type Metadata = { id:string; queryHash:string; project:string; location:string; useLegacySql:boolean; maximumBytesBilled:number;
@@ -140,6 +143,13 @@ export class StagedUatDetailQuery {
       const i=await tx.get<Intent>(reportPath('uatDetailIntents',job.id)), g=await this.gate(job,p=>tx.get(p),true);
       this.validateIntent(i,job,g.p,g.now,true); if (!['started','dispatching'].includes(i!.state) || !positive(i!.startedAt)) return fail(); return i!;
     });
+    try { await this.budget.confirmBound(this.reservation(i)); } catch { return {state:'uncertain' as const}; }
+    await this.authority(job);
+    await this.store.transaction(async tx=>{
+      const currentIntent=await tx.get<Intent>(reportPath('uatDetailIntents',job.id)), g=await this.gate(job,p=>tx.get(p),true);
+      this.validateIntent(currentIntent,job,g.p,g.now,true);
+      if (currentIntent!.state!==i.state || currentIntent!.binding!==i.binding) return fail();
+    });
     const m=await this.native.lookup(i.nativeId);
     if (!m || m.id!==i.nativeId || m.queryHash!==i.queryHash || m.project!==i.project || m.location!=='US'
       || m.useLegacySql!==false || m.maximumBytesBilled!==i.bytes || m.state!=='DONE' || m.error!==false
@@ -147,11 +157,43 @@ export class StagedUatDetailQuery {
       || m.endedAt<i.startedAt! || m.endedAt>this.now()) return {state:'uncertain' as const};
     await this.authority(job);
     await this.store.transaction(async tx=>{
-      const currentIntent=await tx.get<Intent>(reportPath('uatDetailIntents',job.id)), g=await this.gate(job,p=>tx.get(p),true);
+      const currentIntent=await tx.get<Intent>(reportPath('uatDetailIntents',job.id));
+      const existing=await tx.get<NativeProof>(reportPath('uatDetailNativeProofs',job.id)), g=await this.gate(job,p=>tx.get(p),true);
       this.validateIntent(currentIntent,job,g.p,g.now,true);
-      if (currentIntent!.state!==i.state || currentIntent!.binding!==i.binding || currentIntent!.startedAt!==i.startedAt) return fail();
+      if (existing || currentIntent!.state!==i.state || currentIntent!.binding!==i.binding || currentIntent!.startedAt!==i.startedAt) return fail();
+      tx.create(reportPath('uatDetailNativeProofs',job.id),{schema:1,jobId:job.id,binding:i.binding,nativeId:i.nativeId,
+        queryHash:i.queryHash,project:i.project,location:'US',day:i.day,policyDigest:i.policyDigest,
+        sourceGeneration:job.control.sourceGeneration,scopeDigest:job.control.scopeDigest,
+        originalFence:i.fence,originalWorkerHash:i.workerHash,verifiedFence:job.fence,verifiedWorkerHash:job.workerHash,
+        bytes:i.bytes,billed:m.billed,endedAt:m.endedAt});
       tx.set(reportPath('uatDetailIntents',job.id),{...currentIntent!,state:'complete'});
     });
     return {state:'complete' as const, billed:m.billed, endedAt:m.endedAt};
   }
+  /** Read persisted native completion only; publication has separate gates. */
+  async readProof(job:ReportJob) {
+    await this.store.transaction(tx=>this.gate(job,p=>tx.get(p),true));
+    await this.authority(job);
+    const first=await this.store.transaction(tx=>tx.get<Intent>(reportPath('uatDetailIntents',job.id)));
+    if (!first) return fail();
+    await this.budget.confirmBound(this.reservation(first));
+    await this.authority(job);
+    return this.store.transaction(async tx=>{
+      const i=await tx.get<Intent>(reportPath('uatDetailIntents',job.id));
+      const proof=await tx.get<NativeProof>(reportPath('uatDetailNativeProofs',job.id)), g=await this.gate(job,p=>tx.get(p),true);
+      this.validateIntent(i,job,g.p,g.now,true);
+      if (!i || i.state!=='complete' || !positive(i.startedAt) || !proof
+        || Object.keys(proof).sort().join()!=='billed,binding,bytes,day,endedAt,jobId,location,nativeId,originalFence,originalWorkerHash,policyDigest,project,queryHash,schema,scopeDigest,sourceGeneration,verifiedFence,verifiedWorkerHash'
+        || proof.schema!==1 || proof.jobId!==job.id || proof.binding!==i.binding || proof.nativeId!==i.nativeId
+        || proof.queryHash!==i.queryHash || proof.project!==i.project || proof.location!=='US' || proof.bytes!==i.bytes
+        || proof.day!==i.day || proof.policyDigest!==i.policyDigest || proof.sourceGeneration!==job.control.sourceGeneration
+        || proof.scopeDigest!==job.control.scopeDigest || proof.originalFence!==i.fence || proof.originalWorkerHash!==i.workerHash
+        || !positive(proof.verifiedFence) || proof.verifiedFence>job.fence || !isHash(proof.verifiedWorkerHash)
+        || (proof.verifiedFence===job.fence && proof.verifiedWorkerHash!==job.workerHash)
+        || !Number.isSafeInteger(proof.billed) || proof.billed<0 || proof.billed>i.bytes
+        || !positive(proof.endedAt) || proof.endedAt<i.startedAt || proof.endedAt>g.now) return fail();
+      return proof;
+    });
+  }
+
 }

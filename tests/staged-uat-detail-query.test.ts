@@ -116,6 +116,9 @@ describe('isolated staged UAT detail query prototype',()=>{
   f.native.lookup.mockResolvedValueOnce({id,queryHash:hash(sql),project:'hushh-ai-prod',location:'US',useLegacySql:false,maximumBytesBilled:100,state:'DONE',error:false,billed:80,endedAt:now+1000});
   await expect(f.saga.recover(renewed)).resolves.toEqual({state:'complete',billed:80,endedAt:now+1000});
   expect(f.native.submit).toHaveBeenCalledOnce();expect(f.db.values.get('metricsQueryBudgetDays/2026-11-19')).toMatchObject({bytes:100,statements:1});
+  const proof=await f.saga.readProof(renewed);expect(proof).toMatchObject({nativeId:id,billed:80,bytes:100});
+  const path=reportPath('uatDetailNativeProofs',renewed.id); f.store.data.set(path,{...proof,billed:101});
+  await expect(f.saga.readProof(renewed)).rejects.toThrow();
  });
  it('does not recover with a stale or unauthorized worker fence',async()=>{
   const f=fixture();await f.saga.prepare(f.job,sql,new AbortController().signal);await f.saga.reserve(f.job);await f.saga.submit(f.job,sql,new AbortController().signal);
