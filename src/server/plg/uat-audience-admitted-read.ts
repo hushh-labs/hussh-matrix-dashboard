@@ -19,10 +19,16 @@ export async function readAdmittedUatPage<T>({ store, viewer, key, authority, re
   const digest = createHmac('sha256', key).update(`uat-audience-viewer\n${viewer.trim().toLowerCase()}`).digest('hex');
   const id = operation();
   await admitUatAudiencePage(store, digest, id, now());
-  // An abort or authority loss after reservation remains charged/open; no I/O.
-  signal.throwIfAborted();
-  if (!await authority()) throw new Error('UAT audience unavailable');
-  signal.throwIfAborted();
+  // No provider call has started yet. A denied or cancelled pre-dispatch
+  // attempt can release concurrency, but its daily admission remains charged.
+  try {
+    signal.throwIfAborted();
+    if (!await authority()) throw new Error('UAT audience unavailable');
+    signal.throwIfAborted();
+  } catch (error) {
+    await finishUatAudiencePage(store, digest, id);
+    throw error;
+  }
   const result = await read(signal);
   if (!result || result.terminal !== true || !Object.hasOwn(result, 'value')) throw new Error('UAT audience unavailable');
   // A complete response can release concurrency, but its day charge is retained.
