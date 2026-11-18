@@ -690,7 +690,7 @@ export function Retention({ one }: { one: OneAppSummary }) {
         </ResponsiveContainer>
       </div>
       <p className="mt-2 text-xs font-semibold text-muted">
-        Observed cohorts start on Sunday. {one.retentionRange ? `${one.retentionRange.startDate} to ${one.retentionRange.endDate}, ${one.retentionRange.timezone} (UTC−8). ` : ''}
+        Observed cohorts start on Sunday. {one.retentionRange ? `${one.retentionRange.startDate} to ${one.retentionRange.endDate}, ${one.retentionRange.timezone}. ` : ''}
         Up to eight weeks from the preceding 84 reporting days; this history is wider
         than the selected range. Missing historical first arrivals are not reconstructed.
       </p>

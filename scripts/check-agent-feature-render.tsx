@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { AgentCapabilityAnalyticsPanel, featureAuditSpecs } from '../src/components/AgentCapabilityAnalyticsPanel';
 import { AGENT_MEASUREMENTS } from '../src/lib/agent-measurement-contract.mjs';
 import { OneLocationAnalyticsPanel } from '../src/components/OneLocationAnalyticsPanel';
+import { Retention } from '../src/components/OneAppPanel';
 import { FeatureUserBreakdownPanel } from '../src/components/FeatureUserBreakdownPanel';
 import type { OneAppSummary } from '../src/lib/types';
 
@@ -60,6 +61,16 @@ const summary = {
   },
   featureUsage: {},
 } as unknown as OneAppSummary;
+for (const timezone of ['UTC', 'America/Los_Angeles']) {
+  const one = { ...summary, retentionAvailable: true,
+    retentionRange: { startDate: '2026-09-01', endDate: '2026-10-01', timezone },
+    retention: [{ cohortWeek: '2026-09-06', cohortSize: 10, returnedW1: 4, rateW1: .4, windowComplete: true, state: 'available' }],
+  } as unknown as OneAppSummary;
+  const markup = renderToStaticMarkup(createElement(Retention, { one }));
+  assert.ok(markup.includes(timezone));
+  assert.doesNotMatch(markup, /UTC−8/);
+}
+
 const gmailSummary = {
   ...summary,
   capabilities: [{ key: 'gmail', instrumented: true, observed: true, devices: 9, accounts: 8, deliberateEvents: 11 }],
