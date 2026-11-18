@@ -4,8 +4,8 @@ export { BIGQUERY_COST_LIMITS } from './bigquery-cost-limits';
 import { buildUatFeaturePlan, buildUatLocationPlan } from './uat-one-feature-plan';
 import { uatTwoSourceChildIds, validateUatTwoSourcePolicies } from './reports/uat-two-source-manifest';
 import { digest as detailDigest, reportKey as detailReportKey, validateControl as validateDetailControl,
-  validateRequest as validateDetailRequest, validatePolicy as validateDetailPolicy,
-  type ReportJob, type ReportingPolicy, type ReportControl } from './reports/contracts';
+  validateRequest as validateDetailRequest, validatePolicy as validateDetailPolicy, validateAccess as validateDetailAccess,
+  type ReportJob, type ReportingPolicy, type ReportControl, type ReportAccess } from './reports/contracts';
 import { reportPath as detailPath, FirestoreReportStore, type ReportStore } from './reports/store';
 import { prepareUatCombinedDetail } from './reports/uat-combined-detail';
 import { validateUatCombinedPublication } from './reports/uat-combined-publication';
@@ -13,7 +13,10 @@ import { validateUatServicePolicy } from './reports/uat-service-policy';
 import { UatTwoSourceReservations } from './reports/uat-two-source-reservations';
 import { reportingSession } from './reports/session';
 import { googleWorkerIdentityVerifier } from './reports/worker-http';
-import { MetricsReportWorker } from './reports/service';
+import { MetricsReportWorker, MetricsReports } from './reports/service';
+import { UatDetailTaskQueue } from './reports/uat-detail-queue';
+import { MetricsReportDispatch } from './reports/dispatch';
+import { cloudTasksRequest } from './reports/transports';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BigQuery, Query } from '@google-cloud/bigquery';
 import type { Firestore } from '@google-cloud/firestore';
@@ -960,9 +963,13 @@ export async function createServiceOwnedUatRuntime() {
   flags(); let config:any;
   try { config=JSON.parse(process.env.METRICS_UAT_SERVICE_CONFIG??''); } catch { throw new BigQueryCostControlError(); }
   if (!config || typeof config!=='object' || Array.isArray(config)
-    || Object.keys(config).sort().join()!=='reportingDatabase,reportingProject,taskInvoker,workerAudience'
+    || Object.keys(config).sort().join()!=='maxResponseBytes,queueParent,reportingDatabase,reportingProject,rpcTimeoutMs,taskInvoker,webInvoker,workerAudience'
     || config.reportingProject!=='hushh-ai-prod' || config.reportingDatabase!=='metrics-reports'
-    || config.taskInvoker!==`metrics-report-task-invoker@${config.reportingProject}.iam.gserviceaccount.com`) throw new BigQueryCostControlError();
+    || !Number.isSafeInteger(config.rpcTimeoutMs) || config.rpcTimeoutMs<1 || config.rpcTimeoutMs>60000
+    || !Number.isSafeInteger(config.maxResponseBytes) || config.maxResponseBytes<1 || config.maxResponseBytes>900000
+    || config.taskInvoker!==`metrics-report-task-invoker@${config.reportingProject}.iam.gserviceaccount.com`
+    || config.webInvoker!==`metrics-report-web@${config.reportingProject}.iam.gserviceaccount.com`
+    || typeof config.queueParent!=='string' || !/^projects\/hushh-ai-prod\/locations\/[a-z0-9-]+\/queues\/metrics-uat-detail-[a-z0-9-]+$/.test(config.queueParent)) throw new BigQueryCostControlError();
   let audience:URL; try { audience=new URL(config.workerAudience); } catch { throw new BigQueryCostControlError(); }
   if (audience.protocol!=='https:' || !audience.hostname.endsWith('.run.app') || audience.origin!==config.workerAudience
     || audience.username || audience.password || audience.port || audience.search || audience.hash) throw new BigQueryCostControlError();
@@ -973,7 +980,7 @@ export async function createServiceOwnedUatRuntime() {
       tx.get<any>(detailPath('policy','one-agent-detail-two-source'))]);
     const p=validateUatServicePolicy(raw,source,Date.now(),sourceRecovery);
     if (p.reportingProject!==config.reportingProject || p.reportingDatabase!==config.reportingDatabase
-      || p.workerAudience!==config.workerAudience || p.taskInvoker!==config.taskInvoker) throw new BigQueryCostControlError();
+      || p.workerAudience!==config.workerAudience || p.taskInvoker!==config.taskInvoker || p.webInvoker!==config.webInvoker || p.queueParent!==config.queueParent || p.rpcTimeoutMs!==config.rpcTimeoutMs || p.maxResponseBytes!==config.maxResponseBytes) throw new BigQueryCostControlError();
     return p;
   });
   try { await policy(true); flags(); } catch(error) { await db.terminate(); throw error; }
@@ -995,6 +1002,14 @@ export async function createServiceOwnedUatRuntime() {
     if (!identity.emailVerified || identity.email!==config.taskInvoker || detailDigest(first)!==detailDigest(second)) throw new BigQueryCostControlError();
     return true;
   };
+  const web=async(token:string,access:ReportAccess,sourceRecovery=false)=>{
+    flags(); validateDetailAccess(access);
+    if (typeof token!=='string' || !token || token.length>16384) throw new BigQueryCostControlError();
+    const first=await policy(sourceRecovery),identity=await verify(token,config.workerAudience),second=await policy(sourceRecovery); flags();
+    if (!identity.emailVerified || identity.email!==config.webInvoker || access.scopeDigest!==first.scopeDigest
+      || detailDigest(first)!==detailDigest(second)) throw new BigQueryCostControlError();
+    return access;
+  };
   const staff=async(cookie:string|undefined,sourceRecovery=false)=>{
     flags(); const access=reportingSession(cookie); if (!access) throw new BigQueryCostControlError();
     const first=await policy(sourceRecovery); if (access.scopeDigest!==first.scopeDigest) throw new BigQueryCostControlError();
@@ -1002,19 +1017,14 @@ export async function createServiceOwnedUatRuntime() {
     if (!again || detailDigest(again)!==detailDigest(access) || detailDigest(first)!==detailDigest(second)) throw new BigQueryCostControlError();
     return access;
   };
-  return Object.freeze({
-    async checkStaff(cookie:string|undefined) {
-      await staff(cookie,true); return true;
-    },
-    checkWorker,
-    async read(cookie:string|undefined,input:unknown) {
-      const access=await staff(cookie,true);
-      const result=await store.transaction(async tx=>{
+  const readAccess=async(access:ReportAccess,input:unknown)=>{
+    return store.transaction(async tx=>{
         const [global,raw,service]=await Promise.all([tx.get<ReportingPolicy>(detailPath('policy','current')),
           tx.get<any>(detailPath('policy','one-agent-detail-two-source')),tx.get<any>(detailPath('policy','one-agent-detail-service'))]);
         const now=Date.now(),limits=validateDetailPolicy(global),source=validateUatTwoSourcePolicies(raw,now,true),approved=validateUatServicePolicy(service,raw,now,true);
         if (approved.reportingProject!==config.reportingProject || approved.reportingDatabase!==config.reportingDatabase
-          || approved.workerAudience!==config.workerAudience || approved.taskInvoker!==config.taskInvoker || approved.scopeDigest!==access.scopeDigest) throw new BigQueryCostControlError();
+          || approved.workerAudience!==config.workerAudience || approved.taskInvoker!==config.taskInvoker || approved.webInvoker!==config.webInvoker
+          || approved.queueParent!==config.queueParent || approved.rpcTimeoutMs!==config.rpcTimeoutMs || approved.maxResponseBytes!==config.maxResponseBytes || approved.scopeDigest!==access.scopeDigest) throw new BigQueryCostControlError();
         const request=validateDetailRequest(input,limits.maxPeriodDays); if (request.reportId!=='one.agent-detail-uat') throw new BigQueryCostControlError();
         const control=validateDetailControl(await tx.get<ReportControl>(detailPath('controls',request.reportId)),request,access);
         if (control.scopeDigest!==source.manifest.scopeDigest || control.sourceGeneration!==source.manifest.sourceGeneration
@@ -1039,12 +1049,10 @@ export async function createServiceOwnedUatRuntime() {
         tx.set(detailPath('quotas',quotaKey),{count:count+1,windowEndsAt:(Math.floor(now/limits.quotaWindowMs)+1)*limits.quotaWindowMs});
         return result;
       });
-      const after=await staff(cookie,true); if (detailDigest(after)!==detailDigest(access)) throw new BigQueryCostControlError();
-      return result;
-    },
-    async status(cookie:string|undefined,id:string) {
-      const access=await staff(cookie,true); if (!/^[a-f0-9]{64}$/.test(id)) throw new BigQueryCostControlError();
-      const result=await store.transaction(async tx=>{
+  };
+  const statusAccess=async(access:ReportAccess,id:string)=>{
+    if (!/^[a-f0-9]{64}$/.test(id)) throw new BigQueryCostControlError();
+    const result=await store.transaction(async tx=>{
         const [global,job]=await Promise.all([tx.get<ReportingPolicy>(detailPath('policy','current')),tx.get<ReportJob>(detailPath('jobs',id))]);
         const now=Date.now(),limits=validateDetailPolicy(global);
         if (!job || job.id!==id || String(job.request.reportId)!=='one.agent-detail-uat' || job.control.scopeDigest!==access.scopeDigest) throw new BigQueryCostControlError();
@@ -1060,12 +1068,51 @@ export async function createServiceOwnedUatRuntime() {
       if (result.state==='completed') {
         // A completed status also consumes one read quota: it validates the
         // actual current publication rather than trusting the job state alone.
-        const current=await this.read(cookie,result.request); if (current.state!=='partial') throw new BigQueryCostControlError();
+        const current=await readAccess(access,result.request); if (current.state!=='partial') throw new BigQueryCostControlError();
         const head=await store.transaction(tx=>tx.get<any>(detailPath('heads',result.key)));
         if (head?.publication!==id) throw new BigQueryCostControlError();
       }
-      const after=await staff(cookie,true);if (detailDigest(after)!==detailDigest(access)) throw new BigQueryCostControlError();
-      return {state:result.state==='completed'?'partial' as const:result.state,needsAttention:result.needsAttention};
+    return {state:result.state==='completed'?'partial' as const:result.state,needsAttention:result.needsAttention};
+  };
+  return Object.freeze({
+    async checkStaff(cookie:string|undefined) {
+      await staff(cookie,true); return true;
+    },
+    checkWorker,
+    async checkWeb(token:string,access:ReportAccess) { await web(token,access,true); return true; },
+    async read(cookie:string|undefined,input:unknown) {
+      const access=await staff(cookie,true);
+      const result=await readAccess(access,input);
+      const after=await staff(cookie,true); if (detailDigest(after)!==detailDigest(access)) throw new BigQueryCostControlError();
+      return result;
+    },
+    async readForWeb(token:string,access:ReportAccess,input:unknown) {
+      validateDetailAccess(access); const scoped=Object.freeze({...access});
+      await web(token,scoped,true); const result=await readAccess(scoped,input);
+      await web(token,scoped,true); return result;
+    },
+    async requestForWeb(token:string,access:ReportAccess,input:unknown,signal:AbortSignal) {
+      validateDetailAccess(access); const scoped=Object.freeze({...access});
+      computeFlags(); signal.throwIfAborted(); await web(token,scoped); computeFlags(); signal.throwIfAborted();
+      const result=await new MetricsReports(store,Date.now,undefined,true).request(input,scoped);
+      await web(token,scoped); computeFlags(); signal.throwIfAborted();
+      if (result.jobId) {
+        const queue=new UatDetailTaskQueue({enabled:true,parent:config.queueParent,workerUrl:config.workerAudience+'/internal/metrics/uat-detail/collect',invokerEmail:config.taskInvoker,rpcTimeoutMs:config.rpcTimeoutMs},cloudTasksRequest(config.maxResponseBytes));
+        const guardedQueue={taskName:(id:string)=>queue.taskName(id),
+          create:async(id:string)=>{await web(token,scoped); computeFlags(); signal.throwIfAborted(); return queue.create(id);},
+          lookup:async(id:string)=>{await web(token,scoped); computeFlags(); signal.throwIfAborted(); return queue.lookup(id);}};
+        await new MetricsReportDispatch(store,guardedQueue).deliver(result.jobId,detailDigest(config.webInvoker));
+        await web(token,scoped); computeFlags(); signal.throwIfAborted();
+      }
+      return result;
+    },
+    async status(cookie:string|undefined,id:string) {
+      const access=await staff(cookie,true), result=await statusAccess(access,id);
+      const after=await staff(cookie,true);if(detailDigest(after)!==detailDigest(access)) throw new BigQueryCostControlError(); return result;
+    },
+    async statusForWeb(token:string,access:ReportAccess,id:string) {
+      validateDetailAccess(access);const scoped=Object.freeze({...access});await web(token,scoped,true);
+      const result=await statusAccess(scoped,id);await web(token,scoped,true);return result;
     },
     async collect(token:string,jobId:string,signal:AbortSignal) {
       computeFlags(); await checkWorker(token); computeFlags(); signal.throwIfAborted();

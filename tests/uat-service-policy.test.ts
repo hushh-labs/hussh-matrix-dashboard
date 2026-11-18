@@ -7,9 +7,10 @@ it('requires an approved UAT manifest, matching scope, source and fixed service 
  const {manifest,manifestDigest}=uatTwoSourceManifest(config,scopeDigest,sourceGeneration);
  const base={approved:true,enabled:true,environment:'uat',project:'hushh-ai-prod',location:'US',referenceDigest:'c'.repeat(64),scopeDigest,sourceGeneration,startDate:config.startDate,endDate:config.endDate,timezone:'UTC',expiresAt:now+1000,maxBytes:1000};
  const source={approved:true,enabled:true,config,scopeDigest,sourceGeneration,manifestDigest,feature:{...base,queryHash:manifest.featureQueryHash},location:{...base,queryHash:manifest.locationQueryHash}};
- const policy={approved:true,enabled:true,expiresAt:now+1000,manifestDigest,scopeDigest,sourceGeneration,reportingProject:'project-test',reportingDatabase:'metrics-reporting',workerAudience:'https://detail-worker.run.app',taskInvoker:'metrics-report-task-invoker@project-test.iam.gserviceaccount.com'};
+ const policy={approved:true,enabled:true,expiresAt:now+1000,manifestDigest,scopeDigest,sourceGeneration,reportingProject:'project-test',reportingDatabase:'metrics-reporting',workerAudience:'https://detail-worker.run.app',taskInvoker:'metrics-report-task-invoker@project-test.iam.gserviceaccount.com',webInvoker:'metrics-report-web@project-test.iam.gserviceaccount.com',queueParent:'projects/project-test/locations/us-central1/queues/metrics-uat-detail-manual',rpcTimeoutMs:1000,maxResponseBytes:10000};
  expect(validateUatServicePolicy(policy,source,now)).toMatchObject({manifestDigest});
  for(const change of [{enabled:false},{scopeDigest:'d'.repeat(64)},{taskInvoker:'other@example.com'},{workerAudience:'https://evil.example.com'}])
   expect(()=>validateUatServicePolicy({...policy,...change},source,now)).toThrow();
  expect(()=>validateUatServicePolicy(policy,{...source,enabled:false},now)).toThrow();
 });
+

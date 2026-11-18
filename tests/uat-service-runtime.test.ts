@@ -3,7 +3,7 @@ import { createServiceOwnedUatRuntime } from '../src/server/bigquery-cost-contro
 import { createHmac } from 'node:crypto';
 import { uatTwoSourceManifest } from '../src/server/reports/uat-two-source-manifest';
 import { reportPath } from '../src/server/reports/store';
-import { reportKey } from '../src/server/reports/contracts';
+import { reportKey, digest } from '../src/server/reports/contracts';
 const calls=vi.hoisted(()=>({construct:vi.fn(),terminate:vi.fn(),verify:vi.fn(),native:vi.fn(),onTransaction:vi.fn(),docs:new Map<string,unknown>()}));
 vi.mock('@google-cloud/firestore',()=>({Firestore:class {
  constructor(options:unknown){calls.construct(options);} doc(path:string){return {path};} terminate=calls.terminate;
@@ -22,7 +22,7 @@ it('checks the existing signed staff session and exact Google worker identity ag
  const {manifest,manifestDigest}=uatTwoSourceManifest(config,scopeDigest,sourceGeneration);
  const base={approved:true,enabled:true,environment:'uat',project:'hushh-ai-prod',location:'US',referenceDigest:'c'.repeat(64),scopeDigest,sourceGeneration,startDate:config.startDate,endDate:config.endDate,timezone:'UTC',expiresAt:now+60000,maxBytes:1000};
  const source={approved:true,enabled:true,config,scopeDigest,sourceGeneration,manifestDigest,feature:{...base,queryHash:manifest.featureQueryHash},location:{...base,queryHash:manifest.locationQueryHash}};
- const tuple={reportingProject:'hushh-ai-prod',reportingDatabase:'metrics-reports',workerAudience:'https://detail-worker.run.app',taskInvoker:'metrics-report-task-invoker@hushh-ai-prod.iam.gserviceaccount.com'};
+ const tuple={reportingProject:'hushh-ai-prod',reportingDatabase:'metrics-reports',workerAudience:'https://detail-worker.run.app',taskInvoker:'metrics-report-task-invoker@hushh-ai-prod.iam.gserviceaccount.com',webInvoker:'metrics-report-web@hushh-ai-prod.iam.gserviceaccount.com',queueParent:'projects/hushh-ai-prod/locations/us-central1/queues/metrics-uat-detail-manual',rpcTimeoutMs:1000,maxResponseBytes:10000};
  const service={approved:true,enabled:true,expiresAt:now+60000,manifestDigest,scopeDigest,sourceGeneration,...tuple};
  calls.docs.set(reportPath('policy','one-agent-detail-service'),service);calls.docs.set(reportPath('policy','one-agent-detail-two-source'),source);
  vi.stubEnv('METRICS_UAT_SERVICE_ENABLED','true');vi.stubEnv('METRICS_BIGQUERY_ENABLED','true');vi.stubEnv('METRICS_UAT_DETAIL_ENABLED','true');
@@ -37,6 +37,18 @@ it('checks the existing signed staff session and exact Google worker identity ag
  expect(await runtime.read(`s:${body}.${signature}`,request)).toEqual({state:'unavailable'});expect(calls.native).not.toHaveBeenCalled();
  const id='f'.repeat(64),key=reportKey(request,control); calls.docs.set(reportPath('jobs',id),{id,key,request,control,status:'accepted',needsAttention:false});
  expect(await runtime.status(`s:${body}.${signature}`,id)).toEqual({state:'accepted',needsAttention:false});expect(calls.native).not.toHaveBeenCalled();
+ const access={subjectHash:digest('staff'),scopeDigest};
+ calls.verify.mockResolvedValueOnce({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:tuple.webInvoker})});
+ expect(await runtime.checkWeb('web-token',access)).toBe(true);
+ calls.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:tuple.webInvoker})});
+ expect(await runtime.readForWeb('web-token',access,request)).toEqual({state:'unavailable'});
+ calls.verify.mockResolvedValueOnce({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:tuple.taskInvoker})});
+ await expect(runtime.readForWeb('task-token',access,request)).rejects.toThrow();
+ calls.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:tuple.taskInvoker})});
+ calls.verify.mockResolvedValueOnce({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:tuple.taskInvoker})});
+ await expect(runtime.checkWeb('task-token',access)).rejects.toThrow();
+ calls.verify.mockResolvedValueOnce({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:tuple.webInvoker})});
+ await expect(runtime.checkWeb('web-token',{...access,scopeDigest:'9'.repeat(64)})).rejects.toThrow();
  expect(await runtime.checkWorker('synthetic-token')).toBe(true);expect(calls.verify).toHaveBeenCalledWith({idToken:'synthetic-token',audience:tuple.workerAudience});
  calls.verify.mockResolvedValueOnce({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'other@example.com'})});
  await expect(runtime.checkWorker('other-token')).rejects.toThrow();

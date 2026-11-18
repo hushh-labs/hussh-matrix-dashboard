@@ -30,7 +30,7 @@ function setup() {
  const referenceDigest=createHash('sha256').update(JSON.stringify({refs,catalog:[{id:'events_20261118',type:'TABLE'}]})).digest('hex');
  const base={approved:true,enabled:true,environment:'uat',project:'hushh-ai-prod',location:'US',referenceDigest,scopeDigest,sourceGeneration,startDate:config.startDate,endDate:config.endDate,timezone:'UTC',expiresAt:now+60000,maxBytes:30*1024**2};
  const source={approved:true,enabled:true,config,scopeDigest,sourceGeneration,manifestDigest,feature:{...base,queryHash:manifest.featureQueryHash},location:{...base,queryHash:manifest.locationQueryHash}};
- const tuple={reportingProject:'hushh-ai-prod',reportingDatabase:'metrics-reports',workerAudience:'https://detail-worker.run.app',taskInvoker:'metrics-report-task-invoker@hushh-ai-prod.iam.gserviceaccount.com'};
+ const tuple={reportingProject:'hushh-ai-prod',reportingDatabase:'metrics-reports',workerAudience:'https://detail-worker.run.app',taskInvoker:'metrics-report-task-invoker@hushh-ai-prod.iam.gserviceaccount.com',webInvoker:'metrics-report-web@hushh-ai-prod.iam.gserviceaccount.com',queueParent:'projects/hushh-ai-prod/locations/us-central1/queues/metrics-uat-detail-manual',rpcTimeoutMs:1000,maxResponseBytes:10000};
  const service={approved:true,enabled:true,expiresAt:now+180000,manifestDigest,scopeDigest,sourceGeneration,...tuple};
  const global={approved:true,computeEnabled:true,quotaWindowMs:60000,readRequests:10,statusRequests:10,computeRequests:10,customCapacity:2,scheduledCapacity:0,customPerSubjectCapacity:1,maxPeriodDays:90,leaseMs:30000,jobLifetimeMs:120000,maxSnapshotBytes:900000};
  const control={enabled:true,revision:1,scopeDigest,sourceGeneration,definitionVersion:'1',freshnessMs:1000,staleMs:120000};
@@ -214,3 +214,23 @@ it('publishes a verified combined subset and keeps reads passive, scoped and pro
  fake.docs.set(reportPath('policy','one-agent-detail-two-source'),{...f.source,enabled:false});await expect(runtime.read(cookie,f.job.request)).rejects.toThrow();
  await runtime.close();
 });
+
+it.each(['incident','policy'] as const)('holds dispatch if %s closes after durable intent',async fault=>{
+ const f=setup();fake.docs.delete(reportPath('jobs',f.job.id));fake.docs.set(reportPath('heads',f.job.key),{sequence:0,activeJob:null,publication:null});
+ fake.docs.set(reportPath('capacity','custom'),{active:0});fake.docs.set(reportPath('subjectCapacity',digest(['custom','e'.repeat(64)])),{active:0});
+ fake.docs.set(reportPath('policy','dispatch'),{approved:true,enabled:true,leaseMs:1000,lookupDelayMs:1000,maxLookups:2});
+ fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'metrics-report-web@hushh-ai-prod.iam.gserviceaccount.com'})});
+ const runtime=await createServiceOwnedUatRuntime();let changed=false;
+ fake.onGet.mockImplementation((path:string,data:Map<string,any>)=>{if(!changed && path.startsWith('metricsReporting/v1/dispatches/')) {changed=true;
+   if(fault==='incident')vi.stubEnv('METRICS_BIGQUERY_ENABLED','false');
+   else data.set(reportPath('policy','one-agent-detail-two-source'),{...f.source,enabled:false});
+ }});
+ const fetcher=vi.spyOn(globalThis,'fetch');
+ await expect(runtime.requestForWeb('token',{subjectHash:'e'.repeat(64),scopeDigest:f.scopeDigest},f.job.request,new AbortController().signal)).rejects.toThrow();
+ expect(changed).toBe(true);expect(fetcher).not.toHaveBeenCalled();expect(fake.create).not.toHaveBeenCalled();
+ fetcher.mockRestore();await runtime.close();
+});
+
+
+
+

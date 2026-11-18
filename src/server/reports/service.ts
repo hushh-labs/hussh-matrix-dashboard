@@ -4,9 +4,9 @@ import { digest, ReportError, reportKey, validateAccess, validateAggregate, vali
 import { reportPath as path, type ReportStore, type ReportTransaction } from './store';
 import type { ReportBodyCache } from './body-cache';
 import { periodicPlan } from './periodic-policy';
-import { validateUatDetailPolicy } from './staged-uat-detail-query';
-import { validateUatFeatureManifest } from './uat-feature-manifest';
-import { validateOneAgentDetail } from './one-agent-detail-contract';
+import { uatTwoSourceChildIds, validateUatTwoSourcePolicies } from './uat-two-source-manifest';
+import { validateUatServicePolicy } from './uat-service-policy';
+import { validateUatCombinedPublication } from './uat-combined-publication';
 
 type Head = { sequence: number; activeJob: string | null; publication: string | null };
 type Capacity = { active: number };
@@ -33,15 +33,10 @@ export class MetricsReports {
     const control = validateControl(await tx.get<ReportControl>(path('controls', request.reportId)), request, access);
     if (request.reportId === 'one.agent-detail-uat') {
       if (!this.detailEnabled) throw new ReportError('unavailable');
-      const source=validateUatDetailPolicy(await tx.get(path('policy','one-agent-detail-bq')),this.now(),detailRead);
-      const approved=await tx.get<any>(path('policy','one-agent-detail-manifest'));
-      if (!approved || Object.keys(approved).sort().join()!=='approved,config,enabled,manifestDigest'
-        || approved.approved!==true || approved.enabled!==true) throw new ReportError('unavailable');
-      const {manifest}=validateUatFeatureManifest(approved.config,approved.manifestDigest);
-      if (source.queryHash!==manifest.queryHash || source.scopeDigest!==access.scopeDigest
-        || source.sourceGeneration!==control.sourceGeneration || source.startDate!==request.startDate
-        || source.endDate!==request.endDate || source.timezone!==request.timezone
-        || manifest.startDate!==request.startDate || manifest.endDate!==request.endDate || manifest.timezone!==request.timezone)
+      const [raw,service]=await Promise.all([tx.get(path('policy','one-agent-detail-two-source')),tx.get(path('policy','one-agent-detail-service'))]);
+      const source=validateUatTwoSourcePolicies(raw,this.now(),detailRead),approved=validateUatServicePolicy(service,raw,this.now(),detailRead);
+      if (approved.scopeDigest!==access.scopeDigest || approved.sourceGeneration!==control.sourceGeneration
+        || source.manifest.startDate!==request.startDate || source.manifest.endDate!==request.endDate || source.manifest.timezone!==request.timezone)
         throw new ReportError('unavailable');
     }
     return { policy, request, control, key: reportKey(request, control) };
@@ -109,6 +104,23 @@ export class MetricsReports {
       const head = await tx.get<Head>(path('heads', c.key)) ?? { sequence: 0, activeJob: null, publication: null };
       const publication = head.publication && c.request.reportId !== 'one.agent-detail-uat'
         ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
+      const detailId=c.request.reportId==='one.agent-detail-uat'?head.publication:null;
+      if (detailId!==null && !/^[a-f0-9]{64}$/.test(detailId)) throw new ReportError('unavailable');
+      const [detailPublication,detailJob,detailDraft,detailRaw,detailService]=detailId?await Promise.all([
+        tx.get<any>(path('uatCombinedPublications',detailId)),tx.get<ReportJob>(path('jobs',detailId)),
+        tx.get<any>(path('uatCombinedDrafts',detailId)),tx.get<any>(path('policy','one-agent-detail-two-source')),
+        tx.get<any>(path('policy','one-agent-detail-service'))]):[null,null,null,null,null];
+      let detailFresh=false;
+      if (detailId) {
+        const source=validateUatTwoSourcePolicies(detailRaw,now),ids=uatTwoSourceChildIds(detailId,source.manifestDigest);
+        const [feature,location]=await Promise.all([tx.get<any>(path('uatTwoSourceProofs',ids.feature)),tx.get<any>(path('uatTwoSourceProofs',ids.location))]);
+        if (!detailJob || detailJob.id!==detailId || detailJob.status!=='completed' || detailJob.key!==c.key
+          || digest(detailJob.request)!==digest(c.request) || digest(detailJob.control)!==digest(c.control) || !detailPublication
+          || detailPublication.policyDigest!==digest(detailRaw) || detailPublication.servicePolicyDigest!==digest(detailService)
+          || detailPublication.manifestDigest!==source.manifestDigest) throw new ReportError('unavailable');
+        const checked=validateUatCombinedPublication(detailPublication,detailDraft,{feature,location},detailJob,now,c.policy.maxSnapshotBytes);
+        detailFresh=now-checked.computedAt<=c.control.freshnessMs;
+      }
       const active = head.activeJob ? await tx.get<ReportJob>(path('jobs', head.activeJob)) : null;
       const slots = await tx.get<Capacity>(path('capacity', lane)) ?? { active: 0 };
       const subjectSlot = path('subjectCapacity', digest([lane, access.subjectHash]));
@@ -179,7 +191,9 @@ export class MetricsReports {
         || cycleJobs.some((job, index) => !job || job.id !== cycle.jobs[index] || !['completed', 'failed', 'invalidated'].includes(job.status)))) throw new ReportError('capacity');
       let result: { state: 'accepted' | 'running' | 'delayed' | 'completed'; reportId: string | null; jobId: string | null };
       let jobToCreate: ReportJob | null = null;
-      if (publication && publication.key === c.key && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
+      if (detailFresh) {
+        result={state:'completed',reportId:detailId!,jobId:null};
+      } else if (publication && publication.key === c.key && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
         if (plan) {
           if (Object.keys(publication).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
             || publication.id !== head.publication || digest(publication.request) !== digest(c.request) || digest(publication.control) !== digest(c.control)
@@ -249,28 +263,15 @@ export class MetricsReports {
       const control = await tx.get<ReportControl>(path('controls', job.request.reportId));
       const dispatch = await tx.get<{ state: string }>(path('dispatches', jobId));
       if (job.request.reportId === 'one.agent-detail-uat' && job.status === 'completed') {
-        const [head,pub,intent,proof,snapshot,source,manifest]=await Promise.all([
-          tx.get<Head>(path('heads',job.key)),tx.get<any>(path('uatDetailPublications',jobId)),
-          tx.get<any>(path('uatDetailIntents',jobId)),tx.get<any>(path('uatDetailNativeProofs',jobId)),
-          tx.get<any>(path('uatDetailPartialSnapshots',jobId)),tx.get<any>(path('policy','one-agent-detail-bq')),
-          tx.get<any>(path('policy','one-agent-detail-manifest'))]);
-        if (head?.publication!==jobId || !pub || pub.id!==jobId || pub.key!==job.key || pub.kind!=='uat-feature-subset'
-          || Object.keys(pub).sort().join()!=='computedAt,control,coverage,detail,id,key,kind,manifestDigest,proofDigest,publishedAt,request,schema,sourcePolicyDigest'
-          || pub.schema!==1 || pub.manifestDigest!==manifest?.manifestDigest || pub.sourcePolicyDigest!==digest(source)
-          || pub.coverage!=='partial' || digest(pub.request)!==digest(job.request) || digest(pub.control)!==digest(job.control)
-          || !intent || intent.state!=='complete' || intent.jobId!==jobId || intent.policyDigest!==digest(source)
-          || !proof || proof.binding!==intent.binding || proof.policyDigest!==intent.policyDigest || pub.proofDigest!==digest(proof)
-          || !snapshot || Object.keys(snapshot).sort().join()!=='binding,computedAt,coverage,detail,kind,schema'
-          || snapshot.schema!==1 || snapshot.kind!=='uat-feature-subset' || snapshot.coverage!=='partial'
-          || snapshot?.binding!==digest([job.id,job.key,job.request,job.control,digest(source),digest(proof)])
-          || pub.computedAt!==snapshot.computedAt || !Number.isSafeInteger(pub.computedAt) || pub.computedAt<job.acceptedAt
-          || !Number.isSafeInteger(pub.publishedAt) || pub.computedAt>pub.publishedAt || pub.publishedAt>now
-          || now-pub.computedAt>job.control.staleMs || Buffer.byteLength(JSON.stringify(snapshot))>policy.maxSnapshotBytes
-          || digest(pub.detail)!==digest(snapshot?.detail)) throw new ReportError('unavailable');
-        const detail=validateOneAgentDetail(pub.detail,{environment:'uat',scopeDigest:access.scopeDigest,
-          period:{startDate:job.request.startDate,endDate:job.request.endDate,timezone:job.request.timezone}});
-        if (detail.source.checkedAt!==null || detail.source.watermark!==null || detail.source.coverage!=='intraday_or_unknown'
-          || detail.rows.some(row=>row.agent==='location' && row.state!=='unavailable')) throw new ReportError('unavailable');
+        const [head,pub,draft,raw,service]=await Promise.all([tx.get<Head>(path('heads',job.key)),
+          tx.get<any>(path('uatCombinedPublications',jobId)),tx.get<any>(path('uatCombinedDrafts',jobId)),
+          tx.get<any>(path('policy','one-agent-detail-two-source')),tx.get<any>(path('policy','one-agent-detail-service'))]);
+        const source=validateUatTwoSourcePolicies(raw,now,true),ids=uatTwoSourceChildIds(jobId,source.manifestDigest);
+        const [feature,location]=await Promise.all([tx.get<any>(path('uatTwoSourceProofs',ids.feature)),tx.get<any>(path('uatTwoSourceProofs',ids.location))]);
+        if (head?.publication!==jobId || !pub || pub.manifestDigest!==source.manifestDigest || pub.policyDigest!==digest(raw)
+          || pub.servicePolicyDigest!==digest(service)) throw new ReportError('unavailable');
+        const checked=validateUatCombinedPublication(pub,draft,{feature,location},job,now,policy.maxSnapshotBytes);
+        if (now-checked.computedAt>job.control.staleMs) throw new ReportError('unavailable');
       }
       charge();
       const needsAttention = job.needsAttention || job.status === 'accepted' && dispatch?.state === 'blocked';

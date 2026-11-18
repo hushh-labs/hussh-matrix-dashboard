@@ -2,6 +2,7 @@ import { currentAccess } from '../lib/access';
 import { reportsRuntime } from '../lib/runtime';
 import { reportDefinitions, type MetricValue, type ReportId } from '../../../src/server/reports/contracts';
 import { ReportRefresh } from './report-refresh';
+import { UatManualRefresh } from './uat-manual-refresh';
 
 export default async function ReportsPage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -31,6 +32,7 @@ export default async function ReportsPage({ searchParams }: {
     <label>Through<input type="date" name="endDate" required defaultValue={typeof request.endDate === 'string' ? request.endDate : yesterday} /></label>
     <label>Reporting timezone<input name="timezone" required defaultValue={typeof request.timezone === 'string' ? request.timezone : 'UTC'} /></label>
     <button type="submit">Apply</button></form>
+    {process.env.METRICS_UAT_WEB_ENABLED==='true' && refreshRequest && <UatManualRefresh key={JSON.stringify(refreshRequest)} enabled={true} request={{reportId:'one.agent-detail-uat',startDate:refreshRequest.startDate,endDate:refreshRequest.endDate,timezone:refreshRequest.timezone}} />}
     <ReportRefresh key={JSON.stringify(refreshRequest)} request={refreshRequest} enabled={runtime !== null} />
     {!view?.report ? <section className="empty" role="status"><h2>Report unavailable</h2>
       <p>There is no verified publication for this selection. Try another period or check back after collection completes.</p></section> :
