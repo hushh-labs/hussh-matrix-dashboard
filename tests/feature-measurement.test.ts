@@ -52,6 +52,11 @@ describe('feature metric units', () => {
     expect(featureMeasurementNote('strategy_requested')).toContain('does not count delivered strategies');
   });
 
+  it('does not equate marketplace profile views with data-deal subscriptions', () => {
+    expect(featureMeasurementNote('profile_viewed')).toContain('advisor profile views');
+    expect(featureMeasurementNote('profile_viewed')).toContain('does not prove a subscription');
+  });
+
   it('shows the exact value hidden by compact rounding', () => {
     expect(exactCount(6678)).toBe('6,678');
     expect(eventVolumeExplanation(6678, 12)).toContain('6,678 records from 12 device/browser IDs');
