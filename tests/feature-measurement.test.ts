@@ -45,6 +45,13 @@ describe('feature metric units', () => {
     }
   });
 
+  it('describes the combined RIA request records without asserting strategy delivery', () => {
+    const row = AGENT_MEASUREMENTS.find(item => item.key === 'strategy_requested')!;
+    expect(row.events).toEqual(['ria_request_created', 'one_ria_strategy_requested']);
+    expect(featureMeasurementNote('strategy_requested')).toContain('including failures');
+    expect(featureMeasurementNote('strategy_requested')).toContain('does not count delivered strategies');
+  });
+
   it('shows the exact value hidden by compact rounding', () => {
     expect(exactCount(6678)).toBe('6,678');
     expect(eventVolumeExplanation(6678, 12)).toContain('6,678 records from 12 device/browser IDs');

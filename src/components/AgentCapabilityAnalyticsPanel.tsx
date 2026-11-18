@@ -399,12 +399,12 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'strategy_requested',
-      label: 'Investment Strategy Request',
+      label: 'Advisor request activity',
       icon: Zap,
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_ria_strategy_requested"). Portfolio strategy generation.',
+      explanation: 'Includes access-request outcomes and legacy strategy-request records; it does not measure delivered strategies.',
     },
     {
       key: 'client_handoff',
