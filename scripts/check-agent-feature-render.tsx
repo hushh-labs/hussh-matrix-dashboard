@@ -112,6 +112,21 @@ const uninstrumentedCapability = renderGmail({
 } as unknown as OneAppSummary);
 assert.match(uninstrumentedCapability, /Activity tracking is not available yet/);
 
+for (const [capabilityKey, featureKey, label] of [
+  ['wallet', 'wallet_card_added', 'Card addition activity'],
+  ['memory', 'memory_capture_saved', 'Memory save activity'],
+  ['connected_systems', 'crm_record_created', 'CRM record creation activity'],
+] as const) {
+  for (const outcome of ['success', 'error'] as const) {
+    const item = { accounts: 1, devices: 1, signals: 1, successes: Number(outcome === 'success'), expectedErrors: 0, failures: Number(outcome === 'error'), outcomeSignals: 1 };
+    const one = { ...summary, capabilities: [{ key: capabilityKey, instrumented: true, observed: true, devices: 1, accounts: 1, deliberateEvents: 1 }], featureUsage: { [featureKey]: item } } as unknown as OneAppSummary;
+    const markup = renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, { capabilityKey, one, uat: null, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {} }));
+    assert.ok(markup.includes(label));
+    assert.match(markup, /1 records from 1 device\/browser IDs/);
+    assert.doesNotMatch(markup, /Added a card securely|Saved a reviewed memory|Created a CRM record/);
+  }
+}
+
 const measuredGmail = renderGmail(gmailSummary);
 assert.match(measuredGmail, /292 records from 9 device\/browser IDs/);
 assert.match(measuredGmail, /Inbox visits are not separately tracked yet/);
