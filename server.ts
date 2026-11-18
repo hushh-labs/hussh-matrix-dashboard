@@ -3689,10 +3689,10 @@ ${capabilitySql.isDeliberate}
             label: spec.label,
             instrumented,
             observed: Boolean(row),
-            users: instrumented ? toNumber(row?.users) : null,
-            events: instrumented ? toNumber(row?.events) : null,
-            successes: instrumented ? toNumber(row?.successes) : null,
-            failures: instrumented ? toNumber(row?.failures) : null,
+            users: instrumented && !locationBehavior.error ? toNumber(row?.users) : null,
+            events: instrumented && !locationBehavior.error ? toNumber(row?.events) : null,
+            successes: instrumented && !locationBehavior.error ? toNumber(row?.successes) : null,
+            failures: instrumented && !locationBehavior.error ? toNumber(row?.failures) : null,
           };
         }),
         circleKinds: [

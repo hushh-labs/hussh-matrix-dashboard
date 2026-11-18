@@ -110,7 +110,7 @@ function EnvironmentColumn({
           <ActivesByPlatform rows={one.activeByPlatform} available={one.activeByPlatformAvailable} />
           <ReportDetails title="First launch & activation"><InstallFunnel funnels={one.installFunnel} /><Activation one={one} /></ReportDetails>
           <ReportDetails title="Retention"><Retention one={one} /></ReportDetails>
-          <ReportDetails title="Location usage by platform"><LocationAgentByPlatform rows={one.locationAnalytics.platforms} /></ReportDetails>
+          <ReportDetails title="Location usage by platform"><LocationAgentByPlatform rows={one.locationAnalytics.platforms} available={one.locationBehaviorAvailable} /></ReportDetails>
         </>
       ) : (
         <div className={cn(dashboardPanel, 'p-6 text-center')}>
@@ -292,7 +292,10 @@ function AppStoreConnectTesterStateBreakdown({
  * summary that is genuinely platform-scoped (unlike the activation funnel and
  * retention above, which are product-wide and shown once per environment).
  */
-function LocationAgentByPlatform({ rows }: { rows: OneLocationPlatformBehaviorMetric[] }) {
+export function LocationAgentByPlatform({ rows, available }: { rows: OneLocationPlatformBehaviorMetric[]; available: boolean }) {
+  if (!available) {
+    return <div className={cn(dashboardPanel, 'p-6 text-center')}><p className="text-sm font-semibold text-muted">Location Agent activity is unavailable for this window.</p></div>;
+  }
   if (rows.length === 0) {
     return (
       <div className={cn(dashboardPanel, 'p-6 text-center')}>
