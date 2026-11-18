@@ -169,6 +169,7 @@ function actionSpec(key: string, label: string, icon: typeof Activity): FeatureA
 
 const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
   onboarding: [
+    actionSpec('daily_signin', 'Sign-ins recorded', UserCheck),
     {
       key: 'auth_started',
       label: 'Started sign-in',
@@ -445,6 +446,7 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
   ],
   memory: [
+    actionSpec('context_resolved', 'Context resolutions recorded', Database),
     actionSpec('memory_capture_prepared', 'Prepared a memory for review', Database),
     actionSpec('memory_capture_saved', 'Saved a reviewed memory', Database),
     actionSpec('memory_detail_edited', 'Corrected a saved detail', Database),

@@ -63,6 +63,36 @@ function renderGmail(one: OneAppSummary) {
     capabilityKey: 'gmail', one, uat: one, rangeLabel: 'Last 30 days', dateControl: null, onBack: () => {},
   }));
 }
+const onboardingSummary = (signals: number, available = true) => ({
+  ...summary, featureUsageAvailable: available,
+  capabilities: [{ key: 'onboarding', instrumented: true, observed: true, devices: 9, accounts: 8, deliberateEvents: signals }],
+  featureUsage: { daily_signin: { accounts: 2, devices: 3, signals, successes: 0, expectedErrors: 0, failures: 0, outcomeSignals: 0 } },
+}) as unknown as OneAppSummary;
+function renderOnboarding(environment: 'production' | 'uat', available = true) {
+  return renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, {
+    capabilityKey: 'onboarding', one: onboardingSummary(17, available), uat: onboardingSummary(31, available),
+    environment, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {},
+  }));
+}
+const memorySummary = { ...summary,
+  capabilities: [{ key: 'memory', instrumented: true, observed: true, devices: 4, accounts: 2, deliberateEvents: 13 }],
+  featureUsage: { context_resolved: { accounts: 2, devices: 4, signals: 13, successes: 0, expectedErrors: 0, failures: 0, outcomeSignals: 0 } },
+} as unknown as OneAppSummary;
+const memoryContext = renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, {
+  capabilityKey: 'memory', one: memorySummary, uat: null, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {},
+}));
+assert.match(memoryContext, /Context resolutions recorded/);
+assert.match(memoryContext, /13 records from 4 device\/browser IDs/);
+
+const productionOnboarding = renderOnboarding('production');
+const uatOnboarding = renderOnboarding('uat');
+assert.match(productionOnboarding, /Sign-ins recorded/);
+assert.match(productionOnboarding, /17 records from 3 device\/browser IDs/);
+assert.doesNotMatch(productionOnboarding, /31 records from 3 device\/browser IDs/);
+assert.match(uatOnboarding, /31 records from 3 device\/browser IDs/);
+assert.doesNotMatch(uatOnboarding, /17 records from 3 device\/browser IDs/);
+assert.match(renderOnboarding('uat', false), /Data unavailable/);
+
 const measuredGmail = renderGmail(gmailSummary);
 assert.match(measuredGmail, /292 records from 9 device\/browser IDs/);
 assert.match(measuredGmail, /Inbox visits are not separately tracked yet/);
