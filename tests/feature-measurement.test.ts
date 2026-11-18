@@ -34,6 +34,17 @@ describe('feature metric units', () => {
     expect(featureMeasurementState('client_handoff', true, true, undefined, true)).toBe('not_tracked');
   });
 
+  it('keeps observed, empty, gap and unreadable states distinct across the complete catalog', () => {
+    expect(new Set(AGENT_MEASUREMENTS.map(row => row.key)).size).toBe(AGENT_MEASUREMENTS.length);
+    expect(new Set(AGENT_MEASUREMENTS.map(row => row.agent)).size).toBe(12);
+    for (const row of AGENT_MEASUREMENTS) {
+      expect(featureMeasurementState(row.key, false, true, 9), row.key).toBe('unavailable');
+      expect(featureMeasurementState(row.key, true, false, 9), row.key).toBe('observed');
+      expect(featureMeasurementState(row.key, true, true, 0), row.key).toBe(row.gap ? 'not_tracked' : 'empty');
+      expect(featureMeasurementState(row.key, true, false, 0), row.key).toBe('not_tracked');
+    }
+  });
+
   it('shows the exact value hidden by compact rounding', () => {
     expect(exactCount(6678)).toBe('6,678');
     expect(eventVolumeExplanation(6678, 12)).toContain('6,678 records from 12 device/browser IDs');
