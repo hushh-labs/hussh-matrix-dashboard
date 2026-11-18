@@ -13,8 +13,10 @@ describe('One feature SQL extraction', () => {
   it.each(cases)('preserves the prior complete query for %s / %s', (table,dateFilter,expected) => {
     const sql=oneFeatureUsageQuery({deviceKeySql,table,dateFilter});
     const addition="          WHEN event_name = 'mail_receipts_workspace_viewed' THEN 'receipts_workspace_viewed'\n";
-    expect(sql.split(addition)).toHaveLength(2);
-    expect(createHash('sha256').update(sql.replace(addition,'')).digest('hex')).toBe(expected);
+    const add="          WHEN event_name = 'one_location_sms_contact_add_result' THEN 'sms_contact_add'\n";
+    const remove="          WHEN event_name = 'one_location_sms_contact_remove_result' THEN 'sms_contact_remove'\n";
+    for(const entry of [addition,add,remove])expect(sql.split(entry)).toHaveLength(2);
+    expect(createHash('sha256').update(sql.replace(addition,'').replace(add,'').replace(remove,'')).digest('hex')).toBe(expected);
     expect(sql).toContain(`FROM ${table}`); expect(sql).toContain(`WHERE ${dateFilter}`);
   });
 });

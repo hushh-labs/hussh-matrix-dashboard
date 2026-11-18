@@ -11,6 +11,7 @@ interface FeatureUserBreakdownPanelProps {
   successes?: number | null;
   expectedErrors?: number | null;
   failures?: number | null;
+  failureLabel?: string;
   measurementNote?: string;
   activityDescription?: string;
   eventBreakdown?: OneFeatureEventCount[];
@@ -33,6 +34,7 @@ export function FeatureUserBreakdownPanel({
   successes,
   expectedErrors,
   failures,
+  failureLabel = 'Failed',
   measurementNote,
   activityDescription,
   eventBreakdown,
@@ -77,7 +79,7 @@ export function FeatureUserBreakdownPanel({
               {[
                 { label: 'Successful', value: successes },
                 { label: 'Canceled / blocked', value: expectedErrors },
-                { label: 'Failed', value: failures },
+                { label: failureLabel, value: failures },
                 { label: 'Result not reported', value: unclassifiedEvents(totalEvents, successes ?? null, expectedErrors ?? null, failures ?? null) },
               ].map(item => <div key={item.label} className="rounded-lg bg-canvas p-3"><dt>{item.label}</dt><dd className="mt-1 text-base font-semibold text-ink">{exactCount(item.value)}</dd></div>)}
             </dl>
@@ -90,7 +92,7 @@ export function FeatureUserBreakdownPanel({
             <div className="overflow-x-auto">
               <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="w-full text-left">
                 <caption className="mb-2 text-left font-semibold text-ink">Source events contributing to this row</caption>
-                <thead><tr className="text-muted"><th className="py-2 pr-3">Event name</th><th className="px-2 text-right">Records</th><th className="px-2 text-right">Success</th><th className="px-2 text-right">Canceled / no-op</th><th className="px-2 text-right">Failed</th></tr></thead>
+                <thead><tr className="text-muted"><th className="py-2 pr-3">Event name</th><th className="px-2 text-right">Records</th><th className="px-2 text-right">Success</th><th className="px-2 text-right">Canceled / no-op</th><th className="px-2 text-right">{failureLabel}</th></tr></thead>
                 <tbody>{eventBreakdown.map((event) => (
                   <tr key={event.eventName} className="border-t border-stroke">
                     <td className="py-2 pr-3 font-mono">{event.eventName}</td>

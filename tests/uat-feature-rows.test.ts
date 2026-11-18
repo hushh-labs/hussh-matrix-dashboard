@@ -23,3 +23,11 @@ it('keeps recorded Receipts workspace transitions separate from Inbox and absent
  expect(adaptUatFeatureRows([],expected).rows.find(x=>x.key==='receipts_workspace_viewed')).toMatchObject({state:'unavailable',counts:null});
  expect(()=>adaptUatFeatureRows([{...receipt,eventBreakdown:[{...receipt.eventBreakdown[0],eventName:'one_gmail_inbox_viewed'}]}],expected)).toThrow();
 });
+
+it('keeps single-contact Location results from the feature source without inventing older data',()=>{
+ const event={eventName:'one_location_sms_contact_add_result',signals:2,successes:1,expectedErrors:0,failures:1};
+ const row={featureKey:'sms_contact_add',accounts:1,devices:1,signals:2,successes:1,expectedErrors:0,failures:1,outcomeSignals:2,eventBreakdown:[event]};
+ const result=adaptUatFeatureRows([row],expected);
+ expect(result.rows.find(x=>x.key==='sms_contact_add')).toMatchObject({state:'measured',counts:{signals:2,failures:1}});
+ expect(result.rows.find(x=>x.key==='sms_contact_remove')).toMatchObject({state:'unavailable',counts:null});
+});

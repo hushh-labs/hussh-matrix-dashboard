@@ -102,6 +102,8 @@ const featureNotes: Record<string, string> = {
   location_viewed: 'Counts one_location_journey_action with action=location_share_viewed. Repeated view records count again; they do not mean a new share was sent or a new person joined.',
   check_in: 'Counts check-in events and journey action nearby_check_in_result. A Check-In may also emit a sharing confirmation, so feature rows overlap.',
   check_out: 'Counts events matching check_out. These record the end of a check-in, not a new sharing session.',
+  sms_contact_add: 'Counts single-contact add results. Success means the returned roster confirmed the contact; error means the client could not confirm the result, not necessarily that the server made no change. No contact details are recorded.',
+  sms_contact_remove: 'Counts single-contact removal results. Success means the returned roster confirmed removal; error means the client could not confirm the result, not necessarily that the server made no change. Bulk Circle changes are separate.',
   sms_safety: 'Counts one_location_sos_triggered records. An emitted trigger does not prove that an SMS was delivered.',
   request_location: 'Counts request-sent records and location_request journey actions, including approval, denial and fulfilment. Use the separate fulfilled-request KPI for confirmed fulfilment.',
   public_sharing: 'Counts public-link creation and public_link journey actions, including opens, shares and revocations. The total is not a count of new links.',

@@ -12,6 +12,8 @@ export const AGENT_MEASUREMENTS = [
   entry('location', 'live_sharing', event('one_location_share_confirmed'), ['one_location_share_confirmed']),
   entry('location', 'check_in', `${event('one_location_check_in_completed')} OR event_name LIKE '%check_in%' OR (${action('one_location_journey_action','nearby_check_in_result')})`, ['one_location_check_in_completed','one_location_journey_action']),
   entry('location', 'check_out', "event_name LIKE '%check_out%'", ['one_location_check_out_completed']),
+  entry('location', 'sms_contact_add', event('one_location_sms_contact_add_result'), ['one_location_sms_contact_add_result'], 'Emergency contact add results await verified new instrumentation; older changes cannot be inferred.'),
+  entry('location', 'sms_contact_remove', event('one_location_sms_contact_remove_result'), ['one_location_sms_contact_remove_result'], 'Emergency contact removal results await verified new instrumentation; older changes cannot be inferred.'),
   entry('location', 'sms_safety', event('one_location_sos_triggered'), ['one_location_sos_triggered']),
   entry('location', 'request_location', `${event('one_location_request_sent')} OR (${event('one_location_journey_action')} AND action LIKE 'location_request_%')`, ['one_location_request_sent','one_location_journey_action']),
   entry('location', 'public_sharing', `${event('one_location_public_link_created')} OR (${event('one_location_journey_action')} AND action LIKE 'public_link_%')`, ['one_location_public_link_created','one_location_journey_action']),

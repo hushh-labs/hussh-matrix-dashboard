@@ -16,6 +16,7 @@ export interface FeatureActivityRow {
   successes?: number | null;
   expectedErrors?: number | null;
   failures?: number | null;
+  failureLabel?: string;
   measured: boolean;
   badgeLabel: string;
   badgeClass: string;
@@ -46,6 +47,7 @@ export function FeatureActivityTable({ rows }: { rows: FeatureActivityRow[] }) {
       successes={row.measured ? row.successes : null}
       expectedErrors={row.measured ? row.expectedErrors : null}
       failures={row.measured ? row.failures : null}
+      failureLabel={row.failureLabel}
       activityDescription={featureActivityDescription(row.key)}
       measurementNote={featureMeasurementNote(row.key)}
       eventBreakdown={row.measured ? row.eventBreakdown : undefined}

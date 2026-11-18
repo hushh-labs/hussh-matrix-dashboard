@@ -1,11 +1,13 @@
 import { AGENT_MEASUREMENTS } from '../../lib/agent-measurement-contract.mjs';
 import { ONE_AGENT_DETAIL_MANIFEST, ONE_AGENT_DETAIL_MANIFEST_DIGEST, validateOneAgentDetail } from './one-agent-detail-contract';
 
+export const FEATURE_ONLY_LOCATION_KEYS = new Set(['sms_contact_add','sms_contact_remove']);
+
 /** Aggregate-only feature query rows. Location's UI uses a separate source,
  * so this feature-only result cannot assert Location values or full coverage. */
 export function adaptUatFeatureRows(rows:unknown, expected:{scopeDigest:string;period:{startDate:string;endDate:string;timezone:string}}) {
   if (!Array.isArray(rows) || rows.length>=2000) throw new Error('One feature rows unavailable');
-  const allowed=new Set(ONE_AGENT_DETAIL_MANIFEST.filter(v=>v.agent!=='location').map(v=>v.key));
+  const allowed=new Set(ONE_AGENT_DETAIL_MANIFEST.filter(v=>v.agent!=='location' || FEATURE_ONLY_LOCATION_KEYS.has(v.key)).map(v=>v.key));
   const mapped=new Map<string,{counts:Record<string,number>;eventBreakdown:Array<{eventName:string;signals:number;successes:number;expectedErrors:number;failures:number}>}>();
   const names=['accounts','devices','signals','successes','expectedErrors','failures','outcomeSignals'] as const;
   const number=(v:unknown)=>{
@@ -30,7 +32,7 @@ export function adaptUatFeatureRows(rows:unknown, expected:{scopeDigest:string;p
   }
   const result={version:'1',environment:'uat',scopeDigest:expected.scopeDigest,manifestDigest:ONE_AGENT_DETAIL_MANIFEST_DIGEST,
     period:expected.period,source:{kind:'ga4_export',coverage:'intraday_or_unknown',checkedAt:null,watermark:null},
-    rows:ONE_AGENT_DETAIL_MANIFEST.map(({agent,key})=>mapped.has(key) && agent!=='location'
+    rows:ONE_AGENT_DETAIL_MANIFEST.map(({agent,key})=>mapped.has(key) && (agent!=='location' || FEATURE_ONLY_LOCATION_KEYS.has(key))
       ? {agent,key,state:'measured',counts:mapped.get(key)!.counts,eventBreakdown:mapped.get(key)!.eventBreakdown}
       : {agent,key,state:'unavailable',counts:null,eventBreakdown:null})};
   return validateOneAgentDetail(result,{environment:'uat',scopeDigest:expected.scopeDigest,period:expected.period});

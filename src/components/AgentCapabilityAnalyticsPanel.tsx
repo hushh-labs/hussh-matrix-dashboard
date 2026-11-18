@@ -514,6 +514,8 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       badgeClass: 'bg-[#12b76a]/10 text-success',
       explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_out_completed"). Verified active in UAT & Production.',
     },
+    actionSpec('sms_contact_add', 'Emergency contact add results', ContactRound),
+    actionSpec('sms_contact_remove', 'Emergency contact removal results', ContactRound),
     {
       key: 'sms_safety',
       label: 'Save My Soul SMS',
@@ -630,7 +632,8 @@ export function AgentCapabilityAnalyticsPanel({
   ];
 
   const computedFeatures = specs.map((spec) => {
-    const locationMetric = capabilityKey === 'location'
+    const featureOnlyLocation = spec.key === 'sms_contact_add' || spec.key === 'sms_contact_remove';
+    const locationMetric = capabilityKey === 'location' && !featureOnlyLocation
       ? activeSummary?.locationAnalytics?.features?.find((item) => item.key === spec.key)
       : undefined;
     const featureUsageMetric = activeSummary?.featureUsage?.[spec.key];
@@ -650,7 +653,7 @@ export function AgentCapabilityAnalyticsPanel({
             + (locationMetric.failures ?? 0),
         }
       : featureUsageMetric;
-    const sourceAvailable = capabilityKey === 'location'
+    const sourceAvailable = capabilityKey === 'location' && !featureOnlyLocation
       ? Boolean(activeSummary?.locationBehaviorAvailable)
       : Boolean(activeSummary?.featureUsageAvailable);
     const state = featureMeasurementState(spec.key, sourceAvailable, instrumented, aggregateMetric?.signals, spec.status === 'gap');
@@ -894,6 +897,7 @@ export function AgentCapabilityAnalyticsPanel({
           successes: feature.resultCounts?.successes,
           expectedErrors: feature.resultCounts?.expectedErrors,
           failures: feature.resultCounts?.failures,
+          failureLabel: feature.key === 'sms_contact_add' || feature.key === 'sms_contact_remove' ? 'Not confirmed' : undefined,
         }))} />
       </div>
 

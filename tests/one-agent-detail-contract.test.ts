@@ -8,13 +8,13 @@ const payload = () => ({ version:'1', environment:'uat', scopeDigest:scope, mani
 const expected = { environment:'uat' as const, scopeDigest:scope, period };
 describe('proposed One agent-detail v1 contract', () => {
   it('accepts all catalogued feature rows, including measured zero and explicit unknown', () => {
-    const p = payload(); expect(ONE_AGENT_DETAIL_MANIFEST).toHaveLength(65);
+    const p = payload(); expect(ONE_AGENT_DETAIL_MANIFEST).toHaveLength(67);
     p.rows[0] = { ...p.rows[0], state:'unavailable', counts:null as any, eventBreakdown:null };
     p.rows[1].counts.accounts = null as any;
     expect(validateOneAgentDetail(p, expected)).toBe(p);
   });
   it('rejects an older 64-row payload rather than treating it as current coverage', () => {
-    const old=payload();old.rows=old.rows.filter(row=>row.key!=='receipts_workspace_viewed');
+    const old=payload();old.rows=old.rows.filter(row=>!['receipts_workspace_viewed','sms_contact_add','sms_contact_remove'].includes(row.key));
     expect(old.rows).toHaveLength(64);expect(()=>validateOneAgentDetail(old,expected)).toThrow();
   });
   it('accepts a separately scoped production payload', () => {

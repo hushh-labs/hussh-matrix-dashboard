@@ -14,6 +14,8 @@ export function oneFeatureUsageQuery({ deviceKeySql, table, dateFilter }: { devi
           WHEN event_name = 'one_location_check_in_completed' OR event_name LIKE '%check_in%' THEN 'check_in'
           WHEN event_name LIKE '%check_out%' THEN 'check_out'
           WHEN event_name = 'one_location_journey_action' AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action') = 'nearby_check_in_result' THEN 'check_in'
+          WHEN event_name = 'one_location_sms_contact_add_result' THEN 'sms_contact_add'
+          WHEN event_name = 'one_location_sms_contact_remove_result' THEN 'sms_contact_remove'
           WHEN event_name = 'one_location_sos_triggered' THEN 'sms_safety'
           WHEN event_name = 'one_location_request_sent' THEN 'request_location'
           WHEN event_name = 'one_location_public_link_created' THEN 'public_sharing'
