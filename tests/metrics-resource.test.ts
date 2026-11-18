@@ -30,6 +30,30 @@ describe('session metrics resources', () => {
     expect(fetcher).toHaveBeenLastCalledWith(url, expect.objectContaining({ headers: expect.objectContaining({ 'X-Metrics-Passive-Read': '1' }) }));
     expect(peekMetrics(url)).toBeNull();
   });
+  it('rechecks viewer-specific referrals on selection without retaining handles', async () => {
+    const url = '/api/analytics/one/referrals?board=individual&environment=production';
+    const fetcher = vi.fn().mockResolvedValueOnce(reply(7)).mockResolvedValueOnce(new Response('{}', { status: 403 }));
+    vi.stubGlobal('fetch', fetcher);
+    await readMetrics(url);
+    expect(peekMetrics(url)).toBeNull();
+    await expect(readMetrics(url)).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1][1].headers).not.toHaveProperty('X-Metrics-Passive-Read');
+    expect(peekMetrics(url)).toBeNull();
+  });
+  it('coalesces concurrent referral reads but fences an old session', async () => {
+    let resolve!: (response: Response) => void;
+    const fetcher = vi.fn(() => new Promise<Response>(yes => { resolve = yes; }));
+    vi.stubGlobal('fetch', fetcher);
+    const url = '/api/analytics/one/referrals?environment=uat';
+    const first = readMetrics(url), second = readMetrics(url);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    invalidateMetricsSession(); resolve(reply(7));
+    await expect(first).rejects.toThrow('Session changed');
+    await expect(second).rejects.toThrow('Session changed');
+    expect(peekMetrics(url)).toBeNull();
+  });
+
   it('logout prevents an in-flight response from repopulating a new session cache', async () => {
     let resolve!: (response: Response) => void;
     vi.stubGlobal('fetch', () => new Promise<Response>(yes => { resolve = yes; }));
