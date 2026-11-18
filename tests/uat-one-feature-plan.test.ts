@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { buildUatFeaturePlan } from '../src/server/uat-one-feature-plan';
+import { buildUatFeaturePlan, buildUatLocationPlan } from '../src/server/uat-one-feature-plan';
 const config={project:'hushh-pda-uat',dataset:'analytics_533362555',webHost:'uat.one.hushh.ai',timezone:'UTC',
  startDate:'2026-11-18',endDate:'2026-11-18',maxPeriodDays:7};
 it('builds the fixed UAT surface and deduplicated daily/intraday suffix plan',()=>{
@@ -8,6 +8,13 @@ it('builds the fixed UAT surface and deduplicated daily/intraday suffix plan',()
  expect(p.query).toContain("_TABLE_SUFFIX IN ('20261118', 'intraday_20261118')");
  expect(p.query).toContain('INFORMATION_SCHEMA.TABLES');expect(p.query).toContain("= 'uat'");
  expect(p.query).not.toContain("'one.hushh.ai'");
+});
+it('builds a distinct Location query under the same fixed UAT surface and source range',()=>{
+ const feature=buildUatFeaturePlan(config), location=buildUatLocationPlan(config);
+ expect(location.queryHash).not.toBe(feature.queryHash); expect(location.query).toContain("'feature_daily'");
+ expect(location.query).toContain("'one_location_sos_triggered'"); expect(location.query).toContain("= 'uat'");
+ expect(location.query).toContain("_TABLE_SUFFIX IN ('20261118', 'intraday_20261118')");
+ expect(()=>buildUatLocationPlan({...config,project:'hushh-ai-prod'})).toThrow();
 });
 it('rejects non-UAT, invalid identity, date and unapproved range',()=>{
  for (const change of [{project:'hushh-ai-prod'},{webHost:'one.hushh.ai'},{dataset:'analytics_1`; DROP TABLE x'},

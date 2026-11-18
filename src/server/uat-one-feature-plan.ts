@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
 import { oneSurfaceSql, ONE_WEB_HOSTS, ONE_REPORTING_SCOPE_VERSION } from './one-scope.mjs';
 import { oneFeatureUsageQuery } from './one-feature-usage-query';
+import { oneLocationBehaviorQuery } from './one-location-behavior-query';
 import { reportingTimezone } from './reports/contracts';
 
 /** Disconnected plan builder. Configuration must come from an independently
  * approved, verified UAT source policy; it is never a public request body. */
-export function buildUatFeaturePlan(config: { project:string; dataset:string; webHost:string; timezone:string;
-  startDate:string; endDate:string; maxPeriodDays:number }) {
+type UatPlanConfig = { project:string; dataset:string; webHost:string; timezone:string;
+  startDate:string; endDate:string; maxPeriodDays:number };
+function buildUatPlan(config: UatPlanConfig, location:boolean) {
   const validDay=(v:string)=>/^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0,10)===v;
   if (!config || config.project!=='hushh-pda-uat' || !/^analytics_\d+$/.test(config.dataset)
     || !ONE_WEB_HOSTS.uat.includes(config.webHost) || reportingTimezone(config.timezone)!==config.timezone
@@ -28,9 +30,12 @@ export function buildUatFeaturePlan(config: { project:string; dataset:string; we
           AND NOT STARTS_WITH(table_name, 'events_intraday_')
       )
     )) AND ${oneSurfaceSql(config.webHost,'uat')}`;
-  const query=oneFeatureUsageQuery({deviceKeySql:"CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id)",
+  const query=(location ? oneLocationBehaviorQuery : oneFeatureUsageQuery)({deviceKeySql:"CONCAT(COALESCE(platform, 'UNKNOWN'), ':', user_pseudo_id)",
     table:`\`${config.project}.${config.dataset}.events_*\``,dateFilter});
   return Object.freeze({ query, queryHash:createHash('sha256').update(query).digest('hex'), sourceProject:config.project,
     dataset:config.dataset, environment:'uat' as const, reportingScopeVersion:ONE_REPORTING_SCOPE_VERSION,
     startDate:config.startDate,endDate:config.endDate,timezone:config.timezone });
 }
+export function buildUatFeaturePlan(config:UatPlanConfig) { return buildUatPlan(config,false); }
+/** Separate Location plan, not admitted by the feature-only worker. */
+export function buildUatLocationPlan(config:UatPlanConfig) { return buildUatPlan(config,true); }
