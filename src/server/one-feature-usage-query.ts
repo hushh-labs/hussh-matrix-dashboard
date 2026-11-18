@@ -65,6 +65,7 @@ export function oneFeatureUsageQuery({ deviceKeySql, table, dateFilter }: { devi
           WHEN event_name IN ('agent_pkm_context_resolved', 'one_memory_context_resolved') THEN 'context_resolved'
           WHEN event_name = 'one_memory_action' THEN CONCAT('memory_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
           WHEN event_name = 'one_wallet_action' THEN CONCAT('wallet_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
+          WHEN event_name = 'one_calendar_invitation_response' THEN 'calendar_invitation_response'
           WHEN event_name = 'one_calendar_action' THEN CONCAT('calendar_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
           WHEN event_name = 'one_kyc_action' THEN CONCAT('kyc_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))
           WHEN event_name = 'one_crm_action' THEN CONCAT('crm_', (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'action'))

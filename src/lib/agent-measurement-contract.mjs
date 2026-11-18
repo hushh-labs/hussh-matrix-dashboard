@@ -60,6 +60,7 @@ export const AGENT_MEASUREMENTS = [
   entry('memory', 'context_resolved', any('agent_pkm_context_resolved','one_memory_context_resolved'), ['agent_pkm_context_resolved','one_memory_context_resolved']),
   ...['capture_prepared','capture_saved','detail_edited','detail_deleted','export_saved','auto_save_changed'].map(value => entry('memory',`memory_${value}`,action('one_memory_action',value),['one_memory_action'])),
   ...['card_added','card_deleted'].map(value => entry('wallet',`wallet_${value}`,action('one_wallet_action',value),['one_wallet_action'])),
+  entry('calendar', 'calendar_invitation_response', event('one_calendar_invitation_response'), ['one_calendar_invitation_response'], 'Calendar invitation response records await verified new instrumentation; earlier responses cannot be inferred.'),
   ...['connected','disconnected','chat_opened'].map(value => entry('calendar',`calendar_${value}`,action('one_calendar_action',value),['one_calendar_action'])),
   ...['access_approved','access_denied','redraft_completed','reply_sent','reply_rejected','workflow_refreshed'].map(value => entry('kyc',`kyc_${value}`,action('one_kyc_action',value),['one_kyc_action'], 'These KYC actions are not tracked yet. Workflow usage cannot be measured from this row.')),
   ...['record_created','record_updated','record_deleted'].map(value => entry('connected_systems',`crm_${value}`,action('one_crm_action',value),['one_crm_action'])),

@@ -468,6 +468,7 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     actionSpec('wallet_card_deleted', 'Card removal activity', Wallet),
   ],
   calendar: [
+    actionSpec('calendar_invitation_response', 'Calendar invitation response records', Calendar),
     actionSpec('calendar_connected', 'Calendar connection results', Calendar),
     actionSpec('calendar_disconnected', 'Calendar disconnection results', Calendar),
     actionSpec('calendar_chat_opened', 'Opened Calendar assistance', Calendar),

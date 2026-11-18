@@ -31,3 +31,12 @@ it('keeps single-contact Location results from the feature source without invent
  expect(result.rows.find(x=>x.key==='sms_contact_add')).toMatchObject({state:'measured',counts:{signals:2,failures:1}});
  expect(result.rows.find(x=>x.key==='sms_contact_remove')).toMatchObject({state:'unavailable',counts:null});
 });
+
+it('keeps Calendar response observations separate from connection outcomes and email delivery',()=>{
+ const event={eventName:'one_calendar_invitation_response',signals:2,successes:0,expectedErrors:0,failures:0};
+ const row={featureKey:'calendar_invitation_response',accounts:1,devices:1,signals:2,successes:0,expectedErrors:0,failures:0,outcomeSignals:0,eventBreakdown:[event]};
+ const result=adaptUatFeatureRows([row],expected);
+ expect(result.rows.find(x=>x.key==='calendar_invitation_response')).toMatchObject({state:'measured',counts:{signals:2,outcomeSignals:0}});
+ expect(result.rows.find(x=>x.key==='calendar_connected')).toMatchObject({state:'unavailable',counts:null});
+ expect(adaptUatFeatureRows([],expected).rows.find(x=>x.key==='calendar_invitation_response')).toMatchObject({state:'unavailable',counts:null});
+});
