@@ -53,6 +53,19 @@ export class StagedUatDetailQuery {
       read(reportPath('policy','current')),read(reportPath('jobs',job.id)),read(reportPath('controls',job.request.reportId))]);
     const now=this.now(), p=detailPolicy(raw,now,recovery); current(live,job,control,global,p,now,recovery); return {p,now};
   }
+  /** Internal status for one authorized worker step; no provider I/O. */
+  async inspect(job:ReportJob) {
+    const readState=async () => this.store.transaction(async tx=>{
+      const i=await tx.get<Intent>(reportPath('uatDetailIntents',job.id));
+      const recovery=!!i && ['started','dispatching','complete'].includes(i.state);
+      const g=await this.gate(job,p=>tx.get(p),recovery);
+      if (!i) return 'new' as const;
+      this.validateIntent(i,job,g.p,g.now,recovery);
+      if (!['prepared','reserving','reserved','started','dispatching','complete'].includes(i.state)) return fail();
+      return i.state;
+    });
+    await readState(); await this.authority(job); return readState();
+  }
   /** Preflight and native free estimate only. It never starts a paid job. */
   async prepare(job:ReportJob, sql:string, signal:AbortSignal) {
     signal.throwIfAborted();
