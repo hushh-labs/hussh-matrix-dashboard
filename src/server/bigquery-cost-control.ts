@@ -34,6 +34,8 @@ export interface QueryBudgetReservation {
   day: string;
   bytes: number;
   statements: number;
+  /** Optional immutable intent binding for new staged jobs. */
+  binding?: string;
   restoration?: RestorationGrant;
 }
 export interface QueryBudgetStore {
@@ -111,10 +113,31 @@ export class FirestoreQueryBudgetStore implements QueryBudgetStore {
       }));
   }
 
+  /** Read-only reconciliation for a staged, bound reservation. Failure or
+   * unknown acknowledgement never authorizes submission. */
+  async confirmBound(reservation: QueryBudgetReservation): Promise<void> {
+    if (reservation.restoration || !/^[a-f0-9]{64}$/.test(reservation.binding ?? '')
+      || !/^\d{4}-\d{2}-\d{2}$/.test(reservation.day) || !Number.isFinite(Date.parse(reservation.day))
+      || new Date(reservation.day).toISOString().slice(0,10) !== reservation.day
+      || !/^metrics_[a-zA-Z0-9_-]+$/.test(reservation.id) || reservation.statements !== 1
+      || !Number.isSafeInteger(reservation.bytes) || reservation.bytes < 1 || reservation.bytes > BIGQUERY_COST_LIMITS.bytesPerStatement)
+      throw new BigQueryCostControlError('Invalid bound reservation.');
+    const db = await this.getDatabase(), dayRef = db.doc(`metricsQueryBudgetDays/${reservation.day}`);
+    const reservationRef = dayRef.collection('reservations').doc(reservation.id);
+    await db.runTransaction(async tx => {
+      const [day, row] = await tx.getAll(dayRef, reservationRef), total = day.data(), value = row.data();
+      if (!day.exists || !row.exists || total?.policyVersion !== 1 || !Number.isSafeInteger(total.bytes)
+        || total.bytes < reservation.bytes || total.bytes > BIGQUERY_COST_LIMITS.bytesPerUtcDay
+        || !Number.isSafeInteger(total.statements) || total.statements < 1 || total.statements > BIGQUERY_COST_LIMITS.statementsPerUtcDay
+        || value?.bytes !== reservation.bytes || value?.statements !== 1 || value?.binding !== reservation.binding)
+        throw new BigQueryCostControlError('Bound reservation could not be verified.');
+    });
+  }
+
   async reserve(reservation: QueryBudgetReservation): Promise<void> {
     if (reservation.restoration) {
       const restore = currentDailyOneRefresh()?.store ?? currentContinuation()?.store ?? await legacyRestoration();
-      if (!restore || reservation.statements !== 1 || reservation.id !== reservation.restoration.id
+      if (!restore || reservation.binding !== undefined || reservation.statements !== 1 || reservation.id !== reservation.restoration.id
         || reservation.bytes !== reservation.restoration.bytes) throw new BigQueryCostControlError();
       await restore.reserve(reservation.restoration);
       return;
@@ -124,6 +147,9 @@ export class FirestoreQueryBudgetStore implements QueryBudgetStore {
       || !Number.isSafeInteger(reservation.statements) || reservation.statements < 1
       || reservation.statements > BIGQUERY_COST_LIMITS.statementsPerRequest
       || !Number.isSafeInteger(reservation.bytes) || reservation.bytes < 1
+      || (reservation.binding !== undefined && (!/^[a-f0-9]{64}$/.test(reservation.binding)
+        || reservation.statements !== 1 || !Number.isFinite(Date.parse(reservation.day))
+        || new Date(reservation.day).toISOString().slice(0,10) !== reservation.day))
       || reservation.bytes > reservation.statements * BIGQUERY_COST_LIMITS.bytesPerStatement) {
       throw new BigQueryCostControlError('Invalid query budget reservation.');
     }
@@ -137,7 +163,7 @@ export class FirestoreQueryBudgetStore implements QueryBudgetStore {
       }
       if (reservationSnapshot.exists) {
         const existing = reservationSnapshot.data();
-        if (existing?.bytes !== reservation.bytes || existing?.statements !== reservation.statements) {
+        if (existing?.bytes !== reservation.bytes || existing?.statements !== reservation.statements || existing?.binding !== reservation.binding) {
           throw new BigQueryCostControlError('Query reservation does not match.');
         }
         return;
@@ -156,7 +182,8 @@ export class FirestoreQueryBudgetStore implements QueryBudgetStore {
       }
       transaction.set(dayRef, { policyVersion: 1, bytes: bytes + reservation.bytes,
         statements: statements + reservation.statements });
-      transaction.create(reservationRef, { bytes: reservation.bytes, statements: reservation.statements });
+      transaction.create(reservationRef, { bytes: reservation.bytes, statements: reservation.statements,
+        ...(reservation.binding !== undefined ? { binding: reservation.binding } : {}) });
     });
   }
 }
