@@ -4,6 +4,8 @@ import { reportPath } from '../src/server/reports/store';
 import { UatFeaturePartialPublisher } from '../src/server/reports/uat-feature-partial-publication';
 import { UatFeaturePartialReader } from '../src/server/reports/uat-feature-partial-reader';
 import { MemoryReportStore } from './helpers/metrics-report-memory-store';
+import { UatFeatureLifecycle } from '../src/server/reports/uat-feature-lifecycle';
+import { uatFeatureManifest } from '../src/server/reports/uat-feature-manifest';
 const now=Date.parse('2026-11-19T12:00:00Z');
 function fixture() {
  const store=new MemoryReportStore(), control={enabled:true,revision:1,sourceGeneration:'a'.repeat(64),scopeDigest:'b'.repeat(64),definitionVersion:'1',freshnessMs:1000,staleMs:2000};
@@ -75,4 +77,49 @@ it('fails closed on disabled, wrong scope, stale publication, proof drift or rev
   await expect(reader.read(f.job,mode==='scope'?{...access,scopeDigest:'8'.repeat(64)}:access)).rejects.toThrow();
   expect(f.store.data.get(reportPath('heads','legacy-sentinel'))).toEqual({publication:'unchanged'});
  }
+});
+
+it('completes a proof-bound partial report once and reads it under quota after lease expiry',async()=>{
+ const f=fixture(), access={subjectHash:'9'.repeat(64),scopeDigest:f.job.control.scopeDigest};
+ const config={project:'hushh-pda-uat',dataset:'analytics_533362555',webHost:'uat.one.hushh.ai',timezone:'UTC',startDate:'2026-11-18',endDate:'2026-11-18',maxPeriodDays:7};
+ const {manifest,manifestDigest}=uatFeatureManifest(config);
+ f.job.lane='custom'; f.job.requesterHash='8'.repeat(64);
+ f.source.queryHash=manifest.queryHash; f.proof.queryHash=manifest.queryHash; f.proof.policyDigest=digest(f.source);
+ f.store.data.set(reportPath('jobs',f.job.id),f.job); f.store.data.set(reportPath('policy','one-agent-detail-bq'),f.source);
+ f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),f.proof);
+ f.store.data.set(reportPath('uatDetailIntents',f.job.id),{state:'complete',jobId:f.job.id,binding:f.proof.binding,policyDigest:f.proof.policyDigest});
+ f.store.data.set(reportPath('policy','one-agent-detail-manifest'),{approved:true,enabled:true,config,manifestDigest});
+ f.store.data.set(reportPath('heads',f.job.key),{sequence:1,activeJob:f.job.id,publication:null});
+ f.store.data.set(reportPath('capacity','custom'),{active:1});
+ f.store.data.set(reportPath('subjectCapacity',digest(['custom',f.job.requesterHash])),{active:1});
+ await f.publisher.publish(f.job,new AbortController().signal);
+ const lifecycle=new UatFeatureLifecycle(f.store,f.saga,f.auth,()=>now,true);
+ f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),{...f.proof,binding:'4'.repeat(64)});
+ await expect(lifecycle.complete(f.job,access)).rejects.toThrow();
+ f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),f.proof);
+ f.store.data.set(reportPath('policy','one-agent-detail-bq'),{...f.source,queryHash:'4'.repeat(64)});
+ await expect(lifecycle.complete(f.job,access)).rejects.toThrow();
+ f.store.data.set(reportPath('policy','one-agent-detail-bq'),f.source);
+ await expect(lifecycle.complete(f.job,access)).resolves.toMatchObject({state:'partial'});
+ expect(f.store.data.get(reportPath('capacity','custom'))).toEqual({active:0});
+ await expect(lifecycle.complete(f.job,access)).rejects.toThrow();
+ expect(f.store.data.get(reportPath('capacity','custom'))).toEqual({active:0});
+ await expect(lifecycle.read(f.job,access)).resolves.toMatchObject({state:'partial',freshness:'unknown'});
+ f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),{...f.proof,queryHash:'4'.repeat(64)});
+ await expect(lifecycle.read(f.job,access)).rejects.toThrow();
+ f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),f.proof);
+ f.store.data.set(reportPath('policy','one-agent-detail-manifest'),{approved:true,enabled:true,config,manifestDigest:'0'.repeat(64)});
+ await expect(lifecycle.read(f.job,access)).rejects.toThrow();
+ f.store.data.set(reportPath('policy','one-agent-detail-manifest'),{approved:true,enabled:true,config,manifestDigest});
+ const lateReader=new UatFeatureLifecycle(f.store,f.saga,f.auth,()=>now+2001,true);
+ await expect(lateReader.read(f.job,access)).rejects.toThrow();
+ const quotaKey=digest([access.subjectHash,'read',Math.floor(now/60000)]);
+ f.store.data.set(reportPath('quotas',quotaKey),{count:10,windowEndsAt:now+60000});
+ await expect(lifecycle.read(f.job,access)).rejects.toThrow('quota');
+ f.store.data.set(reportPath('quotas',quotaKey),{count:0,windowEndsAt:now+60000});
+ const denied=new UatFeatureLifecycle(f.store,f.saga,async()=>false,()=>now,true);
+ await expect(denied.read(f.job,access)).rejects.toThrow('unauthorized');
+ f.store.data.set(reportPath('controls',f.job.request.reportId),{...f.job.control,enabled:false});
+ await expect(lifecycle.read(f.job,access)).rejects.toThrow();
+ expect(f.store.data.get(reportPath('heads','legacy-sentinel'))).toEqual({publication:'unchanged'});
 });
