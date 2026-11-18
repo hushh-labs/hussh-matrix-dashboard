@@ -12,7 +12,7 @@ function fixture() {
  let time=now; const store=new MemoryReportStore(), db=new DB(), canonical=new FirestoreQueryBudgetStore(db as any);
  const policy={approved:true,computeEnabled:true,quotaWindowMs:60000,readRequests:10,statusRequests:10,computeRequests:10,customCapacity:2,scheduledCapacity:0,customPerSubjectCapacity:1,maxPeriodDays:90,leaseMs:60000,jobLifetimeMs:120000,maxSnapshotBytes:900000};
  const control={enabled:true,revision:1,sourceGeneration:'a'.repeat(64),scopeDigest:'b'.repeat(64),definitionVersion:'1',freshnessMs:1000,staleMs:2000};
- const job={id:'c'.repeat(64),key:'d'.repeat(64),status:'running',fence:1,workerHash:'e'.repeat(64),leaseUntil:now+60000,expiresAt:now+120000,control,
+ const job={id:'c'.repeat(64),key:'d'.repeat(64),status:'running',fence:1,workerHash:'e'.repeat(64),leaseUntil:now+60000,expiresAt:now+120000,sourceStarted:true,control,
   request:{reportId:'one.agent-detail-uat',startDate:'2026-11-18',endDate:'2026-11-18',timezone:'UTC'}} as any;
  const approved={approved:true,enabled:true,environment:'uat',project:'hushh-ai-prod',location:'US',queryHash:hash(sql),referenceDigest:'f'.repeat(64),sourceGeneration:control.sourceGeneration,scopeDigest:control.scopeDigest,startDate:'2026-11-18',endDate:'2026-11-18',timezone:'UTC',expiresAt:now+60000,maxBytes:1000};
  store.data.set(reportPath('policy','current'),policy);store.data.set(reportPath('policy','one-agent-detail-bq'),approved);
@@ -24,7 +24,9 @@ function fixture() {
 describe('isolated staged UAT detail query prototype',()=>{
  it('fails closed without explicit policy or compute permission before native work',async()=>{
   const f=fixture();f.store.data.delete(reportPath('policy','one-agent-detail-bq'));
-  await expect(f.saga.prepare(f.job,sql,new AbortController().signal)).rejects.toThrow();expect(f.native.estimate).not.toHaveBeenCalled();expect(f.native.submit).not.toHaveBeenCalled();
+  const auth=vi.fn(async()=>true), saga=new StagedUatDetailQuery(f.store,f.canonical,f.native,auth,()=>now);
+  await expect(saga.prepare(f.job,sql,new AbortController().signal)).rejects.toThrow();expect(auth).not.toHaveBeenCalled();
+  expect(f.native.estimate).not.toHaveBeenCalled();expect(f.native.submit).not.toHaveBeenCalled();
  });
  it('reserves the canonical ledger before a single submission and never resubmits on 404',async()=>{
   const f=fixture();await f.saga.prepare(f.job,sql,new AbortController().signal);await expect(f.saga.reserve(f.job)).resolves.toEqual({state:'reserved'});
@@ -65,6 +67,15 @@ describe('isolated staged UAT detail query prototype',()=>{
   expect(f.native.submit).not.toHaveBeenCalled();
   expect((f.store.data.get(reportPath('uatDetailIntents',f.job.id)) as any).state).toBe('started');
  });
+ it('samples the worker clock after delayed transaction reads',async()=>{
+  const f=fixture(); let armed=false, clock=now;
+  const delayed={transaction:<T>(fn:(tx:any)=>Promise<T>)=>f.store.transaction(tx=>fn({...tx,get:async(path:string)=>{
+    const value=await tx.get(path); if(armed && path===reportPath('policy','current')) clock=now+60001; return value;
+  }}))};
+  const saga=new StagedUatDetailQuery(delayed,f.canonical,f.native,async()=>true,()=>clock);
+  await saga.prepare(f.job,sql,new AbortController().signal);await saga.reserve(f.job);armed=true;
+  await expect(saga.submit(f.job,sql,new AbortController().signal)).rejects.toThrow();expect(f.native.submit).not.toHaveBeenCalled();
+ });
  it('holds a lost reservation acknowledgment until an exact read-only confirmation',async()=>{
   const f=fixture(); const budget={reserve:vi.fn(async(r:any)=>{await f.canonical.reserve(r);throw Error('lost ack');}),confirmBound:vi.fn((r:any)=>f.canonical.confirmBound(r))};
   const saga=new StagedUatDetailQuery(f.store,budget,f.native,async()=>true,()=>now);await saga.prepare(f.job,sql,new AbortController().signal);
@@ -96,6 +107,20 @@ describe('isolated staged UAT detail query prototype',()=>{
   const path=reportPath('uatDetailIntents',f.job.id), intent=f.store.data.get(path) as any;
   f.store.data.set(path,{...intent,bytes:99});await expect(f.saga.submit(f.job,sql,new AbortController().signal)).rejects.toThrow();
   expect(f.native.submit).not.toHaveBeenCalled();
+ });
+ it('allows a newly fenced worker to reconcile after midnight without another submission or refund',async()=>{
+  const f=fixture();await f.saga.prepare(f.job,sql,new AbortController().signal);await f.saga.reserve(f.job);await f.saga.submit(f.job,sql,new AbortController().signal);
+  const id=f.native.submit.mock.calls[0][0].id, later=Date.parse('2026-11-20T00:01:00Z'); f.time(later);
+  const renewed={...f.job,fence:2,workerHash:'f'.repeat(64),leaseUntil:later+60000}; f.store.data.set(reportPath('jobs',f.job.id),renewed);
+  f.native.lookup.mockResolvedValueOnce(null); await expect(f.saga.recover(renewed)).resolves.toEqual({state:'uncertain'});
+  f.native.lookup.mockResolvedValueOnce({id,queryHash:hash(sql),project:'hushh-ai-prod',location:'US',useLegacySql:false,maximumBytesBilled:100,state:'DONE',error:false,billed:80,endedAt:now+1000});
+  await expect(f.saga.recover(renewed)).resolves.toEqual({state:'complete',billed:80,endedAt:now+1000});
+  expect(f.native.submit).toHaveBeenCalledOnce();expect(f.db.values.get('metricsQueryBudgetDays/2026-11-19')).toMatchObject({bytes:100,statements:1});
+ });
+ it('does not recover with a stale or unauthorized worker fence',async()=>{
+  const f=fixture();await f.saga.prepare(f.job,sql,new AbortController().signal);await f.saga.reserve(f.job);await f.saga.submit(f.job,sql,new AbortController().signal);
+  f.store.data.set(reportPath('jobs',f.job.id),{...f.job,fence:2,workerHash:'f'.repeat(64)});
+  await expect(f.saga.recover(f.job)).rejects.toThrow(); expect(f.native.lookup).not.toHaveBeenCalled();
  });
  it('reconciles only exact DONE metadata within the per-job billed bound',async()=>{
   const f=fixture();await f.saga.prepare(f.job,sql,new AbortController().signal);await f.saga.reserve(f.job);await f.saga.submit(f.job,sql,new AbortController().signal);
