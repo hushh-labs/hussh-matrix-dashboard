@@ -897,3 +897,27 @@ test('filters registered actions and inspects limited activity without claiming 
   await expect(page.getByRole('region', { name: 'All agent activity' }).getByRole('status')).toContainText('collection limit');
   expect(state.contacts[0].firstValueAt).toBeNull();
 });
+
+test('UAT directory reads only when requested and advances one page per action', async ({ page }) => {
+  let calls = 0;
+  await mockPlg(page, false, false, (input, result) => {
+    calls++;
+    return { ...result, version: 2, environment: 'uat', customerReporting: false, deliveryAuthorized: false,
+      rows: [], nextCursor: input.cursor ? null : 'page-two.' + 'b'.repeat(64) } as PlgAudiencePage;
+  });
+  await page.goto('/plg/uat/workspace');
+  await expect(page.getByText('Apply filters to load the connected agent catalog.')).toBeVisible();
+  expect(calls).toBe(0);
+  await page.getByRole('button', { name: 'Apply filters' }).click();
+  await expect(page.getByText('More accounts remain; continue searching below.', { exact: false })).toBeVisible();
+  expect(calls).toBe(1);
+  await page.getByLabel('Task status').selectOption('failed');
+  await expect(page.getByText('Apply filters to load results.')).toBeVisible();
+  expect(calls).toBe(1);
+  await page.getByRole('button', { name: 'Apply filters' }).click();
+  await expect(page.getByText('More accounts remain; continue searching below.', { exact: false })).toBeVisible();
+  expect(calls).toBe(2);
+  await page.getByRole('button', { name: 'Page 2', exact: true }).click();
+  await expect(page.getByText('End of results.', { exact: false })).toBeVisible();
+  expect(calls).toBe(3);
+});

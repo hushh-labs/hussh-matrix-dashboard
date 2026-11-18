@@ -8,6 +8,9 @@ import { PlgService, preferenceToken, signValue, type PlgRuntime } from '../src/
 import { accountHash, enroll, registerPlgCatalog } from '../src/server/plg/engine';
 import { applyDeliveryEvent } from '../src/server/plg/delivery-events';
 import * as audienceSource from '../src/server/plg/one-audience';
+import * as admissionRuntime from '../src/server/plg/uat-audience-admission-runtime';
+import { MemoryReportStore } from './helpers/metrics-report-memory-store';
+import { reportPath } from '../src/server/reports/store';
 import * as evidenceSource from '../src/server/plg/one-source';
 import { PLG_SYNC_REQUEST_TIMEOUT_MS } from '../src/lib/plg-budgets.mjs';
 import { workProfileWorkspaceMember } from '../src/server/plg/workspace-access';
@@ -41,6 +44,12 @@ const input = {
   internal: false,
 };
 let store: MemoryPlgStore;
+function mockAllowedAdmission() {
+  const limits = new MemoryReportStore(); limits.data.set(reportPath('policy','uat-audience-admission'),
+    { approved:true, enabled:true, revision:1, dailyGlobal:10, dailyViewer:10, concurrentGlobal:2, concurrentViewer:2 });
+  vi.spyOn(admissionRuntime, 'uatAudienceAdmissionRuntime').mockReturnValue({ store:limits, key:'k'.repeat(40) });
+}
+
 function app(runtime = config, member: (email: string) => boolean = () => false) {
   const server = express();
   server.use(
@@ -53,17 +62,57 @@ function app(runtime = config, member: (email: string) => boolean = () => false)
   server.use(express.urlencoded({ extended: false }));
   // This header simulates an already authenticated session only in this test app.
   server.use((req, _res, next) => {
-    if (req.get('Test-User')) (req as any).sessionUser = { email: req.get('Test-User') };
+    if (req.get('Test-User')) (req as any).sessionUser = { email: req.get('Test-User'), exp: Math.floor(Date.now() / 1000) + 3600 };
     next();
   });
   registerPlgRoutes(server, false, new PlgService(store, runtime), member);
   return server;
 }
 describe('Private PLG API boundaries', () => {
+  it('fails closed without admission configuration on either UAT entry', async () => {
+    for (const [key, value] of Object.entries({ GOOGLE_CLOUD_PROJECT:'hushh-ai-prod', PLG_UAT_RUNTIME:'', PLG_PUBLIC_ORIGIN:'https://metrics.hussh.ai',
+      PLG_FIRESTORE_PROJECT:'hushh-ai-prod', PLG_FIRESTORE_DATABASE:'one-plg-production', PLG_UAT_VIEW_ENABLED:'true', METRICS_UAT_AUDIENCE_ADMISSION_ENABLED:'false' })) vi.stubEnv(key, value);
+    const source = vi.spyOn(audienceSource,'readUatAudience'); const server = app();
+    expect((await request(server).post('/api/plg/uat/audience').set('Test-User','operator@example.invalid').set('Origin',config.origin).send({})).status).toBe(503);
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT','hushh-pda-uat'); vi.stubEnv('PLG_UAT_RUNTIME','uat');
+    expect((await request(server).post('/api/plg/audience').set('Test-User','operator@example.invalid').set('Origin',config.origin).send({})).status).toBe(503);
+    expect(source).not.toHaveBeenCalled();
+  });
+  it('shares the admitted UAT page cap across both UAT route entries', async () => {
+    for (const [key, value] of Object.entries({ GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '', PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai',
+      PLG_FIRESTORE_PROJECT: 'hushh-ai-prod', PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_UAT_VIEW_ENABLED: 'true' })) vi.stubEnv(key, value);
+    const limits = new MemoryReportStore();
+    limits.data.set(reportPath('policy','uat-audience-admission'), { approved:true, enabled:true, revision:1,
+      dailyGlobal:1, dailyViewer:1, concurrentGlobal:1, concurrentViewer:1 });
+    vi.spyOn(admissionRuntime, 'uatAudienceAdmissionRuntime').mockReturnValue({ store: limits, key: 'k'.repeat(40) });
+    const source = vi.spyOn(audienceSource, 'readUatAudience').mockResolvedValue({ environment:'uat', rows:[] } as any);
+    const server = app();
+    const first = await request(server).post('/api/plg/uat/audience').set('Test-User','operator@example.invalid').set('Origin',config.origin).send({});
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat'); vi.stubEnv('PLG_UAT_RUNTIME', 'uat');
+    const second = await request(server).post('/api/plg/audience').set('Test-User','operator@example.invalid').set('Origin',config.origin).send({});
+    expect(first.status).toBe(200); expect(second.status).toBe(503); expect(source).toHaveBeenCalledOnce();
+  });
+
+  it('withholds an admitted UAT page when workspace membership changes during the read', async () => {
+    for (const [key, value] of Object.entries({ GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '',
+      PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai', PLG_FIRESTORE_PROJECT: 'hushh-ai-prod',
+      PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_UAT_VIEW_ENABLED: 'true' })) vi.stubEnv(key, value);
+    const limits = new MemoryReportStore(); limits.data.set(reportPath('policy','uat-audience-admission'),
+      { approved:true, enabled:true, revision:1, dailyGlobal:1, dailyViewer:1, concurrentGlobal:1, concurrentViewer:1 });
+    vi.spyOn(admissionRuntime, 'uatAudienceAdmissionRuntime').mockReturnValue({ store:limits, key:'k'.repeat(40) });
+    let member = true;
+    const source = vi.spyOn(audienceSource, 'readUatAudience').mockImplementation(async () => {
+      member = false; return { environment:'uat', rows:[] } as any;
+    });
+    const result = await request(app(config, () => member)).post('/api/plg/uat/audience')
+      .set('Test-User','member@example.invalid').set('Origin',config.origin).send({});
+    expect(result.status).toBe(503); expect(source).toHaveBeenCalledOnce();
+  });
   it('serves a separate UAT directory to workspace members without opening the Production store', async () => {
     for (const [key, value] of Object.entries({ GOOGLE_CLOUD_PROJECT: 'hushh-ai-prod', PLG_UAT_RUNTIME: '',
       PLG_DEV_RUNTIME: '', PLG_UAT_VIEW_ENABLED: 'true', PLG_FIRESTORE_PROJECT: 'hushh-ai-prod',
       PLG_FIRESTORE_DATABASE: 'one-plg-production', PLG_PUBLIC_ORIGIN: 'https://metrics.hussh.ai' })) vi.stubEnv(key, value);
+    mockAllowedAdmission();
     const read = vi.spyOn(audienceSource, 'readUatAudience').mockResolvedValue({ environment: 'uat', rows: [],
       deliveryAuthorized: false, customerReporting: false } as any);
     const productionRead = vi.spyOn(audienceSource, 'readOneAudience');
@@ -244,6 +293,7 @@ describe('Private PLG API boundaries', () => {
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'hushh-pda-uat');
     vi.stubEnv('PLG_UAT_RUNTIME', 'uat');
     const production = vi.spyOn(audienceSource, 'readOneAudience');
+    mockAllowedAdmission();
     const uat = vi.spyOn(audienceSource, 'readUatAudience').mockResolvedValue({ environment: 'uat', rows: [] } as any);
     const storage = vi.spyOn(store, 'read').mockRejectedValue(new Error('Production store must not be read'));
     (store as any).accountStorage = vi.fn(() => { throw new Error('Production account store must not be read'); });

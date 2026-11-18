@@ -27,7 +27,7 @@ import {
   tokenPreference,
 } from './service';
 import { syncOneEvidence } from './one-source';
-import { readOneAudience, readUatAudience } from './one-audience';
+import { readOneAudience } from './one-audience';
 import { deliveryBlockers, runAutomationCycle, setAutomationEnabled } from './automation';
 import { applyDeliveryEvent } from './delivery-events';
 import { OneSubscriptions, queueSubscriptionRevocation, syncSubscriptions } from './one-subscriptions';
@@ -38,6 +38,8 @@ import { registerUatEvidenceRoute } from './uat-evidence-routes';
 import { registerAttemptEmailRoute } from './attempt-email-routes';
 import { decodeWorkspacePage, encodeWorkspacePages } from './workspace-pages';
 import { hostedUatView } from './uat-view-runtime';
+import { readAdmittedUatAudience } from './uat-audience-admitted-adapter';
+import { uatAudienceAdmissionRuntime } from './uat-audience-admission-runtime';
 
 /** The same generation fence applies to new One links and already-sent legacy links. */
 function unsubscribeContact(state: PlgState, contact: PlgContact, generation?: string) {
@@ -176,6 +178,17 @@ export function registerPlgRoutes(
       throw new PlgError(403, 'Invalid request origin');
     return { email, role: value as 'admin' | 'operator' };
   };
+  // The session is validated at login; this repeats the configured role and
+  // origin checks and session expiry, not Google's live revocation status.
+  const admittedUatRead = async (req: express.Request, signal: AbortSignal) => {
+    const user = role(req), runtime = uatAudienceAdmissionRuntime();
+    const authority = async (viewer: string) => {
+      const current = (req as any).sessionUser;
+      if (!current || !Number.isSafeInteger(current.exp) || current.exp * 1000 <= Date.now()) return false;
+      try { return role(req).email === viewer; } catch { return false; }
+    };
+    return readAdmittedUatAudience({ ...runtime, viewer: user.email, input: req.body, signal, authorize: authority });
+  };
   const machine = (req: express.Request, purpose: string) => {
     const secret = purpose === 'sync' ? (config.syncSecret ?? '') : purpose === 'cycle' ? (config.cycleSecret ?? '') : config.signingSecret;
     const timestamp = req.get('X-PLG-Timestamp') || '';
@@ -289,8 +302,9 @@ export function registerPlgRoutes(
     const active = new AbortController();
     const disconnected = () => { if (!res.writableEnded) active.abort(); };
     res.once('close', disconnected);
+    if (req.aborted || res.destroyed || res.writableEnded) active.abort();
     try {
-      const page = await readUatAudience(req.body, undefined, fetch, Date.now, active.signal);
+      const page = await admittedUatRead(req, active.signal);
       active.signal.throwIfAborted();
       return res.json(page);
     } finally { res.off('close', disconnected); }
@@ -303,9 +317,11 @@ export function registerPlgRoutes(
       const active = new AbortController();
       const disconnected = () => { if (!res.writableEnded) active.abort(); };
       res.once('close', disconnected);
+      if (req.aborted || res.destroyed || res.writableEnded) active.abort();
       try {
         const uat = process.env.GOOGLE_CLOUD_PROJECT === 'hushh-pda-uat' || process.env.PLG_UAT_RUNTIME === 'uat';
-        const page = await (uat ? readUatAudience : readOneAudience)(req.body, undefined, fetch, Date.now, active.signal);
+        const page = uat ? await admittedUatRead(req, active.signal)
+          : await readOneAudience(req.body, undefined, fetch, Date.now, active.signal);
         active.signal.throwIfAborted();
         // UAT directory reads never open or link the Production campaign store.
         if (page.environment === 'uat') return res.json(page);
