@@ -86,10 +86,20 @@ export class MetricsReportMaintenance {
       const head = await tx.get<{ activeJob: string | null; publication: string | null }>(path('heads', job.key));
       const receipt = await tx.get<{ state: string }>(path('sourceReceipts', id));
       const cycle = await tx.get<{ jobs: string[] }>(path('periodicCycles', 'current'));
+      const detailIntent = String(job.request.reportId) === 'one.agent-detail-uat'
+        ? await tx.get<{ state: string }>(path('uatDetailIntents', id)) : null;
       if (!head || head.activeJob === id || head.publication === id || receipt && receipt.state !== 'completed'
+        || detailIntent && detailIntent.state !== 'complete'
         || cycle && (!Array.isArray(cycle.jobs) || cycle.jobs.length > 4 || cycle.jobs.some(jobId => !/^[a-f0-9]{64}$/.test(jobId)) || cycle.jobs.includes(id))) return 0;
       // Keep the permanent head sequence: deleting it could reuse provider/task IDs.
       for (const collection of ['snapshots', 'sourceReceipts', 'dispatches', 'jobs']) tx.delete(path(collection, id));
+      if (String(job.request.reportId) === 'one.agent-detail-uat') {
+        // Completed detail receipts stay immutable for billing reconciliation.
+        // Only an unreachable publication and its private payload are pruned.
+        tx.delete(path('uatDetailPublications', id));
+        tx.delete(path('uatDetailPartialSnapshots', id));
+        return 6;
+      }
       return 4; // Document delete operations, not claimed reclaimed bytes or savings.
     });
   }

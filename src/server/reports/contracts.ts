@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 export const reportDefinitions = {
   'one.adoption': { version: '1', product: 'one', metrics: ['activeAccounts', 'confirmedOutcomes'] },
+  'one.agent-detail-uat': { version: '1', product: 'one', maxPeriodDays: 7, metrics: [] },
   'hushhai.acquisition': { version: '1', product: 'hushhai', metrics: ['sessions', 'activeUsers', 'engagedSessions', 'keyEvents'] },
   'hushhai.activity': { version: '1', product: 'hushhai', maxPeriodDays: 7, metrics: ['pageViews', 'searchSubmissions', 'searchCompletions', 'searchFailures', 'ctaClicks'] },
   'metrics.reliability': { version: '1', product: 'metrics', maxPeriodDays: 7, metrics: ['requestCount', 'serverErrorCount', 'serverErrorRatio', 'p95LatencyMs'] },
@@ -86,6 +87,7 @@ export const reportKey = (request: ReportRequest, control: ReportControl) => dig
 ]);
 export function validateAggregate(result: AggregateResult, job: ReportJob, now: number, maxBytes: number) {
   const request = job.request;
+  if (request.reportId === 'one.agent-detail-uat') throw new ReportError('invalid');
   if (!result || Object.keys(result).sort().join() !== ['metrics', 'sourceCheckedAt', 'sourceWatermark',
     'sourceGeneration', 'scopeDigest', 'definitionVersion', 'period', 'reconciled'].sort().join()
     || result.reconciled !== true || result.sourceGeneration !== job.control.sourceGeneration

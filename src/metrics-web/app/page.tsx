@@ -11,7 +11,7 @@ export default async function ReportsPage({ searchParams }: {
     <p>Sign in with your approved Google account to view product reports.</p>
     <a className="button" href="https://metrics.hussh.ai/api/auth/google">Continue with Google</a></section>;
   const query = await searchParams;
-  const reportId: ReportId = typeof query.report === 'string' && Object.hasOwn(reportDefinitions, query.report)
+  const reportId: ReportId = typeof query.report === 'string' && query.report !== 'one.agent-detail-uat' && Object.hasOwn(reportDefinitions, query.report)
     ? query.report as ReportId : 'one.adoption';
   // A date selection reads only an already published report. No source query.
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);

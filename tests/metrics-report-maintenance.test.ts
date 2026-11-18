@@ -87,4 +87,19 @@ describe('bounded reference-aware report maintenance', () => {
     expect([...f.store.data.keys()].filter(k => k.startsWith(reportPath('quotas', '')))).toHaveLength(1);
     expect(scan.mock.calls.every(([, , limit]) => limit === maintenancePolicy.batchSize)).toBe(true);
   });
+  it('retains reachable or uncertain detail jobs and prunes only unreachable partial payloads', async () => {
+    const f=collectionFixture(); await f.initialize(); await f.put('policy','maintenance',{...maintenancePolicy,batchSize:100});
+    const job=(await f.worker.claim((await f.reports.request(f.request,f.access)).jobId!,digest('detail-worker')))!.job;
+    await f.worker.publish(job,f.result(job));
+    await f.put('jobs',job.id,{...await f.get<Record<string,unknown>>('jobs',job.id),request:{...job.request,reportId:'one.agent-detail-uat'}});
+    await f.put('uatDetailPartialSnapshots',job.id,{payload:'private'}); await f.put('uatDetailPublications',job.id,{payload:'published'});
+    await f.put('uatDetailIntents',job.id,{state:'dispatching'}); await f.put('uatDetailNativeProofs',job.id,{proof:'retain'});
+    f.advance(2000); const m=new MetricsReportMaintenance(f.store,vi.fn(),f.clock);
+    await m.run(digest('first')); expect(await f.get('uatDetailPublications',job.id)).not.toBeNull();
+    await f.put('heads',job.key,{sequence:1,activeJob:null,publication:null}); await m.run(digest('second'));
+    expect(await f.get('jobs',job.id)).not.toBeNull();
+    await f.put('uatDetailIntents',job.id,{state:'complete'}); await m.run(digest('third'));
+    expect(await f.get('jobs',job.id)).toBeNull(); expect(await f.get('uatDetailPublications',job.id)).toBeNull();
+    expect(await f.get('uatDetailPartialSnapshots',job.id)).toBeNull(); expect(await f.get('uatDetailNativeProofs',job.id)).not.toBeNull();
+  });
 });

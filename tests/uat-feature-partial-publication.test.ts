@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { digest } from '../src/server/reports/contracts';
+import { digest, reportKey } from '../src/server/reports/contracts';
 import { reportPath } from '../src/server/reports/store';
 import { UatFeaturePartialPublisher } from '../src/server/reports/uat-feature-partial-publication';
 import { UatFeaturePartialReader } from '../src/server/reports/uat-feature-partial-reader';
@@ -84,6 +84,7 @@ it('completes a proof-bound partial report once and reads it under quota after l
  const config={project:'hushh-pda-uat',dataset:'analytics_533362555',webHost:'uat.one.hushh.ai',timezone:'UTC',startDate:'2026-11-18',endDate:'2026-11-18',maxPeriodDays:7};
  const {manifest,manifestDigest}=uatFeatureManifest(config);
  f.job.lane='custom'; f.job.requesterHash='8'.repeat(64);
+ f.job.key=reportKey(f.job.request,f.job.control);
  f.source.queryHash=manifest.queryHash; f.proof.queryHash=manifest.queryHash; f.proof.policyDigest=digest(f.source);
  f.store.data.set(reportPath('jobs',f.job.id),f.job); f.store.data.set(reportPath('policy','one-agent-detail-bq'),f.source);
  f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),f.proof);
@@ -105,6 +106,8 @@ it('completes a proof-bound partial report once and reads it under quota after l
  await expect(lifecycle.complete(f.job,access)).rejects.toThrow();
  expect(f.store.data.get(reportPath('capacity','custom'))).toEqual({active:0});
  await expect(lifecycle.read(f.job,access)).resolves.toMatchObject({state:'partial',freshness:'unknown'});
+ await expect(lifecycle.readCurrent(f.job.request,access)).resolves.toMatchObject({state:'partial',freshness:'unknown'});
+ await expect(lifecycle.readCurrent({...f.job.request,reportId:'one.adoption'},access)).rejects.toThrow();
  f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),{...f.proof,queryHash:'4'.repeat(64)});
  await expect(lifecycle.read(f.job,access)).rejects.toThrow();
  f.store.data.set(reportPath('uatDetailNativeProofs',f.job.id),f.proof);

@@ -1,4 +1,4 @@
-import { digest, ReportError, validateAccess, validatePolicy, type ReportAccess, type ReportControl, type ReportJob, type ReportingPolicy } from './contracts';
+import { digest, ReportError, reportKey, validateAccess, validateControl, validatePolicy, validateRequest, type ReportAccess, type ReportControl, type ReportJob, type ReportingPolicy } from './contracts';
 import { reportPath as path, type ReportStore } from './store';
 import { validateOneAgentDetail } from './one-agent-detail-contract';
 import { validateUatDetailPolicy, type StagedUatDetailQuery } from './staged-uat-detail-query';
@@ -34,6 +34,21 @@ function detail(snapshot:any, job:ReportJob, policy:ReportingPolicy, now:number)
 export class UatFeatureLifecycle {
   constructor(private store:ReportStore, private saga:StagedUatDetailQuery,
     private authorize:(job:ReportJob, access:ReportAccess)=>Promise<boolean>, private now:()=>number=Date.now, private enabled=false) {}
+  async readCurrent(input:unknown, access:ReportAccess) {
+    if (!this.enabled) return fail(); validateAccess(access);
+    const job=await this.store.transaction(async tx=>{
+      const policy=validatePolicy(await tx.get<ReportingPolicy>(path('policy','current')));
+      const request=validateRequest(input,policy.maxPeriodDays);
+      if (request.reportId!=='one.agent-detail-uat') return fail();
+      const control=validateControl(await tx.get<ReportControl>(path('controls',request.reportId)),request,access);
+      const key=reportKey(request,control), head=await tx.get<Head>(path('heads',key));
+      if (!head?.publication || !/^[a-f0-9]{64}$/.test(head.publication)) return fail();
+      const found=await tx.get<ReportJob>(path('jobs',head.publication));
+      if (!found || found.key!==key || digest(found.request)!==digest(request) || digest(found.control)!==digest(control)) return fail();
+      return found;
+    });
+    return this.read(job,access);
+  }
   async complete(job:ReportJob, access:ReportAccess) {
     if (!this.enabled) return fail(); validateAccess(access);
     if (access.scopeDigest!==job.control.scopeDigest || !await this.authorize(job,access)) throw new ReportError('unauthorized');

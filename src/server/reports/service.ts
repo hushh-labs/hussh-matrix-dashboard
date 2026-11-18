@@ -4,6 +4,9 @@ import { digest, ReportError, reportKey, validateAccess, validateAggregate, vali
 import { reportPath as path, type ReportStore, type ReportTransaction } from './store';
 import type { ReportBodyCache } from './body-cache';
 import { periodicPlan } from './periodic-policy';
+import { validateUatDetailPolicy } from './staged-uat-detail-query';
+import { validateUatFeatureManifest } from './uat-feature-manifest';
+import { validateOneAgentDetail } from './one-agent-detail-contract';
 
 type Head = { sequence: number; activeJob: string | null; publication: string | null };
 type Capacity = { active: number };
@@ -20,13 +23,27 @@ type Context = { policy: ReportingPolicy; control: ReportControl; request: Repor
 
 /** No source SDK, provider callback or enqueue callback exists in this reader. */
 export class MetricsReports {
-  constructor(private store: ReportStore, private now: () => number = Date.now, private cache?: ReportBodyCache) {}
+  constructor(private store: ReportStore, private now: () => number = Date.now, private cache?: ReportBodyCache,
+    private detailEnabled = false) {}
 
-  private async context(tx: ReportTransaction, input: unknown, access: ReportAccess): Promise<Context> {
+  private async context(tx: ReportTransaction, input: unknown, access: ReportAccess, detailRead = false): Promise<Context> {
     validateAccess(access);
     const policy = validatePolicy(await tx.get<ReportingPolicy>(path('policy', 'current')));
     const request = validateRequest(input, policy.maxPeriodDays);
     const control = validateControl(await tx.get<ReportControl>(path('controls', request.reportId)), request, access);
+    if (request.reportId === 'one.agent-detail-uat') {
+      if (!this.detailEnabled) throw new ReportError('unavailable');
+      const source=validateUatDetailPolicy(await tx.get(path('policy','one-agent-detail-bq')),this.now(),detailRead);
+      const approved=await tx.get<any>(path('policy','one-agent-detail-manifest'));
+      if (!approved || Object.keys(approved).sort().join()!=='approved,config,enabled,manifestDigest'
+        || approved.approved!==true || approved.enabled!==true) throw new ReportError('unavailable');
+      const {manifest}=validateUatFeatureManifest(approved.config,approved.manifestDigest);
+      if (source.queryHash!==manifest.queryHash || source.scopeDigest!==access.scopeDigest
+        || source.sourceGeneration!==control.sourceGeneration || source.startDate!==request.startDate
+        || source.endDate!==request.endDate || source.timezone!==request.timezone
+        || manifest.startDate!==request.startDate || manifest.endDate!==request.endDate || manifest.timezone!==request.timezone)
+        throw new ReportError('unavailable');
+    }
     return { policy, request, control, key: reportKey(request, control) };
   }
 
@@ -45,6 +62,7 @@ export class MetricsReports {
     const now = this.now();
     return this.store.transaction(async tx => {
       const c = await this.context(tx, input, access);
+      if (c.request.reportId === 'one.agent-detail-uat') throw new ReportError('unavailable'); // use the separately authorized detail reader
       const head = await tx.get<Head>(path('heads', c.key));
       const cacheKey = head?.publication ? `${c.key}:${head.publication}` : null;
       const report = head?.publication ? this.cache?.get<PublishedReport>(cacheKey!)
@@ -87,8 +105,10 @@ export class MetricsReports {
       // Manual scheduled admission cannot race an enabled periodic cycle.
       if (!plan && lane === 'scheduled' && periodicPolicy && (periodicPolicy as { enabled?: unknown }).enabled !== false) throw new ReportError('unavailable');
       const c = await this.context(tx, plan?.request ?? input, access);
+      if (c.request.reportId === 'one.agent-detail-uat' && lane !== 'custom') throw new ReportError('unavailable');
       const head = await tx.get<Head>(path('heads', c.key)) ?? { sequence: 0, activeJob: null, publication: null };
-      const publication = head.publication ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
+      const publication = head.publication && c.request.reportId !== 'one.agent-detail-uat'
+        ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
       const active = head.activeJob ? await tx.get<ReportJob>(path('jobs', head.activeJob)) : null;
       const slots = await tx.get<Capacity>(path('capacity', lane)) ?? { active: 0 };
       const subjectSlot = path('subjectCapacity', digest([lane, access.subjectHash]));
@@ -222,12 +242,36 @@ export class MetricsReports {
     return this.store.transaction(async tx => {
       const job = await tx.get<ReportJob>(path('jobs', jobId));
       if (!job) throw new ReportError('unavailable');
-      await this.context(tx, job.request, access);
+      await this.context(tx, job.request, access, job.status === 'completed');
       const policy = validatePolicy(await tx.get<ReportingPolicy>(path('policy', 'current')));
       const charge = await this.quota(tx, access, policy, 'status', now);
       if (job.control.scopeDigest !== access.scopeDigest) throw new ReportError('unauthorized');
       const control = await tx.get<ReportControl>(path('controls', job.request.reportId));
       const dispatch = await tx.get<{ state: string }>(path('dispatches', jobId));
+      if (job.request.reportId === 'one.agent-detail-uat' && job.status === 'completed') {
+        const [head,pub,intent,proof,snapshot,source,manifest]=await Promise.all([
+          tx.get<Head>(path('heads',job.key)),tx.get<any>(path('uatDetailPublications',jobId)),
+          tx.get<any>(path('uatDetailIntents',jobId)),tx.get<any>(path('uatDetailNativeProofs',jobId)),
+          tx.get<any>(path('uatDetailPartialSnapshots',jobId)),tx.get<any>(path('policy','one-agent-detail-bq')),
+          tx.get<any>(path('policy','one-agent-detail-manifest'))]);
+        if (head?.publication!==jobId || !pub || pub.id!==jobId || pub.key!==job.key || pub.kind!=='uat-feature-subset'
+          || Object.keys(pub).sort().join()!=='computedAt,control,coverage,detail,id,key,kind,manifestDigest,proofDigest,publishedAt,request,schema,sourcePolicyDigest'
+          || pub.schema!==1 || pub.manifestDigest!==manifest?.manifestDigest || pub.sourcePolicyDigest!==digest(source)
+          || pub.coverage!=='partial' || digest(pub.request)!==digest(job.request) || digest(pub.control)!==digest(job.control)
+          || !intent || intent.state!=='complete' || intent.jobId!==jobId || intent.policyDigest!==digest(source)
+          || !proof || proof.binding!==intent.binding || proof.policyDigest!==intent.policyDigest || pub.proofDigest!==digest(proof)
+          || !snapshot || Object.keys(snapshot).sort().join()!=='binding,computedAt,coverage,detail,kind,schema'
+          || snapshot.schema!==1 || snapshot.kind!=='uat-feature-subset' || snapshot.coverage!=='partial'
+          || snapshot?.binding!==digest([job.id,job.key,job.request,job.control,digest(source),digest(proof)])
+          || pub.computedAt!==snapshot.computedAt || !Number.isSafeInteger(pub.computedAt) || pub.computedAt<job.acceptedAt
+          || !Number.isSafeInteger(pub.publishedAt) || pub.computedAt>pub.publishedAt || pub.publishedAt>now
+          || now-pub.computedAt>job.control.staleMs || Buffer.byteLength(JSON.stringify(snapshot))>policy.maxSnapshotBytes
+          || digest(pub.detail)!==digest(snapshot?.detail)) throw new ReportError('unavailable');
+        const detail=validateOneAgentDetail(pub.detail,{environment:'uat',scopeDigest:access.scopeDigest,
+          period:{startDate:job.request.startDate,endDate:job.request.endDate,timezone:job.request.timezone}});
+        if (detail.source.checkedAt!==null || detail.source.watermark!==null || detail.source.coverage!=='intraday_or_unknown'
+          || detail.rows.some(row=>row.agent==='location' && row.state!=='unavailable')) throw new ReportError('unavailable');
+      }
       charge();
       const needsAttention = job.needsAttention || job.status === 'accepted' && dispatch?.state === 'blocked';
       const state = digest(control) !== digest(job.control) ? 'invalidated' as const
