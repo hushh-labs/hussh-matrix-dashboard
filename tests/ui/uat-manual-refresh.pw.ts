@@ -16,3 +16,11 @@ test('hides old UAT data during denied refresh and after date change',async({pag
  await page.getByRole('button',{name:'Change date'}).click();await held!.fulfill({json:{state:'partial',computedAt:1,detail}}).catch(()=>{});await expect(page.getByText('7',{exact:true})).toHaveCount(0);expect(external).toEqual([]);
 });
 
+
+test('stops waiting when a manual request does not answer',async({page})=>{
+ await page.clock.install();
+ await page.route('**/*',async route=>{const url=new URL(route.request().url());if(url.hostname!=='127.0.0.1' && url.hostname!=='localhost')return route.abort();return route.continue();});
+ let count=0;await page.route('**/api/uat-detail-refresh',async()=>{count++;});
+ await page.goto('/tests/ui/fixtures/uat-manual/');await page.getByRole('button',{name:'Refresh UAT agent activity'}).click();
+ await expect.poll(()=>count).toBe(1);await page.clock.fastForward(10001);await expect(page.getByText('Report refresh is unavailable.')).toBeVisible();expect(count).toBe(1);
+});
