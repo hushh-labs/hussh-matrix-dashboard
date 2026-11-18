@@ -40,3 +40,19 @@ it('fails closed on missing authority, revoked authority, and malformed upstream
  await expect(readAdmittedUatAudience(args(store, async () => true, async () => new Response('{')))).rejects.toThrow();
  expect([...store.data.entries()].some(([path, value]) => path.includes('uatAudienceClaims/') && (value as {state?:string}).state === 'open')).toBe(true);
 });
+
+it('keeps the claim open when cancellation reaches the real parser before body consumption', async () => {
+  const store = init(), abort = new AbortController();
+  const fetcher = vi.fn(async () => { abort.abort(); return Response.json(fixture()); });
+  await expect(readAdmittedUatAudience({ ...args(store, async () => true, fetcher), signal: abort.signal })).rejects.toThrow();
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect([...store.data.entries()].some(([path, value]) => path.includes('uatAudienceClaims/') && (value as {state?:string}).state === 'open')).toBe(true);
+});
+
+it('withholds a completed page when viewer authority is revoked during the upstream read', async () => {
+  const store = init(); let allowed = true;
+  const authorize = vi.fn(async () => allowed);
+  const fetcher = vi.fn(async () => { allowed = false; return Response.json(fixture()); });
+  await expect(readAdmittedUatAudience(args(store, authorize, fetcher))).rejects.toThrow();
+  expect(fetcher).toHaveBeenCalledOnce(); expect(authorize).toHaveBeenCalledTimes(3);
+});
