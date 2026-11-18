@@ -14,7 +14,8 @@ const coverage = {
   limited: 'Collection limit reached', reset_during_traversal: 'Account reset during browsing',
 };
 
-export function PlgAudiencePanel({ state, load, openContact }: {
+export function PlgAudiencePanel({ state, load, openContact, manual = false }: {
+  manual?: boolean;
   state: Pick<PlgState, 'catalog' | 'contacts'>;
   load: (filters: PlgAudienceFilters, signal: AbortSignal) => Promise<PlgAudiencePage>;
   openContact: (contactId: string) => void;
@@ -55,7 +56,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
       const { page: result, scanned: checked } = await findAudiencePage(load, { ...filters, cursor: next }, active.signal,
         (count, page) => { if (request === sequence.current) {
           setScanned(count); confirmed.current = { request, page, scanned: count, start: next, index, reset };
-        } }, Date.now, audienceFilterScan);
+        } }, Date.now, manual ? { maxPages: 1, budgetMs: 30_000 } : audienceFilterScan);
       if (request !== sequence.current) return;
       display({ request, page: result, scanned: checked, start: next, index, reset });
     } catch (e) {
@@ -63,11 +64,11 @@ export function PlgAudiencePanel({ state, load, openContact }: {
     } finally { if (request === sequence.current) setBusy(false); }
   }
   useEffect(() => {
-    void read(null);
+    if (!manual) void read(null);
     return () => { sequence.current++; controller.current?.abort(); };
   }, [load]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty || manual) return;
     searchTimer.current = setTimeout(() => void read(null), 350);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, [filters, dirty]);
@@ -85,15 +86,15 @@ export function PlgAudiencePanel({ state, load, openContact }: {
   return <section className="min-w-0 space-y-5" aria-label="Agent people">
     <div className={cn(dashboardCard, 'p-5 sm:p-6')}>
       <h3 className="text-lg font-semibold text-ink">Users and agent drop-offs</h3>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Find registered accounts and their recorded activity in the last seven days. Results update as you change your filters. Campaign enrollment is separate.</p>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Find registered accounts and their recorded activity in the last seven days. {manual ? 'Apply filters or refresh to load one source page at a time.' : 'Results update as you change your filters.'} Campaign enrollment is separate.</p>
       <p className="mt-2 text-xs leading-5 text-muted">{data?.environment === 'uat'
         ? 'UAT registered accounts include team and test accounts. These records are separate from Production.'
         : data?.environment === 'production' ? 'Production account counts exclude confirmed staff, test and reviewer accounts.' : 'The connected environment is shown when the directory loads.'} Accounts are distinct; they are not proven unique people.</p>
       {error && <p role="alert" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">{error}</p>}
-      {!catalogReady && !error && <p role="status" className="mt-4 text-sm text-muted">Loading the connected agent catalog. Agent and user filters will be available when it loads.</p>}
+      {!catalogReady && !error && <p role="status" className="mt-4 text-sm text-muted">{manual && !busy ? 'Apply filters to load the connected agent catalog.' : 'Loading the connected agent catalog. Agent and user filters will be available when it loads.'}</p>}
       <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <label className="grid gap-1.5 text-xs font-semibold text-muted">Agent<select className={control} disabled={!catalogReady} value={catalogReady ? filters.agentId : ''} onChange={(e) => change({ agentId: e.target.value as PlgAudienceFilters['agentId'] })}>
-          {!catalogReady && <option value="">{error ? 'Agents unavailable' : 'Loading agents…'}</option>}
+          {!catalogReady && <option value="">{error ? 'Agents unavailable' : manual && !busy ? 'Apply filters to load agents' : 'Loading agents…'}</option>}
           {selectableAgents?.map((a) => <option key={a.id} value={a.id}>{a.label}{a.public ? a.available ? '' : ' (unavailable)' : ' (internal)'}</option>)}
         </select></label>
         <label className="grid gap-1.5 text-xs font-semibold text-muted">Task status<select className={control} disabled={!catalogReady} value={filters.segment} onChange={(e) => change({ segment: e.target.value as PlgAudienceFilters['segment'] })}>
@@ -111,7 +112,7 @@ export function PlgAudiencePanel({ state, load, openContact }: {
         <button className={button} type="button" disabled={busy} onClick={() => change(defaults)}>Reset filters</button>
       </form>
       <label className="mt-4 flex items-center gap-2 text-xs text-muted"><input type="checkbox" disabled={!catalogReady} checked={includeTechnicalAgents} onChange={(e) => setIncludeTechnicalAgents(e.target.checked)} />Include internal and unavailable agents</label>
-      {dirty && <p role="status" className="mt-4 text-sm font-medium text-ink">Updating results…</p>}
+      {dirty && <p role="status" className="mt-4 text-sm font-medium text-ink">{manual ? 'Apply filters to load results.' : 'Updating results…'}</p>}
       {selectedAgent && (selectedAgent.outcome ? selectedAgent.outcome.status !== 'supported' :
         !['agent_personal_information', 'agent_email'].includes(selectedAgent.id)) && <div role="status" className="mt-4 rounded-xl border border-stroke bg-canvas p-4 text-sm text-ink">
           This connection does not provide verified completion tracking for {selectedAgent.label}. Recorded usage remains visible below. This does not mean nobody used the agent.

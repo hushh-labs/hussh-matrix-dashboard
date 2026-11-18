@@ -18,7 +18,8 @@ describe('UAT activity view', () => {
     const html = renderToStaticMarkup(<PlgUatWorkspace />);
     const selector = html.match(/<select\b[^>]*>[\s\S]*?<\/select>/)?.[0];
     expect(selector).toContain('disabled=""');
-    expect(selector).toContain('Loading agents');
+    expect(selector).toContain('Apply filters to load agents');
+    expect(html).toContain('Apply filters to load the connected agent catalog');
     expect(selector).not.toContain('value="agent_one"');
     expect(html).not.toContain('No matching accounts');
   });

@@ -27,6 +27,6 @@ export function PlgUatWorkspace() {
         <a href="/plg">Production workspace</a>
       </nav>
     </header>
-    <PlgAudiencePanel state={{ contacts: [] }} load={load} openContact={() => undefined} />
+    <PlgAudiencePanel manual state={{ contacts: [] }} load={load} openContact={() => undefined} />
   </main>;
 }
