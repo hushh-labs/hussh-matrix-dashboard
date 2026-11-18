@@ -66,7 +66,7 @@ const activityDescriptions: Record<string, string> = {
   autocategory_applied: 'Receipt categorization activity recorded.',
   verification_checked: 'Advisor verification checks and status changes.',
   workspace_visited: 'Times the advisor workspace was visited.',
-  strategy_requested: 'Advisor and strategy requests recorded.',
+  strategy_requested: 'Advisor access-request outcomes and legacy strategy-request records. Repeat records count again.',
   client_handoff: 'Client handoffs are not tracked yet.',
   marketplace_browsed: 'Marketplace browsing recorded.',
   profile_viewed: 'Times a marketplace profile was viewed.',
@@ -139,7 +139,7 @@ const featureNotes: Record<string, string> = {
   autocategory_applied: 'Counts autocategory_applied, receipt_categorized and one_gmail_receipt_categorized records. Multiple stages or receipts can emit multiple records.',
   verification_checked: 'Counts advisor-verification status changes and checks. These do not all mean verification was approved.',
   workspace_visited: 'Counts advisor-workspace views. Repeat visits count again.',
-  strategy_requested: 'Counts advisor request creation and strategy-request records. A request does not prove a strategy was delivered.',
+  strategy_requested: 'Counts ria_request_created access-request or request-bundle outcomes, including failures, and legacy one_ria_strategy_requested records. It does not count delivered strategies.',
   marketplace_browsed: 'Counts marketplace-browsing records. Repeated exploration counts again.',
   profile_viewed: 'Counts marketplace-profile views. A view does not prove a subscription or sale.',
 };

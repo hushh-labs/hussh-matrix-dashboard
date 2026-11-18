@@ -139,6 +139,16 @@ for (const [capabilityKey, featureKey, label] of [
   }
 }
 
+for (const outcome of ['success', 'error'] as const) {
+  const ria = { ...summary, capabilities: [{ key: 'ria', instrumented: true, observed: true, devices: 1, accounts: 1, deliberateEvents: 1 }],
+    featureUsage: { strategy_requested: { accounts: 1, devices: 1, signals: 1, successes: Number(outcome === 'success'), expectedErrors: 0, failures: Number(outcome === 'error'), outcomeSignals: 1 } },
+  } as unknown as OneAppSummary;
+  const markup = renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, { capabilityKey: 'ria', one: ria, uat: null, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {} }));
+  assert.match(markup, /Advisor request activity/);
+  assert.match(markup, /1 records from 1 device\/browser IDs/);
+  assert.doesNotMatch(markup, /Investment Strategy Request/);
+}
+
 const measuredGmail = renderGmail(gmailSummary);
 assert.match(measuredGmail, /292 records from 9 device\/browser IDs/);
 assert.match(measuredGmail, /Inbox visits are not separately tracked yet/);
