@@ -4,12 +4,12 @@ const scope = 'a'.repeat(64), period = { startDate:'2026-11-01', endDate:'2026-1
 const counts = { accounts:0, devices:0, signals:0, successes:0, expectedErrors:0, failures:0, outcomeSignals:0 };
 const payload = () => ({ version:'1', environment:'uat', scopeDigest:scope, manifestDigest:ONE_AGENT_DETAIL_MANIFEST_DIGEST, period,
   source:{ kind:'ga4_export', coverage:'intraday_or_unknown', watermark:null, checkedAt:'2026-11-19T00:00:00Z' },
-  rows:ONE_AGENT_DETAIL_MANIFEST.map(({agent,key}) => ({agent,key,state:'measured',counts:{...counts}})) });
+  rows:ONE_AGENT_DETAIL_MANIFEST.map(({agent,key}) => ({agent,key,state:'measured',counts:{...counts},eventBreakdown:null})) });
 const expected = { environment:'uat' as const, scopeDigest:scope, period };
 describe('proposed One agent-detail v1 contract', () => {
   it('accepts all catalogued feature rows, including measured zero and explicit unknown', () => {
     const p = payload(); expect(ONE_AGENT_DETAIL_MANIFEST).toHaveLength(64);
-    p.rows[0] = { ...p.rows[0], state:'unavailable', counts:null as any };
+    p.rows[0] = { ...p.rows[0], state:'unavailable', counts:null as any, eventBreakdown:null };
     p.rows[1].counts.accounts = null as any;
     expect(validateOneAgentDetail(p, expected)).toBe(p);
   });

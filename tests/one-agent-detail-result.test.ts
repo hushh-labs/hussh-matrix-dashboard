@@ -6,7 +6,7 @@ const job={environment:'uat' as const,reportScopeDigest:'a'.repeat(64),manifestS
 const result=()=>({definitionVersion:'1',sourceGeneration:job.sourceGeneration,manifestScopeDigest:job.manifestScopeDigest,computedAt:150,
  detail:{version:'1',environment:'uat',scopeDigest:job.reportScopeDigest,manifestDigest:ONE_AGENT_DETAIL_MANIFEST_DIGEST,period,
  source:{kind:'ga4_export',coverage:'intraday_or_unknown',checkedAt:null,watermark:null},
- rows:ONE_AGENT_DETAIL_MANIFEST.map(({agent,key})=>({agent,key,state:'unavailable',counts:null}))}});
+ rows:ONE_AGENT_DETAIL_MANIFEST.map(({agent,key})=>({agent,key,state:'unavailable',counts:null,eventBreakdown:null}))}});
 it('accepts a bounded, scope-bound incomplete result without claiming source freshness', () => {
  const value=result(); expect(validateProposedOneDetailResult(value,job,200,900_000)).toBe(value);
 });

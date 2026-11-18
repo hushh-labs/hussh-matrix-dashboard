@@ -8,7 +8,8 @@ export const ONE_AGENT_DETAIL_MANIFEST = AGENT_MEASUREMENTS.map(({ agent, key })
 export const ONE_AGENT_DETAIL_MANIFEST_DIGEST = digest(ONE_AGENT_DETAIL_MANIFEST);
 type Environment = 'production' | 'uat';
 type Counts = { accounts: number | null; devices: number | null; signals: number | null; successes: number | null; expectedErrors: number | null; failures: number | null; outcomeSignals: number | null };
-type Row = { agent: string; key: string; state: 'measured' | 'unavailable' | 'not_tracked'; counts: Counts | null };
+type EventCount = { eventName:string; signals:number; successes:number; expectedErrors:number; failures:number };
+type Row = { agent: string; key: string; state: 'measured' | 'unavailable' | 'not_tracked'; counts: Counts | null; eventBreakdown:EventCount[] | null };
 export type OneAgentDetailV1 = { version: '1'; environment: Environment; scopeDigest: string; manifestDigest: string;
   period: { startDate: string; endDate: string; timezone: string }; source: { kind: 'ga4_export'; coverage: 'intraday_or_unknown'; watermark: string | null; checkedAt: string | null };
   rows: Row[] };
@@ -41,12 +42,28 @@ export function validateOneAgentDetail(value: unknown, expected: { environment: 
     || !Array.isArray(p.rows) || p.rows.length !== ONE_AGENT_DETAIL_MANIFEST.length) return bad();
   const expectedKeys = new Set(ONE_AGENT_DETAIL_MANIFEST.map(({ agent, key }) => `${agent}:${key}`)), seen = new Set<string>();
   for (const row of p.rows) {
-    if (!keys(row,['agent','key','state','counts'])) return bad();
+    if (!keys(row,['agent','key','state','counts','eventBreakdown'])) return bad();
     const id = `${row.agent}:${row.key}`;
     if (!expectedKeys.has(id) || seen.has(id) || !['measured','unavailable','not_tracked'].includes(row.state)) return bad();
     seen.add(id);
-    if (row.state !== 'measured') { if (row.counts !== null) return bad(); continue; }
+    if (row.state !== 'measured') { if (row.counts !== null || row.eventBreakdown !== null) return bad(); continue; }
     if (!keys(row.counts, fields) || Object.values(row.counts!).some(n => n !== null && (!Number.isSafeInteger(n) || n < 0)) || Object.values(row.counts!).every(n => n === null)) return bad();
+    if (row.eventBreakdown !== null) {
+      if (!Array.isArray(row.eventBreakdown) || row.eventBreakdown.length>256) return bad();
+      const seenEvents=new Set<string>(), sums={signals:0,successes:0,expectedErrors:0,failures:0};
+      for (const event of row.eventBreakdown) {
+        if (!keys(event,['eventName','signals','successes','expectedErrors','failures'])
+          || typeof event.eventName !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(event.eventName)
+          || seenEvents.has(event.eventName)) return bad();
+        seenEvents.add(event.eventName);
+        for (const name of ['signals','successes','expectedErrors','failures'] as const) {
+          if (!Number.isSafeInteger(event[name]) || event[name]<0) return bad(); sums[name]+=event[name];
+          if (!Number.isSafeInteger(sums[name])) return bad();
+        }
+      }
+      for (const name of ['signals','successes','expectedErrors','failures'] as const)
+        if (row.counts![name] !== null && row.counts![name] !== sums[name]) return bad();
+    }
   }
   return p;
 }

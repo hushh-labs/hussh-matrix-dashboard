@@ -27,13 +27,13 @@ export function adaptRetainedOneAgentDetail(summary: unknown, context: {
   const rows = ONE_AGENT_DETAIL_MANIFEST.map(({ agent, key }) => {
     const source = agent === 'location' ? (s.locationBehaviorAvailable ? location.get(key) : null)
       : (s.featureUsageAvailable ? s.featureUsage[key] : null);
-    if (!source || typeof source !== 'object' || Array.isArray(source)) return { agent, key, state:'unavailable', counts:null };
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return { agent, key, state:'unavailable', counts:null, eventBreakdown:null };
     // The legacy Location producer fills absent aggregate rows with zero.
     // Positive events witness a returned aggregate row; zero does not.
     if (agent === 'location') {
       if (source.events !== null && source.events !== undefined &&
         (!Number.isSafeInteger(source.events) || source.events < 0)) throw new Error('One agent detail unavailable');
-      if (!source.events) return { agent, key, state:'unavailable', counts:null };
+      if (!source.events) return { agent, key, state:'unavailable', counts:null, eventBreakdown:null };
     }
     const f = s.featureUsageAvailable ? s.featureUsage[key] : null;
     const parts = [source.successes, source.expectedErrors, source.failures];
@@ -46,8 +46,8 @@ export function adaptRetainedOneAgentDetail(summary: unknown, context: {
       successes:numberOrUnknown(source.successes), expectedErrors:numberOrUnknown(source.expectedErrors),
       failures:numberOrUnknown(source.failures), outcomeSignals };
     return Object.values(counts).every(v => v === null)
-      ? { agent, key, state:'unavailable', counts:null }
-      : { agent, key, state:'measured', counts };
+      ? { agent, key, state:'unavailable', counts:null, eventBreakdown:null }
+      : { agent, key, state:'measured', counts, eventBreakdown:agent==='location' ? null : source.eventBreakdown ?? null };
   });
   const result = { version:'1', environment:context.environment, scopeDigest:context.scopeDigest,
     manifestDigest:ONE_AGENT_DETAIL_MANIFEST_DIGEST, period:context.period,

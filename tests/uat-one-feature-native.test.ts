@@ -82,3 +82,24 @@ it('recovery validates exact native query and returns null for 404 without creat
   status:{state:'DONE'},statistics:{endTime:String(now),query:{statementType:'SELECT',totalBytesBilled:'1'}}}])});
  await expect(f.adapter.lookup(id)).rejects.toThrow(); expect(f.create).not.toHaveBeenCalled();
 });
+
+it('reads bounded rows only around matching persisted proof and exact DONE metadata',async()=>{
+ const f=setup(), proof={jobId:f.job.id,queryHash:plan.queryHash,project,location:'US',scopeDigest:f.job.control.scopeDigest,
+  sourceGeneration:f.job.control.sourceGeneration,nativeId:f.request.id,bytes:f.request.maximumBytesBilled,billed:7,endedAt:now};
+ const metadata={id:proof.nativeId,queryHash:proof.queryHash,project,location:'US',useLegacySql:false,maximumBytesBilled:proof.bytes,
+  state:'DONE',error:false,billed:proof.billed,endedAt:proof.endedAt};
+ vi.spyOn(f.adapter,'lookup').mockResolvedValue(metadata); const getQueryResults=vi.fn(async()=>[[{featureKey:'daily_signin'}],null]);
+ f.client.job.mockReturnValue({getQueryResults}); const saga={readProof:vi.fn(async()=>proof)} as any;
+ await expect(f.adapter.readVerifiedRows(f.job,saga,new AbortController().signal)).resolves.toEqual([{featureKey:'daily_signin'}]);
+ expect(saga.readProof).toHaveBeenCalledTimes(2);expect(getQueryResults).toHaveBeenCalledWith({autoPaginate:false,maxResults:2000,timeoutMs:30000});
+});
+it('withholds rows for pagination, proof change or unverified DONE metadata',async()=>{
+ const f=setup(), proof={jobId:f.job.id,queryHash:plan.queryHash,project,location:'US',scopeDigest:f.job.control.scopeDigest,
+  sourceGeneration:f.job.control.sourceGeneration,nativeId:f.request.id,bytes:f.request.maximumBytesBilled,billed:7,endedAt:now};
+ const metadata={id:proof.nativeId,queryHash:proof.queryHash,project,location:'US',useLegacySql:false,maximumBytesBilled:proof.bytes,
+  state:'DONE',error:false,billed:proof.billed,endedAt:proof.endedAt};
+ vi.spyOn(f.adapter,'lookup').mockResolvedValue(metadata); const getQueryResults=vi.fn(async()=>[[{featureKey:'daily_signin'}],{pageToken:'next'}]);
+ f.client.job.mockReturnValue({getQueryResults}); const saga={readProof:vi.fn(async()=>proof)} as any;
+ await expect(f.adapter.readVerifiedRows(f.job,saga,new AbortController().signal)).rejects.toThrow();
+ expect(saga.readProof).toHaveBeenCalledOnce();
+});

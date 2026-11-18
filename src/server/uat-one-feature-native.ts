@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { BIGQUERY_COST_LIMITS, type FirestoreQueryBudgetStore } from './bigquery-cost-control';
 import { digest, validatePolicy, type ReportJob, type ReportingPolicy, type ReportControl } from './reports/contracts';
 import { reportPath, type ReportStore } from './reports/store';
+import type { StagedUatDetailQuery } from './reports/staged-uat-detail-query';
 import { conservativeBillingBound } from './bigquery-billing-bound';
 import { buildUatFeaturePlan } from './uat-one-feature-plan';
 
@@ -130,4 +131,22 @@ export class UatFeatureNative {
       maximumBytesBilled:integer(q.maximumBytesBilled),state:m?.status?.state,error:!!m?.status?.errorResult,
       billed:integer(stats.totalBytesBilled),endedAt:integer(m?.statistics?.endTime)};
   }
+  /** Read only an already verified DONE job. This never creates or replays a
+   * query; the saga rechecks canonical reservation and authority around the read. */
+  async readVerifiedRows(job:ReportJob, saga:StagedUatDetailQuery, signal:AbortSignal):Promise<unknown[]> {
+    signal.throwIfAborted(); const proof=await saga.readProof(job); signal.throwIfAborted();
+    if (proof.jobId!==job.id || proof.queryHash!==this.plan.queryHash || proof.project!==BIGQUERY_COST_LIMITS.project
+      || proof.location!=='US' || proof.scopeDigest!==job.control.scopeDigest || proof.sourceGeneration!==job.control.sourceGeneration) return bad();
+    const matches=(m:Awaited<ReturnType<UatFeatureNative['lookup']>>) => !!m && m.id===proof.nativeId && m.queryHash===proof.queryHash
+      && m.project===proof.project && m.location==='US' && m.useLegacySql===false && m.maximumBytesBilled===proof.bytes
+      && m.state==='DONE' && m.error===false && m.billed===proof.billed && m.endedAt===proof.endedAt;
+    const before=await this.lookup(proof.nativeId); signal.throwIfAborted(); if (!matches(before)) return bad();
+    const [rows,next]=await this.client.job(proof.nativeId,{location:'US'}).getQueryResults({autoPaginate:false,maxResults:2000,timeoutMs:BIGQUERY_COST_LIMITS.timeoutMs});
+    signal.throwIfAborted();
+    if (!Array.isArray(rows) || rows.length>=2000 || next?.pageToken || Buffer.byteLength(JSON.stringify(rows))>700_000) return bad();
+    const after=await this.lookup(proof.nativeId); signal.throwIfAborted(); if (!matches(after)) return bad();
+    const again=await saga.readProof(job); signal.throwIfAborted(); if (digest(again)!==digest(proof)) return bad();
+    return rows;
+  }
+
 }
