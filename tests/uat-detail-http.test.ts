@@ -35,3 +35,19 @@ it('fails closed with a sanitized response when a result exceeds the byte bound'
  const result=await request(server).post('/internal/metrics/uat-detail/collect').set('Authorization','Bearer token').send({jobId:'a'.repeat(64)}).expect(503);
  expect(result.body).toEqual({state:'unavailable'});
 });
+import { createConnection } from 'node:net';
+import type { AddressInfo } from 'node:net';
+it('returns unavailable for an incomplete body and never invokes the worker after deadline',async()=>{
+ const execute=vi.fn(),deliver=vi.fn();
+ const server=uatDetailServer({enabled:true,maxRequestBytes:1024,maxResponseBytes:1024,timeoutMs:50},{execute} as any,{deliver} as any);
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const socket=createConnection((server.address() as AddressInfo).port,'127.0.0.1');
+ try {
+  let text='';const response=new Promise<void>((resolve,reject)=>{socket.on('data',chunk=>{text+=chunk.toString();if(text.includes('{"state":"unavailable"}'))resolve();});socket.on('error',reject);});
+  await new Promise<void>(resolve=>socket.once('connect',resolve));
+  socket.write('POST /internal/metrics/uat-detail/collect HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer token\r\nContent-Type: application/json\r\nContent-Length: 76\r\n\r\n{"jobId":"');
+  await Promise.race([response,new Promise<never>((_,reject)=>setTimeout(()=>reject(Error('deadline response missing')),2000))]);
+  expect(text).toContain('503');expect(execute).not.toHaveBeenCalled();expect(deliver).not.toHaveBeenCalled();
+  socket.write('a'.repeat(64)+'"}');await new Promise(resolve=>setTimeout(resolve,50));expect(execute).not.toHaveBeenCalled();
+ } finally {socket.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
