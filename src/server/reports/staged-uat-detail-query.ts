@@ -23,7 +23,7 @@ const fail=()=>{ throw new ReportError('unavailable'); };
 const positive=(v:unknown):v is number=>Number.isSafeInteger(v) && Number(v)>0;
 const canonicalDay=(v:unknown):v is string=>typeof v==='string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
   && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0,10)===v;
-function detailPolicy(value:unknown, now:number, recovery=false):DetailPolicy {
+export function validateUatDetailPolicy(value:unknown, now:number, recovery=false):DetailPolicy {
   if (!value || typeof value!=='object' || Array.isArray(value)) return fail(); const p=value as DetailPolicy;
   if (Object.keys(p).sort().join()!=='approved,enabled,endDate,environment,expiresAt,location,maxBytes,project,queryHash,referenceDigest,scopeDigest,sourceGeneration,startDate,timezone'
     || p.approved!==true || p.enabled!==true || p.environment!=='uat' || p.project!==BIGQUERY_COST_LIMITS.project || p.location!=='US'
@@ -51,7 +51,7 @@ export class StagedUatDetailQuery {
   private async gate(job:ReportJob, read:(path:string)=>Promise<any>, recovery=false) {
     const [raw,global,live,control]=await Promise.all([read(reportPath('policy','one-agent-detail-bq')),
       read(reportPath('policy','current')),read(reportPath('jobs',job.id)),read(reportPath('controls',job.request.reportId))]);
-    const now=this.now(), p=detailPolicy(raw,now,recovery); current(live,job,control,global,p,now,recovery); return {p,now};
+    const now=this.now(), p=validateUatDetailPolicy(raw,now,recovery); current(live,job,control,global,p,now,recovery); return {p,now};
   }
   /** Internal status for one authorized worker step; no provider I/O. */
   async inspect(job:ReportJob) {
