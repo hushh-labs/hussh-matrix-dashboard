@@ -77,30 +77,22 @@ preference updates, unlock, grants and withdrawal; the three Gmail rows;
 Advisor handoff; Marketplace browsing and subscription; and all six KYC
 actions. Their lack of exported records is not evidence of no product use.
 
-## Repeatable end-to-end verification
+## Offline source inventory
 
-`npm run audit:metrics:agent-signals` reads both properties, applies the same
-verified surface scope, prefers finalized daily exports over overlapping
-intraday exports, and independently computes counts. It compares each feature's
-accounts, device IDs, records, successful/expected/failed results and classified
-outcome totals. It also verifies all agent-level distinct unions and daily
-chart points. It fails on missing API sources, date mismatch, unknown feature
-keys or numeric disagreement. Known tracking gaps remain explicit in its JSON
-report even when the exported counts reconcile.
+The live agent-signal audit is disabled because its previous BigQuery execution
+was outside the shared durable query budget. There is no paid execution override.
+An offline inventory is available without BigQuery or dashboard requests:
 
 ```bash
-npm run audit:metrics:agent-signals -- \
-  --start-date 2026-09-08 --end-date 2026-10-07 --repeat 3 \
+npm run audit:metrics:agent-signals -- --inventory-only \
   --app-repo <hushh-research-checkout> --app-ref <reviewed-commit>
 ```
 
-Use the existing private release-session mechanism for protected endpoints;
-never paste signed cookies or secrets into commands or reports. `--cli` uses
-the authenticated BQ CLI instead of SDK ADC. Repetitions are bounded to three,
-query cache is disabled for source comparisons, and source/API calls have
-timeouts. Output contains aggregate counts and source file paths only.
+Source references are candidate callers, not proof of live event capture or
+numeric reconciliation. Restoring live verification requires a separately
+reviewed budgeted execution and recovery path.
 
-The original mapping passed three calculation comparisons because both used
+A historical pre-disable comparison (2026-11) found that the original mapping passed three calculation comparisons because both used
 the same old accepted names. Reviewing the emitting code exposed the provider
 mapping defect; the revised independent audit correctly failed against the old
 live Google row. This negative control distinguishes numeric consistency from
