@@ -39,7 +39,7 @@ export function createUatDetailBootstrap(env:Record<string,string|undefined> = p
  };
  const server=uatDetailServer({enabled:true,maxRequestBytes:8192,maxResponseBytes:c.maxResponseBytes,timeoutMs:c.rpcTimeoutMs},
   {execute:async(token,id,signal)=>(await authorized(token,c.taskInvoker,signal)).collect(token,id,signal)},
-  {deliver:async()=>{throw new ReportError('unavailable');}},web);
+  {deliver:async(token,id,signal)=>(await authorized(token,'metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com',signal)).dispatch(token,id,signal)},web);
  server.once('close',()=>{closed=true;void runtime?.then(value=>value.close()).catch(()=>{});});
  return server;
 }

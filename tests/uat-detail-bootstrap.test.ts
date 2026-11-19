@@ -33,3 +33,12 @@ it('accepts the fixed web principal and delegates only after verification',async
  expect(response.body.result).toEqual({state:'unavailable'});expect(fake.verify).toHaveBeenCalledWith('token',config.workerAudience);
  expect(fake.runtime).toHaveBeenCalledOnce();expect(readDatesForWeb).toHaveBeenCalledOnce();
 });
+it('dispatcher route requires the fixed distinct service principal',async()=>{
+ const server=createUatDetailBootstrap(enabled()),dispatch=vi.fn(async()=>({state:'delayed'}));fake.runtime.mockResolvedValue({dispatch,close:vi.fn()});
+ fake.verify.mockResolvedValue({email:config.taskInvoker,emailVerified:true});
+ await request(server).post('/internal/metrics/uat-detail/dispatch').set('Authorization','Bearer token').send({jobId:'a'.repeat(64)}).expect(401);
+ expect(fake.runtime).not.toHaveBeenCalled();
+ fake.verify.mockResolvedValue({email:'metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com',emailVerified:true});
+ await request(createUatDetailBootstrap(enabled())).post('/internal/metrics/uat-detail/dispatch').set('Authorization','Bearer token').send({jobId:'a'.repeat(64)}).expect(200);
+ expect(dispatch).toHaveBeenCalledOnce();
+});

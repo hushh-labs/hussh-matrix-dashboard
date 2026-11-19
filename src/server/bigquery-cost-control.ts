@@ -10,6 +10,7 @@ import { reportPath as detailPath, FirestoreReportStore, type ReportStore } from
 import { prepareUatCombinedDetail } from './reports/uat-combined-detail';
 import { validateUatCombinedPublication } from './reports/uat-combined-publication';
 import { validateUatServicePolicy } from './reports/uat-service-policy';
+import { validateUatDispatcherPolicy } from './reports/uat-detail-dispatch-policy';
 import { UatTwoSourceReservations } from './reports/uat-two-source-reservations';
 import { reportingSession } from './reports/session';
 import { googleWorkerIdentityVerifier } from './reports/worker-http';
@@ -1145,6 +1146,37 @@ export async function createServiceOwnedUatRuntime() {
     async statusForWeb(token:string,access:ReportAccess,id:string) {
       validateDetailAccess(access);const scoped=Object.freeze({...access});await web(token,scoped,true);
       const result=await statusAccess(scoped,id);await web(token,scoped,true);return result;
+    },
+    async dispatch(token:string,jobId:string,signal:AbortSignal) {
+      const gate=async()=>{
+        computeFlags(); if(process.env.METRICS_UAT_DISPATCH_ENABLED!=='true')throw new BigQueryCostControlError();
+        signal.throwIfAborted();const service=await policy();
+        const raw=await store.transaction(tx=>tx.get<any>(detailPath('policy','one-agent-detail-dispatcher')));
+        const approved=validateUatDispatcherPolicy(raw,service,Date.now());
+        const identity=await verify(token,config.workerAudience), again=await policy();
+        const next=await store.transaction(tx=>tx.get<any>(detailPath('policy','one-agent-detail-dispatcher')));
+        validateUatDispatcherPolicy(next,again,Date.now());
+        computeFlags();signal.throwIfAborted();
+        if(process.env.METRICS_UAT_DISPATCH_ENABLED!=='true' || !identity.emailVerified || identity.email!==approved.dispatcher
+          || detailDigest(service)!==detailDigest(again) || detailDigest(raw)!==detailDigest(next))throw new BigQueryCostControlError();
+      };
+      if (!/^[a-f0-9]{64}$/.test(jobId)) throw new BigQueryCostControlError();
+      await gate(); const job=await worker.inspect(jobId);signal.throwIfAborted();
+      if(!job || job.request.reportId!=='one.agent-detail-uat' || job.lane!=='custom' || !await serviceAuthority(job))throw new BigQueryCostControlError();
+      const queue=new UatDetailTaskQueue({enabled:true,parent:config.queueParent,workerUrl:config.workerAudience+'/internal/metrics/uat-detail/collect',invokerEmail:config.taskInvoker,rpcTimeoutMs:config.rpcTimeoutMs},cloudTasksRequest(config.maxResponseBytes));
+      const checkJob=async()=>{const current=await store.transaction(async tx=>{
+        const live=await tx.get<ReportJob>(detailPath('jobs',jobId));
+        const control=await tx.get<ReportControl>(detailPath('controls','one.agent-detail-uat'));
+        if(!live || !control || detailDigest(control)!==detailDigest(live.control))throw new BigQueryCostControlError();
+        return live;
+      });signal.throwIfAborted();
+        if(current.request.reportId!=='one.agent-detail-uat' || current.lane!=='custom'
+          || detailDigest(current.request)!==detailDigest(job.request) || detailDigest(current.control)!==detailDigest(job.control)
+          || !await serviceAuthority(current))throw new BigQueryCostControlError();};
+      const guarded={taskName:(id:string)=>queue.taskName(id),
+        create:async(id:string)=>{await gate();await checkJob();computeFlags();if(process.env.METRICS_UAT_DISPATCH_ENABLED!=='true')throw new BigQueryCostControlError();signal.throwIfAborted();return queue.create(id);},
+        lookup:async(id:string)=>{await gate();await checkJob();computeFlags();if(process.env.METRICS_UAT_DISPATCH_ENABLED!=='true')throw new BigQueryCostControlError();signal.throwIfAborted();return queue.lookup(id);}};
+      await gate();return new MetricsReportDispatch(store,guarded).deliver(jobId,detailDigest('metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com'));
     },
     async collect(token:string,jobId:string,signal:AbortSignal) {
       computeFlags(); await checkWorker(token); computeFlags(); signal.throwIfAborted();

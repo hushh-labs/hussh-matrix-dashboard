@@ -4,7 +4,8 @@ import { createServiceOwnedUatRuntime } from '../src/server/bigquery-cost-contro
 import { digest, reportKey } from '../src/server/reports/contracts';
 import { reportPath } from '../src/server/reports/store';
 import { uatTwoSourceManifest, uatTwoSourceChildIds } from '../src/server/reports/uat-two-source-manifest';
-const fake=vi.hoisted(()=>({docs:new Map<string,any>(),budgetDocs:new Map<string,any>(),tails:new Map<string,Promise<void>>(),paidEvidence:[] as boolean[],onGet:vi.fn(),construct:vi.fn(),create:vi.fn(),getTables:vi.fn(),metadata:vi.fn(),rows:vi.fn(),verify:vi.fn(),terminate:vi.fn()}));
+const fake=vi.hoisted(()=>({docs:new Map<string,any>(),budgetDocs:new Map<string,any>(),tails:new Map<string,Promise<void>>(),paidEvidence:[] as boolean[],queue:vi.fn(),onGet:vi.fn(),construct:vi.fn(),create:vi.fn(),getTables:vi.fn(),metadata:vi.fn(),rows:vi.fn(),verify:vi.fn(),terminate:vi.fn()}));
+vi.mock('../src/server/reports/transports',()=>({cloudTasksRequest:()=>fake.queue}));
 vi.mock('google-auth-library',()=>({OAuth2Client:class {verifyIdToken=fake.verify;}}));
 vi.mock('@google-cloud/firestore',()=>({Firestore:class {
  private database:string;constructor(options:any){this.database=options.databaseId;}
@@ -22,7 +23,7 @@ vi.mock('@google-cloud/bigquery',()=>({BigQuery:class {
 }}));
 afterEach(()=>{vi.unstubAllEnvs();fake.docs.clear();vi.clearAllMocks();});
 function setup() {
- fake.docs.clear();fake.budgetDocs.clear();fake.tails.clear();fake.paidEvidence=[];fake.onGet.mockReset();fake.create.mockReset();fake.getTables.mockReset();fake.metadata.mockReset();fake.rows.mockReset();fake.construct.mockClear();
+ fake.docs.clear();fake.budgetDocs.clear();fake.tails.clear();fake.paidEvidence=[];fake.onGet.mockReset();fake.create.mockReset();fake.queue.mockReset();fake.getTables.mockReset();fake.metadata.mockReset();fake.rows.mockReset();fake.construct.mockClear();
  const now=Date.now(),scopeDigest='a'.repeat(64),sourceGeneration='b'.repeat(64);
  const config={project:'hushh-pda-uat',dataset:'analytics_533362555',webHost:'uat.one.hushh.ai',timezone:'UTC',startDate:'2026-11-18',endDate:'2026-11-18',maxPeriodDays:7};
  const {manifest,manifestDigest}=uatTwoSourceManifest(config,scopeDigest,sourceGeneration);
@@ -289,4 +290,47 @@ it('date-only read binds approved period and never starts native work',async()=>
  await expect(runtime.readDatesForWeb('token',access,{...dates,startDate:'2026-11-17'})).rejects.toThrow();
  fake.docs.delete(reportPath('policy','one-agent-detail-two-source'));await expect(runtime.readDatesForWeb('token',access,dates)).rejects.toThrow();
  expect(fake.create).not.toHaveBeenCalled();expect(fake.budgetDocs.size).toBe(0);await runtime.close();
+});
+
+it('dispatcher requires distinct approved identity and recovers lost acknowledgement by lookup only',async()=>{
+ const f=setup(),service=fake.docs.get(reportPath('policy','one-agent-detail-service'));
+ fake.docs.set(reportPath('policy','one-agent-detail-dispatcher'),{approved:true,enabled:true,expiresAt:Date.now()+60000,
+  dispatcher:'metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com',serviceDigest:digest(service)});
+ fake.docs.set(reportPath('policy','dispatch'),{approved:true,enabled:true,leaseMs:1000,lookupDelayMs:1000,maxLookups:2});
+ const runtime=await createServiceOwnedUatRuntime(),signal=new AbortController().signal;
+ await expect(runtime.dispatch('token',f.job.id,signal)).rejects.toThrow();expect(fake.queue).not.toHaveBeenCalled();
+ vi.stubEnv('METRICS_UAT_DISPATCH_ENABLED','true');
+ await expect(runtime.dispatch('token',f.job.id,signal)).rejects.toThrow();expect(fake.queue).not.toHaveBeenCalled(); // task identity is not dispatcher
+ fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com'})});
+ fake.queue.mockRejectedValueOnce(Error('lost acknowledgement')).mockResolvedValueOnce({status:404});
+ expect(await runtime.dispatch('token',f.job.id,signal)).toEqual({state:'delayed'});
+ const receiptKey=reportPath('dispatches',f.job.id),receipt=fake.docs.get(receiptKey);fake.docs.set(receiptKey,{...receipt,nextLookupAt:0,leaseUntil:0});
+ expect(await runtime.dispatch('token',f.job.id,signal)).toEqual({state:'delayed'});
+ expect(fake.queue).toHaveBeenCalledTimes(2);expect(fake.queue.mock.calls.map(call=>call[1].method)).toEqual(['POST','GET']);
+ expect(fake.create).not.toHaveBeenCalled();await runtime.close();
+});
+
+it('holds dispatcher intent without queue work if dispatcher policy closes during admission',async()=>{
+ const f=setup(),service=fake.docs.get(reportPath('policy','one-agent-detail-service'));
+ const policyKey=reportPath('policy','one-agent-detail-dispatcher');
+ const policy={approved:true,enabled:true,expiresAt:Date.now()+60000,dispatcher:'metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com',serviceDigest:digest(service)};
+ fake.docs.set(policyKey,policy);fake.docs.set(reportPath('policy','dispatch'),{approved:true,enabled:true,leaseMs:1000,lookupDelayMs:1000,maxLookups:2});
+ vi.stubEnv('METRICS_UAT_DISPATCH_ENABLED','true');fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:policy.dispatcher})});
+ const runtime=await createServiceOwnedUatRuntime();let closed=false;
+ fake.onGet.mockImplementation((path:string,data:Map<string,any>)=>{if(!closed && path.startsWith('metricsReporting/v1/dispatches/')){closed=true;data.set(policyKey,{...policy,enabled:false});}});
+ expect(await runtime.dispatch('token',f.job.id,new AbortController().signal)).toEqual({state:'delayed'});
+ expect(closed).toBe(true);expect(fake.queue).not.toHaveBeenCalled();expect(fake.create).not.toHaveBeenCalled();
+ expect(fake.docs.get(reportPath('dispatches',f.job.id))).toMatchObject({state:'uncertain'});await runtime.close();
+});
+
+it('holds dispatcher intent when control changes during the post-intent identity gate',async()=>{
+ const f=setup(),service=fake.docs.get(reportPath('policy','one-agent-detail-service'));
+ const p={approved:true,enabled:true,expiresAt:Date.now()+60000,dispatcher:'metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com',serviceDigest:digest(service)};
+ fake.docs.set(reportPath('policy','one-agent-detail-dispatcher'),p);fake.docs.set(reportPath('policy','dispatch'),{approved:true,enabled:true,leaseMs:1000,lookupDelayMs:1000,maxLookups:2});
+ vi.stubEnv('METRICS_UAT_DISPATCH_ENABLED','true');fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:p.dispatcher})});
+ const runtime=await createServiceOwnedUatRuntime();let intent=false,changed=false;
+ fake.onGet.mockImplementation((path:string,data:Map<string,any>)=>{if(path.startsWith('metricsReporting/v1/dispatches/'))intent=true;
+  if(intent && !changed && path===reportPath('policy','one-agent-detail-dispatcher')) {changed=true;const key=reportPath('controls','one.agent-detail-uat');data.set(key,{...data.get(key),enabled:false});}});
+ expect(await runtime.dispatch('token',f.job.id,new AbortController().signal)).toEqual({state:'delayed'});
+ expect(changed).toBe(true);expect(fake.queue).not.toHaveBeenCalled();expect(fake.create).not.toHaveBeenCalled();await runtime.close();
 });
