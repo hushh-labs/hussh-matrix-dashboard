@@ -51,3 +51,12 @@ it('returns unavailable for an incomplete body and never invokes the worker afte
   socket.write('a'.repeat(64)+'"}');await new Promise(resolve=>setTimeout(resolve,50));expect(execute).not.toHaveBeenCalled();
  } finally {socket.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
+
+it('bounded shutdown aborts in-flight work and closes a noncooperative connection',async()=>{
+ const {shutdownUatDetailServer}=await import('../src/server/reports/uat-detail-http');
+ let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});let observed:AbortSignal|undefined;
+ const execute=vi.fn(async(_token:string,_id:string,signal:AbortSignal)=>{observed=signal;entered();await new Promise(()=>{});});
+ const server=uatDetailServer({enabled:true,maxRequestBytes:1024,maxResponseBytes:1024,timeoutMs:5000},{execute} as any,{deliver:vi.fn()} as any);
+ const call=request(server).post('/internal/metrics/uat-detail/collect').set('Authorization','Bearer token').send({jobId:'a'.repeat(64)}).then(()=>{},()=>{});
+ await started;await shutdownUatDetailServer(server,30);expect(observed?.aborted).toBe(true);await call;
+});

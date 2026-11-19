@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "start": "tsx server.ts",
     "metrics:collector": "tsx scripts/metrics-collector.ts",
+    "metrics:uat-detail-worker": "tsx src/server/reports/uat-detail-main.ts",
     "test": "vitest run",
     "test:metrics:environment-fixtures": "node scripts/check-one-environment-fixtures.mjs",
     "test:metrics:feed-scope": "node scripts/render-one-feed-scope.mjs",
