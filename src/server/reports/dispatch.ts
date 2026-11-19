@@ -20,7 +20,7 @@ function dispatchPolicy(value: DispatchPolicy | null) {
  * Rendering and report reads never import this module. */
 export class MetricsReportDispatch {
   constructor(private store: ReportStore, private queue: ReportTaskQueue, private now: () => number = Date.now) {}
-  async deliver(jobId: string, ownerHash: string) {
+  async deliver(jobId: string, ownerHash: string, options: {lookupOnly?:boolean} = {}) {
     if (!/^[a-f0-9]{64}$/.test(jobId) || !/^[a-f0-9]{64}$/.test(ownerHash)) throw new ReportError('invalid');
     const now = this.now(), taskName = this.queue.taskName(jobId);
     const intent = await this.store.transaction(async tx => {
@@ -38,7 +38,7 @@ export class MetricsReportDispatch {
       if (digest(control) !== digest(job.control) || !job.sourceStarted && job.expiresAt <= now) return { state: 'skipped' as const };
       if (current?.state === 'blocked') return { state: current.state };
       if (current && (current.leaseUntil > now || current.nextLookupAt > now)) return { state: 'delayed' as const };
-      if (!current && job.sourceStarted) return { state: 'skipped' as const };
+      if (!current && (job.sourceStarted || options.lookupOnly === true)) return { state: 'skipped' as const };
       if (current && (!Number.isSafeInteger(current.lookups) || current.lookups < 0 || current.lookups >= policy.maxLookups)) {
         tx.set(reportPath('dispatches', jobId), { ...current, state: 'blocked', leaseUntil: 0 });
         return { state: 'blocked' as const };

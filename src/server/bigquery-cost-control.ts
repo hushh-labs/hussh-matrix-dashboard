@@ -1060,11 +1060,13 @@ export async function createServiceOwnedUatRuntime() {
         const request=validateDetailRequest(job.request,limits.maxPeriodDays),control=validateDetailControl(await tx.get<ReportControl>(detailPath('controls',request.reportId)),request,access);
         if (detailDigest(control)!==detailDigest(job.control) || job.key!==detailReportKey(request,control)) throw new BigQueryCostControlError();
         const head=await tx.get<any>(detailPath('heads',job.key));
+        const dispatchReceipt=await tx.get<any>(detailPath('dispatches',id));
         if (job.status==='completed' && head?.publication!==id) throw new BigQueryCostControlError();
         const quotaKey=detailDigest([access.subjectHash,'status',Math.floor(now/limits.quotaWindowMs)]),quota=await tx.get<{count:number}>(detailPath('quotas',quotaKey));
         const count=quota?.count??0;if (!Number.isSafeInteger(count) || count<0 || count>=limits.statusRequests) throw new BigQueryCostControlError();
         tx.set(detailPath('quotas',quotaKey),{count:count+1,windowEndsAt:(Math.floor(now/limits.quotaWindowMs)+1)*limits.quotaWindowMs});
-        return {state:job.status,request,key:job.key,needsAttention:job.needsAttention};
+        return {state:job.status,request,key:job.key,needsAttention:job.needsAttention ||
+          (job.status!=='completed' && (dispatchReceipt?.state==='uncertain' || dispatchReceipt?.state==='blocked'))};
       });
       if (result.state==='completed') {
         // A completed status also consumes one read quota: it validates the
@@ -1176,7 +1178,7 @@ export async function createServiceOwnedUatRuntime() {
       const guarded={taskName:(id:string)=>queue.taskName(id),
         create:async(id:string)=>{await gate();await checkJob();computeFlags();if(process.env.METRICS_UAT_DISPATCH_ENABLED!=='true')throw new BigQueryCostControlError();signal.throwIfAborted();return queue.create(id);},
         lookup:async(id:string)=>{await gate();await checkJob();computeFlags();if(process.env.METRICS_UAT_DISPATCH_ENABLED!=='true')throw new BigQueryCostControlError();signal.throwIfAborted();return queue.lookup(id);}};
-      await gate();return new MetricsReportDispatch(store,guarded).deliver(jobId,detailDigest('metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com'));
+      await gate();return new MetricsReportDispatch(store,guarded).deliver(jobId,detailDigest('metrics-report-dispatcher@hushh-ai-prod.iam.gserviceaccount.com'),{lookupOnly:true});
     },
     async collect(token:string,jobId:string,signal:AbortSignal) {
       computeFlags(); await checkWorker(token); computeFlags(); signal.throwIfAborted();
