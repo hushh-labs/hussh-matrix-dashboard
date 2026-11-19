@@ -57,6 +57,17 @@ describe('fixed periodic collector admission', () => {
     await f.put('snapshots', manual.jobId!, snapshot);
     await expect(f.reports.requestPeriodic('one', access)).rejects.toThrow();
   });
+  it.each(['negative', 'source-after'])('rejects %s timestamps in an earlier periodic receipt publication', async fault => {
+    const f = collectionFixture(); await f.initialize(); const manual = await f.reports.request(f.request, f.access);
+    const claim = await f.worker.claim(manual.jobId!, digest('worker')); await f.worker.publish(claim!.job, f.result(claim!.job));
+    await f.put('policy', 'periodic', schedule()); const first = await f.reports.requestPeriodic('one', access);
+    expect(first).toEqual({ state:'completed', reportId:manual.jobId, jobId:null });
+    const head = (await f.get<any>('heads', claim!.job.key))!; await f.put('heads', claim!.job.key, { ...head, publication:null });
+    const snapshot = (await f.get<any>('snapshots', manual.jobId!))!;
+    await f.put('snapshots', manual.jobId!, { ...snapshot, computedAt:fault==='negative' ? -1 : snapshot.result.sourceCheckedAt - 1 });
+    await expect(f.reports.requestPeriodic('one', access)).rejects.toThrow();
+    expect([...f.store.data.keys()].filter(key => key.includes('/jobs/'))).toHaveLength(1);
+  });
   it('does not reuse a malformed publication as a completed periodic report', async () => {
     const f = collectionFixture(); await f.initialize(); const manual = await f.reports.request(f.request, f.access);
     const claim = await f.worker.claim(manual.jobId!, digest('worker')); await f.worker.publish(claim!.job, f.result(claim!.job));

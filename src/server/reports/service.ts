@@ -18,6 +18,16 @@ function validPeriodicDay(day: PeriodicDay, expectedDay: string) {
 }
 type Context = { policy: ReportingPolicy; control: ReportControl; request: ReportRequest; key: string };
 
+function validatePublishedReport(report: PublishedReport | null, id: string | null, c: Context, now: number) {
+  if (!report || Object.keys(report).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
+    || report.key !== c.key || report.id !== id || digest(report.control) !== digest(c.control)
+    || digest(report.request) !== digest(c.request) || !Number.isSafeInteger(report.computedAt) || report.computedAt < 0
+    || !Number.isSafeInteger(report.publishedAt) || report.publishedAt > now || report.computedAt > report.publishedAt)
+    throw new ReportError('unavailable');
+  validateAggregate(report.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
+  if (report.result.sourceCheckedAt > report.computedAt) throw new ReportError('unavailable');
+}
+
 /** No source SDK, provider callback or enqueue callback exists in this reader. */
 export class MetricsReports {
   constructor(private store: ReportStore, private now: () => number = Date.now, private cache?: ReportBodyCache) {}
@@ -52,11 +62,7 @@ export class MetricsReports {
       const charge = await this.quota(tx, access, c.policy, 'read', now);
       charge();
       if (!report) return { state: 'unavailable' as const, report: null };
-      if (Object.keys(report).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
-        || report.key !== c.key || report.id !== head!.publication || digest(report.control) !== digest(c.control)
-        || digest(report.request) !== digest(c.request) || !Number.isSafeInteger(report.computedAt)
-        || !Number.isSafeInteger(report.publishedAt) || report.publishedAt > now || report.computedAt > report.publishedAt) throw new ReportError('unavailable');
-      validateAggregate(report.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
+      validatePublishedReport(report, head!.publication, c, now);
       const watermark = report.result.sourceWatermark;
       // Publication age limits retention of provider reports with unknown source
       // freshness. It never establishes an information watermark.
@@ -88,7 +94,9 @@ export class MetricsReports {
       if (!plan && lane === 'scheduled' && periodicPolicy && (periodicPolicy as { enabled?: unknown }).enabled !== false) throw new ReportError('unavailable');
       const c = await this.context(tx, plan?.request ?? input, access);
       const head = await tx.get<Head>(path('heads', c.key)) ?? { sequence: 0, activeJob: null, publication: null };
+      if (head.publication !== null && (typeof head.publication !== 'string' || !/^[a-f0-9]{64}$/.test(head.publication))) throw new ReportError('unavailable');
       const publication = head.publication ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
+      if (head.publication) validatePublishedReport(publication, head.publication, c, now);
       const active = head.activeJob ? await tx.get<ReportJob>(path('jobs', head.activeJob)) : null;
       const slots = await tx.get<Capacity>(path('capacity', lane)) ?? { active: 0 };
       const subjectSlot = path('subjectCapacity', digest([lane, access.subjectHash]));
@@ -140,12 +148,7 @@ export class MetricsReports {
         if (receipt) {
           const published = receiptPublication;
           if (receiptJob?.status === 'completed' || receipt.reportId) {
-            if (!published || Object.keys(published).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
-              || published.id !== (receiptJob?.id ?? receipt.reportId) || published.key !== c.key
-              || digest(published.request) !== digest(c.request) || digest(published.control) !== digest(c.control)
-              || !Number.isSafeInteger(published.computedAt) || !Number.isSafeInteger(published.publishedAt)
-              || published.computedAt > published.publishedAt || published.publishedAt > now) throw new ReportError('unavailable');
-            validateAggregate(published.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
+            validatePublishedReport(published, receiptJob?.id ?? receipt.reportId, c, now);
           }
           persistTighter(); charge();
           return receiptJob ? { state: receiptJob.status, reportId: receiptJob.status === 'completed' ? receiptJob.id : null, jobId: receiptJob.id }
@@ -160,14 +163,7 @@ export class MetricsReports {
         || cycleJobs.some((job, index) => !job || job.id !== cycle.jobs[index] || !['completed', 'failed', 'invalidated'].includes(job.status)))) throw new ReportError('capacity');
       let result: { state: 'accepted' | 'running' | 'delayed' | 'completed'; reportId: string | null; jobId: string | null };
       let jobToCreate: ReportJob | null = null;
-      if (publication && publication.key === c.key && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
-        if (plan) {
-          if (Object.keys(publication).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
-            || publication.id !== head.publication || digest(publication.request) !== digest(c.request) || digest(publication.control) !== digest(c.control)
-            || !Number.isSafeInteger(publication.computedAt) || !Number.isSafeInteger(publication.publishedAt)
-            || publication.computedAt > publication.publishedAt || publication.publishedAt > now) throw new ReportError('unavailable');
-          validateAggregate(publication.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
-        }
+      if (publication && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
         result = { state: 'completed', reportId: publication.id, jobId: null };
       } else if (active && ['accepted', 'running', 'delayed'].includes(active.status)) {
         result = { state: active.status as 'accepted' | 'running' | 'delayed', reportId: null, jobId: active.id };

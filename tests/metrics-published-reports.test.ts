@@ -71,6 +71,46 @@ for (const mode of ['memory', ...(emulator ? ['firestore'] : [])]) {
       expect((await reader.request(request, access)).state).toBe('completed');
       expect(await store.transaction(tx => tx.get(path('capacity', 'custom')))).toEqual({ active: 0 });
     });
+    it.each(['missing', 'id', 'key', 'request', 'control', 'future', 'order', 'negative', 'source-after', 'extra', 'aggregate', 'stale-incompatible'])(
+      'does not reuse or replace a %s manual publication', async fault => {
+        const intent = await reader.request(request, access); let calls = 0;
+        const source = { submit: async (job: ReportJob) => { calls++; return aggregate(job, now); },
+          recover: async () => { throw new Error('Unexpected recovery'); } };
+        await collectReport(worker, intent.jobId!, digest('source-worker'), source);
+        const id = intent.jobId!, key = reportKey(request, control);
+        const original = await store.transaction(tx => tx.get<any>(path('snapshots', id)));
+        expect((await reader.request(request, access))).toMatchObject({ state: 'completed', reportId: id, jobId: null });
+        if (fault === 'missing') await store.transaction(async tx => { tx.delete(path('snapshots', id)); });
+        else {
+          const changed = fault === 'id' ? { ...original, id: digest('different') }
+            : fault === 'key' ? { ...original, key: digest('different') }
+              : fault === 'request' ? { ...original, request: { ...request, startDate: '2026-11-09' } }
+                : fault === 'control' || fault === 'stale-incompatible' ? { ...original, control: { ...control, revision: 2 } }
+                  : fault === 'future' ? { ...original, publishedAt: now + 1 }
+                    : fault === 'order' ? { ...original, computedAt: now + 1 }
+                      : fault === 'negative' ? { ...original, computedAt: -1 }
+                        : fault === 'source-after' ? { ...original, computedAt: now - 1 }
+                      : fault === 'extra' ? { ...original, extra: true }
+                        : { ...original, result: { ...original.result, scopeDigest: digest('different') } };
+          await put('snapshots', id, changed);
+          if (fault === 'stale-incompatible') now += control.freshnessMs + 1;
+        }
+        await expect(reader.request(request, access)).rejects.toThrow();
+        if (fault === 'negative' || fault === 'source-after') await expect(reader.read(request, access)).rejects.toThrow();
+        expect(calls).toBe(1);
+        expect(await store.transaction(tx => tx.get(path('capacity', 'custom')))).toEqual({ active: 0 });
+        expect(await store.transaction(tx => tx.get<any>(path('heads', key)))).toMatchObject({ activeJob: null, publication: id, sequence: 1 });
+      },
+    );
+    it('starts a replacement for a valid stale report while retaining the old publication', async () => {
+      const first = await claim(); await worker.publish(first.job, aggregate(first.job, now));
+      now += control.freshnessMs + 1;
+      const next = await reader.request(request, access);
+      expect(next.state).toBe('accepted'); expect(next.jobId).not.toBe(first.job.id);
+      expect((await reader.read(request, access)).report?.id).toBe(first.job.id);
+      expect(await store.transaction(tx => tx.get<any>(path('heads', first.job.key))))
+        .toMatchObject({ publication: first.job.id, activeJob: next.jobId, sequence: 2 });
+    });
     it('recovers the original provider identity after timeout and fences the old worker', async () => {
       const first = await claim(); now += policy.leaseMs + 1;
       const recovered = (await new MetricsReportWorker(store, () => now).claim(first.job.id, digest('worker-two')))!;
