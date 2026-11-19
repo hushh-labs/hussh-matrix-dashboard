@@ -71,3 +71,10 @@ describe('authenticated aggregate snapshots', () => {
     }
   });
 });
+
+it('mounts the optional legacy detail bridge before application parsing and fails closed without its target',async()=>{
+ vi.stubEnv('METRICS_UAT_LEGACY_BRIDGE_ENABLED','true');vi.stubEnv('METRICS_UAT_LEGACY_FORWARDING_CONFIG','');
+ const mounted=createApp({requireAuth:true,allowPublicDashboard:false,isProduction:false,sessionSecret:secret});query.mockClear();
+ const response=await request(mounted).post('/api/uat-detail-refresh').send({startDate:'2026-11-18',endDate:'2026-11-18'});
+ expect(response.status).toBe(503);expect(query).not.toHaveBeenCalled();vi.unstubAllEnvs();
+});

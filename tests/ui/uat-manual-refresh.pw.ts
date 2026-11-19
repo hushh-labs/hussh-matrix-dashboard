@@ -24,3 +24,13 @@ test('stops waiting when a manual request does not answer',async({page})=>{
  await page.goto('/tests/ui/fixtures/uat-manual/');await page.getByRole('button',{name:'Refresh UAT agent activity'}).click();
  await expect.poll(()=>count).toBe(1);await page.clock.fastForward(10001);await expect(page.getByText('Report refresh is unavailable.')).toBeVisible();expect(count).toBe(1);
 });
+
+test('legacy Location mount is UAT only and sends selected dates only after a click',async({page})=>{
+ const calls:any[]=[];const external:string[]=[];
+ await page.route('**/*',async route=>{const url=new URL(route.request().url());if(!['127.0.0.1','localhost'].includes(url.hostname)){external.push(url.origin);return route.abort();}return route.continue();});
+ await page.route('**/api/uat-detail-refresh',async route=>{calls.push(route.request().postDataJSON());await route.fulfill({status:403,json:{state:'unauthorized'}});});
+ await page.goto('/tests/ui/fixtures/uat-manual/legacy.html');await expect(page.getByRole('button',{name:'Refresh UAT agent activity'})).toBeVisible();expect(calls).toEqual([]);
+ await page.getByRole('button',{name:'Production',exact:true}).click();await expect(page.getByRole('button',{name:'Refresh UAT agent activity'})).toHaveCount(0);
+ await page.getByRole('button',{name:'UAT',exact:true}).click();await page.getByRole('button',{name:'Change date'}).click();await page.getByRole('button',{name:'Refresh UAT agent activity'}).click();
+ await expect(page.getByText('Report refresh is unavailable.')).toBeVisible();expect(calls).toEqual([{startDate:'2026-11-19',endDate:'2026-11-19'}]);expect(external).toEqual([]);
+});

@@ -1,3 +1,4 @@
+import { UatManualRefresh } from '../metrics-web/app/uat-manual-refresh';
 import { ReportDetails, ReportTabs } from './ReportControls';
 import { MetricsSkeleton } from './MetricsLoading';
 import { AndroidAnalyticsPanel } from './AndroidAnalyticsPanel';
@@ -1247,6 +1248,7 @@ export function OneAppPanel({
   onEnvironmentChange,
   onHealthRequested,
   retained = false,
+  uatDetailDates,
 }: {
   loading?: boolean;
   one: OneAppSummary | null;
@@ -1262,6 +1264,7 @@ export function OneAppPanel({
   onEnvironmentChange?: (environment: 'production' | 'uat') => void;
   onHealthRequested?: (requested: boolean) => void;
   retained?: boolean;
+  uatDetailDates?: {startDate:string;endDate:string};
   /**
    * Owned by Dashboard so the range state lives with every other product's,
    * and rendered here so it sits with the numbers it governs.
@@ -1342,6 +1345,8 @@ export function OneAppPanel({
 
   if (selectedAgentCapability) {
     return (
+      <>
+      {environment === 'uat' && uatDetailDates && <UatManualRefresh enabled request={uatDetailDates} />}
       <AgentCapabilityAnalyticsPanel
         loading={loading}
         environment={environment}
@@ -1356,11 +1361,14 @@ export function OneAppPanel({
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
       />
+      </>
     );
   }
 
   if (locationRoute) {
     return (
+      <>
+      {locationRoute.environment === 'uat' && uatDetailDates && <UatManualRefresh enabled request={uatDetailDates} />}
       <OneLocationAnalyticsPanel
         loading={loading}
         one={one}
@@ -1376,6 +1384,7 @@ export function OneAppPanel({
         onEnvironmentChange={(environment) => onLocationRouteChange({ ...locationRoute, environment })}
         onTabChange={(tab) => onLocationRouteChange({ ...locationRoute, tab })}
       />
+      </>
     );
   }
 

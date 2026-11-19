@@ -14,10 +14,11 @@ export async function POST(request:Request) {
     || request.headers.get('content-type')?.split(';')[0]!=='application/json') throw new ReportError('unavailable');
   const signal=AbortSignal.any([request.signal,AbortSignal.timeout(5000)]);
   const input=await readUatManualBody(request,signal);signal.throwIfAborted();
-  if(!input || typeof input!=='object' || !('reportId' in input) || input.reportId!=='one.agent-detail-uat')throw new ReportError('invalid');
+  const dateOnly=process.env.METRICS_UAT_DATE_WEB_ENABLED==='true' && !!input && typeof input==='object' && Object.keys(input).sort().join()==='endDate,startDate';
+  if(!dateOnly && (!input || typeof input!=='object' || !('reportId' in input) || input.reportId!=='one.agent-detail-uat'))throw new ReportError('invalid');
   const config=validateReportWebConfig(JSON.parse(process.env.METRICS_UAT_WEB_CONFIG??''));
   const client=new UatDetailWebClient(config,reportingIdentityHeaders(new GoogleAuth()));
-  const result=await withCurrentStaff(currentAccess,access=>{signal.throwIfAborted();return client.request(input,access,signal);});
+  const result=await withCurrentStaff(currentAccess,access=>{signal.throwIfAborted();return client.request(input,access,signal,dateOnly);});
   signal.throwIfAborted();
   return Response.json(result,{status:result.state==='completed'?200:202,headers:{'Cache-Control':'private, no-store'}});
  } catch(error) {return reportFailure(error instanceof SyntaxError?new ReportError('invalid'):error);}

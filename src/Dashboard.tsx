@@ -1811,6 +1811,7 @@ export default function Dashboard() {
           />
         ) : activeTab === 'one' ? (
           <OneAppPanel
+            uatDetailDates={import.meta.env.VITE_UAT_DATE_BRIDGE_ENABLED === 'true' ? {startDate:oneAppRange.startDate,endDate:oneAppRange.endDate} : undefined}
             loading={loading}
             environment={oneEnvironment}
             onEnvironmentChange={setOneEnvironment}

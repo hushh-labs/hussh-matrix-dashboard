@@ -4,7 +4,7 @@ import type { OneAgentDetailV1 } from '../../../src/lib/one-agent-detail-types';
 import { UatPartialDetail } from './uat-partial-detail';
 
 /** This control performs no network work until the user selects Refresh. */
-export function UatManualRefresh({request,enabled}:{request:{reportId:'one.agent-detail-uat';startDate:string;endDate:string;timezone:string};enabled:boolean}) {
+export function UatManualRefresh({request,enabled}:{request:{startDate:string;endDate:string;reportId?:'one.agent-detail-uat';timezone?:string};enabled:boolean}) {
  const active=useRef<AbortController|null>(null),[message,setMessage]=useState(''),[report,setReport]=useState<{detail:OneAgentDetailV1;computedAt:number;selection:string}|null>(null);
  const selection=JSON.stringify(request);
  useEffect(()=>{active.current?.abort();active.current=null;setReport(null);setMessage('');return ()=>{active.current?.abort();active.current=null;};},[selection,enabled]);

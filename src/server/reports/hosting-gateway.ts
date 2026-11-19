@@ -21,7 +21,7 @@ function config(value: unknown): HostingConfig {
 function reportMethods(path: string) {
   if (path === '/' || /^\/_next\/static\/[a-zA-Z0-9._~[\]()/+-]+$/.test(path)
     || /^\/api\/reports\/[a-zA-Z0-9.-]+$/.test(path) || /^\/api\/report-jobs\/[a-f0-9]{64}$/.test(path)) return ['GET', 'HEAD'];
-  return path === '/api/report-jobs' ? ['POST'] : null;
+  return ['/api/report-jobs', '/api/uat-detail-refresh', '/api/uat-detail-read', '/api/uat-detail-status'].includes(path) ? ['POST'] : null;
 }
 async function bounded(stream: ReadableStream<Uint8Array> | null, limit: number, signal: AbortSignal) {
   if (!stream) return new Uint8Array();
@@ -128,5 +128,19 @@ export function metricsHostingGateway(env: Record<string, string | undefined> = 
     response.headers.forEach((value, name) => { if (name !== 'set-cookie') res.setHeader(name, value); });
     const cookies = response.headers.getSetCookie(); if (cookies.length) res.setHeader('set-cookie', cookies);
     res.end(Buffer.from(await response.arrayBuffer()));
+  };
+}
+
+/** Optional same-origin detail bridge; existing pages and routes remain local.
+ * The target Next routes own staff session, origin and policy checks. */
+export function uatLegacyDetailBridge(env: Record<string,string | undefined> = process.env,
+  identity?: ReportingIdentityHeaders, fetcher: typeof fetch = fetch): RequestHandler {
+  const paths = new Set(['/api/uat-detail-refresh','/api/uat-detail-read','/api/uat-detail-status']);
+  const forward = metricsHostingGateway({ ...env, METRICS_REPORT_WEB_FORWARDING_CONFIG: env.METRICS_UAT_LEGACY_FORWARDING_CONFIG }, identity, fetcher);
+  return (req,res,next) => {
+    if (env.METRICS_UAT_LEGACY_BRIDGE_ENABLED !== 'true' || !paths.has(req.path)) return next();
+    // Missing forwarding configuration must not fall through to legacy work.
+    if (!env.METRICS_UAT_LEGACY_FORWARDING_CONFIG) { res.status(503).set('Cache-Control','private, no-store').end(); return; }
+    return forward(req,res,next);
   };
 }

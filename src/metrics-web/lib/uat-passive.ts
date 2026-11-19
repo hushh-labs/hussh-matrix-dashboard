@@ -14,7 +14,8 @@ export async function uatPassive(request:Request,operation:'read'|'status') {
    || request.headers.get('content-type')?.split(';')[0]!=='application/json')throw new ReportError('unavailable');
   const signal=AbortSignal.any([request.signal,AbortSignal.timeout(5000)]),input=await readUatManualBody(request,signal);signal.throwIfAborted();
   const client=new UatDetailWebClient(validateReportWebConfig(JSON.parse(process.env.METRICS_UAT_WEB_CONFIG??'')),reportingIdentityHeaders(new GoogleAuth()));
-  const result=operation==='read' ? await withCurrentStaff(currentAccess,access=>client.read(input,access,signal))
+  const dateOnly=operation==='read' && process.env.METRICS_UAT_DATE_WEB_ENABLED==='true' && !!input && typeof input==='object' && Object.keys(input).sort().join()==='endDate,startDate';
+  const result=operation==='read' ? await withCurrentStaff(currentAccess,access=>dateOnly ? client.readDates(input,access,signal) : client.read(input,access,signal))
    : await withCurrentStaff(currentAccess,access=>client.status(String(input),access,signal));
   signal.throwIfAborted();return Response.json(result,{headers:{'Cache-Control':'private, no-store'}});
  }catch(error){return reportFailure(error instanceof SyntaxError?new ReportError('invalid'):error);}

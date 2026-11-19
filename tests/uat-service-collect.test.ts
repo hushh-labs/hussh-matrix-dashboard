@@ -201,6 +201,9 @@ it('publishes a verified combined subset and keeps reads passive, scoped and pro
  expect(fake.construct.mock.calls.every(([options])=>JSON.stringify(options)==='{"projectId":"hushh-ai-prod","autoRetry":false,"maxRetries":0}')).toBe(true);
  const before=fake.create.mock.calls.length,read=await runtime.read(cookie,f.job.request);
  expect(read).toMatchObject({state:'partial',freshness:'unknown'});expect((await runtime.status(cookie,f.job.id)).state).toBe('partial');
+ vi.stubEnv('METRICS_UAT_DATE_BRIDGE_ENABLED','true');fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'metrics-report-web@hushh-ai-prod.iam.gserviceaccount.com'})});
+ const dateRead=await runtime.readDatesForWeb('token',{subjectHash:'e'.repeat(64),scopeDigest:f.scopeDigest},{startDate:f.job.request.startDate,endDate:f.job.request.endDate});
+ expect(dateRead.request).toEqual(f.job.request);expect(dateRead.result).toMatchObject({state:'partial',freshness:'unknown'});
  expect(fake.create).toHaveBeenCalledTimes(before);
  vi.stubEnv('METRICS_BIGQUERY_ENABLED','false');expect(await runtime.read(cookie,f.job.request)).toMatchObject({state:'partial'});
  await expect(runtime.collect('token',f.job.id,new AbortController().signal)).rejects.toThrow();vi.stubEnv('METRICS_BIGQUERY_ENABLED','true');
@@ -234,3 +237,56 @@ it.each(['incident','policy'] as const)('holds dispatch if %s closes after durab
 
 
 
+
+it('date-only bridge rejects disabled, unapproved, mismatched and caller-timezone requests without source work',async()=>{
+ const f=setup(),runtime=await createServiceOwnedUatRuntime(),access={subjectHash:'e'.repeat(64),scopeDigest:f.scopeDigest},signal=new AbortController().signal;
+ fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'metrics-report-web@hushh-ai-prod.iam.gserviceaccount.com'})});
+ const dates={startDate:f.job.request.startDate,endDate:f.job.request.endDate};
+ await expect(runtime.requestDatesForWeb('token',access,dates,signal)).rejects.toThrow();
+ vi.stubEnv('METRICS_UAT_DATE_BRIDGE_ENABLED','true');
+ await expect(runtime.requestDatesForWeb('token',access,{...dates,timezone:'UTC'},signal)).rejects.toThrow();
+ await expect(runtime.requestDatesForWeb('token',access,{...dates,endDate:'2026-11-17'},signal)).rejects.toThrow();
+ fake.docs.delete(reportPath('policy','one-agent-detail-two-source'));
+ await expect(runtime.requestDatesForWeb('token',access,dates,signal)).rejects.toThrow();
+ expect(fake.create).not.toHaveBeenCalled();expect(fake.budgetDocs.size).toBe(0);await runtime.close();
+});
+
+it('date bridge binds approved timezone and rejects disable during admission',async()=>{
+ const f=setup(),access={subjectHash:'e'.repeat(64),scopeDigest:f.scopeDigest},signal=new AbortController().signal;
+ vi.stubEnv('METRICS_UAT_DATE_BRIDGE_ENABLED','true');
+ fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'metrics-report-web@hushh-ai-prod.iam.gserviceaccount.com'})});
+ const runtime=await createServiceOwnedUatRuntime(),dates={startDate:f.job.request.startDate,endDate:f.job.request.endDate};let seen=false; const fetcher=vi.spyOn(globalThis,'fetch');
+ fake.onGet.mockImplementation((path:string)=>{if(path.startsWith('metricsReporting/v1/quotas/')) {seen=true;vi.stubEnv('METRICS_UAT_DATE_BRIDGE_ENABLED','false');}});
+ await expect(runtime.requestDatesForWeb('token',access,dates,signal)).rejects.toThrow();
+ expect(seen).toBe(true);expect(fake.docs.get(reportPath('jobs',f.job.id)).request.timezone).toBe(f.source.config.timezone);
+ expect(fetcher).not.toHaveBeenCalled();expect(fake.create).not.toHaveBeenCalled();expect(fake.budgetDocs.size).toBe(0);fetcher.mockRestore();await runtime.close();
+});
+
+it('date bridge admits a new request using the approved manifest timezone',async()=>{
+ const f=setup(),tz='UTC',cfg={...f.source.config,timezone:tz};
+ const bound=uatTwoSourceManifest(cfg,f.scopeDigest,f.source.sourceGeneration);
+ const source={...f.source,config:cfg,manifestDigest:bound.manifestDigest,
+  feature:{...f.source.feature,timezone:tz,queryHash:bound.manifest.featureQueryHash},location:{...f.source.location,timezone:tz,queryHash:bound.manifest.locationQueryHash}};
+ fake.docs.set(reportPath('policy','one-agent-detail-two-source'),source);
+ const servicePath=reportPath('policy','one-agent-detail-service');fake.docs.set(servicePath,{...fake.docs.get(servicePath),manifestDigest:bound.manifestDigest});
+ fake.docs.delete(reportPath('jobs',f.job.id));fake.docs.set(reportPath('capacity','custom'),{active:0});fake.docs.set(reportPath('subjectCapacity',digest(['custom','e'.repeat(64)])),{active:0});
+ fake.docs.set(reportPath('policy','dispatch'),{approved:true,enabled:true,leaseMs:1000,lookupDelayMs:1000,maxLookups:2});
+ vi.stubEnv('METRICS_UAT_DATE_BRIDGE_ENABLED','true');fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'metrics-report-web@hushh-ai-prod.iam.gserviceaccount.com'})});
+ const runtime=await createServiceOwnedUatRuntime();const fetcher=vi.spyOn(globalThis,'fetch').mockRejectedValue(Error('synthetic queue failure'));
+ await expect(runtime.requestDatesForWeb('token',{subjectHash:'e'.repeat(64),scopeDigest:f.scopeDigest},{startDate:cfg.startDate,endDate:cfg.endDate},new AbortController().signal)).resolves.toMatchObject({state:'accepted'});
+ const jobs=[...fake.docs.entries()].filter(([key])=>key.startsWith('metricsReporting/v1/jobs/')).map(([,value])=>value);
+ expect(jobs).toHaveLength(1);expect(jobs[0].request).toEqual({reportId:'one.agent-detail-uat',startDate:cfg.startDate,endDate:cfg.endDate,timezone:tz});
+ expect(fake.create).not.toHaveBeenCalled();fetcher.mockRestore();await runtime.close();
+});
+
+
+it('date-only read binds approved period and never starts native work',async()=>{
+ const f=setup(),access={subjectHash:'e'.repeat(64),scopeDigest:f.scopeDigest},dates={startDate:f.job.request.startDate,endDate:f.job.request.endDate};
+ fake.verify.mockResolvedValue({getPayload:()=>({iss:'https://accounts.google.com',email_verified:true,email:'metrics-report-web@hushh-ai-prod.iam.gserviceaccount.com'})});
+ vi.stubEnv('METRICS_UAT_DATE_BRIDGE_ENABLED','true');const runtime=await createServiceOwnedUatRuntime();
+ expect(await runtime.readDatesForWeb('token',access,dates)).toEqual({request:f.job.request,result:{state:'unavailable'}});
+ await expect(runtime.readDatesForWeb('token',access,{...dates,timezone:'UTC'})).rejects.toThrow();
+ await expect(runtime.readDatesForWeb('token',access,{...dates,startDate:'2026-11-17'})).rejects.toThrow();
+ fake.docs.delete(reportPath('policy','one-agent-detail-two-source'));await expect(runtime.readDatesForWeb('token',access,dates)).rejects.toThrow();
+ expect(fake.create).not.toHaveBeenCalled();expect(fake.budgetDocs.size).toBe(0);await runtime.close();
+});

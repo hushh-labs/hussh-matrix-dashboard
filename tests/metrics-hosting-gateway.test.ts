@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { forwardMetricsReportWeb, metricsHostingGateway } from '../src/server/reports/hosting-gateway';
+import { forwardMetricsReportWeb, metricsHostingGateway, uatLegacyDetailBridge } from '../src/server/reports/hosting-gateway';
 import { retainedMetricsOrigin } from '../src/server/reports/compatibility';
 import type { ReportingIdentityHeaders } from '../src/server/reports/web-client';
 
@@ -18,6 +18,24 @@ function app(env: Record<string, string | undefined>, fetcher: typeof fetch) {
 }
 const enabled = { METRICS_REPORT_WEB_FORWARDING_CONFIG: JSON.stringify(c), METRICS_BIGQUERY_ENABLED: 'false' };
 afterEach(() => vi.useRealTimers());
+
+describe('optional legacy UAT detail bridge',()=>{
+  it('leaves legacy routes and all disabled requests local without network',async()=>{
+    const server=express(),fetcher=vi.fn(),auth=identity();server.use(uatLegacyDetailBridge({},auth,fetcher));server.use((_req,res)=>res.sendStatus(209));
+    expect((await request(server).post('/api/uat-detail-refresh').send({})).status).toBe(209);
+    expect((await request(server).get('/')).status).toBe(209);expect(auth).not.toHaveBeenCalled();expect(fetcher).not.toHaveBeenCalled();
+  });
+  it('fails closed on missing config and forwards only fixed detail posts when enabled',async()=>{
+    const fetcher=vi.fn<typeof fetch>(async()=>Response.json({state:'unavailable'})),auth=identity();
+    const missing=express();missing.use(uatLegacyDetailBridge({METRICS_UAT_LEGACY_BRIDGE_ENABLED:'true'},auth,fetcher));missing.use((_req,res)=>res.sendStatus(209));
+    expect((await request(missing).post('/api/uat-detail-refresh').send({})).status).toBe(503);expect(fetcher).not.toHaveBeenCalled();
+    const server=express();server.use(uatLegacyDetailBridge({METRICS_UAT_LEGACY_BRIDGE_ENABLED:'true',METRICS_BIGQUERY_ENABLED:'false',METRICS_UAT_LEGACY_FORWARDING_CONFIG:JSON.stringify(c)},auth,fetcher));server.use((_req,res)=>res.sendStatus(209));
+    expect((await request(server).get('/')).status).toBe(209);
+    expect((await request(server).get('/api/uat-detail-read')).status).toBe(405);
+    expect((await request(server).post('/api/uat-detail-read').send({})).status).toBe(200);
+    expect(fetcher).toHaveBeenCalledOnce();expect(fetcher.mock.calls[0][0]).toBe(c.webNativeOrigin+'/api/uat-detail-read');
+  });
+});
 
 describe('held hosting handoff to the source-free Metrics web application', () => {
   it('leaves existing hosting untouched and does no identity/network work without configuration', async () => {
@@ -37,6 +55,15 @@ describe('held hosting handoff to the source-free Metrics web application', () =
       expect(fetcher.mock.calls.at(-1)![0]).toBe(c.webNativeOrigin + path);
       expect(auth.mock.calls.at(-1)![0]).toBe(c.webNativeOrigin);
     }
+  });
+  it.each(['/api/uat-detail-refresh', '/api/uat-detail-read', '/api/uat-detail-status'])('forwards only explicit POST for %s through the fixed web identity', async path => {
+    const auth=identity(), fetcher=vi.fn<typeof fetch>(async()=>Response.json({state:'unavailable'}));
+    expect((await forwardMetricsReportWeb(req(path),c,auth,fetcher)).status).toBe(405);
+    expect(auth).not.toHaveBeenCalled();
+    const response=await forwardMetricsReportWeb(req(path,{method:'POST',body:'{}'}),c,auth,fetcher);
+    expect(response.status).toBe(200); expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0][0]).toBe(c.webNativeOrigin+path);
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('authorization')).toBe('Bearer synthetic-native-identity');
   });
   it('preserves explicit raw job admission and browser identity while discarding spoofed infrastructure credentials', async () => {
     const raw = '{ "reportId": "one.adoption" }';

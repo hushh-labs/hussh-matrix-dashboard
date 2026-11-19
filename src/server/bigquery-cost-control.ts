@@ -1091,16 +1091,48 @@ export async function createServiceOwnedUatRuntime() {
       await web(token,scoped,true); const result=await readAccess(scoped,input);
       await web(token,scoped,true); return result;
     },
-    async requestForWeb(token:string,access:ReportAccess,input:unknown,signal:AbortSignal) {
+    async readDatesForWeb(token:string,access:ReportAccess,input:unknown) {
+      if (process.env.METRICS_UAT_DATE_BRIDGE_ENABLED !== 'true' || !input || typeof input !== 'object' || Array.isArray(input)
+        || Object.keys(input).sort().join() !== 'endDate,startDate') throw new BigQueryCostControlError();
+      const dates=input as {startDate:unknown;endDate:unknown};
+      if (typeof dates.startDate !== 'string' || typeof dates.endDate !== 'string') throw new BigQueryCostControlError();
+      validateDetailAccess(access); const scoped=Object.freeze({...access}); await web(token,scoped,true);
+      const raw=await store.transaction(tx=>tx.get<any>(detailPath('policy','one-agent-detail-two-source')));
+      const approved=validateUatTwoSourcePolicies(raw,Date.now(),true);
+      if (approved.manifest.scopeDigest!==scoped.scopeDigest || dates.startDate!==approved.manifest.startDate
+        || dates.endDate!==approved.manifest.endDate || process.env.METRICS_UAT_DATE_BRIDGE_ENABLED !== 'true') throw new BigQueryCostControlError();
+      const request={reportId:'one.agent-detail-uat',startDate:dates.startDate,endDate:dates.endDate,timezone:approved.manifest.timezone};
+      const result=await readAccess(scoped,request); await web(token,scoped,true);
+      if (process.env.METRICS_UAT_DATE_BRIDGE_ENABLED !== 'true') throw new BigQueryCostControlError();
+      return {request,result};
+    },
+    /** Date-only legacy bridge. The approved source manifest supplies the timezone. */
+    async requestDatesForWeb(token:string,access:ReportAccess,input:unknown,signal:AbortSignal) {
+      if (process.env.METRICS_UAT_DATE_BRIDGE_ENABLED !== 'true' || !input || typeof input !== 'object' || Array.isArray(input)
+        || Object.keys(input).sort().join() !== 'endDate,startDate') throw new BigQueryCostControlError();
+      const dates=input as {startDate:unknown;endDate:unknown};
+      if (typeof dates.startDate !== 'string' || typeof dates.endDate !== 'string') throw new BigQueryCostControlError();
+      validateDetailAccess(access); const scoped=Object.freeze({...access});
+      computeFlags(); signal.throwIfAborted(); await web(token,scoped);
+      const raw=await store.transaction(tx=>tx.get<any>(detailPath('policy','one-agent-detail-two-source')));
+      const approved=validateUatTwoSourcePolicies(raw,Date.now());
+      if (approved.manifest.scopeDigest!==scoped.scopeDigest || dates.startDate!==approved.manifest.startDate
+        || dates.endDate!==approved.manifest.endDate || process.env.METRICS_UAT_DATE_BRIDGE_ENABLED !== 'true') throw new BigQueryCostControlError();
+      signal.throwIfAborted();
+      return this.requestForWeb(token,scoped,{reportId:'one.agent-detail-uat',startDate:dates.startDate,endDate:dates.endDate,timezone:approved.manifest.timezone},signal, true);
+    },
+    async requestForWeb(token:string,access:ReportAccess,input:unknown,signal:AbortSignal,dateBridge=false) {
+      const bridgeGate=()=>{if (dateBridge && process.env.METRICS_UAT_DATE_BRIDGE_ENABLED !== 'true') throw new BigQueryCostControlError();};
+      bridgeGate();
       validateDetailAccess(access); const scoped=Object.freeze({...access});
       computeFlags(); signal.throwIfAborted(); await web(token,scoped); computeFlags(); signal.throwIfAborted();
-      const result=await new MetricsReports(store,Date.now,undefined,true).request(input,scoped);
-      await web(token,scoped); computeFlags(); signal.throwIfAborted();
+      const result=await new MetricsReports(store,Date.now,undefined,true).request(input,scoped,bridgeGate);
+      await web(token,scoped); computeFlags(); bridgeGate(); signal.throwIfAborted();
       if (result.jobId) {
         const queue=new UatDetailTaskQueue({enabled:true,parent:config.queueParent,workerUrl:config.workerAudience+'/internal/metrics/uat-detail/collect',invokerEmail:config.taskInvoker,rpcTimeoutMs:config.rpcTimeoutMs},cloudTasksRequest(config.maxResponseBytes));
         const guardedQueue={taskName:(id:string)=>queue.taskName(id),
-          create:async(id:string)=>{await web(token,scoped); computeFlags(); signal.throwIfAborted(); return queue.create(id);},
-          lookup:async(id:string)=>{await web(token,scoped); computeFlags(); signal.throwIfAborted(); return queue.lookup(id);}};
+          create:async(id:string)=>{await web(token,scoped); computeFlags(); bridgeGate(); signal.throwIfAborted(); return queue.create(id);},
+          lookup:async(id:string)=>{await web(token,scoped); computeFlags(); bridgeGate(); signal.throwIfAborted(); return queue.lookup(id);}};
         await new MetricsReportDispatch(store,guardedQueue).deliver(result.jobId,detailDigest(config.webInvoker));
         await web(token,scoped); computeFlags(); signal.throwIfAborted();
       }

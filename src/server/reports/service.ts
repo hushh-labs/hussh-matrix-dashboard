@@ -81,8 +81,8 @@ export class MetricsReports {
     });
   }
 
-  async request(input: unknown, access: ReportAccess) {
-    return this.admit(input, access, 'custom');
+  async request(input: unknown, access: ReportAccess, beforeAdmission?: () => void) {
+    return this.admit(input, access, 'custom', undefined, beforeAdmission);
   }
   /** Internal scheduler identity only; this method is not exposed to web callers. */
   async requestScheduled(input: unknown, access: ReportAccess) {
@@ -92,7 +92,7 @@ export class MetricsReports {
   async requestPeriodic(entryId: string, access: ReportAccess) {
     return this.admit(null, access, 'scheduled', entryId);
   }
-  private async admit(input: unknown, access: ReportAccess, lane: ReportJob['lane'], entryId?: string) {
+  private async admit(input: unknown, access: ReportAccess, lane: ReportJob['lane'], entryId?: string, beforeAdmission?: () => void) {
     const now = this.now();
     const outcome = await this.store.transaction(async tx => {
       const periodicPolicy = lane === 'scheduled' ? await tx.get<unknown>(path('policy', 'periodic')) : null;
@@ -150,6 +150,7 @@ export class MetricsReports {
         }
         throw error;
       }
+      beforeAdmission?.();
       const planDigest = plan ? digest([plan.policyDigest, plan.request, c.control, access.scopeDigest]) : '';
       if (plan) {
         if (receipt && (Object.keys(receipt).sort().join() !== 'jobId,planDigest,reportId,slotKey,state'

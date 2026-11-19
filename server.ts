@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import express from 'express';
 import { registerPlgRoutes } from './src/server/plg/routes';
-import { metricsHostingGateway } from './src/server/reports/hosting-gateway';
+import { metricsHostingGateway, uatLegacyDetailBridge } from './src/server/reports/hosting-gateway';
 import { workProfileWorkspaceMember } from './src/server/plg/workspace-access';
 import path from 'path';
 import { promisify } from 'node:util';
@@ -9381,6 +9381,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
     res.set('Cache-Control', 'no-store');
     return res.redirect(307, `https://metrics.hussh.ai${req.originalUrl}`);
   });
+  app.use(uatLegacyDetailBridge());
   app.use(metricsHostingGateway());
   app.use(compression({ threshold: 1024 }));
 
