@@ -101,6 +101,17 @@ export class MetricsReports {
       if (!plan && lane === 'scheduled' && periodicPolicy && (periodicPolicy as { enabled?: unknown }).enabled !== false) throw new ReportError('unavailable');
       const c = await this.context(tx, plan?.request ?? input, access);
       if (c.request.reportId === 'one.agent-detail-uat' && lane !== 'custom') throw new ReportError('unavailable');
+      const detailDay = new Date(now).toISOString().slice(0, 10);
+      const detailLimitPolicy = c.request.reportId === 'one.agent-detail-uat' ? await tx.get<any>(path('policy','one-agent-detail-daily-starts')) : null;
+      const detailDayRef = path('uatDetailDays', detailDay);
+      const detailDayRow = c.request.reportId === 'one.agent-detail-uat' ? await tx.get<any>(detailDayRef) : null;
+      if (c.request.reportId === 'one.agent-detail-uat' && (!detailLimitPolicy
+        || Object.keys(detailLimitPolicy).sort().join() !== 'approved,enabled,maxStarts'
+        || detailLimitPolicy.approved !== true || detailLimitPolicy.enabled !== true
+        || !Number.isSafeInteger(detailLimitPolicy.maxStarts) || detailLimitPolicy.maxStarts < 1 || detailLimitPolicy.maxStarts > 4
+        || detailDayRow && (Object.keys(detailDayRow).sort().join() !== 'limit,used'
+          || !Number.isSafeInteger(detailDayRow.used) || detailDayRow.used < 0 || detailDayRow.used > 4
+          || !Number.isSafeInteger(detailDayRow.limit) || detailDayRow.limit < 1 || detailDayRow.limit > 4))) throw new ReportError('unavailable');
       const head = await tx.get<Head>(path('heads', c.key)) ?? { sequence: 0, activeJob: null, publication: null };
       const publication = head.publication && c.request.reportId !== 'one.agent-detail-uat'
         ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
@@ -143,6 +154,11 @@ export class MetricsReports {
       let charge: () => void;
       try { charge = await this.quota(tx, access, c.policy, 'compute', now); }
       catch (error) {
+        if (detailDayRow && detailLimitPolicy && detailLimitPolicy.maxStarts < detailDayRow.limit
+          && error instanceof ReportError && error.code === 'quota') {
+          tx.set(detailDayRef, { ...detailDayRow, limit: detailLimitPolicy.maxStarts });
+          return { denied: 'quota' as const };
+        }
         if (plan && day && error instanceof ReportError && error.code === 'quota') {
           const limit = Math.min(day.limit, plan.maxDailyJobs), slotLimit = Math.min(day.slotLimit, plan.maxDailySlots);
           if (limit < day.limit || slotLimit < day.slotLimit) tx.set(dayRef, { ...day, limit, slotLimit });
@@ -151,6 +167,9 @@ export class MetricsReports {
         throw error;
       }
       beforeAdmission?.();
+      if (detailDayRow && detailLimitPolicy && detailLimitPolicy.maxStarts < detailDayRow.limit) {
+        tx.set(detailDayRef, { ...detailDayRow, limit: detailLimitPolicy.maxStarts });
+      }
       const planDigest = plan ? digest([plan.policyDigest, plan.request, c.control, access.scopeDigest]) : '';
       if (plan) {
         if (receipt && (Object.keys(receipt).sort().join() !== 'jobId,planDigest,reportId,slotKey,state'
@@ -227,13 +246,22 @@ export class MetricsReports {
           nextAttemptAt: 0, needsAttention: false, workerHash: null, providerJobId: `metrics_report_${id}`, dispatchIntent: true, sourceStarted: false };
         result = { state: 'accepted', reportId: null, jobId: id };
       }
-      charge();
       if (jobToCreate) {
+        if (c.request.reportId === 'one.agent-detail-uat') {
+          if (new Date(this.now()).toISOString().slice(0, 10) !== detailDay) throw new ReportError('unavailable');
+          const limit = Math.min(detailDayRow?.limit ?? detailLimitPolicy.maxStarts, detailLimitPolicy.maxStarts);
+          if ((detailDayRow?.used ?? 0) >= limit) {
+            if (detailDayRow && limit < detailDayRow.limit) tx.set(detailDayRef, { ...detailDayRow, limit });
+            return { denied: 'capacity' as const };
+          }
+          tx.set(detailDayRef, { used: (detailDayRow?.used ?? 0) + 1, limit });
+        }
         tx.create(path('jobs', jobToCreate.id), jobToCreate);
         tx.set(path('heads', c.key), { ...head, sequence: head.sequence + 1, activeJob: jobToCreate.id });
         tx.set(path('capacity', lane), { active: slots.active + 1 });
         tx.set(subjectSlot, { active: subject.active + 1 });
       }
+      charge();
       if (plan) {
         const limit = Math.min(day?.limit ?? plan.maxDailyJobs, plan.maxDailyJobs), slotLimit = Math.min(day?.slotLimit ?? plan.maxDailySlots, plan.maxDailySlots);
         const seen = day?.slots.includes(plan.slotKey) ? day.slots : [...(day?.slots ?? []), plan.slotKey];

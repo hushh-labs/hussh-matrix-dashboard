@@ -20,49 +20,26 @@ const secret = 'test-only-cache-session-secret-with-thirty-two-characters';
 const app = createApp({ requireAuth: true, allowPublicDashboard: false, isProduction: false, sessionSecret: secret });
 const cookie = `hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({ email: 'metrics-qa@hushh.ai', exp: Math.floor(Date.now()/1000) + 3600 }), secret))}`;
 describe('authenticated aggregate snapshots', () => {
-  it('serves explicit UAT from its own loader when production membership fails, while production and all fail closed', async () => {
-    membership.mockClear(); query.mockClear();
-    const uat = await request(app).get('/api/analytics/one/app?environment=uat').set('Cookie', cookie);
-    expect(uat.status).toBe(200);
-    expect(uat.body.environment).toBe('uat');
-    expect(uat.body.data.production).toBeNull();
-    expect(uat.body.data.uat).toBeTruthy();
-    expect(membership).not.toHaveBeenCalled();
-    expect(query).toHaveBeenCalled();
-    for (const [options] of query.mock.calls) expect(options.query).not.toContain('hushh-pda.analytics_');
-    for (const environment of ['production', 'all']) {
-      const denied = await request(app).get(`/api/analytics/one/app?environment=${environment}`).set('Cookie', cookie);
-      expect(denied.status).toBe(503);
-      expect(denied.headers['x-metrics-cache']).toBeUndefined();
+  it('returns an opaque reload session binding that changes with account or session expiry', async () => {
+    const expiry=Math.floor(Date.now()/1000)+3600;
+    const session=(email:string,exp:number)=>`hussh_matrix_session=${encodeURIComponent(signCookie(JSON.stringify({email,exp}),secret))}`;
+    const one=await request(app).get('/api/auth/me').set('Cookie',session('staff@hushh.ai',expiry));
+    const same=await request(app).get('/api/auth/me').set('Cookie',session('staff@hushh.ai',expiry));
+    const other=await request(app).get('/api/auth/me').set('Cookie',session('other@hushh.ai',expiry));
+    const renewed=await request(app).get('/api/auth/me').set('Cookie',session('staff@hushh.ai',expiry+1));
+    expect(one.body.user.reloadSubject).toMatch(/^[a-f0-9]{64}$/);expect(one.body.user.reloadSubject).toBe(same.body.user.reloadSubject);
+    expect(one.body.user.reloadSubject).not.toBe(other.body.user.reloadSubject);expect(one.body.user.reloadSubject).not.toBe(renewed.body.user.reloadSubject);
+    expect(one.headers['cache-control']).toContain('no-store');
+  });
+  it('keeps ordinary reads passive even when refresh is requested', async () => {
+    query.mockClear();
+    for (const url of ['/api/analytics/one/app?environment=uat', '/api/analytics/one/android?start_date=2026-09-27&end_date=2026-10-04']) {
+      for (const headers of [{}, {'X-Metrics-Refresh':'1'}, {'X-Metrics-Passive-Read':'0'}]) {
+        const result = await request(app).get(url).set('Cookie', cookie).set(headers);
+        expect(result.status).toBe(503); expect(query).not.toHaveBeenCalled();
+      }
+      expect((await request(app).get(url)).status).toBe(401);
     }
-    expect(membership).toHaveBeenCalledTimes(2);
-    query.mockClear(); membership.mockClear();
-    const selectedUat = await request(app).get('/api/analytics/all?view=one&environment=uat&include_health=1').set('Cookie', cookie);
-    expect(selectedUat.status).toBe(200);
-    expect(selectedUat.body.one.data.production).toBeNull();
-    expect(selectedUat.body.one.data.uat).toBeTruthy();
-    expect(selectedUat.body.kai.productionProduct.data.productionGa4).toBeNull();
-    expect(membership).not.toHaveBeenCalled();
-    for (const [options] of query.mock.calls) expect(options.query).not.toContain('hushh-pda.analytics_');
-  });
-  it('keeps cache hits private and checks authorization before returning a warmed snapshot', async () => {
-    const first = await request(app).get('/api/analytics/one/android?start_date=2026-09-28&end_date=2026-10-05').set('Cookie', cookie);
-    const next = await request(app).get('/api/analytics/one/android?end_date=2026-10-05&start_date=2026-09-28').set('Cookie', cookie);
-    expect(first.status).toBe(200); expect(next.status).toBe(200);
-    expect(next.headers['x-metrics-cache']).toBe('HIT');
-    expect(next.headers['x-metrics-updated-at']).toBe(first.headers['x-metrics-updated-at']);
-    expect(next.headers['cache-control']).toContain('no-store');
-    expect(JSON.stringify(next.body)).not.toMatch(/"email"|"user_pseudo_id"|access_token|private_key/);
-    const denied = await request(app).get('/api/analytics/one/android?end_date=2026-10-05&start_date=2026-09-28');
-    expect(denied.status).toBe(401); expect(denied.headers['x-metrics-cache']).toBeUndefined();
-  });
-  it('waits for explicit refresh without background polling', async () => {
-    const url = '/api/analytics/one/android?start_date=2026-09-27&end_date=2026-10-04';
-    const first = await request(app).get(url).set('Cookie', cookie);
-    const next = await request(app).get(url).set('Cookie', cookie).set('X-Metrics-Refresh', '1');
-    expect(first.status).toBe(200); expect(next.status).toBe(200);
-    expect(next.headers['x-metrics-refreshing']).toBe('0');
-    expect(next.headers['x-metrics-cache']).toBe('REFRESHED');
   });
   it('rejects unsupported scope without caching a client error', async () => {
     for (let attempt = 0; attempt < 2; attempt++) {

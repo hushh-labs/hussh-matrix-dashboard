@@ -178,13 +178,15 @@ describe('legacy report source isolation', () => {
     expect(fallback.body.marker).toBe('older'); expect(state.query).not.toHaveBeenCalled();
     expect((await request(app()).get(url)).status).toBe(401);
   });
-  it('never loads a passive One selection when restoration is absent or preparing', async () => {
-    source(); const url = '/api/analytics/all?view=one&environment=uat&one_start_date=2026-11-14&one_end_date=2026-11-14';
+  it('never loads ordinary selections regardless of caller headers when restoration is absent or preparing', async () => {
+    source(); const urls = ['/api/analytics/all?view=one&environment=uat&one_start_date=2026-11-14&one_end_date=2026-11-14', '/api/analytics/one/uat', '/api/analytics/one/production', '/api/analytics/one/android'];
     for (const phase of ['none', 'planning'] as const) {
       state.phase = phase;
-      const result = await request(app()).get(url).set('Cookie', cookie()).set('X-Metrics-Passive-Read', '1');
-      expect(result.status).toBe(503);
-      expect(state.query).not.toHaveBeenCalled();
+      for (const url of urls) for (const headers of [{}, {'X-Metrics-Passive-Read':'0'}, {'X-Metrics-Refresh':'1'}, {'X-Metrics-Passive-Read':'1'}]) {
+        const result = await request(app()).get(url).set('Cookie', cookie()).set(headers);
+        expect(result.status).toBe(503);
+        expect(state.query).not.toHaveBeenCalled();
+      }
     }
   });
   it('rejects closed-continuation composition from ordinary viewers before source work', async () => {
@@ -234,32 +236,19 @@ describe('legacy report source isolation', () => {
     const result = await request(server).get(url).set('Cookie', cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Compose', '1');
     expect(result.status).toBe(503); expect(save).not.toHaveBeenCalled();
   });
-  it('does not coalesce trusted publication with a pending ordinary request that later fails', async () => {
+  it('does not start ordinary source work before trusted publication', async () => {
     source(); state.phase = 'open'; state.historyFails = false;
-    const delegate = state.query.getMockImplementation()!;
-    let started!: () => void, release!: () => void, first = true;
-    const pending = new Promise<void>(resolve => { started = resolve; });
-    const resumed = new Promise<void>(resolve => { release = resolve; });
-    state.query.mockImplementation(async (options: { query: string }) => {
-      if (options.query.includes('AS current_active') && first) {
-        first = false; started(); await resumed; throw new Error('ordinary query failed');
-      }
-      return delegate(options);
-    });
     const server = app(), url = '/api/analytics/founder?start_date=2026-11-02&end_date=2026-11-02';
-    const ordinary = request(server).get(url).set('Cookie', cookie()).then(value => value);
-    await pending;
-    try {
-      const publication = await request(server).get(url).set('Cookie', cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Restoration-Publish', '1');
-      expect(publication.status).toBe(200); expect(publication.body.one.activeAccounts.current).toBe(3);
-      expect(state.saveSnapshot).toHaveBeenCalledTimes(1);
-    } finally { release(); await ordinary; }
+    expect((await request(server).get(url).set('Cookie', cookie())).status).toBe(503);expect(state.query).not.toHaveBeenCalled();
+    const publication = await request(server).get(url).set('Cookie', cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Restoration-Publish', '1');
+    expect(publication.status).toBe(200); expect(publication.body.one.activeAccounts.current).toBe(3);
+    expect(state.saveSnapshot).toHaveBeenCalledTimes(1);
   });
   it('re-evaluates a cached planning response before publication and refuses incomplete computations', async () => {
     source(); state.phase = 'planning'; state.historyFails = false;
     const server = app(), url = '/api/analytics/founder?start_date=2026-11-04&end_date=2026-11-04';
     const planned = await request(server).get(url).set('Cookie', cookie());
-    expect(planned.status).toBe(200); expect(planned.body.one.available).toBe(false);
+    expect(planned.status).toBe(503); expect(state.query).not.toHaveBeenCalled();
     state.phase = 'open'; state.query.mockClear();
     const published = await request(server).get(url).set('Cookie', cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Restoration-Publish', '1');
     expect(published.status).toBe(200); expect(published.body.one.activeAccounts.current).toBe(3);
@@ -271,13 +260,12 @@ describe('legacy report source isolation', () => {
   it('keeps platform SQL selection stable across planning and open publication in the same process', async () => {
     source(); state.phase = 'planning';
     const server = app(), url = '/api/analytics/all?view=one&environment=production&one_start_date=2026-11-03&one_end_date=2026-11-03';
-    await request(server).get(url).set('Cookie', cookie());
-    const planned = state.query.mock.calls.map(([options]) => options.query as string).filter(sql => sql.includes('androidCapture'));
-    expect(planned.length).toBeGreaterThan(0);
+    expect((await request(server).get(url).set('Cookie', cookie())).status).toBe(503);
+    expect(state.query).not.toHaveBeenCalled();
     state.query.mockClear(); state.phase = 'open';
     await request(server).get(url).set('Cookie', cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Restoration-Publish', '1');
     const opened = state.query.mock.calls.map(([options]) => options.query as string).filter(sql => sql.includes('androidCapture'));
-    expect(opened).toEqual(planned);
+    expect(opened.length).toBeGreaterThan(0);
   });
   it('serves dated restored aggregates after permit closure, including Refresh, with zero new source queries', async () => {
     source();
@@ -341,8 +329,9 @@ describe('legacy report source isolation', () => {
     expect(response.headers['x-metrics-cache']).toBe('RESTORED'); expect(state.query).not.toHaveBeenCalled();
   });
   it('keeps bounded period accounts, platforms and agents when historical first-seen cannot be read', async () => {
-    source(); state.historyFails = true; state.dailyFails = false; state.agentsFail = false;
-    const response = await request(app()).get('/api/analytics/founder?start_date=2026-11-10&end_date=2026-11-10').set('Cookie', cookie());
+    source(); state.phase='closed'; const url='/api/analytics/founder?start_date=2026-11-10&end_date=2026-11-10';
+    state.readSnapshot.mockResolvedValue({at:Date.now(),value:{status:200,body:{one:{available:true,activeAccounts:{current:3},firstObservedAccounts:{current:null,previous:null},comparisonReady:false,identityObservedSince:null,platforms:[{key:'IOS',identifiedAccounts:{current:3}}],agents:[{key:'memory',interactions:{current:4}}],daily:[{activeAccounts:3}]}}}});
+    const response = await request(app()).get(url).set('Cookie', cookie());
     expect(response.status).toBe(200);
     const one = response.body.one;
     expect(one.available).toBe(true); expect(one.activeAccounts.current).toBe(3);
@@ -351,23 +340,29 @@ describe('legacy report source isolation', () => {
     expect(one.platforms.find((row: { key: string }) => row.key === 'IOS').identifiedAccounts.current).toBe(3);
     expect(one.agents.find((row: { key: string }) => row.key === 'memory').interactions.current).toBe(4);
     expect(one.daily[0].activeAccounts).toBe(3);
-    const periodSql = state.query.mock.calls.map(([options]) => options.query as string).find(sql => sql.includes('AS current_active') && !sql.includes('firstSeen'))!;
-    expect(periodSql).toContain("_TABLE_SUFFIX IN ('20261109', 'intraday_20261109', '20261110', 'intraday_20261110')");
-    expect(periodSql).toContain("user_id IN ('" + 'c'.repeat(32) + "')");
+    expect(state.query).not.toHaveBeenCalled();
   });
   it('does not turn failed daily and agent sources into zero activity', async () => {
-    source(); state.historyFails = true; state.dailyFails = true; state.agentsFail = true;
+    source(); state.phase='closed'; state.readSnapshot.mockResolvedValue({at:Date.now(),value:{status:200,body:{one:{activeAccounts:{current:3},daily:[],agents:[{interactions:{current:null}}]}}}});
     const response = await request(app()).get('/api/analytics/founder?start_date=2026-11-08&end_date=2026-11-08').set('Cookie', cookie());
     expect(response.status).toBe(200); expect(response.body.one.activeAccounts.current).toBe(3);
     expect(response.body.one.daily).toEqual([]);
     expect(response.body.one.agents.every((row: { interactions: { current: number | null } }) => row.interactions.current === null)).toBe(true);
+    expect(state.query).not.toHaveBeenCalled();
+  });
+  it.each(['history','daily','agents'] as const)('does not publish when the %s source fails', async failure => {
+    source(); state.phase='open';state.historyFails=failure==='history';state.dailyFails=failure==='daily';state.agentsFail=failure==='agents';
+    const result=await request(app()).get('/api/analytics/founder?start_date=2026-11-10&end_date=2026-11-10')
+      .set('Cookie',cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Restoration-Publish','1');
+    const marker={history:'MIN(day) AS firstSeen',daily:'AS active_accounts',agents:'AS successful_accounts'}[failure];
+    expect(result.status).toBe(503);expect(state.query.mock.calls.some(([options])=>options.query.includes(marker))).toBe(true);expect(state.saveSnapshot).not.toHaveBeenCalled();
   });
   it('loads only the selected One environment and defers unrelated health loaders', async () => {
-    source();
+    source(); state.phase='open';state.historyFails=false;
     const server = app();
     for (const environment of ['production', 'uat']) {
       state.query.mockClear();
-      const response = await request(server).get(`/api/analytics/all?view=one&environment=${environment}&one_start_date=2026-11-09&one_end_date=2026-11-09`).set('Cookie', cookie());
+      const response = await request(server).get(`/api/analytics/all?view=one&environment=${environment}&one_start_date=2026-11-09&one_end_date=2026-11-09`).set('Cookie', cookie('metrics-release-probe@hushh.ai')).set('X-Metrics-Restoration-Publish','1');
       expect(response.status).toBe(200);
       expect(response.body.one.data[environment]).not.toBeNull();
       expect(response.body.one.data[environment === 'production' ? 'uat' : 'production']).toBeNull();

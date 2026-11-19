@@ -38,6 +38,7 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
           email: user.email,
           name: user.name || user.email.split('@')[0],
           picture: user.picture,
+          sub: typeof user.reloadSubject === 'string' && /^[a-f0-9]{64}$/.test(user.reloadSubject) ? user.reloadSubject : undefined,
           domainAuthorized: true,
           publicationAsOf: typeof data.publicationAsOf === 'string' && Number.isFinite(Date.parse(data.publicationAsOf)) ? data.publicationAsOf : undefined,
         };

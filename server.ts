@@ -5630,6 +5630,12 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (req.path === '/api/analytics/all' && typeof req.query.view === 'string' && !['one', 'growth', 'apps', 'overview', 'platforms'].includes(req.query.view)) {
             res.status(400).json({ error: 'Choose a valid metrics section.' }); return;
           }
+          if (req.path === '/api/analytics/all' && req.query.view === 'one' && typeof req.query.environment === 'string' && !['production','uat'].includes(req.query.environment)) {
+            res.status(400).json({ error: 'Choose a valid One environment.' }); return;
+          }
+          if (req.path === '/api/analytics/one/app' && !oneAppScope(req.query.environment)) {
+            res.status(400).json({ error: 'Choose production, uat or all for One app reporting.' }); return;
+          }
           const refresh = publishRestoration || req.get('X-Metrics-Refresh') === '1';
           // Aggregate handlers need only query parameters; do not retain a session or cookie in cached loaders.
           const sourceRequest = { query: req.query } as express.Request;
@@ -5935,14 +5941,12 @@ function registerAnalyticsRoutes(app: express.Express): void {
             ?? await continuation?.read(reportUrl, cohort)
             ?? await continuationComposer?.read(reportUrl, cohort)
             ?? await previous?.readSnapshot(key);
-          const passiveRead = req.get('X-Metrics-Passive-Read') === '1';
-          if (passiveRead && !retained) { res.status(503).json({ error: 'No retained report is available for this selection.' }); return; }
-          const useRetained = retained && (passiveRead || !refresh || !await restoration!.isActive());
-          // Closed restoration publications are read-only. Do not turn an
-          // unsupported range into an automatic warehouse scan on a new day.
-          if (restoration && !retained && !await restoration.isPreparing()) {
+          // Ordinary reads never initiate source work, regardless of caller headers.
+          // Only the separately authorized restoration publication may load.
+          if (!publishRestoration && !retained) {
             res.status(503).json({ error: 'No retained report is available for this selection.' }); return;
           }
+          const useRetained = !publishRestoration && retained;
           const scopedLoad = () => withLegacyReportScope(key, async () => {
               const value = await (cohort ? withCustomerCohort(cohort.cacheKey, load) : load());
               if (publishRestoration && legacyReportFailed()) throw { status: 503, body: { error: 'Initial source computation is incomplete; no report was published.' } };
@@ -5950,9 +5954,8 @@ function registerAnalyticsRoutes(app: express.Express): void {
             });
           // Publication must never coalesce with an ordinary loader that did
           // not check completion. Provider IDs still deduplicate paid work.
-          const result = useRetained ? { ...retained, state: 'RESTORED', refreshing: false, refreshError: refresh }
-            : publishRestoration ? { value: await scopedLoad(), at: Date.now(), state: 'REFRESHED', refreshing: false, refreshError: false }
-              : await snapshots.read(key, scopedLoad, refresh);
+          const result = useRetained ? { ...useRetained, state: 'RESTORED', refreshing: false, refreshError: refresh }
+            : { value: await scopedLoad(), at: Date.now(), state: 'REFRESHED', refreshing: false, refreshError: false };
           if (cohort) await requireCurrentCustomerCohort(cohort.cacheKey);
           else if (dailyRetained && dailyGateCohort) await requireCurrentCustomerCohort(dailyGateCohort.cacheKey);
           if (restoration && publishRestoration) {
@@ -9599,6 +9602,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
   });
 
   app.get('/api/auth/me', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
     const user = (req as any).sessionUser as SessionUser | null;
     if (user) {
       const publicationAsOf = await legacyPreviousRestoration().then(r => r?.publicationAsOf()).catch(() => null)
@@ -9610,6 +9614,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
           email: user.email,
           name: user.name,
           picture: user.picture,
+          ...(config.sessionSecret.length >= 32 && typeof user.email === 'string' ? { reloadSubject: crypto.createHmac('sha256', config.sessionSecret).update(`uat-reload-session-v1\n${user.email.toLowerCase()}\n${user.exp}`).digest('hex') } : {}),
         },
       });
     } else {
@@ -9759,9 +9764,7 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
         res.set('Cache-Control', 'no-store');
         return report ? res.json(report) : res.status(503).json({ error: 'Instagram publication is unavailable.' });
       }
-      const summary = await instagramStore.summary(instagramAccountId);
-      const user = (req as any).sessionUser as SessionUser;
-      return res.json({ ...summary, canSync: instagramAdmins.has(user.email.toLowerCase()) });
+      return res.status(503).json({ error: 'Instagram publication is unavailable.' });
     } catch {
       return res.status(503).json({ state: 'sync_failed', username: null, reach: null, lastSuccessfulSync: null, lastAttempt: null, canSync: false });
     }

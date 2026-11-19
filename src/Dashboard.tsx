@@ -1,4 +1,4 @@
-import { clearOneSelection, saveOneSelection, readOneSelection } from './lib/session-recovery';
+import { clearOneSelection, saveOneSelection, readOneSelection, saveReloadSelection, readReloadSelection, clearReloadSelection, reloadOwnerDigest } from './lib/session-recovery';
 import { ReportDetails, ReportTabs } from './components/ReportControls';
 import { DashboardShell } from './components/DashboardShell';
 import { isReferralsPath, referralsPath } from './lib/referrals';
@@ -32,6 +32,8 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from './components/AuthProvider';
+import { UatManualRefresh } from './metrics-web/app/uat-manual-refresh';
+import { uatReloadIntent } from './lib/uat-reload-intent';
 import {
   Area,
   AreaChart,
@@ -1168,9 +1170,13 @@ function PlatformCard({ platform }: { platform: PlatformStatus }) {
 }
 
 export default function Dashboard() {
-  const { user, signOut } = useAuth();
-  const [recoveredSelection] = useState(() => readOneSelection());
-  useEffect(() => { clearOneSelection(); }, []);
+  const { user, signOut, isAuthenticated, isAuthorized } = useAuth();
+  const [reloadSaved] = useState(() => {
+    const navigation = typeof window === 'undefined' ? undefined : performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    return navigation?.type === 'reload' ? readReloadSelection() : null;
+  });
+  const [recoveredSelection] = useState(() => reloadSaved?.selection ?? readOneSelection());
+  useEffect(() => { clearOneSelection(); clearReloadSelection(); }, []);
   const presetRange = (days: DatePreset) => rangeForPreset(days, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined);
   // The founder lands on the compact production briefing; diagnostic tabs
   // remain available on demand.
@@ -1191,6 +1197,10 @@ export default function Dashboard() {
   // Open a bounded current-day report; larger periods require explicit choice.
   const [oneRange, setOneRange] = useState<HushhAiDateRangeState>(() => rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
   const [oneAppRange, setOneAppRange] = useState<HushhAiDateRangeState>(() => recoveredSelection?.range ?? rangeForPreset(1, user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined));
+  const [reloadUatScope] = useState(() => {
+    const navigation = typeof window === 'undefined' ? undefined : performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    return uatReloadIntent(navigation?.type, activeTab, locationRoute?.environment ?? recoveredSelection?.environment ?? 'production', oneAppRange);
+  });
   const [onePublicationAsOf, setOnePublicationAsOf] = useState<string | null>(null);
   const [onePartialReports, setOnePartialReports] = useState<{ startDate: string; endDate: string; environment: 'production' | 'uat' }[]>([]);
   useEffect(() => {
@@ -1222,6 +1232,24 @@ export default function Dashboard() {
   }, [user?.email, user?.publicationAsOf]);
   const onePresetRange = (days: DatePreset) => rangeForPreset(days, onePublicationAsOf ? new Date(onePublicationAsOf) : user?.publicationAsOf ? new Date(user.publicationAsOf) : undefined);
   const [oneEnvironment, setOneEnvironment] = useState<'production' | 'uat'>(locationRoute?.environment ?? recoveredSelection?.environment ?? 'production');
+  const [reloadOwner, setReloadOwner] = useState<{subject:string;digest:string}|null>(null);
+  useEffect(() => { let active=true;const subject=user?.sub;setReloadOwner(null);
+    if (subject && isAuthenticated && isAuthorized) void reloadOwnerDigest(subject).then(digest=>{if(active && digest)setReloadOwner({subject,digest});});
+    return () => {active=false;};
+  }, [user?.sub,isAuthenticated,isAuthorized]);
+  useEffect(() => {
+    const saveReload = () => {
+      if (import.meta.env.VITE_UAT_RELOAD_REFRESH_ENABLED === 'true' && isAuthenticated && isAuthorized && reloadOwner?.subject === user?.sub && activeTab === 'one' && (locationRoute?.environment ?? oneEnvironment) === 'uat')
+        saveReloadSelection({tab:'one',environment:'uat',range:oneAppRange},reloadOwner.digest);
+      else clearReloadSelection();
+    };
+    window.addEventListener('pagehide',saveReload);return () => window.removeEventListener('pagehide',saveReload);
+  }, [isAuthenticated,isAuthorized,reloadOwner,user?.sub,activeTab,locationRoute,oneEnvironment,oneAppRange]);
+  const [reloadEligible, setReloadEligible] = useState(Boolean(reloadUatScope));
+  useEffect(() => {
+    if (reloadUatScope && (activeTab !== 'one' || (locationRoute?.environment ?? oneEnvironment) !== 'uat'
+      || oneAppRange.startDate !== reloadUatScope.startDate || oneAppRange.endDate !== reloadUatScope.endDate)) setReloadEligible(false);
+  }, [reloadUatScope, activeTab, locationRoute, oneEnvironment, oneAppRange]);
   const [oneHealthRequested, setOneHealthRequested] = useState(false);
   useEffect(() => {
     const preserveSelection = () => { if (activeTab === 'one') saveOneSelection({ tab: 'one', environment: locationRoute?.environment ?? oneEnvironment, range: oneAppRange }); };
@@ -1809,7 +1837,10 @@ export default function Dashboard() {
             retained={Boolean(user?.publicationAsOf)}
             stale={comparison.stale}
           />
-        ) : activeTab === 'one' ? (
+        ) : activeTab === 'one' ? (<>
+          {import.meta.env.VITE_UAT_RELOAD_REFRESH_ENABLED === 'true' && reloadEligible && reloadUatScope && reloadSaved && reloadOwner?.subject === user?.sub && reloadOwner?.digest === reloadSaved.ownerDigest && isAuthenticated && isAuthorized
+            && (locationRoute?.environment ?? oneEnvironment) === 'uat' && oneAppRange.startDate === reloadUatScope.startDate && oneAppRange.endDate === reloadUatScope.endDate
+            && <UatManualRefresh enabled autoReload request={reloadUatScope} />}
           <OneAppPanel
             uatDetailDates={import.meta.env.VITE_UAT_DATE_BRIDGE_ENABLED === 'true' ? {startDate:oneAppRange.startDate,endDate:oneAppRange.endDate} : undefined}
             loading={loading}
@@ -1848,7 +1879,7 @@ export default function Dashboard() {
                 </div>
               )}</>
             )}
-          />
+          /></>
         ) : activeTab === 'apps' ? (
           <AppsPanel
             loading={loading}

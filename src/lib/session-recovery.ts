@@ -1,12 +1,13 @@
 /** Keep only the One selection across a same-tab sign-in. No account data is stored. */
 export interface OneSelection { tab: 'one'; environment: 'production' | 'uat'; range: { preset: 1 | 7 | 14 | 30 | 90 | 'custom'; startDate: string; endDate: string } }
 const key = 'metrics-one-session-selection-v1';
+const reloadKey = 'metrics-one-reload-selection-v1', reloadSaltKey = 'metrics-one-reload-salt-v1';
 export function saveOneSelection(value: OneSelection) {
   try { sessionStorage.setItem(key, JSON.stringify(value)); } catch { /* sign-in remains available without storage */ }
 }
-export function readOneSelection(): OneSelection | null {
+function readSelection(storageKey:string): OneSelection | null {
   try {
-    const raw = sessionStorage.getItem(key); if (!raw || raw.length > 300) return null;
+    const raw = sessionStorage.getItem(storageKey); if (!raw || raw.length > 300) return null;
     const value = JSON.parse(raw), range = value?.range, start = range?.startDate, end = range?.endDate;
     if (value?.tab !== 'one' || !['production', 'uat'].includes(value.environment) || ![1, 7, 14, 30, 90, 'custom'].includes(range?.preset)
       || typeof start !== 'string' || typeof end !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)
@@ -15,5 +16,23 @@ export function readOneSelection(): OneSelection | null {
     return { tab: 'one', environment: value.environment, range: { preset: range.preset, startDate: start, endDate: end } };
   } catch { return null; }
 }
+
+export function readOneSelection(): OneSelection | null { return readSelection(key); }
+export async function reloadOwnerDigest(subject:string): Promise<string | null> {
+  try {
+    if (!subject || !globalThis.crypto?.subtle) return null;
+    let salt=sessionStorage.getItem(reloadSaltKey);
+    if (!salt || !/^[a-f0-9]{64}$/.test(salt)) { salt=Array.from(crypto.getRandomValues(new Uint8Array(32)),v=>v.toString(16).padStart(2,'0')).join('');sessionStorage.setItem(reloadSaltKey,salt); }
+    const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`${salt}\n${subject}`));
+    return Array.from(new Uint8Array(bytes),v=>v.toString(16).padStart(2,'0')).join('');
+  } catch { return null; }
+}
+export function saveReloadSelection(value: OneSelection, ownerDigest:string) { try { if (/^[a-f0-9]{64}$/.test(ownerDigest)) sessionStorage.setItem(reloadKey, JSON.stringify({...value,ownerDigest})); } catch { /* optional */ } }
+export function readReloadSelection(): {selection:OneSelection;ownerDigest:string} | null {
+  try { const selection=readSelection(reloadKey),raw=sessionStorage.getItem(reloadKey),ownerDigest=raw && JSON.parse(raw)?.ownerDigest;
+    return selection && typeof ownerDigest==='string' && /^[a-f0-9]{64}$/.test(ownerDigest) ? {selection,ownerDigest} : null;
+  } catch { return null; }
+}
+export function clearReloadSelection() { try { sessionStorage.removeItem(reloadKey); } catch { /* optional */ } }
 
 export function clearOneSelection() { try { sessionStorage.removeItem(key); } catch { /* optional recovery */ } }
