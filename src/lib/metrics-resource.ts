@@ -16,9 +16,15 @@ export function peekMetrics<T>(url: string | null): MetricsSnapshot<T> | null {
   return hit as MetricsSnapshot<T>;
 }
 
+export function revalidateMetricsSelection(url: string | null): boolean {
+  return Boolean(url && (url === '/api/analytics/one/referrals' || url.startsWith('/api/analytics/one/referrals?')));
+}
+
 export async function readMetrics<T>(url: string, options: { refresh?: boolean } = {}): Promise<MetricsSnapshot<T>> {
+  const passive = url.startsWith('/api/analytics/all?') || url === '/api/analytics/all';
+  const privateSelection = revalidateMetricsSelection(url);
   const existing = peekMetrics<T>(url);
-  if (!options.refresh && existing) return existing;
+  if (!passive && !privateSelection && !options.refresh && existing) return existing;
   const running = pending.get(url);
   if (running) return running as Promise<MetricsSnapshot<T>>;
   const requestGeneration = generation;
@@ -26,7 +32,7 @@ export async function readMetrics<T>(url: string, options: { refresh?: boolean }
   const request = (async () => {
     const response = await fetch(url, {
       cache: 'no-store', credentials: 'same-origin',
-      headers: { Accept: 'application/json', ...(options.refresh ? { 'X-Metrics-Refresh': '1' } : {}) },
+      headers: { Accept: 'application/json', ...(passive ? { 'X-Metrics-Passive-Read': '1' } : {}), ...(options.refresh ? { 'X-Metrics-Refresh': '1' } : {}) },
       signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok) {
@@ -53,6 +59,7 @@ export async function readMetrics<T>(url: string, options: { refresh?: boolean }
       cacheState: response.headers.get('X-Metrics-Cache'), sourceCoverage: response.headers.get('X-Metrics-Source-Coverage'),
       refreshing: response.headers.get('X-Metrics-Refreshing') === '1', refreshError: response.headers.get('X-Metrics-Refresh-Error') === '1' };
     if (requestGeneration !== generation) throw new Error('Session changed');
+    if (privateSelection) return snapshot;
     while (values.size >= MAX_ENTRIES && !values.has(url)) values.delete(values.keys().next().value!);
     values.set(url, snapshot);
     return snapshot;

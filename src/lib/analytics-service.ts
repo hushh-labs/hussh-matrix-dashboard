@@ -870,6 +870,7 @@ function buildPlatforms(
     ...(hushhTech?.dataQualityWarnings ?? []),
     !hushhTech?.gcp ? 'Cloud Monitoring coverage waiting' : null,
     !search ? 'Search Console coverage waiting' : null,
+    search?.note ?? null,
   ].filter(Boolean).join('; ') || null;
   const kaiProdFeed = kaiProduction?.productionFeed?.status;
   const kaiProdGcp = kaiProduction?.gcp;
@@ -1140,16 +1141,16 @@ function buildHushhAiOpsMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric
   ];
 }
 
-function buildHushhAiSearchMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
+export function buildHushhAiSearchMetrics(hushhAi: HushhAiSummary | null): BreakdownMetric[] {
   const search = hushhAi?.searchConsole;
   if (!search) return [];
 
   return [
-    metric('Search Clicks', search.clicks, search.sourceLabel ?? 'Search Console'),
-    metric('Search Impressions', search.impressions, search.sourceLabel ?? 'Search Console'),
-    metric('Search CTR', search.ctr ?? 0, search.sourceLabel ?? 'Search Console', formatPercent(search.ctr)),
-    metric('Search Avg Position', search.averagePosition ?? 0, search.sourceLabel ?? 'Search Console', search.averagePosition?.toFixed(1) ?? '—'),
-    ...search.queries.slice(0, 6).map((row) => metric(
+    waitingMetric('Search Clicks', search.sourceLabel ?? 'Search Console', search.available ? search.clicks : null),
+    waitingMetric('Search Impressions', search.sourceLabel ?? 'Search Console', search.available ? search.impressions : null),
+    waitingMetric('Search CTR', search.sourceLabel ?? 'Search Console', search.available ? search.ctr : null, search.available ? formatPercent(search.ctr) : 'Waiting'),
+    waitingMetric('Search Avg Position', search.sourceLabel ?? 'Search Console', search.available ? search.averagePosition : null, search.available ? search.averagePosition?.toFixed(1) ?? '—' : 'Waiting'),
+    ...(search.available ? search.queries : []).slice(0, 6).map((row) => metric(
       row.query,
       firstNumber(row.clicks, row.impressions),
       `${formatNumber(asNumber(row.impressions))} impressions`,
@@ -1481,7 +1482,7 @@ function buildHushhTechBusinessMetrics(hushhTech: HushhTechMetricsSummary | null
   ];
 }
 
-function buildHushhTechOpsMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
+export function buildHushhTechOpsMetrics(hushhTech: HushhTechMetricsSummary | null): BreakdownMetric[] {
   if (!hushhTech) return [];
   const gcp = hushhTech.gcp;
   const search = hushhTech.searchPerformance;
@@ -1493,10 +1494,10 @@ function buildHushhTechOpsMetrics(hushhTech: HushhTechMetricsSummary | null): Br
     metric('Cloud Run Success Rate', asNumber(successRate), gcp?.source, formatPercent(successRate)),
     metric('Cloud Run P95 Latency', asNumber(gcp?.p95LatencyMs), gcp?.source, formatLatency(gcp?.p95LatencyMs)),
     metric('Cloud Run Instances', asNumber(gcp?.instanceCount), gcp?.source),
-    metric('Search Clicks', asNumber(search?.overview.clicks), search?.source),
-    metric('Search Impressions', asNumber(search?.overview.impressions), search?.source),
-    metric('Search CTR', asNumber(search?.overview.ctr), search?.source, formatPercent(search?.overview.ctr)),
-    metric('Search Avg Position', asNumber(search?.overview.averagePosition), search?.source, search?.overview.averagePosition?.toFixed(1) ?? '—'),
+    waitingMetric('Search Clicks', search?.source ?? 'Search Console', search?.available ? search.overview.clicks : null),
+    waitingMetric('Search Impressions', search?.source ?? 'Search Console', search?.available ? search.overview.impressions : null),
+    waitingMetric('Search CTR', search?.source ?? 'Search Console', search?.available ? search.overview.ctr : null, search?.available ? formatPercent(search.overview.ctr) : 'Waiting'),
+    waitingMetric('Search Avg Position', search?.source ?? 'Search Console', search?.available ? search.overview.averagePosition : null, search?.available ? search.overview.averagePosition?.toFixed(1) ?? '—' : 'Waiting'),
     metric('Avg Session Duration', asNumber(traffic?.averageSessionDuration), traffic ? hushhTech.traffic.source : 'GA4 traffic unverified', traffic ? formatDuration(traffic.averageSessionDuration) : 'Waiting'),
   ];
 }

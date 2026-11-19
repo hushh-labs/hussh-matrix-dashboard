@@ -42,6 +42,7 @@ import { syncInstagram } from './src/server/instagram/sync';
 import { InstagramCredentials } from './src/server/instagram/credentials';
 import { instagramPublication } from './src/server/instagram/publication';
 import { monitoringPublication, monitoringSend } from './src/server/monitoring-publication';
+import { aggregateSearchDays, buildSearchConsoleDailyRows, latestCompleteSearchDay, searchConsoleCoverageNote } from './src/server/search-console-daily';
 import { oneSurfaceSql, oneFounderSurfaceSql, oneNonDebugSql, oneFeedEnvironment, validateOneFeedScope, ONE_REPORTING_SCOPE_VERSION, androidCaptureResult, androidComparisonCoverage, androidCaptureQueryRange, ONE_ANDROID_COMPLETE_FROM } from './src/server/one-scope.mjs';
 import { oneAccountSource, oneIdentityAuthorityId, accountScopeNote, readOneAccountCounts } from './src/server/one-account-scope.mjs';
 import { hushhTechWindowMatches, hushhTechPeriodValue } from './src/server/hushhtech-window.mjs';
@@ -815,15 +816,7 @@ function searchConsoleDailySpine(
   range: HushhAiDateRange,
   rows: Record<string, unknown>[],
 ): Array<Record<string, unknown>> {
-  const byDate = new Map(rows.map((row) => [String(row.date ?? row.dataDate ?? row.eventDate), row]));
-  return dateSpine(range).map((date) => {
-    const metric = searchConsoleMetric(byDate.get(date));
-    return {
-      date,
-      label: date.slice(5),
-      ...metric,
-    };
-  });
+  return buildSearchConsoleDailyRows(dateSpine(range), rows, searchConsoleMetric);
 }
 
 function sqlStringLiteral(value: string): string {
@@ -932,7 +925,7 @@ function productSearchConsolePayload(
     pages: pages.map((row) => ({ pageUrl: String(row.pageUrl ?? ''), ...searchConsoleMetric(row) })),
     countries: countries.map((row) => ({ country: String(row.country ?? ''), ...searchConsoleMetric(row) })),
     devices: devices.map((row) => ({ device: String(row.device ?? ''), ...searchConsoleMetric(row) })),
-    note,
+    note: note + searchConsoleCoverageNote(dateSpine(range), dailyRows),
   };
 }
 
@@ -1319,9 +1312,9 @@ async function fetchHushhTechSearchConsoleFallback(
         endDate: range.endDate,
         expectedLagSeconds: 86_400,
       },
-      note: available
+      note: (available
         ? 'Read by metrics.hussh.ai from GCP fallback Search Console tables while the official bulk export is warming up.'
-        : `Search Console GCP fallback returned no rows for this range. ${officialExportNote}`,
+        : `Search Console GCP fallback returned no rows for this range. ${officialExportNote}`) + searchConsoleCoverageNote(dateSpine(range), daily.rows),
     },
     error: errors.length > 0 ? errors.join('; ') : null,
   };
@@ -1494,9 +1487,9 @@ export async function fetchHushhTechSearchConsole(range: HushhAiDateRange): Prom
         endDate: range.endDate,
         expectedLagSeconds: 86_400,
       },
-      note: overview.clicks > 0 || overview.impressions > 0
+      note: (overview.clicks > 0 || overview.impressions > 0
         ? 'Read by metrics.hussh.ai from the Search Console BigQuery bulk export.'
-        : 'Search Console bulk export returned no rows for this range.',
+        : 'Search Console bulk export returned no rows for this range.') + searchConsoleCoverageNote(dateSpine(range), daily.rows),
   };
   const fallback = await fetchHushhTechSearchConsoleFallback(
     range,
@@ -3696,10 +3689,10 @@ ${capabilitySql.isDeliberate}
             label: spec.label,
             instrumented,
             observed: Boolean(row),
-            users: instrumented ? toNumber(row?.users) : null,
-            events: instrumented ? toNumber(row?.events) : null,
-            successes: instrumented ? toNumber(row?.successes) : null,
-            failures: instrumented ? toNumber(row?.failures) : null,
+            users: instrumented && !locationBehavior.error ? toNumber(row?.users) : null,
+            events: instrumented && !locationBehavior.error ? toNumber(row?.events) : null,
+            successes: instrumented && !locationBehavior.error ? toNumber(row?.successes) : null,
+            failures: instrumented && !locationBehavior.error ? toNumber(row?.failures) : null,
           };
         }),
         circleKinds: [
@@ -4788,21 +4781,6 @@ function searchConsoleDailyRows(searchConsole: Record<string, unknown> | null): 
     : [];
 }
 
-function aggregateSearchConsoleRows(rows: Record<string, unknown>[]) {
-  const clicks = rows.reduce((sum, row) => sum + toNumber(row.clicks), 0);
-  const impressions = rows.reduce((sum, row) => sum + toNumber(row.impressions), 0);
-  const weightedPosition = rows.reduce((sum, row) => {
-    const position = metricValue(row.averagePosition);
-    return position == null ? sum : sum + position * toNumber(row.impressions);
-  }, 0);
-  return {
-    clicks,
-    impressions,
-    ctr: impressions > 0 ? clicks / impressions : null,
-    averagePosition: impressions > 0 ? weightedPosition / impressions : null,
-  };
-}
-
 function searchConsoleSectionMetrics(metric: Record<string, unknown>) {
   return [
     sourceMetric('clicks', 'Clicks', metric.clicks),
@@ -4818,16 +4796,14 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
   const overview = asRecord(searchConsole?.overview) ?? {};
   const generatedAt = typeof searchConsole?.generatedAt === 'string' ? searchConsole.generatedAt : new Date().toISOString();
   const dailyRows = searchConsoleDailyRows(searchConsole);
-  const latestAvailableDaily = dailyRows
-    .filter((row) => toNumber(row.clicks) > 0 || toNumber(row.impressions) > 0)
-    .at(-1) ?? dailyRows.at(-1);
+  const { row: latestAvailableDaily, source: dailySource } = latestCompleteSearchDay(dailyRows);
   const latestMetric = latestAvailableDaily
     ? {
         ...searchConsoleMetric(latestAvailableDaily),
         date: latestAvailableDaily.date,
       }
-    : aggregateSearchConsoleRows([]);
-  const lastSevenMetric = aggregateSearchConsoleRows(dailyRows.slice(-7));
+    : aggregateSearchDays([], 1);
+  const lastSevenMetric = aggregateSearchDays(dailyRows.slice(-7), 7);
   const rangeTotals = asRecord(searchConsole?.rangeTotals) ?? {};
   const selectedMetric = searchConsoleMetric({ ...overview, ...rangeTotals });
   const latestDataDate = typeof searchConsole?.latestDataDate === 'string'
@@ -4837,7 +4813,6 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
       : null;
   const latestIngestedAt = typeof searchConsole?.latestIngestedAt === 'string' ? searchConsole.latestIngestedAt : null;
   const sourceFreshnessAt = latestIngestedAt ?? generatedAt;
-  const dailySource = latestDataDate ? `GCP daily aggregate · data date ${latestDataDate}` : 'GCP daily aggregate';
   const waitingSearchNote = 'Waiting for the next GCP Search Console daily aggregate.';
   return {
     key: 'search_console',
@@ -4879,7 +4854,7 @@ function buildSearchConsoleSourceCard(searchConsole: Record<string, unknown> | n
         label: 'Last 7 Days',
         status: available ? 'delayed' : 'waiting',
         stateClass: sourceStateClass(available ? 'delayed' : 'waiting'),
-        source: dailySource,
+        source: 'GCP daily aggregate · selected range',
         freshness: {
           generatedAt: sourceFreshnessAt,
           expectedLagSeconds: metricValue(searchConsole?.expectedLagSeconds ?? 86_400),
@@ -6187,7 +6162,9 @@ function registerAnalyticsRoutes(app: express.Express): void {
             ?? await continuation?.read(reportUrl, cohort)
             ?? await continuationComposer?.read(reportUrl, cohort)
             ?? await previous?.readSnapshot(key);
-          const useRetained = retained && (!refresh || !await restoration!.isActive());
+          const passiveRead = req.get('X-Metrics-Passive-Read') === '1';
+          if (passiveRead && !retained) { res.status(503).json({ error: 'No retained report is available for this selection.' }); return; }
+          const useRetained = retained && (passiveRead || !refresh || !await restoration!.isActive());
           // Closed restoration publications are read-only. Do not turn an
           // unsupported range into an automatic warehouse scan on a new day.
           if (restoration && !retained && !await restoration.isPreparing()) {

@@ -100,3 +100,25 @@ test('refresh starts a new snapshot from page one',async({page})=>{
   await page.getByRole('button',{name:/Refresh metrics/}).click();await refreshed;
   await expect(page.getByText('Page 1 · 20 per page')).toBeVisible();
 });
+
+test('referral reselection hides previous names until authorization is rechecked', async ({ page }) => {
+  await mockDashboard(page);
+  let calls = 0;
+  let release: (() => void) | undefined;
+  await page.route('**/api/analytics/one/referrals?**', async route => {
+    calls++;
+    if (calls === 1) return route.fulfill({ json: referrals });
+    if (calls === 2) return route.fulfill({ json: { ...referrals, state: 'preview', board: 'circles', entries: [], entryCount: null, nextAfterRank: null } });
+    await new Promise<void>(resolve => { release = resolve; });
+    return route.fulfill({ status: 403, json: {} });
+  });
+  await page.goto('/referral-analytics');
+  await expect(page.getByText('Member 01', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Circles', exact: true }).click();
+  await expect.poll(() => calls).toBe(2);
+  await page.getByRole('tab', { name: 'Individual', exact: true }).click();
+  await expect.poll(() => calls).toBe(3);
+  await expect(page.getByText('Member 01', { exact: true })).toHaveCount(0);
+  release!();
+  await expect(page.getByText('Member 01', { exact: true })).toHaveCount(0);
+});

@@ -2,9 +2,10 @@ import { featureTrackingGap } from './agent-measurement-contract.mjs';
 
 /** An exported record is evidence; an event declaration on its own is not. */
 export function featureMeasurementState(key: string, sourceAvailable: boolean, instrumented: boolean, signals: number | null | undefined, declaredGap = false) {
-  if (sourceAvailable && typeof signals === 'number' && signals > 0) return 'observed';
+  if (!sourceAvailable) return 'unavailable';
+  if (typeof signals === 'number' && signals > 0) return 'observed';
   if (declaredGap || !instrumented || featureTrackingGap(key)) return 'not_tracked';
-  return sourceAvailable ? 'empty' : 'unavailable';
+  return 'empty';
 }
 
 export function exactCount(value: number | null | undefined): string {
@@ -38,6 +39,7 @@ const activityDescriptions: Record<string, string> = {
   circle_engagement: 'Circle activity, including creation, opening, joining and removal.',
   auth_started: 'Times a sign-in was started.',
   daily_signin: 'Sign-ins recorded. Repeat sign-ins count again.',
+  context_resolved: 'Context resolution records. Repeated resolutions count again.',
   phone_verified: 'Phone verification steps, including starts and results.',
   google_signin: 'Google sign-in starts and results recorded. One attempt can create several records.',
   profile_created: 'Profile creation recorded. Repeat records count again.',
@@ -64,7 +66,7 @@ const activityDescriptions: Record<string, string> = {
   autocategory_applied: 'Receipt categorization activity recorded.',
   verification_checked: 'Advisor verification checks and status changes.',
   workspace_visited: 'Times the advisor workspace was visited.',
-  strategy_requested: 'Advisor and strategy requests recorded.',
+  strategy_requested: 'Advisor access-request outcomes and legacy strategy-request records. Repeat records count again.',
   client_handoff: 'Client handoffs are not tracked yet.',
   marketplace_browsed: 'Marketplace browsing recorded.',
   profile_viewed: 'Times a marketplace profile was viewed.',
@@ -108,6 +110,9 @@ const featureNotes: Record<string, string> = {
   circle_engagement: 'Counts Circle creation and other circle journey actions such as opens, joins and removal. Use the Circle creation card for creation records.',
   auth_started: 'Counts auth_started and one_auth_started records. These are sign-in starts, not new registered accounts.',
   daily_signin: 'Counts auth_completed, one_auth_login_completed and auth_succeeded records. Repeat sign-ins count again.',
+  context_resolved: 'Counts agent_pkm_context_resolved and one_memory_context_resolved records. It does not count saved memories.',
+  wallet_card_added: 'Counts card-add action records, including successful and failed results. It is not a count of cards added.',
+  wallet_card_deleted: 'Counts card-removal action records, including successful and failed results. It is not a count of cards removed.',
   phone_verified: 'Counts phone-verification starts and completions, including one_auth_phone_verified and one_phone_verified. The total includes multiple stages.',
   google_signin: 'Counts auth_started, auth_succeeded and auth_failed only with action=google, plus legacy Google sign-in events. These overlap general authentication rows. Starts and results are different records, not unique attempts or new accounts.',
   profile_created: 'Counts profile_created and one_auth_profile_created records. Registration totals come separately from Firebase Authentication.',
@@ -134,16 +139,16 @@ const featureNotes: Record<string, string> = {
   autocategory_applied: 'Counts autocategory_applied, receipt_categorized and one_gmail_receipt_categorized records. Multiple stages or receipts can emit multiple records.',
   verification_checked: 'Counts advisor-verification status changes and checks. These do not all mean verification was approved.',
   workspace_visited: 'Counts advisor-workspace views. Repeat visits count again.',
-  strategy_requested: 'Counts advisor request creation and strategy-request records. A request does not prove a strategy was delivered.',
+  strategy_requested: 'Counts ria_request_created access-request or request-bundle outcomes, including failures, and legacy one_ria_strategy_requested records. It does not count delivered strategies.',
   marketplace_browsed: 'Counts marketplace-browsing records. Repeated exploration counts again.',
-  profile_viewed: 'Counts marketplace-profile views. A view does not prove a subscription or sale.',
+  profile_viewed: 'Counts marketplace_profile_viewed and legacy one_marketplace_profile_viewed records. The former can include advisor profile views; a view does not prove a subscription or sale.',
 };
 
 export function featureMeasurementNote(key: string): string {
   if (featureNotes[key]) return featureNotes[key];
   for (const agent of ['memory', 'wallet', 'calendar', 'kyc', 'crm']) {
     if (key.startsWith(`${agent}_`)) {
-      return `Counts one_${agent}_action with action=${key.slice(agent.length + 1)}. Repeated action records count again; result describes this action only.`;
+      return `Counts one_${agent}_action with action=${key.slice(agent.length + 1)}. Repeated action records count again, including successful, expected-error and failed results when recorded.`;
     }
   }
   return 'Only matching exported events are counted. No recorded event does not prove no product use.';

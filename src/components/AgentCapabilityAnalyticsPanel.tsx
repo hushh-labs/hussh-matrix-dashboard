@@ -167,8 +167,9 @@ function actionSpec(key: string, label: string, icon: typeof Activity): FeatureA
   };
 }
 
-const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
+export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
   onboarding: [
+    actionSpec('daily_signin', 'Sign-ins recorded', UserCheck),
     {
       key: 'auth_started',
       label: 'Started sign-in',
@@ -398,12 +399,12 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'strategy_requested',
-      label: 'Investment Strategy Request',
+      label: 'Advisor request activity',
       icon: Zap,
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_ria_strategy_requested"). Portfolio strategy generation.',
+      explanation: 'Includes access-request outcomes and legacy strategy-request records; it does not measure delivered strategies.',
     },
     {
       key: 'client_handoff',
@@ -427,12 +428,12 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
     {
       key: 'profile_viewed',
-      label: 'Data Profile & Card View',
+      label: 'Marketplace profile views',
       icon: User,
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_marketplace_profile_viewed"). Data deal details view.',
+      explanation: 'Includes marketplace profile view records; a view does not establish a data-deal subscription.',
     },
     {
       key: 'deal_subscribed',
@@ -445,16 +446,17 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     },
   ],
   memory: [
-    actionSpec('memory_capture_prepared', 'Prepared a memory for review', Database),
-    actionSpec('memory_capture_saved', 'Saved a reviewed memory', Database),
-    actionSpec('memory_detail_edited', 'Corrected a saved detail', Database),
-    actionSpec('memory_detail_deleted', 'Removed a saved detail', Database),
-    actionSpec('memory_export_saved', 'Exported saved memories', Download),
-    actionSpec('memory_auto_save_changed', 'Changed automatic saving', Sliders),
+    actionSpec('context_resolved', 'Context resolutions recorded', Database),
+    actionSpec('memory_capture_prepared', 'Memory preparation activity', Database),
+    actionSpec('memory_capture_saved', 'Memory save activity', Database),
+    actionSpec('memory_detail_edited', 'Memory detail edit activity', Database),
+    actionSpec('memory_detail_deleted', 'Memory detail removal activity', Database),
+    actionSpec('memory_export_saved', 'Memory export activity', Download),
+    actionSpec('memory_auto_save_changed', 'Automatic saving changes', Sliders),
   ],
   wallet: [
-    actionSpec('wallet_card_added', 'Added a card securely', Wallet),
-    actionSpec('wallet_card_deleted', 'Removed a card', Wallet),
+    actionSpec('wallet_card_added', 'Card addition activity', Wallet),
+    actionSpec('wallet_card_deleted', 'Card removal activity', Wallet),
   ],
   calendar: [
     actionSpec('calendar_connected', 'Calendar connection results', Calendar),
@@ -470,9 +472,9 @@ const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
     actionSpec('kyc_workflow_refreshed', 'Refreshed a request', RefreshCw),
   ],
   connected_systems: [
-    actionSpec('crm_record_created', 'Created a CRM record', Layers),
-    actionSpec('crm_record_updated', 'Updated a CRM record', Layers),
-    actionSpec('crm_record_deleted', 'Deleted a CRM record', Layers),
+    actionSpec('crm_record_created', 'CRM record creation activity', Layers),
+    actionSpec('crm_record_updated', 'CRM record update activity', Layers),
+    actionSpec('crm_record_deleted', 'CRM record removal activity', Layers),
   ],
   location: [
     {
@@ -794,7 +796,7 @@ export function AgentCapabilityAnalyticsPanel({
         <div className={cn(dashboardCard, 'p-5')}>
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-muted">Data status</p>
-            {observed ? (
+            {capabilitySourceAvailable && instrumented && observed ? (
               <CheckCircle2 className="h-4 w-4 text-success" />
             ) : (
               <AlertTriangle className="h-4 w-4 text-warning" />
@@ -804,19 +806,19 @@ export function AgentCapabilityAnalyticsPanel({
             <span
               className={cn(
                 'inline-block rounded-full px-2.5 py-1 text-xs font-bold',
-                observed
+                capabilitySourceAvailable && instrumented && observed
                   ? 'bg-[#12b76a]/10 text-success'
                   : 'bg-[#ff9500]/10 text-[#b36b00]'
               )}
             >
-              {!instrumented ? 'Not tracked yet' : !capabilitySourceAvailable ? 'Data unavailable' : observed ? 'Data available' : 'No activity recorded'}
+              {!capabilitySourceAvailable ? 'Data unavailable' : !instrumented ? 'Not tracked yet' : observed ? 'Data available' : 'No activity recorded'}
             </span>
           </div>
           <p className="mt-2 text-xs font-semibold text-muted">
-            {!instrumented
-              ? 'Activity tracking is not available yet'
-              : !capabilitySourceAvailable
-                ? 'We could not read this count'
+            {!capabilitySourceAvailable
+              ? 'We could not read this count'
+              : !instrumented
+                ? 'Activity tracking is not available yet'
                 : observed
                   ? 'Activity was recorded in this period'
                   : 'No matching activity was recorded in this period'}

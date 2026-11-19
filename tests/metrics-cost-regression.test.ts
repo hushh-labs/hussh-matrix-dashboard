@@ -4,15 +4,15 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { clearMetricsCache, readMetrics } from '../src/lib/metrics-resource';
 
 afterEach(() => { clearMetricsCache(); vi.useRealTimers(); vi.unstubAllGlobals(); });
-it('reuses an aged browser snapshot until explicit refresh, with no timed network work', async () => {
+it('revalidates selection without timed network work', async () => {
   clearMetricsCache(); vi.useFakeTimers();
   const fetcher = vi.fn(async () => Response.json({ value: 7 })); vi.stubGlobal('fetch', fetcher);
   await readMetrics('/api/analytics/all?view=one');
   await vi.advanceTimersByTimeAsync(20 * 60_000);
   await readMetrics('/api/analytics/all?view=one');
-  expect(fetcher).toHaveBeenCalledTimes(1);
-  await readMetrics('/api/analytics/all?view=one', { refresh: true });
   expect(fetcher).toHaveBeenCalledTimes(2);
+  await readMetrics('/api/analytics/all?view=one', { refresh: true });
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });
 it('keeps native BigQuery and uncapped CLI execution out of dashboard runtime paths', () => {
   const walk = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap(entry =>

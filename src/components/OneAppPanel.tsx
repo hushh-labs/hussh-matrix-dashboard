@@ -227,7 +227,6 @@ function RegisteredUsers({ accounts }: { accounts: OneRegistrationTotals | null 
     );
   }
 
-  const disabled = accounts.disabledAccounts ?? 0;
   const snapshotAt = new Date(accounts.generatedAt).toLocaleString(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -236,7 +235,7 @@ function RegisteredUsers({ accounts }: { accounts: OneRegistrationTotals | null 
     {
       label: 'All-One registered accounts',
       value: accounts.totalAccounts,
-      detail: `Current unique account records · ${exactAccountCount(disabled)} disabled · ${snapshotAt}`,
+      detail: `Current unique account records · ${accounts.disabledAccounts === null ? 'disabled count unavailable' : `${exactAccountCount(accounts.disabledAccounts)} disabled`} · ${snapshotAt}`,
     },
     {
       label: 'New All-One accounts',
@@ -691,7 +690,7 @@ export function Retention({ one }: { one: OneAppSummary }) {
         </ResponsiveContainer>
       </div>
       <p className="mt-2 text-xs font-semibold text-muted">
-        Observed cohorts start on Sunday. {one.retentionRange ? `${one.retentionRange.startDate} to ${one.retentionRange.endDate}, ${one.retentionRange.timezone} (UTC−8). ` : ''}
+        Observed cohorts start on Sunday. {one.retentionRange ? `${one.retentionRange.startDate} to ${one.retentionRange.endDate}, ${one.retentionRange.timezone}. ` : ''}
         Up to eight weeks from the preceding 84 reporting days; this history is wider
         than the selected range. Missing historical first arrivals are not reconstructed.
       </p>
@@ -950,7 +949,7 @@ function FunnelDropoffAgentDiagnostic({
                       title="View aggregate device definition"
                     >
                       <Users className="h-3 w-3" />
-                      <span>{formatNumber(cap.devices ?? 0)} devices</span>
+                      <span>{cap.devices === null ? 'Device count unavailable' : `${formatNumber(cap.devices)} devices`}</span>
                       <ChevronDown className={cn('h-3 w-3 transition-transform', expandedCapKey === cap.key && 'rotate-180')} />
                     </button>
                   ) : (

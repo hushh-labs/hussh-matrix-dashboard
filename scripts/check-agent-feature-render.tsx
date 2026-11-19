@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
-import { AgentCapabilityAnalyticsPanel } from '../src/components/AgentCapabilityAnalyticsPanel';
+import { AgentCapabilityAnalyticsPanel, featureAuditSpecs } from '../src/components/AgentCapabilityAnalyticsPanel';
+import { AGENT_MEASUREMENTS } from '../src/lib/agent-measurement-contract.mjs';
 import { OneLocationAnalyticsPanel } from '../src/components/OneLocationAnalyticsPanel';
+import { Retention } from '../src/components/OneAppPanel';
+import { LocationAgentByPlatform } from '../src/components/AppsPanel';
 import { FeatureUserBreakdownPanel } from '../src/components/FeatureUserBreakdownPanel';
 import type { OneAppSummary } from '../src/lib/types';
+
+// Compare the actual rendered spec collection (including actionSpec-generated rows)
+// to the catalog; neither declarations nor rendering prove source coverage.
+for (const { agent, key } of AGENT_MEASUREMENTS) {
+  assert.equal(featureAuditSpecs[agent]?.filter(spec => spec.key === key).length, 1, `${agent}/${key} must have exactly one detail row`);
+}
 
 function render(capabilityKey: string): string {
   return renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, {
@@ -53,6 +62,16 @@ const summary = {
   },
   featureUsage: {},
 } as unknown as OneAppSummary;
+for (const timezone of ['UTC', 'America/Los_Angeles']) {
+  const one = { ...summary, retentionAvailable: true,
+    retentionRange: { startDate: '2026-09-01', endDate: '2026-10-01', timezone },
+    retention: [{ cohortWeek: '2026-09-06', cohortSize: 10, returnedW1: 4, rateW1: .4, windowComplete: true, state: 'available' }],
+  } as unknown as OneAppSummary;
+  const markup = renderToStaticMarkup(createElement(Retention, { one }));
+  assert.ok(markup.includes(timezone));
+  assert.doesNotMatch(markup, /UTC−8/);
+}
+
 const gmailSummary = {
   ...summary,
   capabilities: [{ key: 'gmail', instrumented: true, observed: true, devices: 9, accounts: 8, deliberateEvents: 11 }],
@@ -63,6 +82,81 @@ function renderGmail(one: OneAppSummary) {
     capabilityKey: 'gmail', one, uat: one, rangeLabel: 'Last 30 days', dateControl: null, onBack: () => {},
   }));
 }
+const onboardingSummary = (signals: number, available = true) => ({
+  ...summary, featureUsageAvailable: available,
+  capabilities: [{ key: 'onboarding', instrumented: true, observed: true, devices: 9, accounts: 8, deliberateEvents: signals }],
+  featureUsage: { daily_signin: { accounts: 2, devices: 3, signals, successes: 0, expectedErrors: 0, failures: 0, outcomeSignals: 0 } },
+}) as unknown as OneAppSummary;
+function renderOnboarding(environment: 'production' | 'uat', available = true) {
+  return renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, {
+    capabilityKey: 'onboarding', one: onboardingSummary(17, available), uat: onboardingSummary(31, available),
+    environment, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {},
+  }));
+}
+const memorySummary = { ...summary,
+  capabilities: [{ key: 'memory', instrumented: true, observed: true, devices: 4, accounts: 2, deliberateEvents: 13 }],
+  featureUsage: { context_resolved: { accounts: 2, devices: 4, signals: 13, successes: 0, expectedErrors: 0, failures: 0, outcomeSignals: 0 } },
+} as unknown as OneAppSummary;
+const memoryContext = renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, {
+  capabilityKey: 'memory', one: memorySummary, uat: null, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {},
+}));
+assert.match(memoryContext, /Context resolutions recorded/);
+assert.match(memoryContext, /13 records from 4 device\/browser IDs/);
+
+const productionOnboarding = renderOnboarding('production');
+const uatOnboarding = renderOnboarding('uat');
+assert.match(productionOnboarding, /Sign-ins recorded/);
+assert.match(productionOnboarding, /17 records from 3 device\/browser IDs/);
+assert.doesNotMatch(productionOnboarding, /31 records from 3 device\/browser IDs/);
+assert.match(uatOnboarding, /31 records from 3 device\/browser IDs/);
+assert.doesNotMatch(uatOnboarding, /17 records from 3 device\/browser IDs/);
+assert.match(renderOnboarding('uat', false), /Data unavailable/);
+
+const unavailableCapability = renderGmail({
+  ...gmailSummary, capabilitiesAvailable: false,
+  capabilities: [{ key: 'gmail', instrumented: false, observed: true }],
+} as unknown as OneAppSummary);
+const statusCard = unavailableCapability.match(/Data status[\s\S]*?We could not read this count/)?.[0] ?? '';
+assert.match(statusCard, /Data unavailable/);
+assert.doesNotMatch(statusCard, /Not tracked yet|text-success/);
+const uninstrumentedCapability = renderGmail({
+  ...gmailSummary, capabilities: [{ key: 'gmail', instrumented: false, observed: false }],
+} as unknown as OneAppSummary);
+assert.match(uninstrumentedCapability, /Activity tracking is not available yet/);
+
+for (const [capabilityKey, featureKey, label] of [
+  ['wallet', 'wallet_card_added', 'Card addition activity'],
+  ['memory', 'memory_capture_saved', 'Memory save activity'],
+  ['connected_systems', 'crm_record_created', 'CRM record creation activity'],
+] as const) {
+  for (const outcome of ['success', 'error'] as const) {
+    const item = { accounts: 1, devices: 1, signals: 1, successes: Number(outcome === 'success'), expectedErrors: 0, failures: Number(outcome === 'error'), outcomeSignals: 1 };
+    const one = { ...summary, capabilities: [{ key: capabilityKey, instrumented: true, observed: true, devices: 1, accounts: 1, deliberateEvents: 1 }], featureUsage: { [featureKey]: item } } as unknown as OneAppSummary;
+    const markup = renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, { capabilityKey, one, uat: null, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {} }));
+    assert.ok(markup.includes(label));
+    assert.match(markup, /1 records from 1 device\/browser IDs/);
+    assert.doesNotMatch(markup, /Added a card securely|Saved a reviewed memory|Created a CRM record/);
+  }
+}
+
+for (const outcome of ['success', 'error'] as const) {
+  const ria = { ...summary, capabilities: [{ key: 'ria', instrumented: true, observed: true, devices: 1, accounts: 1, deliberateEvents: 1 }],
+    featureUsage: { strategy_requested: { accounts: 1, devices: 1, signals: 1, successes: Number(outcome === 'success'), expectedErrors: 0, failures: Number(outcome === 'error'), outcomeSignals: 1 } },
+  } as unknown as OneAppSummary;
+  const markup = renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, { capabilityKey: 'ria', one: ria, uat: null, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {} }));
+  assert.match(markup, /Advisor request activity/);
+  assert.match(markup, /1 records from 1 device\/browser IDs/);
+  assert.doesNotMatch(markup, /Investment Strategy Request/);
+}
+
+const marketplace = { ...summary, capabilities: [{ key: 'marketplace', instrumented: true, observed: true, devices: 2, accounts: 1, deliberateEvents: 3 }],
+  featureUsage: { profile_viewed: { accounts: 1, devices: 2, signals: 3, successes: 3, expectedErrors: 0, failures: 0, outcomeSignals: 3 } },
+} as unknown as OneAppSummary;
+const marketplaceMarkup = renderToStaticMarkup(createElement(AgentCapabilityAnalyticsPanel, { capabilityKey: 'marketplace', one: marketplace, uat: null, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {} }));
+assert.match(marketplaceMarkup, /Marketplace profile views/);
+assert.match(marketplaceMarkup, /3 records from 2 device\/browser IDs/);
+assert.doesNotMatch(marketplaceMarkup, /Data Profile &amp; Card View/);
+
 const measuredGmail = renderGmail(gmailSummary);
 assert.match(measuredGmail, /292 records from 9 device\/browser IDs/);
 assert.match(measuredGmail, /Inbox visits are not separately tracked yet/);
@@ -82,12 +176,45 @@ function renderLocation(one: OneAppSummary) {
     onBack: () => {}, onEnvironmentChange: () => {}, onTabChange: () => {},
   }));
 }
+const zeroJourney = { ...summary, locationBehaviorAvailable: true,
+  locationAnalytics: { ...summary.locationAnalytics, journey: [{ key: 'opened', label: 'Opened', instrumented: true, observed: true, users: 0, events: 0, successes: 0, failures: 0 }] },
+} as OneAppSummary;
+const zeroJourneyMarkup = renderToStaticMarkup(createElement(OneLocationAnalyticsPanel, {
+  one: zeroJourney, uat: null, environment: 'production', tab: 'journey', rangeLabel: 'Selected dates', dateControl: null,
+  onBack: () => {}, onEnvironmentChange: () => {}, onTabChange: () => {},
+}));
+assert.doesNotMatch(zeroJourneyMarkup, /Journey reach is unavailable/);
+assert.match(zeroJourneyMarkup, /Opened/);
+assert.match(zeroJourneyMarkup, /width:2%/);
+
 const measuredLocation = renderLocation(summary);
 assert.match(measuredLocation, /6,653 records from 11 device\/browser IDs/);
 assert.match(measuredLocation, /25 records from 6 device\/browser IDs/);
 assert.doesNotMatch(measuredLocation, /604\.8/); // The average belongs in the optional details.
 assert.doesNotMatch(measuredLocation, /Non-error share|100%/);
 assert.match(renderLocation({ ...summary, locationBehaviorAvailable: false }), /Data unavailable/);
+const unavailablePlatform = renderToStaticMarkup(createElement(LocationAgentByPlatform, { rows: [], available: false }));
+assert.match(unavailablePlatform, /activity is unavailable/);
+assert.doesNotMatch(unavailablePlatform, /No Location Agent activity recorded/);
+const emptyPlatform = renderToStaticMarkup(createElement(LocationAgentByPlatform, { rows: [], available: true }));
+assert.match(emptyPlatform, /No Location Agent activity recorded/);
+
+for (const environment of ['production', 'uat'] as const) {
+  const broken = { ...summary, locationBehaviorAvailable: false,
+    locationAnalytics: { ...summary.locationAnalytics, journey: [{ key: 'opened', label: 'Opened', instrumented: true, observed: false, users: 0, events: 0, successes: 0, failures: 0 }], circleKinds: [], platforms: [] },
+  } as OneAppSummary;
+  for (const tab of ['overview', 'circles', 'journey', 'features'] as const) {
+    const markup = renderToStaticMarkup(createElement(OneLocationAnalyticsPanel, {
+      one: environment === 'production' ? broken : null, uat: environment === 'uat' ? broken : null,
+      environment, tab, rangeLabel: 'Selected dates', dateControl: null, onBack: () => {}, onEnvironmentChange: () => {}, onTabChange: () => {},
+    }));
+    if (tab === 'overview' || tab === 'journey') assert.match(markup, /Journey reach is unavailable/);
+    assert.doesNotMatch(markup, /No fulfilment records found in this period/);
+    if (tab === 'overview' || tab === 'circles') assert.match(markup, /Circle activity is unavailable/);
+    if (tab === 'overview' || tab === 'features') assert.match(markup, /Location platform coverage is unavailable/);
+  }
+}
+
 const detail = renderToStaticMarkup(createElement(FeatureUserBreakdownPanel, {
   featureLabel: 'Shared location views', totalDevices: 11, totalEvents: 6653,
   successes: 6650, expectedErrors: 1, failures: 1,

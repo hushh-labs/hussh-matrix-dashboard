@@ -27,6 +27,7 @@ import {
 } from 'recharts';
 
 import { formatNumber } from '../lib/analytics-service';
+import { locationDailyTrend } from '../lib/location-daily-trend';
 import { dashboardCard, dashboardLabel, dashboardPanel, dashboardBand } from '../lib/theme';
 import { cn } from '../lib/utils';
 import type {
@@ -183,7 +184,8 @@ function FeatureTable({
   })} />;
 }
 
-function JourneyReach({ rows }: { rows: OneLocationJourneyMetric[] }) {
+function JourneyReach({ rows, available }: { rows: OneLocationJourneyMetric[]; available: boolean }) {
+  if (!available) return <div className={cn(dashboardPanel, 'p-6')}>Journey reach is unavailable for this window.</div>;
   const max = Math.max(1, ...rows.map((row) => row.users ?? 0));
   return (
     <div className={cn(dashboardPanel, 'p-5 sm:p-6')}>
@@ -225,6 +227,7 @@ function JourneyReach({ rows }: { rows: OneLocationJourneyMetric[] }) {
 }
 
 function CircleBreakdown({ one }: { one: OneAppSummary }) {
+  if (!one.locationBehaviorAvailable) return <div className={cn(dashboardPanel, 'p-6')}>Circle activity is unavailable for this window.</div>;
   const total = one.locationAnalytics.circleKinds.reduce((sum, row) => sum + row.circlesCreated, 0);
   const engaged = one.locationAnalytics.journey.find((row) => row.key === 'circle_engaged');
   return (
@@ -273,6 +276,7 @@ function SourceCompleteness({
   one: OneAppSummary;
   environment: LocationAnalyticsEnvironment;
 }) {
+  if (!one.locationBehaviorAvailable) return <div className={cn(dashboardPanel, 'p-6')}>Location platform coverage is unavailable for this window.</div>;
   const seen = new Set(
     one.locationAnalytics.platforms
       .filter((row) => row.events > 0)
@@ -352,11 +356,7 @@ export function OneLocationAnalyticsPanel({
   );
   const requestFulfilled = locationAnalytics?.journey.find((row) => row.key === 'request_fulfilled');
   const circleEngaged = locationAnalytics?.journey.find((row) => row.key === 'circle_engaged');
-  const trend = (selectedOne?.daily ?? []).map((point) => ({
-    date: point.eventDate.slice(5),
-    active: point.locationUsers,
-    sharing: byKey.get('live_sharing')?.daily.find((row) => row.eventDate === point.eventDate)?.users ?? 0,
-  }));
+  const trend = locationDailyTrend(selectedOne);
 
   return (
     <main className="space-y-6 sm:space-y-8">
@@ -444,19 +444,19 @@ export function OneLocationAnalyticsPanel({
         <StatCard
           label="Location requests fulfilled"
           value={requestFulfilled?.successes ?? null}
-          detail={requestFulfilled?.observed
+          detail={!selectedOne.locationBehaviorAvailable ? 'Location behavior data is unavailable for this period.' : requestFulfilled?.observed
             ? `Successful fulfilment records · ${exactCount(requestFulfilled.users)} device/browser IDs · ${exactCount(requestFulfilled.failures)} failed records`
             : 'No fulfilment records found in this period'}
           icon={CheckCircle2}
-          waiting={!requestFulfilled?.observed}
+          waiting={!selectedOne.locationBehaviorAvailable || !requestFulfilled?.observed}
         />
-        <StatCard label="Devices using Circles" value={circleEngaged?.users ?? null} detail="Different app or browser IDs with Circle activity" icon={UsersRound} waiting={!circleEngaged?.instrumented} />
+        <StatCard label="Devices using Circles" value={circleEngaged?.users ?? null} detail={selectedOne.locationBehaviorAvailable ? 'Different app or browser IDs with Circle activity' : 'Location behavior data is unavailable for this period.'} icon={UsersRound} waiting={!selectedOne.locationBehaviorAvailable || !circleEngaged?.instrumented} />
       </div>
 
       <MetricCalculationGuide summary={selectedOne} />
       <DailyAgentActivity one={selectedOne} capabilityKey="location" />
 
-      {!locationAnalytics.journeyActionSeen && (
+      {selectedOne.locationBehaviorAvailable && !locationAnalytics.journeyActionSeen && (
         <div className="flex items-start gap-3 rounded-2xl border border-[#f0d8a8] bg-[#fff8ea] p-4 text-[#6a4600]">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
           <p className="text-sm font-semibold leading-5">{environmentConfig.waitingNote}</p>
@@ -478,6 +478,7 @@ export function OneLocationAnalyticsPanel({
           <div className={cn(dashboardPanel, 'p-5 sm:p-6')}>
             <p className="text-base font-bold text-ink">Daily Location activity</p>
             <p className="mt-1 text-xs font-medium text-muted">Unique devices using Location versus live sharing</p>
+            {(!selectedOne.locationBehaviorAvailable || trend.some(point => point.sharing === null)) && <p className="mt-1 text-xs font-medium text-warning">Live sharing behavior data is unavailable for one or more displayed days.</p>}
             <div className="mt-5 h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
@@ -497,7 +498,7 @@ export function OneLocationAnalyticsPanel({
               </ResponsiveContainer>
             </div>
           </div>
-          <JourneyReach rows={locationAnalytics.journey.slice(0, 7)} />
+          <JourneyReach rows={locationAnalytics.journey.slice(0, 7)} available={selectedOne.locationBehaviorAvailable} />
         </section>
       )}
 
@@ -517,7 +518,7 @@ export function OneLocationAnalyticsPanel({
             <p className={dashboardLabel}>Cross-surface journey</p>
             <h3 className="mt-1 text-2xl font-semibold text-ink">From connecting to sharing a location</h3>
           </div>
-          <JourneyReach rows={locationAnalytics.journey} />
+          <JourneyReach rows={locationAnalytics.journey} available={selectedOne.locationBehaviorAvailable} />
         </section>
       )}
 

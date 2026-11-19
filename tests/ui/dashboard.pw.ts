@@ -46,6 +46,16 @@ test('retained comparison shows exact 30 and 90 day windows and leaves all time 
   await expect(page.getByText('Retained data is more than 24 hours old.', { exact: false })).toBeVisible();
 });
 
+test('Location shows a gap warning when sharing behavior is unavailable', async ({ page }) => {
+  await mockDashboard(page);
+  const production = { ...one, locationBehaviorAvailable: false };
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics,
+    one: { ...allAnalytics.one!, data: { ...allAnalytics.one!.data!, production } },
+  } }));
+  await page.goto('/location-analytics/production/overview');
+  await expect(page.getByText('Live sharing behavior data is unavailable for one or more displayed days.')).toBeVisible();
+});
+
 test('retained app health keeps the dated One report and labels separate provider data unavailable', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
   await page.route('**/api/auth/me', route => route.fulfill({ json: { authenticated: true, publicationAsOf: '2026-11-14T21:34:55.606Z',
@@ -65,6 +75,40 @@ test('retained app health keeps the dated One report and labels separate provide
   await page.getByRole('button', { name: 'Open detailed Location analytics', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'One Location analytics', exact: true })).toBeVisible();
   expect(requests.some(url => new URL(url).searchParams.has('include_health'))).toBe(false);
+});
+
+test('One selection rechecks access and does not display a cached report after denial', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
+  let denyProduction = false;
+  await page.route('**/api/analytics/all?*', route => {
+    const url = new URL(route.request().url());
+    if (denyProduction && url.searchParams.get('environment') === 'production') return route.fulfill({ status: 403, json: {} });
+    return route.fulfill({ json: allAnalytics });
+  });
+  await page.goto('/'); await navigate(page, 'One app');
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+  denyProduction = true;
+  await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
+  await page.getByRole('tab', { name: 'Main analytics', exact: true }).click();
+  await expect(page.getByText('One app data is unavailable for this selection.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toHaveCount(0);
+});
+
+test('One refresh hides the prior report while access is checked', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 }); await mockDashboard(page);
+  let refresh = false, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/analytics/all?*', async route => {
+    if (!refresh) return route.fulfill({ json: allAnalytics });
+    await held; return route.fulfill({ status: 403, json: {} });
+  });
+  await page.goto('/'); await navigate(page, 'One app');
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toBeVisible();
+  refresh = true;
+  await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Accounts at a glance' })).toHaveCount(0);
+  release();
+  await expect(page.getByText('One app data is unavailable for this selection.')).toBeVisible();
 });
 
 test('retained Monitoring shows partial observed production values and never reuses them for UAT', async ({ page }) => {
@@ -187,10 +231,11 @@ test('offers explicit newer partial production dates without changing the old de
   const urls: URL[] = [];
   page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
   await page.goto('/location-analytics/production');
-  const choice = page.getByRole('button', { name: '2026-10-17 to 2026-11-15' });
+  const choice = page.getByLabel('Newer saved report dates');
   await expect(choice).toBeVisible();
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_end_date')).toBe('2026-11-14');
-  await choice.click();
+  await choice.selectOption('2026-10-17/2026-11-15');
+  await expect(choice).toHaveValue('2026-10-17/2026-11-15');
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-10-17');
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_end_date')).toBe('2026-11-15');
   await page.goto('/location-analytics/uat');
@@ -205,10 +250,23 @@ test('offers only the matching environment partial dates', async ({ page }) => {
   ] } }));
   const urls: URL[] = []; page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/analytics/all') urls.push(url); });
   await page.goto('/location-analytics/uat');
-  await expect(page.getByRole('button', { name: '2026-10-17 to 2026-11-15' })).toHaveCount(0);
-  await page.getByRole('button', { name: '2026-11-09 to 2026-11-15' }).click();
+  const saved = page.getByLabel('Newer saved report dates');
+  await expect(saved.locator('option')).toHaveCount(2);
+  await expect(saved.locator('option[value="2026-10-17/2026-11-15"]')).toHaveCount(0);
+  await saved.selectOption('2026-11-09/2026-11-15');
   await expect.poll(() => urls.at(-1)?.searchParams.get('environment')).toBe('uat');
   await expect.poll(() => urls.at(-1)?.searchParams.get('one_start_date')).toBe('2026-11-09');
+});
+
+for (const width of [320, 1440]) test(`saved Location ranges remain accessible at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 }); await mockDashboard(page);
+  const reports = ['2026-11-15', '2026-11-09', '2026-11-02', '2026-10-17'].map(startDate => ({ startDate, endDate: '2026-11-15', environment: 'production' }));
+  await page.route('**/api/auth/one-partial-publications-v2', route => route.fulfill({ json: { reports } }));
+  await page.goto('/location-analytics/production');
+  const saved = page.getByLabel('Newer saved report dates');
+  await expect(saved.locator('option')).toHaveCount(5);
+  for (const report of reports) await expect(saved.locator(`option[value="${report.startDate}/${report.endDate}"]`)).toHaveText(`${report.startDate} to ${report.endDate}`);
+  await assertFits(page);
 });
 
 test('session loss prompts sign-in and restores the One date and environment', async ({ page }) => {
@@ -274,10 +332,11 @@ test('UAT Location deep links and agent drilldowns keep the selected source', as
   await page.getByRole('button', { name: 'Features', exact: true }).click();
   await page.locator('.feature-directory > button').filter({ hasText: 'Memory' }).click();
   await expect(page.getByRole('tab', { name: 'UAT / Test builds', exact: true })).toHaveAttribute('aria-selected', 'true');
-  const beforeCachedSwitch = urls.length;
+  const revalidated = page.waitForRequest(request => new URL(request.url()).pathname === '/api/analytics/all'
+    && new URL(request.url()).searchParams.get('environment') === 'production');
   await page.getByRole('tab', { name: 'Production', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Production', exact: true })).toHaveAttribute('aria-selected', 'true');
-  expect(urls.length).toBe(beforeCachedSwitch);
+  expect((await revalidated).headers()['x-metrics-passive-read']).toBe('1');
 });
 
 test('overview stays focused and One reports reveal one subject at a time', async ({ page }) => {
@@ -372,6 +431,37 @@ test('shared registry totals never replace the selected environment customer cou
   await assertFits(page);
 });
 
+test('shared registry distinguishes an unknown disabled count from zero', async ({ page }) => {
+  await mockDashboard(page);
+  let disabledAccounts: number | null = null;
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics,
+    one: { ...allAnalytics.one!, data: { ...allAnalytics.one!.data!, registrations: {
+      ...allAnalytics.one!.data!.registrations!, disabledAccounts,
+    } } },
+  } }));
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByText('Daily, weekly & monthly counts', { exact: true }).click();
+  const tile = page.getByText('All-One registered accounts', { exact: true }).locator('..').locator('..');
+  await expect(tile).toContainText('disabled count unavailable');
+  await expect(tile).not.toContainText('0 disabled');
+  disabledAccounts = 0;
+  await page.getByRole('button', { name: 'Refresh metrics', exact: true }).click();
+  await expect(tile).toContainText('0 disabled');
+});
+
+test('capability diagnostics distinguish unknown device counts from zero', async ({ page }) => {
+  await mockDashboard(page);
+  const capabilities = one.capabilities.map((cap, index) => ({ ...cap, devices: index === 0 ? null : index === 1 ? 0 : cap.devices }));
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics,
+    one: { ...allAnalytics.one!, data: { ...allAnalytics.one!.data!, production: { ...one, capabilities } } },
+  } }));
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: 'Retention', exact: true }).click();
+  const diagnostic = page.getByText('Agent Capabilities (Which Agent)', { exact: true }).locator('..');
+  await expect(diagnostic).toContainText('Device count unavailable');
+  await expect(diagnostic).toContainText('0 devices');
+});
+
 for (const width of [390, 1440]) {
   test(`One keeps collection diagnostics out of the report at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -446,6 +536,21 @@ test('location routes, environments and browser history work at mobile width', a
   await expect(page.locator('.dashboard-page-heading h1')).toHaveText('One Location');
   await page.goBack();
   await expect(page.locator('.dashboard-page-heading h1')).toHaveText('One Location');
+});
+
+test('Mail feature rows report source failure without claiming missing instrumentation', async ({ page }) => {
+  await mockDashboard(page);
+  await page.route('**/api/analytics/all?*', route => route.fulfill({ json: { ...allAnalytics,
+    one: { ...allAnalytics.one!, data: { ...allAnalytics.one!.data!, production: { ...one, featureUsageAvailable: false } } },
+  } }));
+  await page.goto('/'); await navigate(page, 'One app');
+  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  await page.getByRole('button', { name: 'Open detailed Gmail analytics', exact: true }).click();
+  for (const label of ['Mail sign-in screen views', 'Inbox views', 'Receipt categorization']) {
+    const row = page.getByRole('row').filter({ hasText: label });
+    await expect(row).toContainText('Data unavailable');
+    await expect(row).not.toContainText('Not tracked yet');
+  }
 });
 
 test('agent detail pages, feature disclosures and the chat panel fit small screens', async ({ page }) => {

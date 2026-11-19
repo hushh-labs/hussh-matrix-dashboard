@@ -743,7 +743,7 @@ function DateRangeControl({
       aria-busy={refreshing}
     >
       <div className="flex items-center gap-2">
-        <div className="grid min-w-0 flex-1 grid-cols-4 rounded-lg bg-canvas p-1">
+        <div className="grid min-w-0 flex-1 grid-cols-2 sm:grid-cols-5 rounded-lg bg-canvas p-1">
           {presets.map((days) => (
             <button
               key={days}
@@ -1598,15 +1598,15 @@ export default function Dashboard() {
       subtitle: `Search Console aggregate details for ${search?.range?.startDate ?? hushhAiRange.startDate} to ${search?.range?.endDate ?? hushhAiRange.endDate}.`,
       badge: search?.available ? 'Search aggregate' : 'Waiting',
       summary: [
-        detailRow('Clicks', formatOptionalNumber(search?.clicks)),
-        detailRow('Impressions', formatOptionalNumber(search?.impressions)),
-        detailRow('CTR', search?.ctr == null ? '—' : `${(search.ctr * 100).toFixed(1)}%`),
-        detailRow('Avg Position', search?.averagePosition == null ? '—' : search.averagePosition.toFixed(1)),
+        detailRow('Clicks', formatOptionalNumber(search?.available ? search.clicks : null)),
+        detailRow('Impressions', formatOptionalNumber(search?.available ? search.impressions : null)),
+        detailRow('CTR', !search?.available || search.ctr == null ? '—' : `${(search.ctr * 100).toFixed(1)}%`),
+        detailRow('Avg Position', !search?.available || search.averagePosition == null ? '—' : search.averagePosition.toFixed(1)),
       ],
       sections: [
         {
           title: 'Top Queries',
-          rows: (search?.queries ?? []).slice(0, 12).map((query) => detailRow(
+          rows: (search?.available ? search.queries : []).slice(0, 12).map((query) => detailRow(
             query.query,
             `${formatOptionalNumber(query.clicks)} clicks`,
             `${formatOptionalNumber(query.impressions)} impressions · ${query.ctr == null ? '—' : `${(query.ctr * 100).toFixed(1)}%`} CTR · ${query.averagePosition == null ? '—' : query.averagePosition.toFixed(1)} avg position`,
@@ -1614,7 +1614,7 @@ export default function Dashboard() {
         },
         {
           title: 'Top Pages',
-          rows: (search?.pages ?? []).slice(0, 12).map((page) => detailRow(
+          rows: (search?.available ? search.pages : []).slice(0, 12).map((page) => detailRow(
             safeUrlLabel(page.pageUrl),
             `${formatOptionalNumber(page.clicks)} clicks`,
             `${formatOptionalNumber(page.impressions)} impressions · ${page.averagePosition == null ? '—' : page.averagePosition.toFixed(1)} avg position`,
@@ -1622,14 +1622,14 @@ export default function Dashboard() {
         },
         {
           title: 'Countries',
-          rows: (search?.countries ?? []).slice(0, 12).map((country) => detailRow(
+          rows: (search?.available ? search.countries : []).slice(0, 12).map((country) => detailRow(
             country.country,
             `${formatOptionalNumber(country.clicks)} clicks`,
             `${formatOptionalNumber(country.impressions)} impressions`,
           )),
         },
       ],
-      caveats: ['Search Console is daily/delayed search visibility data, not product user identity.'],
+      caveats: ['Search Console is daily/delayed search visibility data, not product user identity.', ...(search?.note ? [search.note] : [])],
     });
   };
 
@@ -1833,10 +1833,17 @@ export default function Dashboard() {
                 onCustomRange={setOneAppRange}
                 ariaLabelPrefix="One app" {...dateEditor('One app')}
               />{onePartialReports.some(range => range.environment === (locationRoute?.environment ?? oneEnvironment)) && (
-                <div className="mt-2 text-sm text-muted">
-                  Newer {locationRoute?.environment ?? oneEnvironment} reports are partial; the latest source day may be incomplete and can change.
-                  {onePartialReports.filter(range => range.environment === (locationRoute?.environment ?? oneEnvironment)).map(range => <button key={`${range.environment}:${range.startDate}:${range.endDate}`} type="button" className="ml-2 underline"
-                    onClick={() => setOneAppRange({ preset: 'custom', startDate: range.startDate, endDate: range.endDate })}>{range.startDate} to {range.endDate}</button>)}
+                <div className="compact-report-dates mt-2 text-xs text-muted">
+                  <label className="block font-semibold" htmlFor="one-saved-partial-range">Newer saved {locationRoute?.environment ?? oneEnvironment} reports</label>
+                  <select id="one-saved-partial-range" aria-label="Newer saved report dates" value={onePartialReports.some(range => range.environment === (locationRoute?.environment ?? oneEnvironment) && range.startDate === oneAppRange.startDate && range.endDate === oneAppRange.endDate) ? `${oneAppRange.startDate}/${oneAppRange.endDate}` : ''} className="mt-1 min-h-10 w-full rounded-lg border border-stroke bg-surface px-2 text-xs text-ink"
+                    onChange={event => {
+                      const selected = onePartialReports.filter(range => range.environment === (locationRoute?.environment ?? oneEnvironment)).find(range => `${range.startDate}/${range.endDate}` === event.currentTarget.value);
+                      if (selected) setOneAppRange({ preset: 'custom', startDate: selected.startDate, endDate: selected.endDate });
+                    }}>
+                    <option value="">Choose saved dates</option>
+                    {onePartialReports.filter(range => range.environment === (locationRoute?.environment ?? oneEnvironment)).map(range => <option key={`${range.environment}:${range.startDate}:${range.endDate}`} value={`${range.startDate}/${range.endDate}`}>{range.startDate} to {range.endDate}</option>)}
+                  </select>
+                  <p className="mt-1">These reports are partial; the latest source day may be incomplete and can change.</p>
                 </div>
               )}</>
             )}
