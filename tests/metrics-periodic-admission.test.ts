@@ -49,6 +49,14 @@ describe('fixed periodic collector admission', () => {
     const head = (await f.get<any>('heads', claim!.job.key))!; await f.put('heads', claim!.job.key, { ...head, publication: null });
     expect(await f.reports.requestPeriodic('one', access)).toEqual(first);
   });
+  it('rejects a malformed publication envelope on receipt replay', async () => {
+    const f = collectionFixture(); await f.initialize(); const manual = await f.reports.request(f.request, f.access);
+    const claim = await f.worker.claim(manual.jobId!, digest('worker')); await f.worker.publish(claim!.job, f.result(claim!.job));
+    await f.put('policy', 'periodic', schedule()); await f.reports.requestPeriodic('one', access);
+    const snapshot = (await f.get<any>('snapshots', manual.jobId!))!; snapshot.unexpected = true;
+    await f.put('snapshots', manual.jobId!, snapshot);
+    await expect(f.reports.requestPeriodic('one', access)).rejects.toThrow();
+  });
   it('does not reuse a malformed publication as a completed periodic report', async () => {
     const f = collectionFixture(); await f.initialize(); const manual = await f.reports.request(f.request, f.access);
     const claim = await f.worker.claim(manual.jobId!, digest('worker')); await f.worker.publish(claim!.job, f.result(claim!.job));

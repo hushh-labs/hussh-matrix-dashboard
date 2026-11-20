@@ -140,7 +140,8 @@ export class MetricsReports {
         if (receipt) {
           const published = receiptPublication;
           if (receiptJob?.status === 'completed' || receipt.reportId) {
-            if (!published || published.id !== (receiptJob?.id ?? receipt.reportId) || published.key !== c.key
+            if (!published || Object.keys(published).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
+              || published.id !== (receiptJob?.id ?? receipt.reportId) || published.key !== c.key
               || digest(published.request) !== digest(c.request) || digest(published.control) !== digest(c.control)
               || !Number.isSafeInteger(published.computedAt) || !Number.isSafeInteger(published.publishedAt)
               || published.computedAt > published.publishedAt || published.publishedAt > now) throw new ReportError('unavailable');
