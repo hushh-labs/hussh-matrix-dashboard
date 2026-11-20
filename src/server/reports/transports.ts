@@ -3,7 +3,7 @@ import { GoogleAuth, Impersonated } from 'google-auth-library';
 import { ReportError } from './contracts';
 import { SourceRequestFailure } from './source-errors';
 import type { AggregateFetch } from './sources';
-import type { TaskApiRequest } from './dispatch';
+import { reportQueueProject, type TaskApiRequest } from './dispatch';
 import { withinDeadline } from './deadline';
 import { isAnalyticsReader, websiteSourceOrigins } from './bindings';
 
@@ -140,7 +140,8 @@ export async function boundedText(response: Response, maxBytes: number, signal: 
 }
 export function cloudTasksRequest(maxResponseBytes: number, credentials: CredentialHeaders = adcCredentialHeaders(), fetcher: typeof fetch = fetch): TaskApiRequest {
   return async (url, request) => {
-    if (!/^https:\/\/cloudtasks\.googleapis\.com\/v2\/projects\/[a-z0-9-]+\/locations\/[a-z0-9-]+\/queues\/metrics-reporting-[a-z0-9-]+\/(tasks|tasks\/[a-f0-9]{64}\?responseView=BASIC)$/.test(url)) throw new ReportError('invalid');
+    const target = /^https:\/\/cloudtasks\.googleapis\.com\/v2\/(projects\/[a-z0-9-]+\/locations\/[a-z0-9-]+\/queues\/[a-z0-9-]+)\/(tasks|tasks\/[a-f0-9]{64}\?responseView=BASIC)$/.exec(url);
+    if (!target || !reportQueueProject(target[1])) throw new ReportError('invalid');
     const response = await fetcher(url, { method: request.method, signal: request.signal, redirect: 'error',
       headers: { ...await withinDeadline(credentials('cloud', request.signal), request.signal), 'Content-Type': 'application/json' },
       ...(request.body ? { body: JSON.stringify(request.body) } : {}) });
