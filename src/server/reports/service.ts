@@ -1,4 +1,4 @@
-import { digest, ReportError, reportKey, validateAccess, validateAggregate, validateControl, validatePolicy,
+import { digest, ReportError, reportKey, reportingCalendarDay, validateAccess, validateAggregate, validateControl, validatePolicy,
   validateRequest, type AggregateResult, type PublishedReport, type ReportAccess, type ReportControl,
   type ReportJob, type ReportingPolicy, type ReportRequest } from './contracts';
 import { reportPath as path, type ReportStore, type ReportTransaction } from './store';
@@ -168,11 +168,15 @@ export class MetricsReports {
       } else if (active && ['accepted', 'running', 'delayed'].includes(active.status)) {
         result = { state: active.status as 'accepted' | 'running' | 'delayed', reportId: null, jobId: active.id };
       } else {
-        // The existing One adoption endpoint cannot compute more than seven
-        // calendar days. Historical reads and already-admitted work remain intact.
+        // Reject dates that are outside One's recent closed-day window before
+        // creating a job. One still validates the precise source boundaries.
         if (c.request.reportId === 'one.adoption') {
-          try { validateRequest(c.request, 7); }
-          catch (error) {
+          try {
+            validateRequest(c.request, 7);
+            const today = reportingCalendarDay(c.request.timezone, now);
+            const earliestDay = reportingCalendarDay(c.request.timezone, now - 7 * 86_400_000);
+            if (c.request.endDate >= today || c.request.startDate < earliestDay) throw new ReportError('invalid');
+          } catch (error) {
             if (plan && day && error instanceof ReportError && error.code === 'invalid') {
               const limit = Math.min(day.limit, plan.maxDailyJobs), slotLimit = Math.min(day.slotLimit, plan.maxDailySlots);
               if (limit < day.limit || slotLimit < day.slotLimit) tx.set(dayRef, { ...day, limit, slotLimit });

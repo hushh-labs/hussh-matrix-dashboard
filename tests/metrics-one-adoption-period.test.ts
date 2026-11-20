@@ -18,6 +18,31 @@ describe('new One adoption computation bounds', () => {
     }
   });
 
+  it('waits for the selected reporting day to close even if UTC already moved to tomorrow', async () => {
+    const f = collectionFixture();
+    await f.initialize();
+    const input = { ...f.request, startDate: '2026-11-12', timezone: 'America/Los_Angeles' };
+    // 11:59pm in the reporting timezone, already the following day in UTC.
+    f.advance(8 * 60 * 60_000 - 1);
+    await expect(f.reports.request(input, f.access)).rejects.toMatchObject({ code: 'invalid' });
+    expect(await f.get('capacity', 'custom')).toBeNull();
+    expect(await f.get('heads', reportKey(input, f.control))).toBeNull();
+    expect(await f.get('sourceReadBudgets', 'one-adoption-uat-2026-11-13')).toBeNull();
+
+    f.advance(1);
+    expect(await f.reports.request(input, f.access)).toMatchObject({ state: 'accepted' });
+    expect(await f.get('capacity', 'custom')).toEqual({ active: 1 });
+  });
+
+  it('rejects a short closed period if it is already outside the recent source window', async () => {
+    const f = collectionFixture();
+    await f.initialize();
+    const input = { ...f.request, startDate: '2026-11-05', endDate: '2026-11-05' };
+    await expect(f.reports.request(input, f.access)).rejects.toMatchObject({ code: 'invalid' });
+    expect(await f.get('heads', reportKey(input, f.control))).toBeNull();
+    expect(await f.get('capacity', 'custom')).toBeNull();
+  });
+
   it('still reads and reuses a valid historical publication beyond seven days', async () => {
     const f = collectionFixture(); await f.initialize();
     const input = { ...f.request, startDate: '2026-11-05' }, key = reportKey(input, f.control), id = digest('prior-publication');

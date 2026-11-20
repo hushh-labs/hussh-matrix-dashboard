@@ -1,4 +1,4 @@
-import { digest, ReportError, reportDefinitions, reportingTimezone, type ReportId, type ReportRequest } from './contracts';
+import { digest, ReportError, reportDefinitions, reportingCalendarDay, reportingTimezone, type ReportId, type ReportRequest } from './contracts';
 
 /** No policy is seeded by code. These are structural bounds, not approved operating limits. */
 export type PeriodicPolicy = { approved: boolean; enabled: boolean; revision: number; slots: number[]; windowMs: number;
@@ -30,10 +30,7 @@ export function periodicPlan(raw: unknown, entryId: string, now: number): Period
   const day = new Date(now).toISOString().slice(0, 10), midnight = Date.parse(day), elapsed = now - midnight;
   const slot = p.slots.find(value => elapsed >= value * 60_000 && elapsed < value * 60_000 + p.windowMs);
   if (slot === undefined) throw new ReportError('unavailable');
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: entry.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
-  const part = (type: string) => parts.find(x => x.type === type)?.value;
-  const localDay = `${part('year')}-${part('month')}-${part('day')}`;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(localDay)) throw new ReportError('unavailable');
+  const localDay = reportingCalendarDay(entry.timezone, now);
   const end = Date.parse(localDay) - entry.endLagDays * 86_400_000, start = end - (entry.periodDays - 1) * 86_400_000;
   const request: ReportRequest = { reportId: entry.reportId, startDate: new Date(start).toISOString().slice(0, 10),
     endDate: new Date(end).toISOString().slice(0, 10), timezone: entry.timezone };

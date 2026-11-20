@@ -80,6 +80,15 @@ export function reportingTimezone(value: string) {
   try { return new Intl.DateTimeFormat('en', { timeZone: value }).resolvedOptions().timeZone; }
   catch { throw new ReportError('invalid'); }
 }
+export function reportingCalendarDay(timezone: string, now: number) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+  const part = (type: string) => parts.find(value => value.type === type)?.value;
+  const day = `${part('year')}-${part('month')}-${part('day')}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new ReportError('unavailable');
+  return day;
+}
 export const reportKey = (request: ReportRequest, control: ReportControl) => digest([
   request.reportId, request.startDate, request.endDate, request.timezone,
   control.definitionVersion, control.sourceGeneration, control.scopeDigest, control.revision,
