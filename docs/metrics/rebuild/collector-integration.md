@@ -131,6 +131,9 @@ The pilot follows [Kushal’s #184 review](https://github.com/hushh-labs/hussh-m
 On 20 November 2026 (IST), [Research #9593](https://github.com/hushh-labs/hushh-research/pull/9593)
 merged the endpoint into UAT at `37002101b66bfd693f58fa943260ab832c721e36` and
 [exact-source qualification](https://github.com/hushh-labs/hushh-research/actions/runs/44696546478) passed.
+The [follow-up qualification](https://github.com/hushh-labs/hushh-research/actions/runs/44715371575)
+also passed at `39377265964cdc95327e88f0b67e494ed500fca6`. UAT advanced again
+during that run. Check that qualification matches the exact selected release SHA.
 The UAT service still served revision `consent-protocol-03025-wuy` without
 adoption bindings at inspection. Before the live test, verify the serving SHA,
 enabled UAT binding, source authorization, approved population policy, collector
