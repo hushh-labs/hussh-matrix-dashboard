@@ -168,6 +168,19 @@ export class MetricsReports {
       } else if (active && ['accepted', 'running', 'delayed'].includes(active.status)) {
         result = { state: active.status as 'accepted' | 'running' | 'delayed', reportId: null, jobId: active.id };
       } else {
+        // The existing One adoption endpoint cannot compute more than seven
+        // calendar days. Historical reads and already-admitted work remain intact.
+        if (c.request.reportId === 'one.adoption') {
+          try { validateRequest(c.request, 7); }
+          catch (error) {
+            if (plan && day && error instanceof ReportError && error.code === 'invalid') {
+              const limit = Math.min(day.limit, plan.maxDailyJobs), slotLimit = Math.min(day.slotLimit, plan.maxDailySlots);
+              if (limit < day.limit || slotLimit < day.slotLimit) tx.set(dayRef, { ...day, limit, slotLimit });
+              return { denied: 'invalid' as const };
+            }
+            throw error;
+          }
+        }
         if (!c.policy.computeEnabled) {
           if (plan && day) { tx.set(dayRef, { ...day, limit: Math.min(day.limit, plan.maxDailyJobs), slotLimit: Math.min(day.slotLimit, plan.maxDailySlots) }); return { denied: 'unavailable' as const }; }
           throw new ReportError('unavailable');
