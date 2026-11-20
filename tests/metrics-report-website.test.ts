@@ -4,15 +4,18 @@ import { digest, reportDefinitions } from '../src/server/reports/contracts';
 import { sourceBindingGeneration, validateSourceBinding, websiteSourceOrigins } from '../src/server/reports/bindings';
 import { WebsiteActivitySource, type AggregateFetch } from '../src/server/reports/sources';
 import { MetricsCollection } from '../src/server/reports/lifecycle';
+import { collectorSourceFactory } from '../src/server/reports/source-factory';
+import { MetricsReportWebClient } from '../src/server/reports/web-client';
 import { readAggregateSecret, readWebsiteAggregateSecret, signedWebsiteAggregateFetch } from '../src/server/reports/transports';
 import { collectionFixture } from './helpers/metrics-collection-fixture';
 
-async function fixture() {
+async function fixture(environment: 'production' | 'uat' = 'production') {
   const f = collectionFixture(); await f.initialize();
   const { environment: _environment, secretVersion: _secret, ...common } = f.binding as typeof f.binding & { environment: string; secretVersion: string };
-  const content = { ...common, kind: 'website' as const, reportId: 'hushhai.activity' as const, environment: 'production' as const,
+  const project = environment === 'uat' ? 'hushh-ai-uat' : 'hushh-ai-prod';
+  const content = { ...common, kind: 'website' as const, reportId: 'hushhai.activity' as const, environment,
     captureGeneration: digest('source-capture-fixture'), coverageThrough: '2026-11-07', coverageFrom: '2026-11-01', maxEventsPerDay: 10,
-    secretVersion: 'projects/hushh-ai-prod/secrets/metrics-website-aggregate-source-production/versions/1' };
+    secretVersion: `projects/${project}/secrets/metrics-website-aggregate-source-${environment}/versions/1` };
   const binding = { ...content, sourceGeneration: sourceBindingGeneration(content) };
   const control = { ...f.control, sourceGeneration: binding.sourceGeneration };
   await f.put('controls', binding.reportId, control); await f.put('sources', binding.reportId, binding);
@@ -28,30 +31,48 @@ async function fixture() {
 }
 
 describe('warehouse-free source-owned website records', () => {
-  it('keeps source events separate from GA4 identity, sessions and confirmed business outcomes', async () => {
-    const f = await fixture(), fetcher = vi.fn<AggregateFetch>(async () => Response.json(f.result()));
-    const source = () => new WebsiteActivitySource(f.store, { sourceGeneration: f.binding.sourceGeneration,
-      timeoutMs: 1000, maxResponseBytes: 20_000 }, 'production', f.binding.captureGeneration, f.binding.maxEventsPerDay, fetcher, f.clock);
-    const collection = new MetricsCollection(f.store, async () => source(), f.clock);
+  it.each(['production', 'uat'] as const)('publishes %s event counts using only that source environment', async environment => {
+    const f = await fixture(environment), fetcher = vi.fn<AggregateFetch>(async () => Response.json(f.result()));
+    const websiteSecret = vi.fn(async () => Buffer.alloc(32, 7));
+    const website = vi.fn((sourceEnvironment: 'production' | 'uat', secret: Uint8Array) => signedWebsiteAggregateFetch(sourceEnvironment, secret,
+      async (url, init) => fetcher(String(url), { body: JSON.parse(String(init?.body)), signal: init?.signal as AbortSignal }), f.clock));
+    const collection = new MetricsCollection(f.store, collectorSourceFactory(f.store, { websiteSecret, website, now: f.clock }), f.clock);
     expect((await collection.collect(f.id, digest('website-worker'))).state).toBe('completed');
     expect((await collection.collect(f.id, digest('redelivery'))).state).toBe('completed');
     for (let i = 0; i < 10; i++) {
       const read = await f.reports.read(f.request, f.access);
       expect(read.state).toBe('unknown_freshness');
+      expect(read.sourceEnvironment).toBe(environment);
       expect(read.report?.result.metrics.pageViews).toMatchObject({ value: 2, basis: 'source_recorded', unit: 'event' });
       expect(read.report?.result.metrics).not.toHaveProperty('sessions');
     }
+    expect(await f.reports.request(f.request, f.access)).toMatchObject({ state: 'completed', reportId: f.id, jobId: null });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[0][0]).toBe(`${websiteSourceOrigins.production}/api/metrics/website/activity`);
+    expect(websiteSecret).toHaveBeenCalledExactlyOnceWith(f.binding.secretVersion, expect.any(AbortSignal));
+    expect(website).toHaveBeenCalledExactlyOnceWith(environment, expect.any(Buffer));
+    expect(fetcher.mock.calls[0][0]).toBe(`${websiteSourceOrigins[environment]}/api/metrics/website/activity`);
     expect(fetcher.mock.calls[0][1].body).toEqual({ period: { startDate: '2026-11-05', endDate: '2026-11-05', timezone: 'UTC' },
       definitionVersion: '1', scopeDigest: f.access.scopeDigest, sourceGeneration: f.binding.sourceGeneration,
       captureGeneration: f.binding.captureGeneration, maxEventsPerDay: 10 });
-    expect(await f.get('sourceReadBudgets', 'website-production-2026-11-13')).toEqual({ used: 13, limit: 13 });
+    expect(await f.get('sourceReadBudgets', `website-${environment}-2026-11-13`)).toEqual({ used: 13, limit: 13 });
+    expect(await f.get('sourceReadBudgets', `website-${environment === 'uat' ? 'production' : 'uat'}-2026-11-13`)).toBeNull();
+    const client = new MetricsReportWebClient({ audience: 'https://metrics-report-example.run.app', timeoutMs: 1000, maxResponseBytes: 20_000 },
+      async () => ({}), async () => {
+        const { sourceEnvironment, ...publication } = await f.reports.read(f.request, f.access);
+        return Response.json(publication, { headers: sourceEnvironment ? { 'X-Metrics-Source-Environment': sourceEnvironment } : {} });
+      }, f.clock);
+    expect(await client.read(f.request, f.access)).toMatchObject({ sourceEnvironment: environment, report: { id: f.id } });
+    await f.put('sources', f.binding.reportId, { ...f.binding, environment: environment === 'uat' ? 'production' : 'uat' });
+    const retained = await client.read(f.request, f.access);
+    expect(retained.report?.id).toBe(f.id);
+    expect(retained.sourceEnvironment).toBeUndefined();
+    expect(fetcher).toHaveBeenCalledOnce();
   });
-  it('requires production authority, exact purpose key, capture generation and reviewed bounded period', async () => {
+  it('requires matching source environment and key, capture generation and reviewed bounded period', async () => {
     const f = await fixture(), job = (await f.worker.claim(f.id, digest('worker')))!.job;
     expect(validateSourceBinding(f.binding, job)).toEqual(f.binding);
     for (const change of [{ environment: 'uat' }, { secretVersion: 'projects/hushh-ai-prod/secrets/plg/versions/1' },
+      { secretVersion: 'projects/hushh-ai-uat/secrets/metrics-website-aggregate-source-uat/versions/1' },
       { captureGeneration: '' }, { coverageThrough: '2026-11-04' }, { coverageFrom: '2026-11-06' },
       { reportId: 'hushhai.acquisition' }]) {
       const bad = { ...f.binding, ...change }; bad.sourceGeneration = sourceBindingGeneration(bad);
