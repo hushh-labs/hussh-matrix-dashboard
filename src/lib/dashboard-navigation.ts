@@ -6,15 +6,15 @@ export const dashboardNavigation = [
   { key: 'briefing', label: 'Overview', group: 'Dashboard', icon: LayoutGrid, description: 'How One is doing, at a glance.' },
   { key: 'overview', label: 'Website traffic', group: 'Analytics', icon: BarChart3, description: 'Visits and performance across Hussh websites.' },
   { key: 'growth', label: 'Growth', group: 'Analytics', icon: ChartNoAxesCombined, description: 'Audience growth, acquisition and operating costs.' },
-  { key: 'compare', label: 'Compare periods', group: 'Analytics', icon: Clock3, description: 'Compare 30 days, 90 days and the full history.' },
+  { key: 'compare', label: 'Compare periods', group: 'Analytics', icon: Clock3, description: 'Compare available periods and date ranges.' },
   { key: 'one', label: 'One app', group: 'Products', icon: Smartphone, description: 'Registered accounts, active users and feature usage.' },
   { key: 'referrals', label: 'Referrals', group: 'One app', icon: UserPlus, description: 'Individual and circle rankings.' },
   { key: 'apps', label: 'Hussh Connect', group: 'Products', icon: UsersRound, description: 'iOS, Android and web across production and test builds.' },
   { key: 'instagram', label: 'Instagram', group: 'Products', icon: Instagram, description: 'Reach, content performance and campaign links.' },
-  { key: 'platforms', label: 'Data sources', group: 'Workspace', icon: Globe2, description: 'Platform health, coverage and measurement readiness.' },
-  { key: 'plg', label: 'Growth workspace', group: 'Workspace', icon: Workflow, description: 'Private activation journeys and follow-ups.' },
+  { key: 'platforms', label: 'Data sources', group: 'Workspace', icon: Globe2, description: 'See where the numbers come from and which sources are ready.' },
+  { key: 'plg', label: 'Growth workspace', group: 'Workspace', icon: Workflow, description: 'Review account activity and manage follow-ups.' },
 ] as const;
 
 export const dashboardTabs: DashboardTab[] = dashboardNavigation.map(item => item.key);
 export const dashboardTabLabels = Object.fromEntries(dashboardNavigation.map(item => [item.key, item.label])) as Record<DashboardTab, string>;
-export const locationNavigation = { label: 'One Location', icon: MapPin, description: 'Location sharing, circles, features and journeys.' };
+export const locationNavigation = { label: 'One Location', icon: MapPin, description: 'Location sharing, Circles and feature activity.' };

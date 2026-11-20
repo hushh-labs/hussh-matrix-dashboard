@@ -36,19 +36,19 @@ export function PlgAgentActivityPanel({ state, busy, refresh, inspect }: {
     <div className={cn(dashboardCard, 'p-5 sm:p-6')}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-2xl">
-          <h3 className="text-lg font-semibold text-ink">Tracking details</h3>
-          <p className="mt-2 text-sm leading-6 text-muted">Review activity across enrolled accounts. App reports and agent/tool returns show observed usage; they do not establish a successful business outcome or app-wide DAU.</p>
+          <h3 className="text-lg font-semibold text-ink">How activity is counted</h3>
+          <p className="mt-2 text-sm leading-6 text-muted">This view shows recorded activity for enrolled accounts. Confirmed completions and app-wide daily usage are measured separately.</p>
           {state.storage?.report && <p className="mt-2 text-xs text-muted">Totals cover {state.storage.report.metrics.enrolled} verified campaign accounts. Account inspection uses the current follow-up queue page.</p>}
         </div>
         <button className={control} disabled={busy} onClick={refresh}>Refresh agent activity</button>
       </div>
       {!(state.storage?.report?.metrics.enrolled ?? state.contacts.length) && <p role="status" className="mt-4 rounded-xl bg-canvas p-4 text-sm text-ink">No accounts are enrolled in campaign tracking. The table describes tracking coverage; its empty counts are not app-wide usage. Use People and usage to browse registered accounts.</p>}
       {!catalog ? <p role="status" className="mt-5 rounded-xl bg-canvas p-4 text-sm text-muted">Connect the One backend and refresh activity to load the registered agents and actions. Collection remains unknown until connected.</p> : <>
-        <p className="mt-5 text-sm font-semibold text-ink">{catalog.agents.length} authored agents · {catalog.actions.length} action and execution identifiers</p>
+        <p className="mt-5 text-sm font-semibold text-ink">{catalog.agents.length} agents · {catalog.actions.length} listed actions</p>
         <label className="mt-3 flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={includeInternal} onChange={(e) => setIncludeInternal(e.target.checked)} />Show internal and unavailable agents</label>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="border-b border-stroke text-xs text-muted"><tr><th className="p-3">Agent</th><th className="p-3">Availability</th><th className="p-3">Verified value definition</th><th className="p-3">Observed accounts</th><th className="p-3">Execution returns</th><th className="p-3">App reports</th><th className="p-3">Errors</th></tr></thead>
+            <thead className="border-b border-stroke text-xs text-muted"><tr><th className="p-3">Agent</th><th className="p-3">Availability</th><th className="p-3">What counts as completion</th><th className="p-3">Accounts with activity</th><th className="p-3">Agent responses</th><th className="p-3">App reports</th><th className="p-3">Errors</th></tr></thead>
             <tbody>{catalog.agents.filter((a) => includeInternal || (a.public && a.available)).map((a) => {
               const reports = state.contacts.flatMap((c) => c.activity?.agents.filter((row) => row.agentId === a.id) ?? []);
               const total = state.storage?.report?.activity.agents.find(row => row.agentId === a.id);

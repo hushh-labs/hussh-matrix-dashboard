@@ -41,8 +41,8 @@ test('retained comparison shows exact 30 and 90 day windows and leaves all time 
   await expect(page.getByText('2026-10-16 to 2026-11-14')).toBeVisible();
   await expect(page.getByText('2026-08-17 to 2026-11-14')).toBeVisible();
   await expect(page.getByText('All-time comparison is unavailable.')).toBeVisible();
-  await expect(page.getByText('All-time totals are unavailable; no estimate is inferred.', { exact: false })).toBeVisible();
-  await expect(page.getByText('Retained reporting anchor 2026-11-14 21:34 UTC.', { exact: false })).toBeVisible();
+  await expect(page.getByText('All-time totals are unavailable.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Saved report as of 2026-11-14 21:34 UTC.', { exact: false })).toBeVisible();
   await expect(page.getByText('Retained data is more than 24 hours old.', { exact: false })).toBeVisible();
 });
 
@@ -373,11 +373,11 @@ test('website selector isolates reports and keeps all products reachable', async
   await expect(page.getByRole('heading', { name: 'One website traffic and data status' })).toBeVisible();
   const selector = page.getByRole('group', { name: 'Website report', exact: true });
   await selector.getByRole('button', { name: 'hushh.ai', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Analytics status matrix' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Analytics availability' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'One website traffic and data status' })).toHaveCount(0);
   await selector.getByRole('button', { name: 'hushhtech.com', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Complete report', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Analytics status matrix' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Analytics availability' })).toHaveCount(0);
   await assertFits(page);
 });
 
@@ -408,7 +408,7 @@ test('shared registry totals never replace the selected environment customer cou
   await expect(active).toContainText('1,284');
   await page.getByText('Daily, weekly & monthly counts', { exact: true }).click();
   await expect(page.getByText('All-One registered accounts', { exact: true }).locator('..').locator('..')).toContainText('8,420');
-  await expect(page.getByText('This shared authentication registry includes Main, Test and staff accounts;', { exact: false })).toBeVisible();
+  await expect(page.getByText('These totals include Main, Test and staff accounts, so they are not a count of production customers.', { exact: false })).toBeVisible();
   await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
   await expect(total).toContainText('Not available');
   await expect(fresh).toContainText('Not available');
@@ -821,7 +821,7 @@ test('Instagram direct publication labels unavailable reach and media honestly',
   } }));
   await page.goto('/'); await navigate(page, 'Instagram');
   await expect(page.getByText('The 7-day reach total is unavailable.')).toBeVisible();
-  await expect(page.getByText(/provider did not supply its own boundary/)).toBeVisible();
+  await expect(page.getByText(/Instagram did not report its own date boundaries/)).toBeVisible();
   await expect(page.getByText(/Meta returned one total/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Posts & Reels', exact: true }).click();
   await expect(page.getByText('Detailed media inventory is unavailable.', { exact: true })).toBeVisible();

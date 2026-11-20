@@ -29,7 +29,7 @@ export function FeatureActivityTable({ rows }: { rows: FeatureActivityRow[] }) {
   function detailsButton(row: FeatureActivityRow) {
     const expanded = expandedKey === row.key;
     return (
-      <button type="button" aria-label={`View details for ${row.label}`} aria-expanded={expanded}
+      <button type="button" aria-label={`${expanded ? 'Hide' : 'View'} details for ${row.label}`} aria-expanded={expanded}
         onClick={() => setExpandedKey(expanded ? null : row.key)}
         className="inline-flex min-h-10 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-brand-600 hover:bg-[#465fff]/10 focus-visible:outline-2 focus-visible:outline-[#465fff]">
         {expanded ? 'Hide details' : 'View details'}
@@ -62,7 +62,7 @@ export function FeatureActivityTable({ rows }: { rows: FeatureActivityRow[] }) {
           <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold', row.badgeClass)}>{row.badgeLabel}</span>
         </div>
         <p className="mt-1 text-xs leading-5 text-muted">{featureActivityDescription(row.key)}</p>
-        <details className="mt-1 text-xs leading-5 text-muted"><summary className="cursor-pointer font-medium">Tracking details</summary><p className="mt-1">{row.explanation}</p></details>
+        <details className="mt-1 text-xs leading-5 text-muted"><summary className="cursor-pointer font-medium">How this is measured</summary><p className="mt-1">{row.explanation}</p></details>
       </div>
     </div>;
   }

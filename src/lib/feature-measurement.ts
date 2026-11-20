@@ -31,7 +31,7 @@ const activityDescriptions: Record<string, string> = {
   location_viewed: 'Times a shared location was viewed. Repeat views count again.',
   check_in: 'Check-in steps and results. A check-in can also create a sharing confirmation.',
   check_out: 'Times a check-out was recorded.',
-  sms_safety: 'SOS triggers recorded. This count does not confirm message delivery.',
+  sms_safety: 'Recorded alert attempts. Delivery is unconfirmed.',
   request_location: 'Location request steps, including sending, approval, denial and fulfilment.',
   public_sharing: 'Public-link activity, including creation, opening, sharing and removal.',
   contact_sync: 'Contact-sync activity, including automatic syncs. This counts activity, not contacts.',
@@ -83,6 +83,7 @@ export function featureActivityDescription(key: string): string {
 
 const activityLabels: Record<string, string> = {
   live_sharing: 'Sharing activity',
+  sms_safety: 'Save My Soul',
   auth_started: 'Sign-in started', phone_verified: 'Phone verification steps', google_signin: 'Google sign-in steps',
   profile_created: 'Profile creation', onboarding_completed: 'Account setup completed',
   portfolio_view: 'Portfolio views', ai_recommendation: 'Recommendation views',
@@ -102,7 +103,7 @@ const featureNotes: Record<string, string> = {
   location_viewed: 'Counts one_location_journey_action with action=location_share_viewed. Repeated view records count again; they do not mean a new share was sent or a new person joined.',
   check_in: 'Counts check-in events and journey action nearby_check_in_result. A Check-In may also emit a sharing confirmation, so feature rows overlap.',
   check_out: 'Counts events matching check_out. These record the end of a check-in, not a new sharing session.',
-  sms_safety: 'Counts one_location_sos_triggered records. An emitted trigger does not prove that an SMS was delivered.',
+  sms_safety: 'Counts recorded attempts to send an alert. Delivery is unconfirmed.',
   request_location: 'Counts request-sent records and location_request journey actions, including approval, denial and fulfilment. Use the separate fulfilled-request KPI for confirmed fulfilment.',
   public_sharing: 'Counts public-link creation and public_link journey actions, including opens, shares and revocations. The total is not a count of new links.',
   contact_sync: 'Counts contact-sync records, including background sync and contact_sync journey actions. This is not a count of contacts or manual sync requests.',

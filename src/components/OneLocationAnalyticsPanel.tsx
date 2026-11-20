@@ -62,14 +62,14 @@ const environments: Array<{
     label: 'Production',
     sourceLabel: 'Live website and mobile apps',
     description: 'Live website and mobile app analytics. Some public mobile builds may still use the test service.',
-    waitingNote: 'The detailed journey event has not reached the production export yet. Existing feature events remain live while the new release rolls out.',
+    waitingNote: 'Detailed journey activity has not appeared in this production report yet. Other feature activity may still be available.',
   },
   {
     key: 'uat',
     label: 'UAT / Test builds',
     sourceLabel: 'Test website and mobile apps',
     description: 'Test website and mobile app analytics. The selected analytics source does not confirm which service a mobile build uses.',
-    waitingNote: 'The detailed journey event has not reached the UAT export yet. TestFlight, Android internal and UAT web events will appear after the next GA4 export.',
+    waitingNote: 'Detailed journey activity has not appeared in this UAT report yet. Other feature activity may still be available.',
   },
 ];
 
@@ -131,7 +131,7 @@ function featureAudit(feature: OneLocationBehaviorMetric, environment: LocationA
     return {
       badgeLabel: 'Not tracked yet',
       badgeClass: 'bg-warning-soft text-warning',
-      explanation: `No matching ${environment === 'production' ? 'production' : 'UAT/test'} event has been observed. This is not proof of zero use.`,
+      explanation: `No matching activity has been recorded for ${environment === 'production' ? 'production' : 'UAT/test'}. This does not mean the feature was unused.`,
     };
   }
   if (!feature.events) {
@@ -192,7 +192,7 @@ function JourneyReach({ rows, available }: { rows: OneLocationJourneyMetric[]; a
       <div className="mb-5">
         <p className="text-base font-bold text-ink">Journey reach</p>
         <p className="mt-1 text-xs font-medium leading-5 text-muted">
-          Optional branches are independent. This is reach, not a forced sequential funnel.
+          Activities are counted separately; they do not have to happen in order.
         </p>
       </div>
       <ol className="space-y-3">
@@ -236,7 +236,7 @@ function CircleBreakdown({ one }: { one: OneAppSummary }) {
         <p className={dashboardLabel}>Created in range</p>
         <p className="mt-3 text-5xl font-semibold tracking-tight text-ink">{formatNumber(total)}</p>
         <p className="mt-2 text-sm font-medium leading-6 text-muted">
-          Based on emitted creation events—not a claim about current active inventory.
+          Based on recorded creation activity in this period. This is not the number of Circles currently active.
         </p>
         <div className="mt-6 grid grid-cols-3 gap-2">
           {one.locationAnalytics.circleKinds.map((row) => (
@@ -299,11 +299,11 @@ function SourceCompleteness({
       <div>
         <p className="text-sm font-bold text-ink">Combined platform total</p>
         <p className="mt-1 text-xs font-medium leading-5 text-muted">
-          Every headline and feature row combines the three platforms inside this environment only.
+          Headline and feature totals include the three platforms for this environment only.
         </p>
         <p className="mt-1 text-xs font-semibold leading-5 text-muted">
-          Qualifying Location activity observed on {sourcesWithActivity} of {sources.length} included platform streams.
-          Zero-event streams remain included in the total.
+          Location activity was recorded on {sourcesWithActivity} of {sources.length} included platforms.
+          Platforms with no recorded activity are still included.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -432,7 +432,7 @@ export function OneLocationAnalyticsPanel({
             {environment === 'production' ? 'Production' : 'UAT/test'} analytics are unavailable.
           </p>
           <p className="mx-auto mt-2 max-w-xl text-sm font-medium leading-6 text-muted">
-            This lane stays separate and will never fall back to the other environment. Check the matching GA4 export and dashboard access.
+            Production and test data stay separate. Check the analytics source and dashboard access for this environment.
           </p>
         </section>
       ) : (
@@ -444,8 +444,8 @@ export function OneLocationAnalyticsPanel({
         <StatCard
           label="Location requests fulfilled"
           value={requestFulfilled?.successes ?? null}
-          detail={!selectedOne.locationBehaviorAvailable ? 'Location behavior data is unavailable for this period.' : requestFulfilled?.observed
-            ? `Successful fulfilment records · ${exactCount(requestFulfilled.users)} device/browser IDs · ${exactCount(requestFulfilled.failures)} failed records`
+          detail={!selectedOne.locationBehaviorAvailable ? 'Location activity data is unavailable for this period.' : requestFulfilled?.observed
+            ? `Successful fulfilment records · ${exactCount(requestFulfilled.users)} devices or browsers · ${exactCount(requestFulfilled.failures)} failed records`
             : 'No fulfilment records found in this period'}
           icon={CheckCircle2}
           waiting={!selectedOne.locationBehaviorAvailable || !requestFulfilled?.observed}
@@ -536,10 +536,10 @@ export function OneLocationAnalyticsPanel({
         <div className={cn(dashboardPanel, 'flex flex-col gap-2 p-5')}>
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-[#12b76a]" />
-            <p className="text-sm font-bold text-ink">Privacy-safe aggregate analytics</p>
+            <p className="text-sm font-bold text-ink">Privacy and your data</p>
           </div>
           <p className="text-sm font-medium leading-6 text-muted">
-            Aggregate GA4 export rows only. Coordinates, Circle names, contact details, member identities, invitation codes, public-link tokens and message content never reach this dashboard. Devices and browsers are not deduplicated into people.
+            This Location report shows aggregate analytics. Coordinates, Circle names, contact details, member identities, invitation codes, public-link tokens and message content do not appear here. Device and browser counts are not counts of unique people.
           </p>
         </div>
       </section>

@@ -267,9 +267,9 @@ function RegisteredUsers({ accounts }: { accounts: OneRegistrationTotals | null 
       <div className="flex items-start gap-3 rounded-2xl border border-[#b8e6c2] bg-[#f2fff5] p-4 text-[#1f6d32]">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <p className="text-sm font-semibold leading-5">
-          System of record: {accounts.sourceLabel}. This shared authentication registry includes Main, Test and staff accounts; it is not a production customer count.
-          Each immutable Firebase account ID is counted once, so repeat sign-ins, sessions, events and devices cannot inflate these values.
-          New means the account creation timestamp falls inside the selected range. Separately created accounts cannot be proven to belong to different humans, and deleted accounts are not present in the current registry snapshot.
+          Source: {accounts.sourceLabel}. These totals include Main, Test and staff accounts, so they are not a count of production customers.
+          Each account is counted once, even if it signs in more than once or uses multiple devices.
+          New accounts were created during the selected dates. One person may have more than one account; deleted accounts are not included in this snapshot.
         </p>
       </div>
     </div>
@@ -431,7 +431,7 @@ export function PlatformsAtAGlance({ one, environment, mainAnalytics, onViewMain
           No mobile activity with verified UAT environment and stream was observed for these dates. Production metrics are not used as a fallback.
         </p>
       )}
-      <p className="text-xs leading-5 text-muted">These platform account rows can overlap and must not be added. The global active-account card deduplicates account IDs across surfaces. Store downloads, crashes and physical devices need separate sources and are not measured by these cards.</p>
+      <p className="text-xs leading-5 text-muted">The same account may appear on more than one platform, so don't add these account rows together. The overall active-account count counts each account once. These cards do not measure store downloads, crashes or physical devices.</p>
     </section>
   );
 }
@@ -643,8 +643,8 @@ export function Retention({ one }: { one: OneAppSummary }) {
           </p>
         </div>
         <p className="max-w-sm text-xs font-semibold leading-5 text-muted">
-          Share of observed first-visit / first-open IDs that returned with activity
-          during days 1–7. Weighted by cohort size; only complete weeks contribute.
+          The share of first-time browser or app IDs that returned during days 1–7.
+          Larger groups count proportionally; only complete weeks are included.
         </p>
       </div>
 
@@ -690,12 +690,11 @@ export function Retention({ one }: { one: OneAppSummary }) {
         </ResponsiveContainer>
       </div>
       <p className="mt-2 text-xs font-semibold text-muted">
-        Observed cohorts start on Sunday. {one.retentionRange ? `${one.retentionRange.startDate} to ${one.retentionRange.endDate}, ${one.retentionRange.timezone}. ` : ''}
-        Up to eight weeks from the preceding 84 reporting days; this history is wider
-        than the selected range. Missing historical first arrivals are not reconstructed.
+        Weeks start on Sunday. {one.retentionRange ? `${one.retentionRange.startDate} to ${one.retentionRange.endDate}, ${one.retentionRange.timezone}. ` : ''}
+        This shows up to eight weeks from the preceding 84 days, which may extend beyond the selected dates. Missing historical first visits are not filled in.
       </p>
       {pendingCount > 0 && <p className="mt-2 text-xs font-semibold text-muted">
-        {pendingCount} cohort(s) await complete acquisition and return data; no rate or zero bar is inferred.
+        {pendingCount} {pendingCount === 1 ? 'week is' : 'weeks are'} waiting for complete first-visit and return data. No rate is shown until the data is complete.
       </p>}
       <div className="mt-4 overflow-x-auto">
         <div className="metrics-table-scroll" role="region" aria-label="Scrollable metrics table" tabIndex={0}><table className="w-full text-left text-xs">
@@ -730,7 +729,7 @@ export function InstallFunnel({ funnels }: { funnels: OneInstallFunnel[] }) {
     return (
       <div className={cn(dashboardPanel, 'p-6 text-center')}>
         <p className="text-sm font-semibold text-muted">
-          Environment-specific first-open coverage is not verified; no install or conversion count is inferred.
+          First-open data for this environment has not been verified, so install and conversion counts are unavailable.
         </p>
       </div>
     );

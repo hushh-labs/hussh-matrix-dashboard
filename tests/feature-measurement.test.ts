@@ -86,3 +86,9 @@ describe('feature metric units', () => {
     expect(featureMeasurementNote('memory_capture_saved')).toContain('action=capture_saved');
   });
 });
+
+it('describes Save My Soul records as alert attempts without claiming delivery', () => {
+  expect(featureActivityLabel('sms_safety', 'Old label')).toBe('Save My Soul');
+  expect(featureActivityDescription('sms_safety')).toBe('Recorded alert attempts. Delivery is unconfirmed.');
+  expect(featureMeasurementNote('sms_safety')).toContain('Delivery is unconfirmed.');
+});

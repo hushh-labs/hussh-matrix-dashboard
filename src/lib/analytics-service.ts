@@ -299,7 +299,7 @@ const ONE_LOCATION_EVENT_LABELS: Record<string, string> = {
   one_location_share_confirmed: 'Shared their live location',
   one_location_check_in_completed: 'Checked in somewhere',
   one_location_check_out_completed: 'Checked out from location',
-  one_location_sos_triggered: 'Sent an emergency SMS',
+  one_location_sos_triggered: 'Save My Soul attempt',
   one_location_request_sent: "Asked for someone's location",
   one_location_circle_created: 'Created a Circle',
   one_location_circle_invite_created: 'Invited people to a Circle',

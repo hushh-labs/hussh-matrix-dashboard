@@ -161,13 +161,12 @@ export function ComparePanel({
       <section>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className={dashboardLabel}>Hussh · all products · three fixed windows</p>
+            <p className={dashboardLabel}>Hussh · all products</p>
             <h2 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">
               Is this better or worse than usual?
             </h2>
             <p className="mt-1.5 max-w-2xl text-sm font-medium leading-6 text-muted">
-              The same figures over the last 30 days, the last 90, and everything since the feeds
-              began. Read across a row; the windows never move.
+              Compare the same numbers across 30 days, 90 days and all available history. Each column shows its dates.
             </p>
           </div>
           {loading && compare && (
@@ -182,9 +181,8 @@ export function ComparePanel({
           <Empty>
             <span className="inline-flex items-center gap-2 font-semibold text-ink">
               <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
-              {retained ? 'Loading retained comparisons' : 'Reading three windows'}
+              {retained ? 'Loading saved comparisons' : 'Loading comparisons'}
             </span>
-            <p className="mt-2">Usually under ten seconds.</p>
           </Empty>
         ) : !compare ? (
           <Empty>
@@ -236,11 +234,11 @@ export function ComparePanel({
       {compare && (
         <section className={dashboardBand}>
           <p className="max-w-3xl text-xs font-semibold leading-5 text-muted">
-            People are counted as devices, not individuals. {compare.publicationAsOf
-              ? 'All-time totals are unavailable; no estimate is inferred.'
-              : '“All time” starts where the One app GA4 export does; billing begins a month later, so the all-time spend column covers slightly less than the audience columns.'}
+            Audience figures count devices. {compare.publicationAsOf
+              ? 'All-time totals are unavailable.'
+              : 'All-time audience data starts with the first One app analytics export. Billing data starts one month later.'}
             {compare.publicationAsOf && Number.isFinite(Date.parse(compare.publicationAsOf))
-              ? ` Retained reporting anchor ${new Date(compare.publicationAsOf).toISOString().slice(0, 16).replace('T', ' ')} UTC.`
+              ? ` Saved report as of ${new Date(compare.publicationAsOf).toISOString().slice(0, 16).replace('T', ' ')} UTC.`
               : compare.fetchedAt ? ` Read ${new Date(compare.fetchedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC.`
               : ''}
             {stale ? ' Retained data is more than 24 hours old.' : ''}

@@ -37,7 +37,7 @@ for (const width of [320,390,768,1440]) test(`rankings only, pagination and layo
   await expect(page.locator('tbody tr').first()).toContainText('Member 01');
   await expect(page.getByText('Page 1 · 20 per page')).toBeVisible();
   await page.getByRole('tab',{name:'Circles',exact:true}).click();
-  await expect(page.getByText('No circle standings yet.')).toBeVisible();
+  await expect(page.getByText('Circle rankings are not published yet. Choose Individual to view individual standings.')).toBeVisible();
   await expect(page.getByRole('button',{name:'Next',exact:true})).toBeDisabled();
   await page.getByRole('tab',{name:'Individual',exact:true}).click();
   await expect(page.locator('tbody tr')).toHaveCount(20);

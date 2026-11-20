@@ -260,9 +260,9 @@ function eventDescription(eventName: string): string {
   if (normalized === 'session_start') return 'GA4 automatic event fired when a new session starts.';
   if (normalized === 'first_visit') return 'GA4 automatic event fired for a first-time visitor/device.';
   if (['fcp', 'lcp', 'cls', 'inp', 'ttfb'].includes(normalized)) {
-    return 'Web-vitals performance telemetry, not a product conversion event.';
+    return 'A measure of how fast or smoothly the page works.';
   }
-  return 'GA4 aggregate event. Product meaning depends on site instrumentation.';
+  return 'A total recorded by Google Analytics. Its meaning depends on how the website tracks this activity.';
 }
 
 function readableMetricLabel(value: string): string {
@@ -1083,7 +1083,7 @@ function StepReachCard({ title, steps }: { title: string; steps: FunnelStep[] })
       <div className="mb-5">
         <h3 className="text-lg font-semibold text-ink">{title}</h3>
         <p className="mt-1 text-sm font-medium text-muted">
-          Distinct devices per observed step · trailing 30 days · not a nested cohort
+          Devices recorded at each step over 30 days. Each step is counted separately.
         </p>
       </div>
       {steps.length === 0 ? (
@@ -1412,7 +1412,7 @@ export default function Dashboard() {
     if (focus === 'events' || focus === 'all') {
       add({
         title: 'Most recorded website actions',
-        subtitle: 'Event names and counts returned by GA4 Data API. Web-vitals rows are performance telemetry, not conversion events.',
+        subtitle: 'Activity counts from Google Analytics, including page performance measurements.',
         rows: (ga4?.topEvents ?? []).map((event) => detailRow(
           readableMetricLabel(event.eventName),
           `${formatNumber(event.events)} events`,
@@ -1950,8 +1950,8 @@ export default function Dashboard() {
                   )}
                 </ChartShell>
                 <ChartShell
-                  title="Production Traffic + Reliability"
-                  subtitle="Cloud Run requests, 5xx responses, and latency context"
+                  title="Live traffic and reliability"
+                  subtitle="Website requests, server errors and response times"
                   action={<DetailActionButton onClick={() => openKaiProductionDetail('One Production Reliability Details')} />}
                 >
                   {kaiProductionDailyStatus.length === 0 ? (
@@ -1980,8 +1980,8 @@ export default function Dashboard() {
                   )}
                 </ChartShell>
                 <MetricListCard
-                  title="Production Readiness"
-                  subtitle="Production feed and GA4 export only."
+                  title="Live data availability"
+                  subtitle="Production activity and Google Analytics"
                   items={kaiProductionReadinessMetrics}
                   onItemClick={(item) => openKaiProductionDetail(`One Production Readiness · ${item.label}`, item)}
                 />
@@ -1997,7 +1997,7 @@ export default function Dashboard() {
             <section className={dashboardBand}>
               <SectionHeader
                 kicker="hushh.ai"
-                title="Analytics status matrix"
+                title="Analytics availability"
                 action={(
                   <DateRangeControl presetAsOf={user?.publicationAsOf} referenceNow={resource.serverNow}
                     range={hushhAiRange}
@@ -2011,7 +2011,7 @@ export default function Dashboard() {
               <div className="mb-4">
                 <ProductLivePanel
                   kicker="Hussh AI live mode"
-                  title="Fresh on refresh"
+                  title="Available website data"
                   refreshingLabel="Refreshing Hussh AI sources"
                   freshness={hushhAiFreshness}
                   lastUpdated={data?.lastUpdated}
@@ -2024,7 +2024,7 @@ export default function Dashboard() {
                   subtitle={`${hushhAiRange.startDate} to ${hushhAiRange.endDate}`}
                   items={hushhAiDailySummaryMetrics}
                 />
-                <ChartShell title="Traffic + Reliability" subtitle="Cloud Run requests, 5xx responses, and latency context">
+                <ChartShell title="Traffic and reliability" subtitle="Website requests, server errors and response times">
                   {hushhAiDailyStatus.length === 0 ? (
                     <EmptyState>No Hussh AI traffic rows available yet.</EmptyState>
                   ) : (
@@ -2054,7 +2054,7 @@ export default function Dashboard() {
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <MetricListCard
                   title="Website visits and engagement"
-                  subtitle="Users, sessions, events, and engaged-session quality"
+                  subtitle="Users, visits, recorded actions and engaged visits"
                   items={hushhAiEngagementMetrics}
                   onItemClick={(item) => {
                     if (/user/i.test(item.label)) openHushhAiGa4Detail('users', item.label);
@@ -2064,8 +2064,8 @@ export default function Dashboard() {
                   }}
                 />
                 <MetricListCard
-                  title="Future Product Events"
-                  subtitle="Custom hushh.ai funnel events waiting for a real aggregate source"
+                  title="Product activity"
+                  subtitle="These counts will appear when a verified source is available"
                   items={hushhAiProductEventMetrics}
                   onItemClick={handleHushhAiMetricListClick('product')}
                 />
@@ -2091,7 +2091,7 @@ export default function Dashboard() {
                 />
                 <MetricListCard
                   title="Countries and devices"
-                  subtitle="Aggregate country and device mix"
+                  subtitle="Where visits came from and which devices were used"
                   items={hushhAiGeoDeviceMetrics}
                   onItemClick={handleHushhAiMetricListClick('geo')}
                 />
@@ -2181,7 +2181,7 @@ export default function Dashboard() {
             </section>
 
             <section className={dashboardBand}>
-              <SectionHeader kicker="hushhtech.com Supabase" title="Account and product records" />
+              <SectionHeader kicker="hushhtech.com" title="Account and product records" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <MetricListCard
                   title="Key account and product totals"
@@ -2202,7 +2202,7 @@ export default function Dashboard() {
             </section>
 
             </>}
-            <ReportDetails title="Cross-product traffic & detailed breakdowns">
+            <ReportDetails title="Traffic across products">
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 xl:grid-cols-[1.55fr_0.95fr]')}>
               <div className={cn(dashboardCard, 'p-5')}>
                 <SectionHeader kicker="Traffic" title="Ecosystem activity" />
@@ -2252,11 +2252,11 @@ export default function Dashboard() {
               </div>
 
               <div className="grid grid-cols-1 gap-4">
-                <MetricListCard title="hushh.ai GCP" subtitle="Website requests, errors and response times" items={hushhAiOpsMetrics} />
+                <MetricListCard title="hushh.ai reliability" subtitle="Website requests, errors and response times" items={hushhAiOpsMetrics} />
                 <MetricListCard title="hushh.ai Search" subtitle="Google Search clicks and appearances" items={hushhAiSearchMetrics} />
                 <MetricListCard
                   title="hushhtech.com Audience"
-                  subtitle="Public endpoint audience and traffic"
+                  subtitle="Audience and website traffic"
                   items={hushhTechAudienceMetrics}
                   onItemClick={(item) => openHushhTechDetail(`HusshTech Audience · ${item.label}`, item)}
                 />
@@ -2392,7 +2392,7 @@ export default function Dashboard() {
         ) : (
           loading ? <MetricsSkeleton /> : <main className="space-y-10">
             <section className={dashboardBand}>
-              <SectionHeader kicker="Platforms" title="Source health" />
+              <SectionHeader kicker="Platforms" title="Data availability" />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 {platforms.map((platform) => (
                   <div key={platform.name}>
@@ -2410,13 +2410,13 @@ export default function Dashboard() {
             <section className={cn(dashboardBand, 'grid grid-cols-1 gap-4 lg:grid-cols-3')}>
               <MetricListCard
                 title="Activation Rates"
-                subtitle="Activated ÷ entered over 30 days; Waiting when the entry step is absent"
+                subtitle="Share of devices that reached activation within the 30-day report. Shown when the entry count is available."
                 items={kaiActivationMetrics}
                 onItemClick={(item) => openKaiProductionDetail(`Production Activation · ${item.label}`, item)}
               />
               <MetricListCard
                 title="Monthly Active Device Mix"
-                subtitle="Distinct devices by platform · 30 days to the latest finalized export"
+                subtitle="Different devices by platform over the latest 30 days with final data"
                 items={platformMix}
                 onItemClick={(item) => openKaiProductionDetail(`Production Platform Mix · ${item.label}`, item)}
               />
@@ -2435,7 +2435,7 @@ export default function Dashboard() {
                 items={instrumentationHealth}
                 onItemClick={(item) => openKaiProductionDetail(`Production Instrumentation · ${item.label}`, item)}
               />
-              <MetricListCard title="hushh.ai GCP" subtitle="Website requests, errors and response times" items={hushhAiOpsMetrics} />
+              <MetricListCard title="hushh.ai reliability" subtitle="Website requests, errors and response times" items={hushhAiOpsMetrics} />
               <MetricListCard
                 title="hushhtech.com Database"
                 subtitle="Key totals from account and product records"

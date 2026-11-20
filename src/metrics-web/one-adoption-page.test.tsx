@@ -41,8 +41,8 @@ it.each([
   expect(html).toContain('Confirmed task outcomes</h2><strong>2</strong><p>outcome · partial');
   expect(html).toContain('Coverage is partial, so some activity may be missing.');
   expect(html).toContain(`<span>${label}</span>`);
-  expect(html).toContain('Source snapshot time</dt><dd>2026-11-20T10:00:00.000Z');
-  expect(html).not.toContain('Source information through');
+  expect(html).toContain('Source report time</dt><dd>2026-11-20T10:00:00.000Z');
+  expect(html).not.toContain('Data through');
   expect(fixture.read).toHaveBeenCalledOnce();
   expect(fixture.request).not.toHaveBeenCalled();
 });
@@ -66,7 +66,7 @@ it('labels website UAT event counts without initiating collection on render', as
   const html = renderToStaticMarkup(await ReportsPage({ searchParams: Promise.resolve({ report: 'hushhai.activity', ...period }) }));
   expect(html).toContain('<span>UAT test activity</span>');
   expect(html).toContain('Recorded page-view events</h2><strong>2</strong><p>event · partial');
-  expect(html).toContain('Source information through</dt><dd>Unknown');
+  expect(html).toContain('Data through</dt><dd>Unknown');
   expect(fixture.read).toHaveBeenCalledOnce();
   expect(fixture.request).not.toHaveBeenCalled();
 });

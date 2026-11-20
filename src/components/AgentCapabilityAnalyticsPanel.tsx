@@ -77,9 +77,9 @@ const capabilityMetadata: Record<
 > = {
   location: {
     title: 'Location Agent',
-    description: 'Real-time location sharing, SOS safety, check-in, request location, and contact sync.',
+    description: 'Location sharing, Save My Soul alerts, check-ins, location requests, and contact sync.',
     icon: Activity,
-    auditExplanation: 'Location sharing and SOS events are verified active in GA4 export. Check-in and invitation handoffs are monitored.',
+    auditExplanation: 'Location sharing and Save My Soul alert activity are recorded. Check-in and invitation activity is also monitored.',
   },
   finance: {
     title: 'Finance Agent',
@@ -494,7 +494,7 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_in_completed").',
+      explanation: 'Recorded check-in activity. A check-in can include more than one step.',
     },
     {
       key: 'check_out',
@@ -503,16 +503,16 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Instrumented in hushh-webapp with trackEvent("one_location_check_out_completed"). Verified active in UAT & Production.',
+      explanation: 'Recorded check-out activity, marking the end of a check-in.',
     },
     {
       key: 'sms_safety',
-      label: 'Save My Soul SMS',
+      label: 'Save My Soul',
       icon: MessageCircleMore,
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Save My Soul emergency trigger events recorded.',
+      explanation: 'Counts attempts to send a Save My Soul alert. Delivery is unconfirmed.',
     },
     {
       key: 'request_location',
@@ -521,7 +521,7 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Location request events recorded across active devices.',
+      explanation: 'Recorded location request steps, including requests and their results.',
     },
     {
       key: 'public_sharing',
@@ -530,7 +530,7 @@ export const featureAuditSpecs: Record<string, FeatureAuditSpec[]> = {
       status: 'active',
       badgeLabel: 'Verified Active',
       badgeClass: 'bg-[#12b76a]/10 text-success',
-      explanation: 'Public location link creation events recorded.',
+      explanation: 'Recorded public-link activity, including creation, opening, sharing and removal.',
     },
     {
       key: 'contact_sync',
@@ -890,7 +890,7 @@ export function AgentCapabilityAnalyticsPanel({
 
       {/* Telemetry Audit & Explanation */}
       <details className={cn(dashboardCard, 'p-6')}>
-        <summary className="cursor-pointer text-sm font-semibold text-ink">Tracking details</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-ink">How this is measured</summary>
         <div className="mt-3 flex items-start gap-3">
           <Info className="h-5 w-5 text-brand-600 shrink-0 mt-0.5" />
           <div>
