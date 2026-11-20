@@ -863,7 +863,7 @@ for (const width of [320, 768, 1440])
       }
       if (label === 'Results') {
         await page.getByRole('button', { name: 'View tracking coverage', exact: true }).click();
-        await expect(page.getByRole('heading', { name: 'Tracking details', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'How activity is counted', exact: true })).toBeVisible();
         await page.getByRole('button', { name: 'Back to results', exact: true }).click();
       }
       expect(

@@ -25,6 +25,7 @@ export function ReferralsPanel({ refreshKey }: { refreshKey: number }) {
   const pageNumber = cursors.length;
 
   return <main className="space-y-5" aria-label="Referral rankings">
+    <p className="text-sm text-muted">Choose a ranking and environment to view published standings.</p>
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div role="tablist" aria-label="Referral rankings" className="inline-flex rounded-lg border border-stroke bg-surface p-1">
         {(['individual', 'circles'] as const).map(key => <button key={key} type="button" role="tab"
@@ -61,10 +62,10 @@ export function ReferralsPanel({ refreshKey }: { refreshKey: number }) {
               </tr>)}</tbody>
             </table>
           </div> : <div role="status" className="py-12 text-center text-sm text-muted">
-            {data?.state === 'preview' ? 'No circle standings yet.'
+            {data?.state === 'preview' ? 'Circle rankings are not published yet. Choose Individual to view individual standings.'
               : data?.state === 'waiting' ? 'Waiting for the first published rankings.'
               : data?.state === 'expired' ? <>This snapshot is no longer available. <button type="button" onClick={restart} className="underline">Load latest rankings</button></>
-              : available ? 'No individual standings yet.' : 'Referral rankings temporarily unavailable.'}
+              : available ? board === 'circles' ? 'No circle standings in this snapshot.' : 'No individual standings yet.' : 'Referral rankings temporarily unavailable.'}
           </div>}
           <nav aria-label="Rankings pagination" className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stroke pt-4 text-sm">
             <span className="text-muted">Page {pageNumber} · {referralPageSize} per page</span>

@@ -67,14 +67,14 @@ export function AppsPanel({ one, oneUat, appStoreConnect, rangeLabel, dateContro
       <div>
         {environment === 'production' ? <EnvironmentColumn
           label="Production"
-          sublabel="iOS: App Store · Android & Web: production"
+        sublabel="App Store, production Android and live web activity"
           one={one}
           appStoreConnectCard={appStoreConnect?.production && (
             <AppStoreConnectCard title="Hussh 1 iOS — App Store" summary={appStoreConnect.production} />
           )}
         /> : <EnvironmentColumn
           label="UAT"
-          sublabel="iOS: TestFlight · Android & Web: UAT"
+          sublabel="TestFlight, test Android and UAT web activity"
           one={oneUat}
           appStoreConnectCard={appStoreConnect?.testflight && (
             <AppStoreConnectTestFlightCard title="Hussh 1 iOS — TestFlight" summary={appStoreConnect.testflight} />
@@ -108,13 +108,13 @@ function EnvironmentColumn({
       {one ? (
         <>
           <ActivesByPlatform rows={one.activeByPlatform} available={one.activeByPlatformAvailable} />
-          <ReportDetails title="First launch & activation"><InstallFunnel funnels={one.installFunnel} /><Activation one={one} /></ReportDetails>
-          <ReportDetails title="Retention"><Retention one={one} /></ReportDetails>
+          <ReportDetails title="First launch and setup"><InstallFunnel funnels={one.installFunnel} /><Activation one={one} /></ReportDetails>
+          <ReportDetails title="Return visits"><Retention one={one} /></ReportDetails>
           <ReportDetails title="Location usage by platform"><LocationAgentByPlatform rows={one.locationAnalytics.platforms} available={one.locationBehaviorAvailable} /></ReportDetails>
         </>
       ) : (
         <div className={cn(dashboardPanel, 'p-6 text-center')}>
-          <p className="text-sm font-semibold text-muted">No data for this environment yet.</p>
+          <p className="text-sm font-semibold text-muted">App data is unavailable for these dates in this environment.</p>
         </div>
       )}
     </section>

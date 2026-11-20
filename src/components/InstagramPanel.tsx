@@ -116,14 +116,14 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
       <p role="status" className="mt-5 text-sm text-muted">
         {loading ? 'Loading Instagram report…' : message || (report ? stateCopy[report.state] : 'Instagram reporting is unavailable.')}
       </p>
-      {report?.source === 'direct_provider_publication' && <p className="mt-2 text-sm text-muted">Instagram account aggregate collection ended at {report.sourceObservedAt || 'an unknown time'}. Requested windows are UTC; the provider did not supply its own boundary. Detailed media inventory is unavailable in this publication.</p>}
+      {report?.source === 'direct_provider_publication' && <p className="mt-2 text-sm text-muted">Account totals were collected at {report.sourceObservedAt || 'an unknown time'}. We requested dates in UTC. Instagram did not report its own date boundaries. Post and Reel details are unavailable for this report.</p>}
     </div>
     <ReportTabs label="Instagram report" value={view} onChange={setView} options={[
       { value: 'overview', label: 'Summary' }, { value: 'content', label: 'Posts & Reels' }, { value: 'campaign', label: 'Campaign links' },
     ]} />
-    {view === 'content' && <ReportDetails title="Content inventory" hint="Past 365 days">
+    {view === 'content' && <ReportDetails title="Posts and Reels collected" hint="Past 365 days">
     <div className={cn(dashboardCard, 'p-5 sm:p-8')}>
-      <h3 className="text-xl font-semibold">Content inventory</h3>
+      <h3 className="text-xl font-semibold">Collected content</h3>
       <p className="mt-2 text-sm text-muted">Posts and Reels returned for the past 365 days. Counts describe collected content, not Instagram reach or unique viewers.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {([
@@ -135,10 +135,10 @@ export function InstagramPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         </div>)}
       </div>
       {report?.inventory ? <p className="mt-4 text-sm leading-6 text-muted">
-        Scan window starts {report.inventory.windowSince} (UTC); last scanned {report.inventory.scannedAt} (UTC).
-        {' '}{report.inventory.complete ? 'Pagination reached the end of the account media list.' : 'Scan is partial at the 75-item limit; format counts are lower bounds.'}
+        Collection starts {report.inventory.windowSince} (UTC). Last checked {report.inventory.scannedAt} (UTC).
+        {' '}{report.inventory.complete ? 'Collection reached the end of the account’s content list.' : 'Collection stopped at 75 items. The actual totals may be higher.'}
         {report.inventory.complete && report.mediaCount === report.inventory.count ? ' The scan count matches the current account media count.' : ''}
-      </p> : <p className="mt-4 text-sm text-muted">Detailed content inventory has not been collected yet.</p>}
+      </p> : <p className="mt-4 text-sm text-muted">Detailed content counts are unavailable.</p>}
       {inventoryTotals.unknown > 0 && <p className="mt-2 text-sm text-warning">{inventoryTotals.unknown} items have an unknown Instagram product type and are excluded from the Reel and Feed counts.</p>}
       <p className="mt-3 text-sm text-muted">
         Current likes across collected items: {inventoryTotals.likes.observed ? inventoryTotals.likes.value.toLocaleString() : '—'} ({inventoryTotals.likes.observed}/{inventoryTotals.count} items with a count).

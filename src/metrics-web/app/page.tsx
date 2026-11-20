@@ -27,7 +27,7 @@ export default async function ReportsPage({ searchParams }: {
   let view: Awaited<ReturnType<NonNullable<typeof runtime>['read']>> | null = null;
   try { if (runtime) view = await runtime.read(request, access); } catch { /* sanitized availability below */ }
   return <><p className="eyebrow">Team reporting</p><h1>Product performance</h1>
-    <p className="intro">Explore adoption and website engagement with clear definitions and source coverage.</p>
+    <p className="intro">See how people use One and the website. Each report explains what it counts.</p>
     <form className="filters" method="get"><label>Report<select name="report" aria-label="Report" defaultValue={reportId}>
       <option value="one.adoption">One adoption</option><option value="hushhai.acquisition">Website acquisition</option>
       <option value="hushhai.activity">Website activity</option>
@@ -38,8 +38,8 @@ export default async function ReportsPage({ searchParams }: {
     <button type="submit">Apply</button></form>
     <ReportRefresh key={JSON.stringify(refreshRequest)} request={refreshRequest} enabled={runtime !== null} />
     {!view?.report ? <section className="empty" role="status"><h2>Report unavailable</h2>
-      <p>There is no verified publication for this selection. Try another period or check back after collection completes.</p></section> :
-      <><div className="report-meta"><span>{view.state === 'unknown_freshness' ? 'Source freshness unknown' : view.state === 'stale' ? 'Older source information' : 'Published report'}</span>
+      <p>There is no verified report for these dates. Choose another period or check again after the report is saved.</p></section> :
+      <><div className="report-meta"><span>{view.state === 'unknown_freshness' ? 'Source update time unknown' : view.state === 'stale' ? 'Older source data' : 'Published report'}</span>
         {(reportId === 'one.adoption' || reportId === 'hushhai.activity') && <span>{view.sourceEnvironment === 'uat' ? 'UAT test activity'
           : view.sourceEnvironment === 'production' ? 'Production activity' : 'Environment unverified'}</span>}
         <span>{view.report.request.startDate} – {view.report.request.endDate} · {view.report.request.timezone}</span></div>
@@ -48,8 +48,8 @@ export default async function ReportsPage({ searchParams }: {
           <strong>{metric.value === null ? 'Unavailable' : new Intl.NumberFormat('en', metric.unit === 'ratio' ? { style: 'percent', maximumSignificantDigits: 3 } : {}).format(metric.value)}</strong>
           <p>{metric.unit.replaceAll('_', ' ')} · {metric.coverage.replaceAll('_', ' ')}</p></article>)}</section>
       <section className="provenance"><h2>About these numbers</h2>
-        <p>Definition {view.report.control.definitionVersion}. {reportId === 'one.adoption' ? 'Each eligible account counts once if it has a recorded One reply or a confirmed task outcome in the selected period. Outcomes count distinct verified effects from supported sources. Coverage is partial, so some activity may be missing.' : reportId === 'hushhai.activity' ? 'Accepted first-party event records, reconciled with source receipts. Capture coverage is partial. People, sessions and business outcomes have separate definitions.' : reportId === 'metrics.reliability' ? 'Provider-recorded HTTP requests to the Metrics hosting service, including API, staff and health traffic. Missing buckets and absent error series remain unknown. The error ratio is unavailable without a verified complete denominator; it is not uptime. Latency is unavailable until compatible distributions are verified.' : 'Google Analytics defines users and sessions. These measures do not establish registered accounts or completed business outcomes.'}</p>
-        <dl><dt>{reportId === 'one.adoption' ? 'Source snapshot time' : 'Source information through'}</dt><dd>{view.report.result.sourceWatermark === null ? 'Unknown' : new Date(view.report.result.sourceWatermark).toISOString()}</dd>
+        <p>Definition {view.report.control.definitionVersion}. {reportId === 'one.adoption' ? 'Each eligible account counts once if it had a recorded One reply or a confirmed task outcome during these dates. Each verified task outcome counts once. Coverage is partial, so some activity may be missing.' : reportId === 'hushhai.activity' ? 'These are actions recorded by the website. Some activity may be missing, and a person can take more than one action.' : reportId === 'metrics.reliability' ? 'These counts include requests from staff, the API and health checks. The error rate needs a verified total request count. Response times need enough reliable data from the source.' : 'Google Analytics defines users and sessions. Registered accounts and confirmed outcomes are measured separately.'}</p>
+        <dl><dt>{reportId === 'one.adoption' ? 'Source report time' : 'Data through'}</dt><dd>{view.report.result.sourceWatermark === null ? 'Unknown' : new Date(view.report.result.sourceWatermark).toISOString()}</dd>
           <dt>Published</dt><dd>{new Date(view.report.publishedAt).toISOString()}</dd></dl>
       </section></>}
   </>;

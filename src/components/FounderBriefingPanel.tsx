@@ -191,7 +191,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne, publicationAsOf
     {resource.loading && !brief ? <MetricsSkeleton label="Loading the selected briefing period" />
       : error && !brief ? <div role="alert" className="rounded-lg bg-warning-soft p-6 text-sm text-warning">The production briefing is temporarily unavailable. No estimate is shown.</div>
         : brief ? <>
-          {error && <p role="status" className="rounded-lg bg-warning-soft p-3 text-sm text-warning">Refresh failed; the previous period remains visible.</p>}
+          {error && <p role="status" className="rounded-lg bg-warning-soft p-3 text-sm text-warning">Refresh failed. Showing the last available results for the selected period.</p>}
           <div className="overview-kpis">
             <MetricCard label="Active accounts" measure={brief.one.activeAccounts} note="Distinct signed-in accounts across measured iOS, Android and web activity." />
             <MetricCard label="First-time accounts" measure={brief.one.firstObservedAccounts} note="First seen in available analytics history during this period. This is not a registration count." />
@@ -264,7 +264,7 @@ export function FounderBriefingPanel({ refreshKey, onExploreOne, publicationAsOf
               <div><p className="text-sm text-muted">Search appearances</p><p className="text-3xl font-semibold">{number(brief.search.impressions.current)}</p></div><ChangeBadge measure={brief.search.clicks} />
             </div>
             <p className="report-footnote">Google search clicks and appearances are not unique visitors or app users.</p>
-            {!brief.search.available && <p className="report-footnote text-warning">The search export is incomplete; no value is guessed.</p>}
+            {!brief.search.available && <p className="report-footnote text-muted">Search data is unavailable or incomplete for this period. No value is estimated.</p>}
           </ReportDetails>
           <div id="overview-data-quality"><ReportDetails title="Data quality & definitions" hint={qualityWarning ? 'Review needed' : undefined}>
               <ul className="mt-4 space-y-2 text-sm leading-6 text-ink">

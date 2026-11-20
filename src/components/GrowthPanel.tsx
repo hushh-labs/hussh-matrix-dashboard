@@ -320,23 +320,23 @@ function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] })
           detail={`Browsers and app installs, trailing ${windowDays} days`}
         />
         <Figure
-          label="Accounts we can name"
+          label="Accounts with an identifier"
           value={exact(accounts)}
           detail="Signed in at least once"
         />
         <Figure
-          label="Devices we can identify"
+          label="Devices linked to an account"
           value={exact(identifiedDevices)}
           detail="Carry an account identity"
         />
         <Figure
-          label="Accounts and devices coverage"
+          label="Share of devices linked to an account"
           value={percentText(coverage, 1)}
           tone={lowCoverage ? 'warn' : 'plain'}
           detail={
             lowCoverage
-              ? 'Too low to report people instead of devices'
-              : 'Share of devices we can attach to a person'
+              ? 'Low share of devices linked to an account'
+              : 'Share of devices linked to an account'
           }
         />
       </div>
@@ -369,7 +369,7 @@ function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] })
                     {row.accounts > 0 ? (
                       <span className="text-muted">{percentText(share, 0)} of devices</span>
                     ) : (
-                      <span className="text-warning">Binds nothing</span>
+                      <span className="text-warning">No accounts recorded</span>
                     )}
                   </td>
                 </tr>
@@ -378,11 +378,10 @@ function IdentityCoverage({ identity }: { identity: GrowthSummary['identity'] })
           </tbody>
         </table></div>
         <p className="border-t border-stroke px-5 py-3 text-xs font-semibold leading-5 text-muted">
-          A device becomes identifiable only once someone signs in, so this ceiling is partly the
-          sign-in rate and partly instrumentation. A platform marked{' '}
-          <strong className="font-bold text-ink">Binds nothing</strong> sends no account
-          identity at all, which is a bug rather than behaviour. The headline account count is
-          globally distinct; platform account rows are diagnostic and must not be added together.
+          A device can be linked to an account after sign-in. The share also depends on how activity
+          is tracked. <strong className="font-bold text-ink">No accounts recorded</strong> means no
+          account identifiers were recorded for that platform in this period. The headline account
+          count is globally distinct; platform account rows must not be added together.
         </p>
       </div>
     </div>
@@ -742,7 +741,7 @@ function InstrumentationHealth({ growth }: { growth: GrowthSummary }) {
           detail={`${formatNumber(ungovernedEventNames)} are missing the standard tracking labels`}
         />
         <Figure
-          label="Planned activity not yet recorded"
+          label="Planned activity not yet sent"
           value={formatNumber(declaredNotEmitted.length)}
           tone={declaredNotEmitted.length > 0 ? 'warn' : 'plain'}
           detail="Defined in tracking plans, but not yet sent by the app"
@@ -754,12 +753,12 @@ function InstrumentationHealth({ growth }: { growth: GrowthSummary }) {
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
             <p className="text-sm font-bold text-ink">
-              Events the contract promises but nothing sends
+              Planned activity not yet sent
             </p>
           </div>
           <p className="text-sm font-medium leading-6 text-muted">
-            Nothing should be built on these until they have an emitter or are removed from the
-            contract: {declaredNotEmitted.join(', ')}.
+            These activity types are in the tracking plan, but the app is not yet set up to send them:{' '}
+            {declaredNotEmitted.join(', ')}.
           </p>
         </div>
       )}
