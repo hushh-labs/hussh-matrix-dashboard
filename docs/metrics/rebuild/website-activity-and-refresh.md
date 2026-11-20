@@ -1,6 +1,8 @@
 # Website activity and deliberate refresh
 
-14 November 2026. Local implementation/review packet; collection remains held.
+20 November 2026. [Website source PR #1068](https://github.com/hushh-labs/hushh-search-console/pull/1068)
+is merged. Its new capture mode still requires owner acceptance and a serving
+revision with the reviewed policy. Collection remains held.
 The user now requests refresh as part of the final rollout. This supersedes the
 desired permanent refresh pause, but does not restart legacy collection jobs.
 BigQuery stays off; #179/#180 reservations and CI/CD remain unchanged.
@@ -39,8 +41,11 @@ website scope; arbitrary hosts and app streams are not added by this patch.
 
 Only the collector can read a purpose-pinned numbered website key, sign the
 fixed native source URL and call the aggregate endpoint. No source key, SDK,
-warehouse execution or raw event records reach the web application. Production
-bindings cannot use UAT endpoints or keys. Approved binding fields include the
+warehouse execution or raw event records reach the web application.
+Production and UAT bindings each require their exact source origin and a
+numbered key in the matching project and environment. Use a separate authorized
+reporting scope for UAT. The page labels the source environment only when the
+binding matches the saved publication. Approved binding fields include the
 counting generation, verified history window and a finite daily receipt ceiling.
 
 Before any key/provider I/O, the same transaction reserves a source-call journal

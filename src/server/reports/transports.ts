@@ -5,7 +5,7 @@ import { SourceRequestFailure } from './source-errors';
 import type { AggregateFetch } from './sources';
 import { reportQueueProject, type TaskApiRequest } from './dispatch';
 import { withinDeadline } from './deadline';
-import { isAnalyticsReader, websiteSourceOrigins } from './bindings';
+import { isAnalyticsReader, websiteSecretEnvironment, websiteSourceOrigins } from './bindings';
 
 export type CredentialHeaders = (audience: 'analytics' | 'cloud' | 'monitoring', signal: AbortSignal) => Promise<Record<string, string>>;
 export function adcCredentialHeaders(): CredentialHeaders {
@@ -81,8 +81,7 @@ export async function readAggregateSecret(version: string, signal: AbortSignal,
 }
 export async function readWebsiteAggregateSecret(version: string, signal: AbortSignal,
   credentials: CredentialHeaders = adcCredentialHeaders(), fetcher: typeof fetch = fetch) {
-  if (!/^projects\/hushh-ai-(prod|uat)\/secrets\/metrics-website-aggregate-source-(production|uat)\/versions\/[1-9]\d*$/.test(version)
-    || version.includes('/hushh-ai-prod/') !== version.includes('-source-production/')) throw new ReportError('invalid');
+  if (!websiteSecretEnvironment(version)) throw new ReportError('invalid');
   return accessAggregateSecret(version, signal, credentials, fetcher);
 }
 async function accessAggregateSecret(version: string, signal: AbortSignal, credentials: CredentialHeaders, fetcher: typeof fetch) {

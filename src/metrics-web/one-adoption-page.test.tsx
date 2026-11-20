@@ -47,6 +47,30 @@ it.each([
   expect(fixture.request).not.toHaveBeenCalled();
 });
 
+it('labels website UAT event counts without initiating collection on render', async () => {
+  fixture.read.mockClear();
+  fixture.request.mockClear();
+  const period = { startDate: '2026-11-18', endDate: '2026-11-18', timezone: 'UTC' };
+  fixture.read.mockResolvedValueOnce({
+    state: 'unknown_freshness',
+    sourceEnvironment: 'uat',
+    report: {
+      request: { reportId: 'hushhai.activity', ...period },
+      control: { definitionVersion: '1' },
+      result: { sourceWatermark: null, metrics: { pageViews: { value: 2, unit: 'event', coverage: 'partial', basis: 'source_recorded' } } },
+      publishedAt: Date.parse('2026-11-20T10:00:01Z'),
+    },
+  });
+
+  const { default: ReportsPage } = await import('./app/page');
+  const html = renderToStaticMarkup(await ReportsPage({ searchParams: Promise.resolve({ report: 'hushhai.activity', ...period }) }));
+  expect(html).toContain('<span>UAT test activity</span>');
+  expect(html).toContain('Recorded page-view events</h2><strong>2</strong><p>event · partial');
+  expect(html).toContain('Source information through</dt><dd>Unknown');
+  expect(fixture.read).toHaveBeenCalledOnce();
+  expect(fixture.request).not.toHaveBeenCalled();
+});
+
 it('defaults to the preceding source calendar day at a UTC date boundary', async () => {
   const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-20T02:00:00Z'));
   try {

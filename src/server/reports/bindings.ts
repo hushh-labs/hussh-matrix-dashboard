@@ -5,6 +5,13 @@ export const websiteSourceOrigins = {
   production: 'https://hushh-search-console-api-yb3ojn3jxa-uc.a.run.app',
   uat: 'https://hushh-search-console-api-2hph5fpttq-uc.a.run.app',
 } as const;
+export function websiteSecretEnvironment(version: unknown): 'production' | 'uat' | undefined {
+  if (typeof version !== 'string') return undefined;
+  const match = /^projects\/hushh-ai-(prod|uat)\/secrets\/metrics-website-aggregate-source-(production|uat)\/versions\/[1-9]\d*$/.exec(version);
+  if (match?.[1] === 'prod' && match[2] === 'production') return 'production';
+  if (match?.[1] === 'uat' && match[2] === 'uat') return 'uat';
+  return undefined;
+}
 /** First reliability target has actual native serving evidence; no user override. */
 export const metricsMonitoringScope = { projectId: 'hushh-ai-prod', serviceName: 'hushh-matrix-dashboard', region: 'us-central1', environment: 'production' } as const;
 export function isAnalyticsReader(value: unknown): value is string {
@@ -27,7 +34,7 @@ type BindingBase = { approved: boolean; enabled: boolean; reportId: ReportId; re
 export type ReportSourceBinding = BindingBase & (
   { kind: 'ga4'; propertyId: string; timezone: string; readerServiceAccount: string; coverageThrough: string } & Ga4WebsiteScope
   | { kind: 'one'; environment: 'production' | 'uat'; secretVersion: string }
-  | { kind: 'website'; environment: 'production'; secretVersion: string; captureGeneration: string; coverageThrough: string; maxEventsPerDay: number }
+  | { kind: 'website'; environment: 'production' | 'uat'; secretVersion: string; captureGeneration: string; coverageThrough: string; maxEventsPerDay: number }
   | { kind: 'monitoring'; environment: 'production'; projectId: string; serviceName: string; region: string; coverageThrough: string }
 );
 export function sourceBindingGeneration(binding: unknown) {
@@ -73,10 +80,10 @@ export function validateSourceBinding(value: unknown, job: Pick<ReportJob, 'requ
       || !/^projects\/[a-z][a-z0-9-]{4,61}[a-z0-9]\/secrets\/metrics-one-aggregate-source-(production|uat)\/versions\/[1-9]\d*$/.test(b.secretVersion)
       || !b.secretVersion.includes(`/metrics-one-aggregate-source-${b.environment}/`)) throw new ReportError('unavailable');
   } else if (b.kind === 'website') {
-    if (b.reportId !== 'hushhai.activity' || b.environment !== 'production' || job.request.timezone !== 'UTC'
+    const environment = websiteSecretEnvironment(b.secretVersion);
+    if (b.reportId !== 'hushhai.activity' || !environment || b.environment !== environment || job.request.timezone !== 'UTC'
       || !/^[a-f0-9]{64}$/.test(b.captureGeneration)
       || !Number.isSafeInteger(b.maxEventsPerDay) || b.maxEventsPerDay < 1 || b.maxEventsPerDay > 1000
-      || !/^projects\/hushh-ai-prod\/secrets\/metrics-website-aggregate-source-production\/versions\/[1-9]\d*$/.test(b.secretVersion)
       || typeof b.coverageThrough !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.coverageThrough)
       || !Number.isFinite(Date.parse(b.coverageThrough)) || new Date(b.coverageThrough).toISOString().slice(0, 10) !== b.coverageThrough
       || b.coverageThrough < b.coverageFrom || job.request.endDate > b.coverageThrough

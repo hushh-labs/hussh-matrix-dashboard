@@ -40,7 +40,7 @@ export default async function ReportsPage({ searchParams }: {
     {!view?.report ? <section className="empty" role="status"><h2>Report unavailable</h2>
       <p>There is no verified publication for this selection. Try another period or check back after collection completes.</p></section> :
       <><div className="report-meta"><span>{view.state === 'unknown_freshness' ? 'Source freshness unknown' : view.state === 'stale' ? 'Older source information' : 'Published report'}</span>
-        {reportId === 'one.adoption' && <span>{view.sourceEnvironment === 'uat' ? 'UAT test activity'
+        {(reportId === 'one.adoption' || reportId === 'hushhai.activity') && <span>{view.sourceEnvironment === 'uat' ? 'UAT test activity'
           : view.sourceEnvironment === 'production' ? 'Production activity' : 'Environment unverified'}</span>}
         <span>{view.report.request.startDate} – {view.report.request.endDate} · {view.report.request.timezone}</span></div>
       <section className="cards" aria-label="Report metrics">{(Object.entries(view.report.result.metrics) as [string, MetricValue][]).map(([key, metric]) =>

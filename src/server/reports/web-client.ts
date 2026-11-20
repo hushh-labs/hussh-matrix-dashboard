@@ -79,7 +79,8 @@ export class MetricsReportWebClient {
       || r.computedAt > r.publishedAt || r.publishedAt > now) throw new ReportError('unavailable');
     validateAggregate(r.result, { request, control: r.control, acceptedAt: 0 } as ReportJob, now, this.config.maxResponseBytes);
     if ((r.result.sourceWatermark === null) !== (value.state === 'unknown_freshness')) throw new ReportError('unavailable');
-    const environment = request.reportId === 'one.adoption' && (sourceEnvironment === 'uat' || sourceEnvironment === 'production')
+    const environment = (request.reportId === 'one.adoption' || request.reportId === 'hushhai.activity')
+      && (sourceEnvironment === 'uat' || sourceEnvironment === 'production')
       ? sourceEnvironment : undefined;
     return { state: value.state, report: r, ...(environment ? { sourceEnvironment: environment } : {}) };
   }

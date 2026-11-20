@@ -78,13 +78,13 @@ export class MetricsReports {
         return { state: 'unavailable' as const, report: null };
       }
       let sourceEnvironment: 'uat' | 'production' | undefined;
-      if (c.request.reportId === 'one.adoption') {
+      if (c.request.reportId === 'one.adoption' || c.request.reportId === 'hushhai.activity') {
         const source = await tx.get<unknown>(path('sources', c.request.reportId));
         // Only the approved binding to this publication can label its environment.
         // Older saved reports remain readable without a matching binding.
         try {
           const binding = validateSourceBinding(source, c);
-          if (binding.kind === 'one') sourceEnvironment = binding.environment;
+          if (binding.kind === 'one' || binding.kind === 'website') sourceEnvironment = binding.environment;
         } catch (error) {
           if (!(error instanceof ReportError)) throw error;
         }
