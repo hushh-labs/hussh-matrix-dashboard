@@ -117,6 +117,8 @@ export class MetricsReports {
       const c = await this.context(tx, plan?.request ?? input, access);
       const head = await tx.get<Head>(path('heads', c.key)) ?? { sequence: 0, activeJob: null, publication: null };
       if (head.publication !== null && (typeof head.publication !== 'string' || !/^[a-f0-9]{64}$/.test(head.publication))) throw new ReportError('unavailable');
+      if (c.request.reportId === 'one.adoption' && head.activeJob !== null
+        && (typeof head.activeJob !== 'string' || !/^[a-f0-9]{64}$/.test(head.activeJob))) throw new ReportError('unavailable');
       const publication = head.publication ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
       if (head.publication) validatePublishedReport(publication, head.publication, c, now);
       const active = head.activeJob ? await tx.get<ReportJob>(path('jobs', head.activeJob)) : null;
@@ -187,6 +189,12 @@ export class MetricsReports {
       let jobToCreate: ReportJob | null = null;
       if (publication && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
         result = { state: 'completed', reportId: publication.id, jobId: null };
+      } else if (c.request.reportId === 'one.adoption' && head.activeJob
+        && (!active || active.id !== head.activeJob || active.key !== c.key || !['custom', 'scheduled'].includes(active.lane)
+          || !['accepted', 'running', 'delayed'].includes(active.status) || !active.request || !active.control
+          || digest(active.request) !== digest(c.request) || digest(active.control) !== digest(c.control))) {
+        // An unresolved pointer cannot identify a shared job or justify starting a replacement.
+        throw new ReportError('unavailable');
       } else if (active && ['accepted', 'running', 'delayed'].includes(active.status)) {
         result = { state: active.status as 'accepted' | 'running' | 'delayed', reportId: null, jobId: active.id };
       } else {

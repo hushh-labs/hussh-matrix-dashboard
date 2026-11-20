@@ -64,14 +64,31 @@ describe('new One adoption computation bounds', () => {
     expect(await f.get('capacity', 'custom')).toEqual({ active: 1 });
   });
 
+  it.each(['different period', 'missing job'] as const)('keeps a pending One report held when its pointer refers to a %s', async fault => {
+    const f = collectionFixture(); await f.initialize();
+    await f.reports.request(f.request, f.access);
+    const key = reportKey(f.request, f.control);
+    const activeJob = fault === 'different period'
+      ? (await f.reports.request({ ...f.request, startDate: f.request.endDate }, f.access)).jobId!
+      : digest('missing One job');
+    const head = { sequence: 1, activeJob, publication: null };
+    await f.put('heads', key, head);
+    const capacity = await f.get('capacity', 'custom');
+    await expect(f.reports.request(f.request, f.access)).rejects.toMatchObject({ code: 'unavailable' });
+    expect(await f.get('heads', key)).toEqual(head);
+    expect(await f.get('capacity', 'custom')).toEqual(capacity);
+    expect(await f.get('jobs', digest([key, 2]))).toBeNull();
+  });
+
   it('retains tightened periodic limits after an invalid range and later policy increase', async () => {
     const f = collectionFixture(); await f.initialize();
     const schedule = { approved: true, enabled: true, revision: 1, slots: [0, 600], windowMs: 60_000,
       maxDailyJobs: 2, entries: [{ id: 'one', reportId: 'one.adoption', timezone: 'UTC', periodDays: 2, endLagDays: 1 }] };
     const access = { subjectHash: digest('periodic-dispatcher'), scopeDigest: f.access.scopeDigest };
     await f.put('policy', 'periodic', schedule);
-    const first = await f.reports.requestPeriodic('one', access), job = (await f.get<ReportJob>('jobs', first.jobId!))!;
-    await f.put('jobs', first.jobId!, { ...job, status: 'completed' }); await f.put('capacity', 'scheduled', { active: 0 });
+    const first = await f.reports.requestPeriodic('one', access);
+    const claim = (await f.worker.claim(first.jobId!, digest('periodic-worker')))!.job;
+    await f.worker.publish(claim, f.result(claim));
     f.advance(600 * 60_000);
     await f.put('policy', 'periodic', { ...schedule, revision: 2, maxDailyJobs: 1, entries: [{ ...schedule.entries[0], periodDays: 8 }] });
     await expect(f.reports.requestPeriodic('one', access)).rejects.toMatchObject({ code: 'invalid' });
