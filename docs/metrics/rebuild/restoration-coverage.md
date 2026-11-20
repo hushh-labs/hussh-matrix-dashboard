@@ -16,7 +16,7 @@ application head `9510cba79cb2b7c0eaa6d56b831d1e513800c32d`.
 | Website traffic (`overview`) | `/api/analytics/all?view=overview`; One production/UAT feed/export, hushh.ai Data API, HushhTech public summary/backend, Monitoring and Search Console | Only the held hushh.ai four-metric adapter is implemented. Every additional source/card needs its own period/population/quality contract. The original API currently fans out to source loaders on cache misses; it is not the new publication reader. |
 | Growth (`growth`) | `/api/analytics/all?view=growth` and `/api/analytics/growth`; One exports, registrations and growth calculations | Not replaced. Acquisition, activation, retention, cost and daily measures need compatible populations/denominators and whole-window distinct counting. Anonymous devices remain separate from identified accounts. |
 | Compare periods (`compare`) | `/api/analytics/growth/compare`; 30-day/90-day/history source windows | Not replaced. Each non-additive period requires its own reconciled result; daily distincts cannot be summed into history totals. Preserve requested period/freshness and expose known historical gaps. |
-| One app (`one`) | `/api/analytics/all?view=one`, `/api/analytics/one/app`, production/UAT account sources, exports and related health | The held two-metric One aggregate adapter is proposed, but the source endpoint is not established. Registrations, claims, per-capability adoption/outcomes, installations, identities and platform breakdowns are not supplied by that stub. Product backends retain account/consent/outcome authority. |
+| One app (`one`) | `/api/analytics/all?view=one`, `/api/analytics/one/app`, production/UAT account sources, exports and related health | The two-metric source has merged and passed UAT qualification. Activation and live reconciliation are pending. Registrations, claims, per-capability adoption/outcomes, installations, identities and platform breakdowns need their own sources. Product backends retain account/consent/outcome authority. [UAT pilot](./collector-integration.md#one-adoption-uat-pilot) |
 | Referrals (`referrals`) | `/api/analytics/one/referrals`; viewer-permitted individual/circle rankings, separate from the shared aggregate cache | Preserve its authenticated operational route/owner. Person-level rankings must not be copied into reporting snapshots or public/shared caches. Not part of the read-only aggregate rebuild's source inventory. |
 | Hussh Connect (`apps`) | `/api/analytics/all?view=apps`, `/api/analytics/app-store-connect`, `/api/analytics/one/android`; existing iOS/Android/web and environment boundaries | Not replaced. App Store Connect analytics, Android reporting, installs, native/web accounts and usage retain their distinct units and release scopes. Downloads/devices are not account registrations. |
 | Instagram (`instagram`) | Private `/api/analytics/instagram`; existing Graph observations persisted through `BigQueryInstagramStore` | Preserve stored observations and operational sync/auth dependencies. Its current read path is warehouse-backed; BigQuery stays off. A reviewed retained aggregate publication/storage handoff is needed before restoration; never replace missing observations with zeros or auto-run `/api/instagram/sync` on page reads. |
@@ -54,6 +54,12 @@ application head `9510cba79cb2b7c0eaa6d56b831d1e513800c32d`.
   scheduler activation or warehouse access follows from this inventory.
 
 ## Serving acceptance
+
+The 20 November 2026 (IST) saved-report test verifies exact 30- and 90-day
+selections using separate synthetic publications. A missing selection leaves no
+job or publication, and Refresh reuses a current publication with computation
+disabled. This verifies report selection and reuse. Retained production period
+coverage still needs to be checked on the authorized serving path.
 
 The first two-report collector/store/web slice must be accepted before expanding
 under #184. It cannot replace all existing sections yet. Completion requires

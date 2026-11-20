@@ -107,7 +107,7 @@ nonempty thresholding/sampling/other-row loss stays partial. This API does not e
 watermark: actual provider values remain partial, with source freshness unknown.
 Publication time bounds display age but does not fabricate data freshness.
 
-The One adapter targets the **Dev-merged, not deployed or enabled** narrow endpoint
+The One adapter targets the narrow backend endpoint
 `POST /api/one/metrics/adoption` on the pinned environment origin. Its request
 contains only period, definition version, source generation and scope digest.
 It signs exact JSON bytes using HMAC-SHA256 over
@@ -124,6 +124,38 @@ global totals. No owner exports are enumerated. **Do not enable the One binding
 until that backend contract and a fixed-period reconciliation are accepted.** A
 manually supplied reconciliation digest is a binding to evidence, not a test that
 the underlying counts are correct.
+
+## One adoption UAT pilot
+
+The pilot follows [Kushal’s #184 review](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184#issuecomment-7031537225).
+On 20 November 2026 (IST), [Research #9593](https://github.com/hushh-labs/hushh-research/pull/9593)
+merged the endpoint into UAT at `37002101b66bfd693f58fa943260ab832c721e36` and
+[exact-source qualification](https://github.com/hushh-labs/hushh-research/actions/runs/44696546478) passed.
+The [follow-up qualification](https://github.com/hushh-labs/hushh-research/actions/runs/44715371575)
+also passed at `39377265964cdc95327e88f0b67e494ed500fca6`. UAT advanced again
+during that run. Check that qualification matches the exact selected release SHA.
+The UAT service still served revision `consent-protocol-03025-wuy` without
+adoption bindings at inspection. Before the live test, verify the serving SHA,
+enabled UAT binding, source authorization, approved population policy, collector
+identity and pilot queue with the release owner. The existing `metrics-reporting-held`
+queue stays paused.
+
+1. Once the UAT source is ready, run one eligible action that produces a confirmed
+   outcome. A private Calendar proposal with no guests is a candidate when an
+   approved fixture is available. Record its confirmation time and outcome evidence
+   privately. Choose the closed source day within the source's seven-day window.
+2. Have the source owner reconcile both aggregates independently for that day,
+   timezone and population policy revision. Count eligible account IDs once across
+   retained replies and confirmed outcomes. Count distinct verified effects using
+   the backend outcome identity. An account already present can produce a new
+   outcome without changing the account count. Record aggregate figures only.
+3. Use explicit Refresh for the selected day and verify both figures, the UAT label,
+   partial coverage and the source snapshot time in the saved report. Record the
+   candidate SHA, date, timezone, counts, source reads, elapsed time, queue retry
+   ceiling and attributable cost. Record cost as unavailable until measured.
+4. Open the same report again and repeat Refresh. Confirm the same publication is
+   reused and the source-call count stays fixed. Keep BigQuery disabled and
+   scheduled admission closed for this pilot.
 
 ## Delivery, recovery, fairness and retention
 

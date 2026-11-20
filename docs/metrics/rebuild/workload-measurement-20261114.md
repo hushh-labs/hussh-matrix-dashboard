@@ -78,6 +78,21 @@ No numerical production targets, recurring savings, zero-hosting-cost claim or
 collection approval follows from these modeled measurements. Existing holds,
 reservations and paused refresh schedules remain in force.
 
+## One adoption pilot recheck
+
+On 20 November 2026 (IST), the same offline harness ran on candidate `1ec63931`.
+Twenty-five simultaneous requests for the same period shared one job. Once its
+publication was available, 250 warm reads and 25 explicit refreshes created no
+new jobs or source calls. The warm reads attempted 1,250 document gets and 250
+quota writes, with no snapshot-body reads. The additional get per warm read
+checks the current One source binding before showing the environment label.
+The 25 refreshes attempted 175 gets and 25 quota writes. Missing and expired
+report reads made zero source calls. The harness made no network requests.
+
+These are modeled storage operations. Use native storage, queue, execution and
+source measurements from the approved pilot before reviewing a recurring budget.
+The live procedure is in the [One adoption UAT pilot](./collector-integration.md#one-adoption-uat-pilot).
+
 ## Separate observed legacy-service baseline
 
 A bounded read of existing Cloud Monitoring `run.googleapis.com/request_count`
