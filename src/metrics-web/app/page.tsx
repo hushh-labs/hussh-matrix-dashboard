@@ -1,6 +1,6 @@
 import { currentAccess } from '../lib/access';
 import { reportsRuntime } from '../lib/runtime';
-import { reportDefinitions, type MetricValue, type ReportId } from '../../../src/server/reports/contracts';
+import { reportDefinitions, reportingCalendarDay, type MetricValue, type ReportId } from '../../../src/server/reports/contracts';
 import { ReportRefresh } from './report-refresh';
 
 export default async function ReportsPage({ searchParams }: {
@@ -14,8 +14,13 @@ export default async function ReportsPage({ searchParams }: {
   const reportId: ReportId = typeof query.report === 'string' && Object.hasOwn(reportDefinitions, query.report)
     ? query.report as ReportId : 'one.adoption';
   // A date selection reads only an already published report. No source query.
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-  const request = { reportId, startDate: query.startDate ?? yesterday, endDate: query.endDate ?? yesterday, timezone: query.timezone ?? 'UTC' };
+  const now = Date.now(), timezone = query.timezone ?? 'UTC';
+  let today = reportingCalendarDay('UTC', now);
+  if (typeof timezone === 'string') {
+    try { today = reportingCalendarDay(timezone, now); } catch { /* The report API rejects invalid timezones. */ }
+  }
+  const yesterday = new Date(Date.parse(today) - 86_400_000).toISOString().slice(0, 10);
+  const request = { reportId, startDate: query.startDate ?? yesterday, endDate: query.endDate ?? yesterday, timezone };
   const runtime = reportsRuntime();
   const refreshRequest = typeof request.startDate === 'string' && typeof request.endDate === 'string' && typeof request.timezone === 'string'
     ? { ...request, startDate: request.startDate, endDate: request.endDate, timezone: request.timezone } : null;

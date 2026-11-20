@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Firestore } from '@google-cloud/firestore';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { digest, reportKey, validateRequest, type AggregateResult, type ReportAccess, type ReportControl,
-  type ReportingPolicy, type ReportJob, type ReportRequest } from '../src/server/reports/contracts';
+  type PublishedReport, type ReportingPolicy, type ReportJob, type ReportRequest } from '../src/server/reports/contracts';
 import { MetricsReports, MetricsReportWorker } from '../src/server/reports/service';
 import { FirestoreReportStore, reportPath as path, type ReportStore } from '../src/server/reports/store';
 import { collectReport } from '../src/server/reports/collector';
@@ -57,6 +57,37 @@ for (const mode of ['memory', ...(emulator ? ['firestore'] : [])]) {
       expect(await reader.read(request, access)).toEqual({ state: 'unavailable', report: null });
       const capacity = await store.transaction(tx => tx.get(path('capacity', 'custom')));
       expect(capacity).toBeNull();
+    });
+    it('reads exact 30- and 90-day publications and leaves a missing period unavailable without admitting work', async () => {
+      await put('policy', 'current', { ...policy, maxPeriodDays: 90, computeEnabled: false, scheduledCapacity: 0 });
+      const short: ReportRequest = { reportId: 'hushhai.acquisition', startDate: '2026-10-13', endDate: '2026-11-11',
+        timezone: 'America/Los_Angeles' };
+      const long: ReportRequest = { ...short, startDate: '2026-08-14' };
+      await put('controls', short.reportId, control);
+      const publishFixture = async (selection: ReportRequest, count: number) => {
+        const key = reportKey(selection, control), id = digest(['retained', key]);
+        const report: PublishedReport = { id, key, request: selection, control, computedAt: now, publishedAt: now,
+          result: { period: { startDate: selection.startDate, endDate: selection.endDate, timezone: selection.timezone },
+            sourceCheckedAt: now, sourceWatermark: null, reconciled: true, definitionVersion: control.definitionVersion,
+            sourceGeneration: control.sourceGeneration, scopeDigest: control.scopeDigest, metrics: {
+              sessions: { value: count + 3, unit: 'session', basis: 'provider_defined', coverage: 'partial' },
+              activeUsers: { value: count, unit: 'provider_user', basis: 'provider_defined', coverage: 'partial' },
+              engagedSessions: { value: count, unit: 'session', basis: 'provider_defined', coverage: 'partial' },
+              keyEvents: { value: 1, unit: 'key_event', basis: 'provider_defined', coverage: 'partial' },
+            } } };
+        await put('snapshots', id, report);
+        await put('heads', key, { sequence: 1, activeJob: null, publication: id });
+        return report;
+      };
+      const thirty = await publishFixture(short, 15);
+      expect(await reader.read(long, access)).toEqual({ state: 'unavailable', report: null });
+      expect(await store.transaction(tx => tx.get(path('heads', reportKey(long, control))))).toBeNull();
+      const ninety = await publishFixture(long, 28);
+      for (const report of [thirty, ninety]) {
+        expect(await reader.read(report.request, access)).toEqual({ state: 'unknown_freshness', report });
+        expect(await reader.request(report.request, access)).toEqual({ state: 'completed', jobId: null, reportId: report.id });
+      }
+      expect(await store.transaction(tx => tx.get(path('capacity', 'custom')))).toBeNull();
     });
     it('coalesces competing instances, atomically publishes and reuses the immutable snapshot', async () => {
       const second = new MetricsReports(store, () => now);

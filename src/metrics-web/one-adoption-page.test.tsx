@@ -46,3 +46,17 @@ it.each([
   expect(fixture.read).toHaveBeenCalledOnce();
   expect(fixture.request).not.toHaveBeenCalled();
 });
+
+it('defaults to the preceding source calendar day at a UTC date boundary', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-20T02:00:00Z'));
+  try {
+    fixture.read.mockClear();
+    fixture.request.mockClear();
+    fixture.read.mockResolvedValueOnce({ state: 'unavailable', report: null });
+    const { default: ReportsPage } = await import('./app/page');
+    await ReportsPage({ searchParams: Promise.resolve({ report: 'one.adoption', timezone: 'America/Los_Angeles' }) });
+    expect(fixture.read).toHaveBeenCalledExactlyOnceWith({ reportId: 'one.adoption', startDate: '2026-11-18',
+      endDate: '2026-11-18', timezone: 'America/Los_Angeles' }, expect.anything());
+    expect(fixture.request).not.toHaveBeenCalled();
+  } finally { clock.mockRestore(); }
+});
