@@ -1,10 +1,11 @@
 import { currentAccess } from '../../../lib/access';
 import { reportsRuntime } from '../../../lib/runtime';
-import { reportFailure } from '../../../lib/http';
+import { privateReportHeaders, reportFailure } from '../../../lib/http';
 import { ReportError } from '../../../../../src/server/reports/contracts';
 export async function POST(request: Request) {
-  const access = await currentAccess();
-  if (!access) return Response.json({ state: 'unauthorized' }, { status: 401 });
+  let access: Awaited<ReturnType<typeof currentAccess>>;
+  try { access = await currentAccess(); } catch { return reportFailure(null); }
+  if (!access) return Response.json({ state: 'unauthorized' }, { status: 401, headers: privateReportHeaders });
   // Origin is a configured deployment binding, never inferred from Host input.
   if (!process.env.METRICS_WEB_ORIGIN || request.headers.get('origin') !== process.env.METRICS_WEB_ORIGIN
     || request.headers.get('content-type')?.split(';')[0] !== 'application/json') return reportFailure(new ReportError('unauthorized'));
@@ -24,6 +25,6 @@ export async function POST(request: Request) {
       }
     } finally { await stream.cancel(); }
     const result = await runtime.request(JSON.parse(text + decoder.decode()), access);
-    return Response.json(result, { status: result.state === 'completed' ? 200 : 202 });
+    return Response.json(result, { status: result.state === 'completed' ? 200 : 202, headers: privateReportHeaders });
   } catch (error) { return reportFailure(error instanceof SyntaxError ? new ReportError('invalid') : error); }
 }
