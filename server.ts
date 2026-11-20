@@ -5576,7 +5576,8 @@ function registerAnalyticsRoutes(app: express.Express): void {
     });
   });
   const api = {
-    get(paths: string | string[], handler: express.RequestHandler) {
+    get(paths: string | string[], handler: express.RequestHandler,
+      sourceFreeResponse?: (query: express.Request['query']) => { status: 200 | 400; body: unknown } | null) {
       app.get(paths, async (req, res) => {
         try {
           if (legacyDiagnosticOnly() && (req as any).sessionUser?.email !== 'metrics-release-probe@hushh.ai') {
@@ -5921,6 +5922,10 @@ function registerAnalyticsRoutes(app: express.Express): void {
           if (publishRestoration && (!restoration || !await restoration.isActive())) {
             res.status(409).json({ error: 'Initial report publication is not active.' }); return;
           }
+          const localResponse = publishRestoration ? null : sourceFreeResponse?.(req.query);
+          if (localResponse?.status === 400) {
+            res.set('Cache-Control', 'no-store').status(400).json(localResponse.body); return;
+          }
           const previous = await legacyPreviousRestoration();
           let dailyRetained: Awaited<ReturnType<NonNullable<Awaited<ReturnType<typeof dailyOneRefresh>>>['read']>> = null;
           let dailyGateCohort: Awaited<ReturnType<typeof readCustomerCohort>> | null = null;
@@ -5944,6 +5949,7 @@ function registerAnalyticsRoutes(app: express.Express): void {
           // Ordinary reads never initiate source work, regardless of caller headers.
           // Only the separately authorized restoration publication may load.
           if (!publishRestoration && !retained) {
+            if (localResponse) { res.set('Cache-Control', 'no-store').status(localResponse.status).json(localResponse.body); return; }
             res.status(503).json({ error: 'No retained report is available for this selection.' }); return;
           }
           const useRetained = !publishRestoration && retained;
@@ -7052,28 +7058,44 @@ const androidHistoryReader = process.env.ONE_GA4_IMPERSONATE_SERVICE_ACCOUNT
   ? googleReader(process.env.ONE_GA4_IMPERSONATE_SERVICE_ACCOUNT, ['https://www.googleapis.com/auth/analytics.readonly']) : null;
 const playReader = process.env.GOOGLE_PLAY_IMPERSONATE_SERVICE_ACCOUNT
   ? googleReader(process.env.GOOGLE_PLAY_IMPERSONATE_SERVICE_ACCOUNT, ['https://www.googleapis.com/auth/playdeveloperreporting','https://www.googleapis.com/auth/devstorage.read_only']) : null;
+const unconfiguredAndroid = {
+  history: { state: 'not_configured', daily: [], note: 'Historical GA4 reader is not configured.' },
+  downloads: { installs: { state: 'not_configured' }, store: { state: 'not_configured' } },
+  vitals: { state: 'not_configured', metrics: {}, note: 'Google Play read-only reporting access is not configured.' },
+};
 const androidReporting = boundedReportingCache(async (range: {startDate:string;endDate:string}) => {
   const [history, downloads, vitals] = await Promise.all([
-    androidHistoryReader ? fetchAndroidHistory(androidHistoryReader, range) : {state:'not_configured',daily:[],note:'Historical GA4 reader is not configured.'},
-    playReader ? fetchPlayDownloads(playReader, process.env.GOOGLE_PLAY_REPORTS_BUCKET || '', range) : {installs:{state:'not_configured'},store:{state:'not_configured'}},
-    playReader ? fetchPlayVitals(playReader, range) : {state:'not_configured',metrics:{},note:'Google Play read-only reporting access is not configured.'},
+    androidHistoryReader ? fetchAndroidHistory(androidHistoryReader, range) : unconfiguredAndroid.history,
+    playReader ? fetchPlayDownloads(playReader, process.env.GOOGLE_PLAY_REPORTS_BUCKET || '', range) : unconfiguredAndroid.downloads,
+    playReader ? fetchPlayVitals(playReader, range) : unconfiguredAndroid.vitals,
   ]);
   return {packageId:'com.hussh.app',range,history,downloads,vitals,fetchedAt:new Date().toISOString()};
 });
 
-api.get('/api/analytics/one/android', async (req, res) => {
-  if (req.query.environment && req.query.environment !== 'production') {
-    res.status(400).json({error:'Provider Android reports support the production property only.'});return;
+const androidRange = (query: express.Request['query']) => {
+  if (query.environment && query.environment !== 'production') {
+    return { error: 'Provider Android reports support the production property only.' } as const;
   }
-  const startDate = firstQueryValue(req.query.start_date);
-  const endDate = firstQueryValue(req.query.end_date);
+  const startDate = firstQueryValue(query.start_date);
+  const endDate = firstQueryValue(query.end_date);
   const validDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date)) && new Date(date).toISOString().slice(0,10) === date;
   const days = (Date.parse(endDate) - Date.parse(startDate)) / 86_400_000 + 1;
   if (!validDate(startDate) || !validDate(endDate) || days < 1 || days > 90 || endDate > new Date().toISOString().slice(0,10)) {
-    res.status(400).json({error:'Select valid start_date and end_date within a maximum of 90 days.'});return;
+    return { error: 'Select valid start_date and end_date within a maximum of 90 days.' } as const;
   }
-  try {res.json(sanitizePublicPayload(await androidReporting({startDate,endDate})));}
+  return { startDate, endDate };
+};
+
+api.get('/api/analytics/one/android', async (req, res) => {
+  const range = androidRange(req.query);
+  if ('error' in range) { res.status(400).json({ error: range.error }); return; }
+  try {res.json(sanitizePublicPayload(await androidReporting(range)));}
   catch {res.status(503).json({error:'Android reporting is temporarily unavailable. Retry later.'});}
+}, query => {
+  const range = androidRange(query);
+  if ('error' in range) return { status: 400, body: { error: range.error } };
+  if (androidHistoryReader || playReader) return null;
+  return { status: 200, body: { packageId: 'com.hussh.app', range, ...unconfiguredAndroid, fetchedAt: new Date().toISOString() } };
 });
 
 api.get('/api/analytics/one/app', async (req, res) => {
@@ -9754,17 +9776,13 @@ export function createApp(configOverrides?: Partial<AppConfig>): express.Express
   });
   app.get('/api/analytics/instagram', async (req, res) => {
     if (!instagramViewer(req)) return res.status(401).json({ error: 'Authentication required' });
+    res.set('Cache-Control', 'no-store');
     if (!instagramEnabled || !/^\d+$/.test(instagramAccountId) || !instagramCredentials.configured()) {
       return res.json({ state: 'not_configured', username: null, reach: null, lastSuccessfulSync: null, lastAttempt: null, canSync: false });
     }
     try {
-      const retained = await legacyRestoration();
-      if (retained) {
-        const report = await (await instagramPublication(instagramAccountId)).read();
-        res.set('Cache-Control', 'no-store');
-        return report ? res.json(report) : res.status(503).json({ error: 'Instagram publication is unavailable.' });
-      }
-      return res.status(503).json({ error: 'Instagram publication is unavailable.' });
+      const report = await legacyRestoration() ? await (await instagramPublication(instagramAccountId)).read() : null;
+      return report ? res.json(report) : res.status(503).json({ error: 'Instagram publication is unavailable.', canSync: false });
     } catch {
       return res.status(503).json({ state: 'sync_failed', username: null, reach: null, lastSuccessfulSync: null, lastAttempt: null, canSync: false });
     }

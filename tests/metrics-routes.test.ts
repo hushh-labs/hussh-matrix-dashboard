@@ -33,10 +33,14 @@ describe('authenticated aggregate snapshots', () => {
   });
   it('keeps ordinary reads passive even when refresh is requested', async () => {
     query.mockClear();
-    for (const url of ['/api/analytics/one/app?environment=uat', '/api/analytics/one/android?start_date=2026-09-27&end_date=2026-10-04']) {
+    for (const [url, status] of [
+      ['/api/analytics/one/app?environment=uat', 503],
+      ['/api/analytics/one/android?start_date=2026-09-27&end_date=2026-10-04', 200],
+    ] as const) {
       for (const headers of [{}, {'X-Metrics-Refresh':'1'}, {'X-Metrics-Passive-Read':'0'}]) {
         const result = await request(app).get(url).set('Cookie', cookie).set(headers);
-        expect(result.status).toBe(503); expect(query).not.toHaveBeenCalled();
+        expect(result.status).toBe(status); expect(query).not.toHaveBeenCalled();
+        if (status === 200) expect(result.body.history.state).toBe('not_configured');
       }
       expect((await request(app).get(url)).status).toBe(401);
     }

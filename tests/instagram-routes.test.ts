@@ -34,7 +34,7 @@ describe('Instagram route boundaries', () => {
     const result = await request(app).post('/api/instagram/sync').set('Cookie', cookie('viewer@hushh.ai')).set('Origin', 'http://localhost:3001');
     expect(result.status).toBe(403);
   });
-  it('does not share operator capability through the aggregate response cache', async () => {
+  it('keeps unpublished Instagram reads passive for both operators and viewers', async () => {
     const prior = {
       enabled: process.env.INSTAGRAM_ANALYTICS_ENABLED,
       token: process.env.INSTAGRAM_ACCESS_TOKEN,
@@ -50,8 +50,12 @@ describe('Instagram route boundaries', () => {
       const app = createApp(config);
       const operator = await request(app).get('/api/analytics/instagram').set('Cookie', cookie('operator@hushh.ai'));
       const viewer = await request(app).get('/api/analytics/instagram').set('Cookie', cookie('viewer@hushh.ai'));
-      expect(operator.body.canSync).toBe(true);
-      expect(viewer.body.canSync).toBe(false);
+      for (const result of [operator, viewer]) {
+        expect(result.status).toBe(503);
+        expect(result.body).toEqual({ error: 'Instagram publication is unavailable.', canSync: false });
+        expect(result.headers['cache-control']).toContain('no-store');
+      }
+      expect(stub).not.toHaveBeenCalled();
     } finally {
       stub.mockRestore();
       for (const [name, value] of Object.entries({ INSTAGRAM_ANALYTICS_ENABLED: prior.enabled, INSTAGRAM_ACCESS_TOKEN: prior.token, INSTAGRAM_ANALYTICS_ADMIN_EMAILS: prior.admins, INSTAGRAM_USER_ID: prior.account })) {

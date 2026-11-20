@@ -606,6 +606,7 @@ describe('Google OAuth 2.0 & Domain Protection Layer', () => {
           email: 'ankit@hushh.ai',
           name: 'Ankit',
           picture: 'https://example.com/photo.jpg',
+          reloadSubject: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
       });
     });
