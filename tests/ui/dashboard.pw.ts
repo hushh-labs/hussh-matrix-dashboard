@@ -408,7 +408,7 @@ test('shared registry totals never replace the selected environment customer cou
   await expect(active).toContainText('1,284');
   await page.getByText('Daily, weekly & monthly counts', { exact: true }).click();
   await expect(page.getByText('All-One registered accounts', { exact: true }).locator('..').locator('..')).toContainText('8,420');
-  await expect(page.getByText('This shared authentication registry includes Main, Test and staff accounts;', { exact: false })).toBeVisible();
+  await expect(page.getByText('These totals include Main, Test and staff accounts, so they are not a count of production customers.', { exact: false })).toBeVisible();
   await page.getByRole('tab', { name: 'Test analytics', exact: true }).click();
   await expect(total).toContainText('Not available');
   await expect(fresh).toContainText('Not available');
