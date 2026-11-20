@@ -112,9 +112,15 @@ describe('collector-only bounded native transports', () => {
   it('pins task API resources and withholds credentials on invalid paths', async () => {
     const credentials = vi.fn(async (_audience: 'analytics' | 'cloud', _signal: AbortSignal) => ({ Authorization: 'Bearer synthetic' })), fetcher = vi.fn<typeof fetch>(async () => Response.json({ name: 'fixed' }));
     const request = cloudTasksRequest(1000, credentials, fetcher);
+    const base = 'https://cloudtasks.googleapis.com/v2/projects/hushh-ai-prod/locations/us-central1/queues/metrics-one-adoption-uat-pilot';
+    for (const url of [base.replace('hushh-ai-prod', 'demo-metrics'), base.replace('us-central1', 'us-east1'), base + '-other']) {
+      await expect(request(`${url}/tasks`, { method: 'POST', signal: signal() })).rejects.toThrow();
+    }
     await expect(request('https://cloudtasks.googleapis.com/v2/projects/demo-metrics/locations/us-central1/queues/other/tasks', { method: 'POST', signal: signal() })).rejects.toThrow();
     expect(credentials).not.toHaveBeenCalled();
     expect(await request('https://cloudtasks.googleapis.com/v2/projects/demo-metrics/locations/us-central1/queues/metrics-reporting-test/tasks', { method: 'POST', signal: signal(), body: {} })).toEqual({ status: 200, name: 'fixed' });
+    expect(await request(`${base}/tasks`, { method: 'POST', signal: signal(), body: {} })).toEqual({ status: 200, name: 'fixed' });
+    expect(await request(`${base}/tasks/${digest('task')}?responseView=BASIC`, { method: 'GET', signal: signal() })).toEqual({ status: 200, name: 'fixed' });
     expect(credentials.mock.calls[0][0]).toBe('cloud'); expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
   });
   it('parses provider cooldowns without accepting invalid or negative values', () => {

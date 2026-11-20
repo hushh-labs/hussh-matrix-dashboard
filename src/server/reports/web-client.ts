@@ -41,7 +41,8 @@ export class MetricsReportWebClient {
     validateReportWebConfig(config);
     if (typeof identity !== 'function') throw new ReportError('unavailable');
   }
-  private async call(operation: 'read' | 'request' | 'status', body: unknown, access: ReportAccess): Promise<unknown> {
+  private async call(operation: 'read' | 'request' | 'status', body: unknown, access: ReportAccess):
+    Promise<{ value: unknown; sourceEnvironment: string | null }> {
     validateAccess(access); const signal = AbortSignal.timeout(this.config.timeoutMs);
     const response = await this.fetcher(`${this.config.audience}/internal/metrics/${operation}`, {
       method: 'POST', signal, redirect: 'error', cache: 'no-store',
@@ -59,11 +60,14 @@ export class MetricsReportWebClient {
         bytes += part.value.byteLength; if (bytes > this.config.maxResponseBytes) throw new ReportError('unavailable');
         text += decoder.decode(part.value, { stream: true });
       }
-      try { return JSON.parse(text + decoder.decode()); } catch { throw new ReportError('unavailable'); }
+      try {
+        return { value: JSON.parse(text + decoder.decode()),
+          sourceEnvironment: response.headers.get('x-metrics-source-environment') };
+      } catch { throw new ReportError('unavailable'); }
     } finally { await reader.cancel(); }
   }
   async read(input: unknown, access: ReportAccess): Promise<Awaited<ReturnType<MetricsReports['read']>>> {
-    const value = await this.call('read', { request: input, access }, access);
+    const { value, sourceEnvironment } = await this.call('read', { request: input, access }, access);
     if (!exact(value, 'report,state')) throw new ReportError('unavailable');
     if (value.state === 'unavailable' && value.report === null) return { state: 'unavailable', report: null };
     const r = value.report as PublishedReport;
@@ -75,10 +79,12 @@ export class MetricsReportWebClient {
       || r.computedAt > r.publishedAt || r.publishedAt > now) throw new ReportError('unavailable');
     validateAggregate(r.result, { request, control: r.control, acceptedAt: 0 } as ReportJob, now, this.config.maxResponseBytes);
     if ((r.result.sourceWatermark === null) !== (value.state === 'unknown_freshness')) throw new ReportError('unavailable');
-    return { state: value.state, report: r };
+    const environment = request.reportId === 'one.adoption' && (sourceEnvironment === 'uat' || sourceEnvironment === 'production')
+      ? sourceEnvironment : undefined;
+    return { state: value.state, report: r, ...(environment ? { sourceEnvironment: environment } : {}) };
   }
   async request(input: unknown, access: ReportAccess): Promise<Awaited<ReturnType<MetricsReports['request']>>> {
-    const value = await this.call('request', { request: input, access }, access);
+    const { value } = await this.call('request', { request: input, access }, access);
     if (!exact(value, 'jobId,reportId,state') || (value.state === 'completed'
       ? !hash(value.reportId) || value.jobId !== null
       : !['accepted', 'running', 'delayed'].includes(value.state) || !hash(value.jobId) || value.reportId !== null)) throw new ReportError('unavailable');
@@ -86,7 +92,7 @@ export class MetricsReportWebClient {
   }
   async status(jobId: string, access: ReportAccess): Promise<Awaited<ReturnType<MetricsReports['status']>>> {
     if (!hash(jobId)) throw new ReportError('invalid');
-    const value = await this.call('status', { jobId, access }, access);
+    const { value } = await this.call('status', { jobId, access }, access);
     if (!exact(value, 'acceptedAt,executionMs,jobId,needsAttention,queueWaitMs,retryAfterMs,state')
       || value.jobId !== jobId || !['accepted', 'running', 'delayed', 'completed', 'failed', 'invalidated'].includes(value.state)
       || typeof value.needsAttention !== 'boolean'

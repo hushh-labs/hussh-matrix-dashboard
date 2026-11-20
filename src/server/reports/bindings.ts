@@ -35,7 +35,7 @@ export function sourceBindingGeneration(binding: unknown) {
   const { approved: _approved, enabled: _enabled, sourceGeneration: _generation, ...content } = binding as ReportSourceBinding;
   return digest(content);
 }
-export function validateSourceBinding(value: unknown, job: ReportJob): ReportSourceBinding {
+export function validateSourceBinding(value: unknown, job: Pick<ReportJob, 'request' | 'control'>): ReportSourceBinding {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ReportError('unavailable');
   const b = value as ReportSourceBinding;
   const common = ['approved', 'enabled', 'reportId', 'revision', 'sourceGeneration', 'scopeDigest', 'reconciliationDigest',

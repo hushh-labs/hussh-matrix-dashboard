@@ -57,6 +57,17 @@ describe('fixed periodic collector admission', () => {
     await f.put('snapshots', manual.jobId!, snapshot);
     await expect(f.reports.requestPeriodic('one', access)).rejects.toThrow();
   });
+  it.each(['negative', 'source-after'])('rejects %s timestamps in an earlier periodic receipt publication', async fault => {
+    const f = collectionFixture(); await f.initialize(); const manual = await f.reports.request(f.request, f.access);
+    const claim = await f.worker.claim(manual.jobId!, digest('worker')); await f.worker.publish(claim!.job, f.result(claim!.job));
+    await f.put('policy', 'periodic', schedule()); const first = await f.reports.requestPeriodic('one', access);
+    expect(first).toEqual({ state:'completed', reportId:manual.jobId, jobId:null });
+    const head = (await f.get<any>('heads', claim!.job.key))!; await f.put('heads', claim!.job.key, { ...head, publication:null });
+    const snapshot = (await f.get<any>('snapshots', manual.jobId!))!;
+    await f.put('snapshots', manual.jobId!, { ...snapshot, computedAt:fault==='negative' ? -1 : snapshot.result.sourceCheckedAt - 1 });
+    await expect(f.reports.requestPeriodic('one', access)).rejects.toThrow();
+    expect([...f.store.data.keys()].filter(key => key.includes('/jobs/'))).toHaveLength(1);
+  });
   it('does not reuse a malformed publication as a completed periodic report', async () => {
     const f = collectionFixture(); await f.initialize(); const manual = await f.reports.request(f.request, f.access);
     const claim = await f.worker.claim(manual.jobId!, digest('worker')); await f.worker.publish(claim!.job, f.result(claim!.job));
@@ -95,8 +106,9 @@ describe('fixed periodic collector admission', () => {
   });
   it('retains a tightened daily job limit even after a denial and a later policy increase', async () => {
     const f = collectionFixture(); await f.initialize(); await f.put('policy', 'periodic', schedule());
-    const first = await f.reports.requestPeriodic('one', access), job = (await f.get<ReportJob>('jobs', first.jobId!))!;
-    await f.put('jobs', first.jobId!, { ...job, status: 'completed' }); await f.put('capacity', 'scheduled', { active: 0 });
+    const first = await f.reports.requestPeriodic('one', access);
+    const claim = (await f.worker.claim(first.jobId!, digest('periodic-worker')))!.job;
+    await f.worker.publish(claim, f.result(claim));
     f.advance(600 * 60_000); await f.put('policy', 'periodic', { ...schedule(), revision: 2, maxDailyJobs: 1 });
     await expect(f.reports.requestPeriodic('one', access)).rejects.toMatchObject({ code: 'capacity' });
     expect(await f.get('periodicDays', '2026-11-13')).toMatchObject({ used: 1, limit: 1 });
@@ -106,7 +118,10 @@ describe('fixed periodic collector admission', () => {
   });
   it('does not add an extra daily slot after a policy is broadened', async () => {
     const f = collectionFixture(); await f.initialize(); await f.put('policy', 'periodic', schedule());
-    const settle = async (id: string) => { const job = (await f.get<ReportJob>('jobs', id))!; await f.put('jobs', id, { ...job, status: 'completed' }); await f.put('capacity', 'scheduled', { active: 0 }); };
+    const settle = async (id: string) => {
+      const claim = (await f.worker.claim(id, digest('periodic-worker')))!.job;
+      await f.worker.publish(claim, f.result(claim));
+    };
     const first = await f.reports.requestPeriodic('one', access); await settle(first.jobId!); f.advance(600 * 60_000);
     const second = await f.reports.requestPeriodic('one', access); await settle(second.jobId!); f.advance(600 * 60_000);
     await f.put('policy', 'periodic', { ...schedule(), revision: 2, slots: [0, 600, 1200], maxDailyJobs: 3 });

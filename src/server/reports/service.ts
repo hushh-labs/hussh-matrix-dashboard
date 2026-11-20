@@ -1,9 +1,10 @@
-import { digest, ReportError, reportKey, validateAccess, validateAggregate, validateControl, validatePolicy,
+import { digest, ReportError, reportKey, reportingCalendarDay, validateAccess, validateAggregate, validateControl, validatePolicy,
   validateRequest, type AggregateResult, type PublishedReport, type ReportAccess, type ReportControl,
   type ReportJob, type ReportingPolicy, type ReportRequest } from './contracts';
 import { reportPath as path, type ReportStore, type ReportTransaction } from './store';
 import type { ReportBodyCache } from './body-cache';
 import { periodicPlan } from './periodic-policy';
+import { validateSourceBinding } from './bindings';
 
 type Head = { sequence: number; activeJob: string | null; publication: string | null };
 type Capacity = { active: number };
@@ -17,6 +18,19 @@ function validPeriodicDay(day: PeriodicDay, expectedDay: string) {
     && day.slots.every(slot => typeof slot === 'string' && slot.startsWith(`${expectedDay}:`) && /^\d{4}-\d{2}-\d{2}:\d{1,4}$/.test(slot));
 }
 type Context = { policy: ReportingPolicy; control: ReportControl; request: ReportRequest; key: string };
+type ReportView =
+  | { state: 'unavailable'; report: null; sourceEnvironment?: never }
+  | { state: 'completed' | 'stale' | 'unknown_freshness'; report: PublishedReport; sourceEnvironment?: 'uat' | 'production' };
+
+function validatePublishedReport(report: PublishedReport | null, id: string | null, c: Context, now: number) {
+  if (!report || Object.keys(report).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
+    || report.key !== c.key || report.id !== id || digest(report.control) !== digest(c.control)
+    || digest(report.request) !== digest(c.request) || !Number.isSafeInteger(report.computedAt) || report.computedAt < 0
+    || !Number.isSafeInteger(report.publishedAt) || report.publishedAt > now || report.computedAt > report.publishedAt)
+    throw new ReportError('unavailable');
+  validateAggregate(report.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
+  if (report.result.sourceCheckedAt > report.computedAt) throw new ReportError('unavailable');
+}
 
 /** No source SDK, provider callback or enqueue callback exists in this reader. */
 export class MetricsReports {
@@ -41,7 +55,7 @@ export class MetricsReports {
     return () => tx.set(ref, { count: count + 1, windowEndsAt: (Math.floor(now / policy.quotaWindowMs) + 1) * policy.quotaWindowMs });
   }
 
-  async read(input: unknown, access: ReportAccess) {
+  async read(input: unknown, access: ReportAccess): Promise<ReportView> {
     const now = this.now();
     return this.store.transaction(async tx => {
       const c = await this.context(tx, input, access);
@@ -50,21 +64,35 @@ export class MetricsReports {
       const report = head?.publication ? this.cache?.get<PublishedReport>(cacheKey!)
         ?? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
       const charge = await this.quota(tx, access, c.policy, 'read', now);
-      charge();
-      if (!report) return { state: 'unavailable' as const, report: null };
-      if (Object.keys(report).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
-        || report.key !== c.key || report.id !== head!.publication || digest(report.control) !== digest(c.control)
-        || digest(report.request) !== digest(c.request) || !Number.isSafeInteger(report.computedAt)
-        || !Number.isSafeInteger(report.publishedAt) || report.publishedAt > now || report.computedAt > report.publishedAt) throw new ReportError('unavailable');
-      validateAggregate(report.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
+      if (!report) {
+        charge();
+        return { state: 'unavailable' as const, report: null };
+      }
+      validatePublishedReport(report, head!.publication, c, now);
       const watermark = report.result.sourceWatermark;
       // Publication age limits retention of provider reports with unknown source
       // freshness. It never establishes an information watermark.
       const age = watermark === null ? now - report.publishedAt : now - watermark;
-      if (age > c.control.staleMs) return { state: 'unavailable' as const, report: null };
+      if (age > c.control.staleMs) {
+        charge();
+        return { state: 'unavailable' as const, report: null };
+      }
+      let sourceEnvironment: 'uat' | 'production' | undefined;
+      if (c.request.reportId === 'one.adoption') {
+        const source = await tx.get<unknown>(path('sources', c.request.reportId));
+        // Only the approved binding to this publication can label its environment.
+        // Older saved reports remain readable without a matching binding.
+        try {
+          const binding = validateSourceBinding(source, c);
+          if (binding.kind === 'one') sourceEnvironment = binding.environment;
+        } catch (error) {
+          if (!(error instanceof ReportError)) throw error;
+        }
+      }
+      charge();
       this.cache?.put(cacheKey!, report);
-      if (watermark === null) return { state: 'unknown_freshness' as const, report };
-      return { state: age > c.control.freshnessMs ? 'stale' as const : 'completed' as const, report };
+      const state = watermark === null ? 'unknown_freshness' : age > c.control.freshnessMs ? 'stale' : 'completed';
+      return { state, report, ...(sourceEnvironment ? { sourceEnvironment } : {}) } as const;
     });
   }
 
@@ -88,7 +116,11 @@ export class MetricsReports {
       if (!plan && lane === 'scheduled' && periodicPolicy && (periodicPolicy as { enabled?: unknown }).enabled !== false) throw new ReportError('unavailable');
       const c = await this.context(tx, plan?.request ?? input, access);
       const head = await tx.get<Head>(path('heads', c.key)) ?? { sequence: 0, activeJob: null, publication: null };
+      if (head.publication !== null && (typeof head.publication !== 'string' || !/^[a-f0-9]{64}$/.test(head.publication))) throw new ReportError('unavailable');
+      if (c.request.reportId === 'one.adoption' && head.activeJob !== null
+        && (typeof head.activeJob !== 'string' || !/^[a-f0-9]{64}$/.test(head.activeJob))) throw new ReportError('unavailable');
       const publication = head.publication ? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
+      if (head.publication) validatePublishedReport(publication, head.publication, c, now);
       const active = head.activeJob ? await tx.get<ReportJob>(path('jobs', head.activeJob)) : null;
       const slots = await tx.get<Capacity>(path('capacity', lane)) ?? { active: 0 };
       const subjectSlot = path('subjectCapacity', digest([lane, access.subjectHash]));
@@ -140,12 +172,7 @@ export class MetricsReports {
         if (receipt) {
           const published = receiptPublication;
           if (receiptJob?.status === 'completed' || receipt.reportId) {
-            if (!published || Object.keys(published).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
-              || published.id !== (receiptJob?.id ?? receipt.reportId) || published.key !== c.key
-              || digest(published.request) !== digest(c.request) || digest(published.control) !== digest(c.control)
-              || !Number.isSafeInteger(published.computedAt) || !Number.isSafeInteger(published.publishedAt)
-              || published.computedAt > published.publishedAt || published.publishedAt > now) throw new ReportError('unavailable');
-            validateAggregate(published.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
+            validatePublishedReport(published, receiptJob?.id ?? receipt.reportId, c, now);
           }
           persistTighter(); charge();
           return receiptJob ? { state: receiptJob.status, reportId: receiptJob.status === 'completed' ? receiptJob.id : null, jobId: receiptJob.id }
@@ -160,18 +187,34 @@ export class MetricsReports {
         || cycleJobs.some((job, index) => !job || job.id !== cycle.jobs[index] || !['completed', 'failed', 'invalidated'].includes(job.status)))) throw new ReportError('capacity');
       let result: { state: 'accepted' | 'running' | 'delayed' | 'completed'; reportId: string | null; jobId: string | null };
       let jobToCreate: ReportJob | null = null;
-      if (publication && publication.key === c.key && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
-        if (plan) {
-          if (Object.keys(publication).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
-            || publication.id !== head.publication || digest(publication.request) !== digest(c.request) || digest(publication.control) !== digest(c.control)
-            || !Number.isSafeInteger(publication.computedAt) || !Number.isSafeInteger(publication.publishedAt)
-            || publication.computedAt > publication.publishedAt || publication.publishedAt > now) throw new ReportError('unavailable');
-          validateAggregate(publication.result, { request: c.request, control: c.control, acceptedAt: 0 } as ReportJob, now, c.policy.maxSnapshotBytes);
-        }
+      if (publication && now - (publication.result.sourceWatermark ?? publication.publishedAt) <= c.control.freshnessMs) {
         result = { state: 'completed', reportId: publication.id, jobId: null };
+      } else if (c.request.reportId === 'one.adoption' && head.activeJob
+        && (!active || active.id !== head.activeJob || active.key !== c.key || !['custom', 'scheduled'].includes(active.lane)
+          || !['accepted', 'running', 'delayed'].includes(active.status) || !active.request || !active.control
+          || digest(active.request) !== digest(c.request) || digest(active.control) !== digest(c.control))) {
+        // An unresolved pointer cannot identify a shared job or justify starting a replacement.
+        throw new ReportError('unavailable');
       } else if (active && ['accepted', 'running', 'delayed'].includes(active.status)) {
         result = { state: active.status as 'accepted' | 'running' | 'delayed', reportId: null, jobId: active.id };
       } else {
+        // Reject dates that are outside One's recent closed-day window before
+        // creating a job. One still validates the precise source boundaries.
+        if (c.request.reportId === 'one.adoption') {
+          try {
+            validateRequest(c.request, 7);
+            const today = reportingCalendarDay(c.request.timezone, now);
+            const earliestDay = reportingCalendarDay(c.request.timezone, now - 7 * 86_400_000);
+            if (c.request.endDate >= today || c.request.startDate < earliestDay) throw new ReportError('invalid');
+          } catch (error) {
+            if (plan && day && error instanceof ReportError && error.code === 'invalid') {
+              const limit = Math.min(day.limit, plan.maxDailyJobs), slotLimit = Math.min(day.slotLimit, plan.maxDailySlots);
+              if (limit < day.limit || slotLimit < day.slotLimit) tx.set(dayRef, { ...day, limit, slotLimit });
+              return { denied: 'invalid' as const };
+            }
+            throw error;
+          }
+        }
         if (!c.policy.computeEnabled) {
           if (plan && day) { tx.set(dayRef, { ...day, limit: Math.min(day.limit, plan.maxDailyJobs), slotLimit: Math.min(day.slotLimit, plan.maxDailySlots) }); return { denied: 'unavailable' as const }; }
           throw new ReportError('unavailable');

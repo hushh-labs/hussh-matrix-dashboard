@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Firestore } from '@google-cloud/firestore';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { digest, reportKey, validateRequest, type AggregateResult, type ReportAccess, type ReportControl,
-  type ReportingPolicy, type ReportJob, type ReportRequest } from '../src/server/reports/contracts';
+  type PublishedReport, type ReportingPolicy, type ReportJob, type ReportRequest } from '../src/server/reports/contracts';
 import { MetricsReports, MetricsReportWorker } from '../src/server/reports/service';
 import { FirestoreReportStore, reportPath as path, type ReportStore } from '../src/server/reports/store';
 import { collectReport } from '../src/server/reports/collector';
@@ -58,6 +58,37 @@ for (const mode of ['memory', ...(emulator ? ['firestore'] : [])]) {
       const capacity = await store.transaction(tx => tx.get(path('capacity', 'custom')));
       expect(capacity).toBeNull();
     });
+    it('reads exact 30- and 90-day publications and leaves a missing period unavailable without admitting work', async () => {
+      await put('policy', 'current', { ...policy, maxPeriodDays: 90, computeEnabled: false, scheduledCapacity: 0 });
+      const short: ReportRequest = { reportId: 'hushhai.acquisition', startDate: '2026-10-13', endDate: '2026-11-11',
+        timezone: 'America/Los_Angeles' };
+      const long: ReportRequest = { ...short, startDate: '2026-08-14' };
+      await put('controls', short.reportId, control);
+      const publishFixture = async (selection: ReportRequest, count: number) => {
+        const key = reportKey(selection, control), id = digest(['retained', key]);
+        const report: PublishedReport = { id, key, request: selection, control, computedAt: now, publishedAt: now,
+          result: { period: { startDate: selection.startDate, endDate: selection.endDate, timezone: selection.timezone },
+            sourceCheckedAt: now, sourceWatermark: null, reconciled: true, definitionVersion: control.definitionVersion,
+            sourceGeneration: control.sourceGeneration, scopeDigest: control.scopeDigest, metrics: {
+              sessions: { value: count + 3, unit: 'session', basis: 'provider_defined', coverage: 'partial' },
+              activeUsers: { value: count, unit: 'provider_user', basis: 'provider_defined', coverage: 'partial' },
+              engagedSessions: { value: count, unit: 'session', basis: 'provider_defined', coverage: 'partial' },
+              keyEvents: { value: 1, unit: 'key_event', basis: 'provider_defined', coverage: 'partial' },
+            } } };
+        await put('snapshots', id, report);
+        await put('heads', key, { sequence: 1, activeJob: null, publication: id });
+        return report;
+      };
+      const thirty = await publishFixture(short, 15);
+      expect(await reader.read(long, access)).toEqual({ state: 'unavailable', report: null });
+      expect(await store.transaction(tx => tx.get(path('heads', reportKey(long, control))))).toBeNull();
+      const ninety = await publishFixture(long, 28);
+      for (const report of [thirty, ninety]) {
+        expect(await reader.read(report.request, access)).toEqual({ state: 'unknown_freshness', report });
+        expect(await reader.request(report.request, access)).toEqual({ state: 'completed', jobId: null, reportId: report.id });
+      }
+      expect(await store.transaction(tx => tx.get(path('capacity', 'custom')))).toBeNull();
+    });
     it('coalesces competing instances, atomically publishes and reuses the immutable snapshot', async () => {
       const second = new MetricsReports(store, () => now);
       const intents = await Promise.all([reader.request(request, access), second.request(request, access)]);
@@ -70,6 +101,46 @@ for (const mode of ['memory', ...(emulator ? ['firestore'] : [])]) {
       for (let i = 0; i < 12; i++) expect((await second.read(request, access)).report?.id).toBe(c.job.id);
       expect((await reader.request(request, access)).state).toBe('completed');
       expect(await store.transaction(tx => tx.get(path('capacity', 'custom')))).toEqual({ active: 0 });
+    });
+    it.each(['missing', 'id', 'key', 'request', 'control', 'future', 'order', 'negative', 'source-after', 'extra', 'aggregate', 'stale-incompatible'])(
+      'does not reuse or replace a %s manual publication', async fault => {
+        const intent = await reader.request(request, access); let calls = 0;
+        const source = { submit: async (job: ReportJob) => { calls++; return aggregate(job, now); },
+          recover: async () => { throw new Error('Unexpected recovery'); } };
+        await collectReport(worker, intent.jobId!, digest('source-worker'), source);
+        const id = intent.jobId!, key = reportKey(request, control);
+        const original = await store.transaction(tx => tx.get<any>(path('snapshots', id)));
+        expect((await reader.request(request, access))).toMatchObject({ state: 'completed', reportId: id, jobId: null });
+        if (fault === 'missing') await store.transaction(async tx => { tx.delete(path('snapshots', id)); });
+        else {
+          const changed = fault === 'id' ? { ...original, id: digest('different') }
+            : fault === 'key' ? { ...original, key: digest('different') }
+              : fault === 'request' ? { ...original, request: { ...request, startDate: '2026-11-09' } }
+                : fault === 'control' || fault === 'stale-incompatible' ? { ...original, control: { ...control, revision: 2 } }
+                  : fault === 'future' ? { ...original, publishedAt: now + 1 }
+                    : fault === 'order' ? { ...original, computedAt: now + 1 }
+                      : fault === 'negative' ? { ...original, computedAt: -1 }
+                        : fault === 'source-after' ? { ...original, computedAt: now - 1 }
+                      : fault === 'extra' ? { ...original, extra: true }
+                        : { ...original, result: { ...original.result, scopeDigest: digest('different') } };
+          await put('snapshots', id, changed);
+          if (fault === 'stale-incompatible') now += control.freshnessMs + 1;
+        }
+        await expect(reader.request(request, access)).rejects.toThrow();
+        if (fault === 'negative' || fault === 'source-after') await expect(reader.read(request, access)).rejects.toThrow();
+        expect(calls).toBe(1);
+        expect(await store.transaction(tx => tx.get(path('capacity', 'custom')))).toEqual({ active: 0 });
+        expect(await store.transaction(tx => tx.get<any>(path('heads', key)))).toMatchObject({ activeJob: null, publication: id, sequence: 1 });
+      },
+    );
+    it('starts a replacement for a valid stale report while retaining the old publication', async () => {
+      const first = await claim(); await worker.publish(first.job, aggregate(first.job, now));
+      now += control.freshnessMs + 1;
+      const next = await reader.request(request, access);
+      expect(next.state).toBe('accepted'); expect(next.jobId).not.toBe(first.job.id);
+      expect((await reader.read(request, access)).report?.id).toBe(first.job.id);
+      expect(await store.transaction(tx => tx.get<any>(path('heads', first.job.key))))
+        .toMatchObject({ publication: first.job.id, activeJob: next.jobId, sequence: 2 });
     });
     it('recovers the original provider identity after timeout and fences the old worker', async () => {
       const first = await claim(); now += policy.leaseMs + 1;

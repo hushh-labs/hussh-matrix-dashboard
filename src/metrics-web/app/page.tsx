@@ -1,6 +1,6 @@
 import { currentAccess } from '../lib/access';
 import { reportsRuntime } from '../lib/runtime';
-import { reportDefinitions, type MetricValue, type ReportId } from '../../../src/server/reports/contracts';
+import { reportDefinitions, reportingCalendarDay, type MetricValue, type ReportId } from '../../../src/server/reports/contracts';
 import { ReportRefresh } from './report-refresh';
 
 export default async function ReportsPage({ searchParams }: {
@@ -14,8 +14,13 @@ export default async function ReportsPage({ searchParams }: {
   const reportId: ReportId = typeof query.report === 'string' && Object.hasOwn(reportDefinitions, query.report)
     ? query.report as ReportId : 'one.adoption';
   // A date selection reads only an already published report. No source query.
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-  const request = { reportId, startDate: query.startDate ?? yesterday, endDate: query.endDate ?? yesterday, timezone: query.timezone ?? 'UTC' };
+  const now = Date.now(), timezone = query.timezone ?? 'UTC';
+  let today = reportingCalendarDay('UTC', now);
+  if (typeof timezone === 'string') {
+    try { today = reportingCalendarDay(timezone, now); } catch { /* The report API rejects invalid timezones. */ }
+  }
+  const yesterday = new Date(Date.parse(today) - 86_400_000).toISOString().slice(0, 10);
+  const request = { reportId, startDate: query.startDate ?? yesterday, endDate: query.endDate ?? yesterday, timezone };
   const runtime = reportsRuntime();
   const refreshRequest = typeof request.startDate === 'string' && typeof request.endDate === 'string' && typeof request.timezone === 'string'
     ? { ...request, startDate: request.startDate, endDate: request.endDate, timezone: request.timezone } : null;
@@ -35,14 +40,16 @@ export default async function ReportsPage({ searchParams }: {
     {!view?.report ? <section className="empty" role="status"><h2>Report unavailable</h2>
       <p>There is no verified publication for this selection. Try another period or check back after collection completes.</p></section> :
       <><div className="report-meta"><span>{view.state === 'unknown_freshness' ? 'Source freshness unknown' : view.state === 'stale' ? 'Older source information' : 'Published report'}</span>
+        {reportId === 'one.adoption' && <span>{view.sourceEnvironment === 'uat' ? 'UAT test activity'
+          : view.sourceEnvironment === 'production' ? 'Production activity' : 'Environment unverified'}</span>}
         <span>{view.report.request.startDate} – {view.report.request.endDate} · {view.report.request.timezone}</span></div>
       <section className="cards" aria-label="Report metrics">{(Object.entries(view.report.result.metrics) as [string, MetricValue][]).map(([key, metric]) =>
-        <article key={key}><h2>{({ activeAccounts: 'Active accounts', confirmedOutcomes: 'Confirmed outcomes', sessions: 'Sessions', activeUsers: 'Active users', engagedSessions: 'Engaged sessions', keyEvents: 'Key events', pageViews: 'Recorded page-view events', searchSubmissions: 'Recorded search submissions', searchCompletions: 'Recorded search completions', searchFailures: 'Recorded search failures', ctaClicks: 'Recorded call-to-action clicks', requestCount: 'Recorded HTTP requests', serverErrorCount: 'Recorded HTTP 5xx responses', serverErrorRatio: 'Observed server error ratio', p95LatencyMs: '95th percentile latency' } as Record<string, string>)[key]}</h2>
+        <article key={key}><h2>{({ activeAccounts: 'Accounts with recorded activity', confirmedOutcomes: 'Confirmed task outcomes', sessions: 'Sessions', activeUsers: 'Active users', engagedSessions: 'Engaged sessions', keyEvents: 'Key events', pageViews: 'Recorded page-view events', searchSubmissions: 'Recorded search submissions', searchCompletions: 'Recorded search completions', searchFailures: 'Recorded search failures', ctaClicks: 'Recorded call-to-action clicks', requestCount: 'Recorded HTTP requests', serverErrorCount: 'Recorded HTTP 5xx responses', serverErrorRatio: 'Observed server error ratio', p95LatencyMs: '95th percentile latency' } as Record<string, string>)[key]}</h2>
           <strong>{metric.value === null ? 'Unavailable' : new Intl.NumberFormat('en', metric.unit === 'ratio' ? { style: 'percent', maximumSignificantDigits: 3 } : {}).format(metric.value)}</strong>
           <p>{metric.unit.replaceAll('_', ' ')} · {metric.coverage.replaceAll('_', ' ')}</p></article>)}</section>
       <section className="provenance"><h2>About these numbers</h2>
-        <p>Definition {view.report.control.definitionVersion}. {reportId === 'one.adoption' ? 'Identified accounts and confirmed business outcomes are counted separately. Missing observations do not establish inactivity.' : reportId === 'hushhai.activity' ? 'Accepted first-party event records, reconciled with source receipts. Capture coverage is partial. People, sessions and business outcomes have separate definitions.' : reportId === 'metrics.reliability' ? 'Provider-recorded HTTP requests to the Metrics hosting service, including API, staff and health traffic. Missing buckets and absent error series remain unknown. The error ratio is unavailable without a verified complete denominator; it is not uptime. Latency is unavailable until compatible distributions are verified.' : 'Google Analytics defines users and sessions. These measures do not establish registered accounts or completed business outcomes.'}</p>
-        <dl><dt>Source information through</dt><dd>{view.report.result.sourceWatermark === null ? 'Unknown' : new Date(view.report.result.sourceWatermark).toISOString()}</dd>
+        <p>Definition {view.report.control.definitionVersion}. {reportId === 'one.adoption' ? 'Each eligible account counts once if it has a recorded One reply or a confirmed task outcome in the selected period. Outcomes count distinct verified effects from supported sources. Coverage is partial, so some activity may be missing.' : reportId === 'hushhai.activity' ? 'Accepted first-party event records, reconciled with source receipts. Capture coverage is partial. People, sessions and business outcomes have separate definitions.' : reportId === 'metrics.reliability' ? 'Provider-recorded HTTP requests to the Metrics hosting service, including API, staff and health traffic. Missing buckets and absent error series remain unknown. The error ratio is unavailable without a verified complete denominator; it is not uptime. Latency is unavailable until compatible distributions are verified.' : 'Google Analytics defines users and sessions. These measures do not establish registered accounts or completed business outcomes.'}</p>
+        <dl><dt>{reportId === 'one.adoption' ? 'Source snapshot time' : 'Source information through'}</dt><dd>{view.report.result.sourceWatermark === null ? 'Unknown' : new Date(view.report.result.sourceWatermark).toISOString()}</dd>
           <dt>Published</dt><dd>{new Date(view.report.publishedAt).toISOString()}</dd></dl>
       </section></>}
   </>;

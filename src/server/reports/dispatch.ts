@@ -67,19 +67,24 @@ export class MetricsReportDispatch {
 export type TaskApiRequest = (url: string, request: { method: 'POST' | 'GET'; body?: unknown; signal: AbortSignal }) =>
   Promise<{ status: number; name?: string }>;
 
+export function reportQueueProject(parent: string): string | undefined {
+  if (parent === 'projects/hushh-ai-prod/locations/us-central1/queues/metrics-one-adoption-uat-pilot') return 'hushh-ai-prod';
+  return /^projects\/([a-z][a-z0-9-]{4,61}[a-z0-9])\/locations\/[a-z0-9-]+\/queues\/metrics-reporting-[a-z0-9-]+$/.exec(parent)?.[1];
+}
+
 /** Fixed native API origin, deterministic task identity and opaque job-only body.
  * The injected caller supplies its own narrow cloud identity; no token is stored. */
 export class CloudReportTaskQueue implements ReportTaskQueue {
   private audience: string;
   constructor(private config: { parent: string; workerUrl: string; invokerEmail: string; rpcTimeoutMs: number }, private request: TaskApiRequest) {
-    const parent = /^projects\/([a-z][a-z0-9-]{4,61}[a-z0-9])\/locations\/[a-z0-9-]+\/queues\/metrics-reporting-[a-z0-9-]+$/.exec(config.parent);
+    const project = reportQueueProject(config.parent);
     let target: URL;
     try { target = new URL(config.workerUrl); } catch { throw new ReportError('invalid'); }
-    if (!parent || !Number.isSafeInteger(config.rpcTimeoutMs) || config.rpcTimeoutMs <= 0
+    if (!project || !Number.isSafeInteger(config.rpcTimeoutMs) || config.rpcTimeoutMs <= 0
       || target.protocol !== 'https:' || !target.hostname.endsWith('.run.app')
       || target.username || target.password || target.search || target.hash || target.port
       || target.pathname !== '/internal/metrics/collect'
-      || config.invokerEmail !== `metrics-report-task-invoker@${parent[1]}.iam.gserviceaccount.com`) throw new ReportError('invalid');
+      || config.invokerEmail !== `metrics-report-task-invoker@${project}.iam.gserviceaccount.com`) throw new ReportError('invalid');
     this.audience = target.origin;
   }
   taskName(jobId: string) {
