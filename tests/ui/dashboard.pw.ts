@@ -821,7 +821,7 @@ test('Instagram direct publication labels unavailable reach and media honestly',
   } }));
   await page.goto('/'); await navigate(page, 'Instagram');
   await expect(page.getByText('The 7-day reach total is unavailable.')).toBeVisible();
-  await expect(page.getByText(/provider did not supply its own boundary/)).toBeVisible();
+  await expect(page.getByText(/Instagram did not report its own date boundaries/)).toBeVisible();
   await expect(page.getByText(/Meta returned one total/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Posts & Reels', exact: true }).click();
   await expect(page.getByText('Detailed media inventory is unavailable.', { exact: true })).toBeVisible();
