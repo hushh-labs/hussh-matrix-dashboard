@@ -19,11 +19,13 @@ export function googleWorkerIdentityVerifier(): WorkerIdentityVerifier {
 }
 export function reportingWorkerServer(config: ReportingRuntimeConfig, runtime: ReportingWorkerRuntime,
   verify: WorkerIdentityVerifier = googleWorkerIdentityVerifier()) {
-  const reply = (res: ServerResponse, status: number, body: unknown, retryAfterMs = 0) => {
+  const reply = (res: ServerResponse, status: number, body: unknown, retryAfterMs = 0,
+    sourceEnvironment?: 'uat' | 'production') => {
     let text = JSON.stringify(body);
     if (Buffer.byteLength(text) > config.maxResponseBytes) { text = '{"state":"unavailable"}'; status = 503; }
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store',
-      ...(retryAfterMs > 0 ? { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) } : {}) });
+      ...(retryAfterMs > 0 ? { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) } : {}),
+      ...(status === 200 && sourceEnvironment ? { 'X-Metrics-Source-Environment': sourceEnvironment } : {}) });
     res.end(text);
   };
   const server = createServer(async (req, res) => {
@@ -60,7 +62,10 @@ export function reportingWorkerServer(config: ReportingRuntimeConfig, runtime: R
         if (Object.keys(body).sort().join() !== keys || !body.access || Object.keys(body.access).sort().join() !== 'scopeDigest,subjectHash') throw new ReportError('invalid');
         validateAccess(body.access);
         if (body.access.scopeDigest !== config.scopeDigest) throw new ReportError('unauthorized');
-        if (req.url.endsWith('/read')) return reply(res, 200, await runtime.read(body.request, body.access));
+        if (req.url.endsWith('/read')) {
+          const { sourceEnvironment, ...view } = await runtime.read(body.request, body.access);
+          return reply(res, 200, view, 0, sourceEnvironment);
+        }
         if (req.url.endsWith('/status')) return reply(res, 200, await runtime.status(body.jobId, body.access));
         return reply(res, 202, await runtime.request(body.request, body.access));
       }

@@ -78,12 +78,21 @@ describe('private reporting flow integration', () => {
       expect(duplicateDelivery.status).toBe(200);
       expect(await duplicateDelivery.json()).toMatchObject({ state: 'completed' });
       for (const access of [f.access, secondStaff]) {
-        expect((await client.read(request, access)).report).toMatchObject({
-          id: accepted.jobId,
-          result: { period: { startDate: request.startDate, endDate: request.endDate, timezone: request.timezone },
-            metrics: { activeAccounts: { value: 2, coverage: 'partial' }, confirmedOutcomes: { value: 3, coverage: 'partial' } } },
+        expect(await client.read(request, access)).toMatchObject({
+          sourceEnvironment: 'uat',
+          report: {
+            id: accepted.jobId,
+            result: { period: { startDate: request.startDate, endDate: request.endDate, timezone: request.timezone },
+              metrics: { activeAccounts: { value: 2, coverage: 'partial' }, confirmedOutcomes: { value: 3, coverage: 'partial' } } },
+          },
         });
       }
+      // A different environment cannot relabel an existing publication.
+      await f.put('sources', request.reportId, { ...f.binding, environment: 'production',
+        secretVersion: 'projects/demo-metrics/secrets/metrics-one-aggregate-source-production/versions/1' });
+      const retained = await client.read(request, secondStaff);
+      expect(retained.sourceEnvironment).toBeUndefined();
+      expect(retained.report?.id).toBe(accepted.jobId);
       expect(await client.request(request, secondStaff)).toMatchObject({ state: 'completed', reportId: accepted.jobId, jobId: null });
       expect((await client.status(accepted.jobId!, f.access)).retryAfterMs).toBe(0);
       expect(await f.get('sourceReadBudgets', 'one-adoption-uat-2026-11-13')).toEqual({ used: 1, limit: 1 });

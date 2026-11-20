@@ -4,6 +4,7 @@ import { digest, ReportError, reportKey, reportingCalendarDay, validateAccess, v
 import { reportPath as path, type ReportStore, type ReportTransaction } from './store';
 import type { ReportBodyCache } from './body-cache';
 import { periodicPlan } from './periodic-policy';
+import { validateSourceBinding } from './bindings';
 
 type Head = { sequence: number; activeJob: string | null; publication: string | null };
 type Capacity = { active: number };
@@ -17,6 +18,9 @@ function validPeriodicDay(day: PeriodicDay, expectedDay: string) {
     && day.slots.every(slot => typeof slot === 'string' && slot.startsWith(`${expectedDay}:`) && /^\d{4}-\d{2}-\d{2}:\d{1,4}$/.test(slot));
 }
 type Context = { policy: ReportingPolicy; control: ReportControl; request: ReportRequest; key: string };
+type ReportView =
+  | { state: 'unavailable'; report: null; sourceEnvironment?: never }
+  | { state: 'completed' | 'stale' | 'unknown_freshness'; report: PublishedReport; sourceEnvironment?: 'uat' | 'production' };
 
 function validatePublishedReport(report: PublishedReport | null, id: string | null, c: Context, now: number) {
   if (!report || Object.keys(report).sort().join() !== 'computedAt,control,id,key,publishedAt,request,result'
@@ -51,7 +55,7 @@ export class MetricsReports {
     return () => tx.set(ref, { count: count + 1, windowEndsAt: (Math.floor(now / policy.quotaWindowMs) + 1) * policy.quotaWindowMs });
   }
 
-  async read(input: unknown, access: ReportAccess) {
+  async read(input: unknown, access: ReportAccess): Promise<ReportView> {
     const now = this.now();
     return this.store.transaction(async tx => {
       const c = await this.context(tx, input, access);
@@ -60,17 +64,35 @@ export class MetricsReports {
       const report = head?.publication ? this.cache?.get<PublishedReport>(cacheKey!)
         ?? await tx.get<PublishedReport>(path('snapshots', head.publication)) : null;
       const charge = await this.quota(tx, access, c.policy, 'read', now);
-      charge();
-      if (!report) return { state: 'unavailable' as const, report: null };
+      if (!report) {
+        charge();
+        return { state: 'unavailable' as const, report: null };
+      }
       validatePublishedReport(report, head!.publication, c, now);
       const watermark = report.result.sourceWatermark;
       // Publication age limits retention of provider reports with unknown source
       // freshness. It never establishes an information watermark.
       const age = watermark === null ? now - report.publishedAt : now - watermark;
-      if (age > c.control.staleMs) return { state: 'unavailable' as const, report: null };
+      if (age > c.control.staleMs) {
+        charge();
+        return { state: 'unavailable' as const, report: null };
+      }
+      let sourceEnvironment: 'uat' | 'production' | undefined;
+      if (c.request.reportId === 'one.adoption') {
+        const source = await tx.get<unknown>(path('sources', c.request.reportId));
+        // Only the approved binding to this publication can label its environment.
+        // Older saved reports remain readable without a matching binding.
+        try {
+          const binding = validateSourceBinding(source, c);
+          if (binding.kind === 'one') sourceEnvironment = binding.environment;
+        } catch (error) {
+          if (!(error instanceof ReportError)) throw error;
+        }
+      }
+      charge();
       this.cache?.put(cacheKey!, report);
-      if (watermark === null) return { state: 'unknown_freshness' as const, report };
-      return { state: age > c.control.freshnessMs ? 'stale' as const : 'completed' as const, report };
+      const state = watermark === null ? 'unknown_freshness' : age > c.control.freshnessMs ? 'stale' : 'completed';
+      return { state, report, ...(sourceEnvironment ? { sourceEnvironment } : {}) } as const;
     });
   }
 

@@ -10,7 +10,8 @@ export async function GET(request: Request, context: { params: Promise<{ reportI
   if (!runtime) return reportFailure(null);
   const params = new URL(request.url).searchParams;
   try {
-    return Response.json(await runtime.read({ reportId: (await context.params).reportId,
-      startDate: params.get('startDate'), endDate: params.get('endDate'), timezone: params.get('timezone') }, access), { headers: privateReportHeaders });
+    const { state, report } = await runtime.read({ reportId: (await context.params).reportId,
+      startDate: params.get('startDate'), endDate: params.get('endDate'), timezone: params.get('timezone') }, access);
+    return Response.json({ state, report }, { headers: privateReportHeaders });
   } catch (error) { return reportFailure(error); }
 }

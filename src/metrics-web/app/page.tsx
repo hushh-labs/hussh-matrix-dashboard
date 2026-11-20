@@ -35,6 +35,8 @@ export default async function ReportsPage({ searchParams }: {
     {!view?.report ? <section className="empty" role="status"><h2>Report unavailable</h2>
       <p>There is no verified publication for this selection. Try another period or check back after collection completes.</p></section> :
       <><div className="report-meta"><span>{view.state === 'unknown_freshness' ? 'Source freshness unknown' : view.state === 'stale' ? 'Older source information' : 'Published report'}</span>
+        {reportId === 'one.adoption' && <span>{view.sourceEnvironment === 'uat' ? 'UAT test activity'
+          : view.sourceEnvironment === 'production' ? 'Production activity' : 'Environment unverified'}</span>}
         <span>{view.report.request.startDate} – {view.report.request.endDate} · {view.report.request.timezone}</span></div>
       <section className="cards" aria-label="Report metrics">{(Object.entries(view.report.result.metrics) as [string, MetricValue][]).map(([key, metric]) =>
         <article key={key}><h2>{({ activeAccounts: 'Accounts with recorded activity', confirmedOutcomes: 'Confirmed task outcomes', sessions: 'Sessions', activeUsers: 'Active users', engagedSessions: 'Engaged sessions', keyEvents: 'Key events', pageViews: 'Recorded page-view events', searchSubmissions: 'Recorded search submissions', searchCompletions: 'Recorded search completions', searchFailures: 'Recorded search failures', ctaClicks: 'Recorded call-to-action clicks', requestCount: 'Recorded HTTP requests', serverErrorCount: 'Recorded HTTP 5xx responses', serverErrorRatio: 'Observed server error ratio', p95LatencyMs: '95th percentile latency' } as Record<string, string>)[key]}</h2>
