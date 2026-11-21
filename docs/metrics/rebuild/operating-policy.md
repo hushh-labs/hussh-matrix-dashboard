@@ -30,7 +30,9 @@ counts across the source and reporting stores.
 
 ## Verified inherited containment and its scope
 
-BigQuery is disabled. Preserve #179/#180: native maximum 100 MiB per statement,
+BigQuery is disabled in the private reporting pilot and in the staged public
+template. At the 21 November preflight, public traffic still served the prior
+revision with its legacy flag enabled. Preserve #179/#180: native maximum 100 MiB per statement,
 100 reserved statements and 10 GiB worst-case reserved bytes per UTC day,
 with at most eight statements per request. The inherited wrapper allows two
 active and 32 waiting invocations **per wrapper instance in one process**, with
@@ -45,8 +47,8 @@ not standing collection authorization.
 The user's 14 November request for optimized BigQuery planning is addressed by
 the [estimate-only preflight and staged reactivation packet](./bigquery-reactivation.md).
 Its one fixed historical capture diagnostic is not a reporting definition,
-paid execution approval or standing collection allowance. The legacy web query
-flag, refresh schedules and collection hold remain closed; a recoverable
+paid execution approval or standing collection allowance. Legacy collection
+schedules remain paused and new warehouse admission is held. A recoverable
 warehouse collector is still required before a paid pilot.
 
 The Firestore daily budget and its reservation records are durable across
