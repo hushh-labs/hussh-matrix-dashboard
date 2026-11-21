@@ -1,5 +1,33 @@
 # Reporting implementation status
 
+## 21 November 2026
+
+The private Next.js web and collector revisions `p-f677ad88` serve the One UAT
+pilot with version 2 of the runtime settings. The release owner verified native
+task creation, cleared the expired dispatch while preserving its audit record,
+and authorized one fresh manual One adoption request for 19 November UTC.
+The pilot permits one job, claim and source call per execution UTC day. It has
+no schedule and uses the One aggregate source. Its validation requires a saved
+publication, reconciliation against 2 active accounts and 9 confirmed outcomes,
+and unchanged publication identity with no additional source calls on repeated
+Refresh. The figures are reference totals until verified against the publication.
+[Queue repair and pilot scope](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184#issuecomment-7051822993)
+
+The public rollout has its own candidate and acceptance. PR #257 merged as
+`4ef2eaaaccf0b8a3340d733216424f3be9cd830e`. The release owner staged a zero-traffic
+revision with BigQuery off and authorized qualification through the existing
+release controls. Promotion requires staff Google sign-in on the candidate,
+with rollback to the current serving revision available.
+[PR validation](https://github.com/hushh-labs/hussh-matrix-dashboard/actions/runs/44795218415)
+
+Website Activity code is merged in Metrics and the source contract is deployed
+in One UAT with its gate off. Accept One first, then reconcile one closed website
+period before expanding agents, historical reports or scope. The operating-policy
+review covers ongoing collection, source limits and any bounded warehouse work.
+[Release sequence](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184#issuecomment-7052503024)
+
+## Earlier implementation evidence
+
 The later held `metrics.reliability` increment adds a bounded native Cloud
 Monitoring source for the existing Metrics hosting service. It preserves missing
 data as unknown, refuses incomplete/continued responses, and shares the existing
