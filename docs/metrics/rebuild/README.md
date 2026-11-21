@@ -4,9 +4,10 @@ Tracking: [#184](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184
 Owner: [Neelesh Meena](https://github.com/DamriaNeelesh).
 Technical lead: [Kushal Trivedi](https://github.com/kushaltrivedi5).
 
-This is the review packet for definitions and collection policy. It does not
-authorize collection, warehouse access, retirement of PLG, or release of the
-incident hold. Definition review and runtime acceptance remain outstanding.
+This packet records definitions, collection policy and release evidence. See the
+[current implementation status](./implementation-status.md) for the private UAT
+pilot and public release path. Wider collection and any warehouse execution
+still require acceptance of the measured operating policy.
 
 ## Ownership and human-review status
 
@@ -23,7 +24,8 @@ PR #185 merged into Main as `de0ad8142ba427ea4acbd74dd1893a8b3ea3a8dd`.
 That approval accepts the proposal packet only: metric/source reconciliation,
 measured operating limits and runtime acceptance remain pending. Collection
 activation and deployment need separate acceptance; the cost hold stays active.
-Draft #186's checks are separate implementation evidence, not those approvals.
+Merged PR #186 provides separate implementation evidence. The limited pilot
+authorization and its remaining acceptance checks are recorded in the status log.
 
 Read in order:
 
@@ -63,12 +65,12 @@ Current event emitters still need source- and release-specific verification.
 | Phase | State | Required exit |
 | --- | --- | --- |
 | Definitions, map and policy | Proposal packet approved; metric/operating acceptance pending | Lead accepts definitions and measurement-based operating limits |
-| Metrics identity | Pending | New application says Metrics; compatibility references inventoried |
-| One and website reporting slice | Pending | Reconciled sources → immutable publication → authenticated Next.js view |
+| Metrics identity | Implemented in the private Next.js application | Accept shared-domain routing and legacy compatibility |
+| One and website reporting slice | Private One UAT pilot authorized; Website staged | Reconcile exact periods, confirm immutable publication and verify authenticated read/refresh |
 | Remaining reports | Pending | Every metric has approved definition, coverage and freshness |
 | Qualification | Pending | Production-build correctness, recovery, performance and cost evidence |
 | Cleanup | Pending | Consumer review, protected references, measured savings |
-| Release | Held | Existing release controls, verified serving behavior and rollback |
+| Release | Public zero-traffic qualification authorized; private rebuild cutover pending | Existing release controls, verified serving behavior and rollback |
 
 Do not close #28, #48, #126 or Research #8248 as a consequence of this rebuild.
 PLG's incomplete Consent creation and Documents acceptance remain recorded in
