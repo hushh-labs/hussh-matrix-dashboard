@@ -1,20 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { formatTrafficTargets } from './capture-cloud-run-traffic.mjs';
+import { retainedNames } from './lib/metrics-retained-report-settings.mjs';
 
 // Read-only preflight for recovering the existing candidate. Standard release
 // checks still qualify the deployed revision, OAuth and signed dashboard APIs.
-const retainedNames = [
-  'METRICS_LEGACY_RESTORATION_ID', 'METRICS_LEGACY_RESTORATION_SOURCE',
-  'METRICS_LEGACY_RECOVERY_ID', 'METRICS_LEGACY_RECOVERY_SOURCE',
-  'METRICS_LEGACY_ABANDONED_ID', 'METRICS_LEGACY_ABANDONED_SOURCE',
-  'METRICS_COMPOSER_ID', 'METRICS_COMPOSER_SOURCE',
-  'METRICS_MEASUREMENT_ID', 'METRICS_MEASUREMENT_SOURCE',
-  'METRICS_CONTINUATION_ID', 'METRICS_CONTINUATION_SOURCE',
-  'METRICS_CLOSED_CONTINUATION_COMPOSER_ID', 'METRICS_CLOSED_CONTINUATION_COMPOSER_SOURCE',
-  'METRICS_DAILY_ONE_ID', 'METRICS_DAILY_ONE_SOURCE',
-  'METRICS_DAILY_MEASUREMENT_ID', 'METRICS_DAILY_PREFLIGHT_ID',
-];
 const uatFlags = new Map([
   ['PLG_UAT_VIEW_ENABLED', 'true'],
   ['PLG_UAT_AUDIENCE_ENABLED', 'true'],

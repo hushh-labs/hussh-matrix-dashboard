@@ -65,6 +65,10 @@ needs to preserve the exact existing values, confirm Secret Manager access for
 the runtime and complete the canonical release checks. Use the captured serving
 split for rollback during staff sign-in verification.
 
+The existing pre-build check also detects inherited plain values for these
+retained report settings. It stops the run before Cloud Build. The final
+runtime verification, OAuth checks and traffic controls remain required.
+
 ### Live recheck and candidate preflight
 
 - The first read after idle returned HTTP 503 in 7.23 s. For that request window,
