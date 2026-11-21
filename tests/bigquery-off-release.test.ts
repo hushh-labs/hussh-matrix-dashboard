@@ -45,6 +45,9 @@ it('only accepts an unset or explicitly disabled BigQuery flag on the serving te
 it('verifies authenticated health and explicitly unavailable warehouse data with bounded API calls', async () => {
   const paths: string[] = [];
   let available = false;
+  let published = false;
+  let invalidScope = false;
+  let missing: string | null = null;
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     paths.push(url.pathname);
@@ -58,7 +61,41 @@ it('verifies authenticated health and explicitly unavailable warehouse data with
       response.end(JSON.stringify({ status: 'ok' }));
       return;
     }
+    if (url.pathname === '/api/auth/plg-publication') {
+      response.end(JSON.stringify({ publicationAsOf: published ? '2026-11-14T21:34:55Z' : null }));
+      return;
+    }
     if (url.pathname === '/api/analytics/all' && url.searchParams.get('view') === 'one') {
+      if (request.headers['x-metrics-passive-read'] !== '1') {
+        response.writeHead(400).end('{}');
+        return;
+      }
+      if (missing) {
+        response.writeHead(503).end(JSON.stringify({ error: missing }));
+        return;
+      }
+      if (published) {
+        const environment = url.searchParams.get('environment');
+        if (!['production', 'uat'].includes(environment ?? '') || url.searchParams.get('one_start_date') !== '2026-11-08'
+          || url.searchParams.get('one_end_date') !== '2026-11-14') {
+          response.writeHead(400).end('{}');
+          return;
+        }
+        const host = environment === 'production' || invalidScope ? 'one.hushh.ai' : 'uat.one.hushh.ai';
+        response.setHeader('X-Metrics-Cache', 'RESTORED');
+        response.setHeader('X-Metrics-Updated-At', '2026-11-14T21:34:55Z');
+        response.end(JSON.stringify({ one: { data: { [environment!]: {
+          available: true, sourceWebHost: host, surfaceScope: { webHost: host, strictWebHost: true },
+          range: { startDate: '2026-11-08', endDate: '2026-11-14' },
+          activeUsers: { countingUnit: 'device', identityScope: 'device' },
+          registeredAccounts: { environment, countingUnit: 'account', available: false, registryScope: 'unconfigured',
+            totalAccounts: null, newAccounts: null, accountsCreatedByRangeEnd: null, disabledAccounts: null, note: 'Unavailable' },
+          identifiedUsers: { countingUnit: 'account', identityScope: 'distinct accounts', deviceCoverage: { dau: null, wau: null, mau: null },
+            selectedRange: { available: false, totalUsers: null, newUsers: null, returningUsers: null, newUserDefinition: 'first observed' } },
+          platformsAvailable: false, activeByPlatformAvailable: false,
+        } } } }));
+        return;
+      }
       response.end(JSON.stringify({ one: { data: { production: { available }, uat: { available: false } } } }));
       return;
     }
@@ -78,9 +115,19 @@ it('verifies authenticated health and explicitly unavailable warehouse data with
       timeout: 5_000,
     });
     expect(JSON.parse((await run()).stdout).ok).toBe(true);
-    expect(paths).toEqual(['/api/health', '/api/analytics/all']);
+    expect(paths).toEqual(['/api/health', '/api/auth/plg-publication', '/api/analytics/all']);
     available = true;
     await expect(run()).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('Expected explicit unavailable warehouse summaries') });
+    missing = 'No retained report is available for this selection.';
+    await expect(run()).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('returned HTTP 503') });
+    missing = null;
+    published = true;
+    expect(JSON.parse((await run()).stdout).checks).toEqual([
+      { endpoint: '/api/health' },
+      ...['production', 'uat'].map(environment => ({ endpoint: '/api/analytics/all', startDate: '2026-11-08', endDate: '2026-11-14', environment, state: 'retained' })),
+    ]);
+    invalidScope = true;
+    await expect(run()).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('retained web host is outside its One environment') });
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
