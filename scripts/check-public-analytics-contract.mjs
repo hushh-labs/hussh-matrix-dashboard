@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { oneAccountSummaryIssues } from "../src/server/one-account-scope.mjs";
 import { registrationTotalsIssues } from "../src/server/one-registration-totals.mjs";
+import { ONE_WEB_HOSTS } from "../src/server/one-scope.mjs";
 
 const args = process.argv.slice(2);
 const bigQueryOff = args.includes('--bigquery-off');
@@ -232,24 +233,66 @@ function assertOneSummary(summary, label, expectedWebHost, findings, environment
   }
 }
 
-async function fetchJson(path, maxBytes) {
+async function fetchJson(path, maxBytes, params = query) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
   try {
     const url = new URL(`${baseUrl}${path}`);
-    if (path !== '/api/health') url.search = query.toString();
-    if (bigQueryOff && path === '/api/analytics/all') url.searchParams.set('view', 'one');
-    const response = await fetch(url, { signal: controller.signal, redirect: bigQueryOff ? 'error' : 'follow' });
+    if (params) url.search = params.toString();
+    const response = await fetch(url, {
+      signal: controller.signal,
+      redirect: bigQueryOff ? 'error' : 'follow',
+      headers: bigQueryOff && path === '/api/analytics/all' ? { 'X-Metrics-Passive-Read': '1' } : undefined,
+    });
     if (bigQueryOff && !/\bno-store\b/.test(response.headers.get('cache-control') || '')) {
       throw new Error(`${path} must remain private and uncached`);
     }
     const text = await response.text();
     if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}`);
     if (Buffer.byteLength(text) > maxBytes) throw new Error(`${path} payload ${Buffer.byteLength(text)} bytes exceeds ${maxBytes}`);
-    return { data: JSON.parse(text), bytes: Buffer.byteLength(text), durationMs: Date.now() - started };
+    return { data: JSON.parse(text), headers: response.headers, bytes: Buffer.byteLength(text), durationMs: Date.now() - started };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function checkRetainedOne(checks, failures) {
+  const { data: anchor } = await fetchJson('/api/auth/plg-publication', 4096, null);
+  if (anchor?.publicationAsOf !== null && (typeof anchor?.publicationAsOf !== 'string'
+    || !Number.isFinite(Date.parse(anchor.publicationAsOf)))) throw new Error('Expected a valid retained publication anchor or explicit null.');
+  const endpoint = '/api/analytics/all';
+  if (anchor.publicationAsOf === null) {
+    const params = new URLSearchParams(query);
+    params.set('view', 'one');
+    const { data } = await fetchJson(endpoint, maxAllBytes, params);
+    const one = data?.one?.data;
+    if (one?.production?.available !== false || one?.uat?.available !== false) {
+      throw new Error('Expected explicit unavailable warehouse summaries for production and UAT');
+    }
+    inspect(data, '$', failures);
+    checks.push({ endpoint, state: 'unavailable' });
+    return;
+  }
+  const publishedEnd = new Date(anchor.publicationAsOf);
+  const publishedStart = new Date(publishedEnd);
+  publishedStart.setUTCDate(publishedEnd.getUTCDate() - (days - 1));
+  for (const [environment, other] of [['production', 'uat'], ['uat', 'production']]) {
+    const params = new URLSearchParams({ view: 'one', environment, one_start_date: date(publishedStart), one_end_date: date(publishedEnd) });
+    const { data, headers } = await fetchJson(endpoint, maxAllBytes, params);
+    const one = data?.one?.data;
+    const summary = one?.[environment];
+    if (headers.get('x-metrics-cache') !== 'RESTORED' || !Number.isFinite(Date.parse(headers.get('x-metrics-updated-at') ?? ''))
+      || summary?.available !== true || one?.[other] != null
+      || summary.range?.startDate !== date(publishedStart) || summary.range?.endDate !== date(publishedEnd)) {
+      failures.push(`${endpoint}.${environment}: expected a dated, environment-scoped retained publication`);
+    }
+    inspect(data, `${endpoint}.${environment}`, failures);
+    const sourceHost = summary?.sourceWebHost;
+    if (!ONE_WEB_HOSTS[environment].includes(sourceHost)) failures.push(`${endpoint}.${environment}: retained web host is outside its One environment`);
+    assertOneSummary(summary, `${endpoint}.${environment}`, sourceHost, failures, environment);
+    if (one?.registrations) failures.push(...registrationTotalsIssues(one.registrations).map(issue => `${endpoint}.${environment}.registrations: ${issue}`));
+    checks.push({ endpoint, environment, startDate: date(publishedStart), endDate: date(publishedEnd), state: 'retained' });
   }
 }
 
@@ -257,11 +300,16 @@ const checks = [];
 const failures = [];
 if (bigQueryOff) {
   try {
-    const { data } = await fetchJson('/api/health', 16_384);
+    const { data } = await fetchJson('/api/health', 16_384, null);
     if (data?.status !== 'ok') throw new Error('Expected healthy authenticated dashboard');
     checks.push({ endpoint: '/api/health' });
   } catch (error) {
     failures.push(`/api/health: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    await checkRetainedOne(checks, failures);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
   }
 }
 const routes = [
@@ -269,15 +317,12 @@ const routes = [
   { path: '/api/analytics/one/app', maxBytes: maxOneBytes },
   { path: '/api/analytics/all', maxBytes: maxAllBytes },
 ];
-for (const spec of bigQueryOff ? routes.slice(-1) : routes) {
+for (const spec of bigQueryOff ? [] : routes) {
   try {
     const result = await fetchJson(spec.path, spec.maxBytes);
     const findings = [];
     inspect(result.data, '$', findings);
     const one = spec.path === '/api/analytics/all' ? result.data?.one?.data : result.data?.data;
-    if (bigQueryOff && (one?.production?.available !== false || one?.uat?.available !== false)) {
-      findings.push('Expected explicit unavailable warehouse summaries for production and UAT');
-    }
     assertOneSummary(one?.production, `${spec.path}.production`, 'one.hushh.ai', findings, 'production');
     assertOneSummary(one?.uat, `${spec.path}.uat`, 'uat.one.hushh.ai', findings, 'uat');
     if (one?.registrations) findings.push(...registrationTotalsIssues(one.registrations).map(issue => `${spec.path}.registrations: ${issue}`));
@@ -301,10 +346,11 @@ for (const spec of bigQueryOff ? routes.slice(-1) : routes) {
   }
 }
 
+const retainedCheck = checks.find(check => check.state === 'retained');
 const report = {
   ok: failures.length === 0,
   baseUrl,
-  range: { startDate: date(start), endDate: date(end), days },
+  range: { startDate: retainedCheck?.startDate ?? date(start), endDate: retainedCheck?.endDate ?? date(end), days },
   checks,
   failures,
 };
