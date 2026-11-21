@@ -36,6 +36,39 @@ setting for the next release. Both existing UAT read secrets have one enabled
 version, which matches the current serving references. The failed candidate is
 immutable and still has the UAT workspace disabled.
 
+### Live recheck and candidate preflight
+
+- The first read after idle returned HTTP 503 in 7.23 s. For that request window,
+  the collector completed its read with HTTP 200 in 8.66 s, after the web
+  response. The next read returned the original 19 November publication with
+  the same counts and partial coverage. The retry's HTTP round trip took 1.04 s.
+  This is a cold-read failure to resolve before accepting the
+  private pilot's availability. Qualify the existing scale-to-zero image and
+  a bounded web-to-collector deadline within the web service's 15 s request
+  limit. Preserve the source-call allowance. Repeat cold and warm reads and
+  verify no collection, source call or publication replacement.
+- The private One policy rejected the tested 7-, 14-, 30- and 90-day periods
+  with HTTP 400. The separately gated Website report returned HTTP 503. The
+  recheck initiated zero job submissions, collection executions and One source
+  calls. Production historical-range controls passed against browser fixtures;
+  live historical totals need separate verification.
+- The unchanged runtime verifier rejected the deployed candidate with 18 plain
+  settings. In an in-memory preflight with the live service metadata, projected
+  Secret Manager references alone exposed the hosted-UAT mismatch. Projecting
+  both the references and the serving UAT settings made the verifier pass.
+  This validates the configuration shape. The new references, their values and
+  the replacement revision still need live owner-side validation.
+- The current serving site and zero-traffic candidate both passed anonymous
+  OAuth boundary checks. The hosted UAT page redirected to login and its
+  evidence API denied anonymous access. These checks establish access controls.
+  Staff Google sign-in and the signed dashboard gate still need verification.
+- The full local pass covered 107 browser tests and 1,186 unit tests (44
+  skipped). The source inventory accounted for all 64 dashboard feature rows and
+  12 capabilities. At Research commit `8bb6d7dab387adf2ad481e18f23f6c7a8035e928`,
+  15 rows had no matching web runtime reference in that inventory, including
+  Mail sign-in screen views, inbox views, receipt categorization and six KYC
+  actions. Deployed emitter and live report coverage remain separate checks.
+
 Website Activity code is merged in Metrics and the website source repository.
 The Website UAT service has rolled back from revision `rc4b84bf649b2-6426183e`.
 Its serving revision `rb01aafdbec73-8345876c` enables legacy telemetry and lacks
