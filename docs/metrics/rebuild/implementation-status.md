@@ -19,10 +19,22 @@ The public rollout has its own candidate and acceptance. PR #257 merged as
 `4ef2eaaaccf0b8a3340d733216424f3be9cd830e`. The release owner staged a zero-traffic
 revision with BigQuery off. PR #258 corrected standalone browser verification
 and merged as `18c737a6dcbd61ce0cc198db39681d856286db74`. The existing release on
-that commit passed browser tests from a clean checkout and the pre-build
-BigQuery check. The documented release requires a monitored staff Google
-sign-in using the canonical domain and an exact prior traffic split for rollback.
+that commit passed browser tests from a clean checkout, built one image and
+passed the isolated renderer check. Revision `hushh-matrix-dashboard-00459-qim`
+is Ready at zero traffic with BigQuery off. The release stopped at the runtime
+configuration gate because 18 retained-report settings were inherited as plain
+values. The preceding revision `hushh-matrix-dashboard-uatmanual-66bf686d` still
+served 100%. Preserve the retained settings and correct their representation
+before running the existing release checks again. The documented release also
+requires a monitored staff Google sign-in on the canonical domain and an exact
+prior traffic split for rollback.
 [Canonical release](https://github.com/hushh-labs/hussh-matrix-dashboard/actions/runs/44874358483)
+
+The candidate also disabled hosted PLG UAT because its release variable was
+unset. `ONE_PLG_HOSTED_UAT_VIEW_CONFIGURED=true` now restores the required
+setting for the next release. Both existing UAT read secrets have one enabled
+version, which matches the current serving references. The failed candidate is
+immutable and still has the UAT workspace disabled.
 
 Website Activity code is merged in Metrics and the website source repository.
 The Website UAT service has rolled back from revision `rc4b84bf649b2-6426183e`.
