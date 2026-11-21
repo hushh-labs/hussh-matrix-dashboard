@@ -30,6 +30,16 @@ it('only accepts an unset or explicitly disabled BigQuery flag on the serving te
     expect(() => run()).toThrow('requires BigQuery disabled');
     expect(() => run(image)).toThrow('requires BigQuery disabled');
   }
+  container.env = [{ name: 'METRICS_DAILY_ONE_ID', value: 'must-not-log-this-value' }];
+  try {
+    run();
+    throw new Error('Expected the inherited retained report setting to block the build.');
+  } catch (error) {
+    expect(String(error)).toContain('Bind retained report settings before building: METRICS_DAILY_ONE_ID.');
+    expect(String(error)).not.toContain('must-not-log-this-value');
+  }
+  container.env = [{ name: 'METRICS_DAILY_ONE_ID', valueFrom: { secretKeyRef: { name: 'retained-one-id', key: '1' } } }];
+  expect(run()).toContain('BigQuery disabled');
 });
 
 it('verifies authenticated health and explicitly unavailable warehouse data with bounded API calls', async () => {

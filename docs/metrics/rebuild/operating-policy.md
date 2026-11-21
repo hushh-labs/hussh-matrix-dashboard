@@ -2,9 +2,37 @@
 
 Status: measurement and technical-lead review required before activation.
 
+## Native One UAT pilot evidence
+
+The 21 November manual run published one fixed 19 November UTC report. The
+active web and collector each had 1 vCPU, 512 MiB, a minimum of zero instances
+and a maximum of one. Web concurrency was 10 and the collector and queue each
+allowed one concurrent request. The pilot queue allowed one attempt. Job queue
+wait was 716 ms and execution was 1,564 ms. The single collector HTTP request
+took 1.836 s, including the 801 ms One aggregate request. It produced a saved
+publication with the expected 2 active accounts and 9 confirmed outcomes with
+partial coverage. Reopen and two Refresh clicks created no new jobs or source
+requests. This run used no warehouse execution or scheduled collection.
+[Pilot evidence](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184#issuecomment-7058423975)
+
+Cloud Run logged 2.109 s across the seven associated web API requests. At
+published Tier 1 request-based rates, the observed web and collector HTTP time
+plus eight requests models about US$0.00010 before credits. This is a request-time
+estimate. Billable instance time can differ due to concurrency, startup and
+shutdown. It excludes upstream work, Firestore, Cloud Tasks, logging, artifacts,
+builds and retained hosting. No total billed amount is established by this pilot.
+[Cloud Run pricing](https://cloud.google.com/run/pricing)
+
+Use this sample to validate the cost model before setting steady-state limits.
+The next measurement includes staff navigation and repeated Refresh, a
+warehouse-free fixed-period Website UAT reconciliation, and service operation
+counts across the source and reporting stores.
+
 ## Verified inherited containment and its scope
 
-BigQuery is disabled. Preserve #179/#180: native maximum 100 MiB per statement,
+BigQuery is disabled in the private reporting pilot and in the staged public
+template. At the 21 November preflight, public traffic still served the prior
+revision with its legacy flag enabled. Preserve #179/#180: native maximum 100 MiB per statement,
 100 reserved statements and 10 GiB worst-case reserved bytes per UTC day,
 with at most eight statements per request. The inherited wrapper allows two
 active and 32 waiting invocations **per wrapper instance in one process**, with
@@ -19,8 +47,8 @@ not standing collection authorization.
 The user's 14 November request for optimized BigQuery planning is addressed by
 the [estimate-only preflight and staged reactivation packet](./bigquery-reactivation.md).
 Its one fixed historical capture diagnostic is not a reporting definition,
-paid execution approval or standing collection allowance. The legacy web query
-flag, refresh schedules and collection hold remain closed; a recoverable
+paid execution approval or standing collection allowance. Legacy collection
+schedules remain paused and new warehouse admission is held. A recoverable
 warehouse collector is still required before a paid pilot.
 
 The Firestore daily budget and its reservation records are durable across

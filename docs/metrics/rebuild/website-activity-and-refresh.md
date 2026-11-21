@@ -7,6 +7,42 @@ The user now requests refresh as part of the final rollout. This supersedes the
 desired permanent refresh pause, but does not restart legacy collection jobs.
 BigQuery stays off; #179/#180 reservations and CI/CD remain unchanged.
 
+21 November 2026: Website UAT serves `rb01aafdbec73-8345876c` at 100% after
+rollback from later images, including `rc4b84bf649b2-6426183e`. Its current
+template has `TELEMETRY_ENABLED=true`, no `WEBSITE_METRICS_ENABLED` setting,
+ingress `all` and an `allUsers` invoker grant. The warehouse-free source requires
+legacy telemetry off during new capture. Keep the serving traffic outside this
+pilot. The current collector pins that public UAT origin and sends an HMAC
+signature. An IAM-protected source needs an independently reviewed UAT-only
+origin and an audience-bound invocation token in addition to the HMAC. The
+existing binding must refuse an arbitrary origin or production fallback.
+
+### Proposed closed-period Website UAT pilot
+
+1. Establish the source population as the five consent-bound event types on an
+   isolated staff pilot route. Verify the exact image and use an existing
+   restricted ingress or identity boundary that denies public requests before
+   datastore work. Review the source revision's rollback reason before reusing
+   its image. If isolation cannot be demonstrated, leave capture disabled.
+2. Propose one UTC capture day, one operator and at most 20 accepted receipts
+   for the five event types. Use one source instance with zero minimum and one
+   concurrent collector claim, one task attempt and one manual report per
+   execution UTC day. Disable legacy telemetry for the isolated candidate and
+   stop capture at the end of the UTC day. The accepted-record cap does not
+   limit charges from refused requests.
+3. Record expected accepted receipts by event type before reading the source
+   rollup. Compare that tally to the independent receipt enumeration and source
+   rollup for the closed day. With a 20-receipt ceiling, one day's consumer
+   budget is 23 logical read units. Reject missing days and overflow. Use the
+   resulting evidence to pin the admitted period and source generation.
+4. Submit one manual report. Check the signed source response, publication,
+   partial coverage in the authenticated page, and reuse without extra source
+   calls. Record request and RPC counts, latency and usage across both services
+   and their stores. Twenty successfully accepted receipts account for up to
+   60 point reads and 60 writes under the documented transaction shape. Measure
+   refused captures and other RPC and index work separately. Preserve historical
+   reports and reservations.
+
 ## Separate metric definition
 
 `hushhai.activity` is a proposed source-owned report for accepted page-view,

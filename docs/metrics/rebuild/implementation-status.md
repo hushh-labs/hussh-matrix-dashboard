@@ -7,22 +7,106 @@ pilot with version 2 of the runtime settings. The release owner verified native
 task creation, cleared the expired dispatch while preserving its audit record,
 and authorized one fresh manual One adoption request for 19 November UTC.
 The pilot permits one job, claim and source call per execution UTC day. It has
-no schedule and uses the One aggregate source. Its validation requires a saved
-publication, reconciliation against 2 active accounts and 9 confirmed outcomes,
-and unchanged publication identity with no additional source calls on repeated
-Refresh. The figures are reference totals until verified against the publication.
+no schedule and uses the One aggregate source. The 19 November publication
+passed its reference check in the authenticated private page and API. It showed
+2 active accounts and 9 confirmed outcomes, both with partial coverage. One
+collector execution made one source request. Reopen and two Refresh requests
+returned the same publication, with zero additional jobs or source requests.
 [Queue repair and pilot scope](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184#issuecomment-7051822993)
+[Acceptance receipt](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184#issuecomment-7058423975)
 
 The public rollout has its own candidate and acceptance. PR #257 merged as
 `4ef2eaaaccf0b8a3340d733216424f3be9cd830e`. The release owner staged a zero-traffic
-revision with BigQuery off and authorized qualification through the existing
-release controls. Promotion requires staff Google sign-in on the candidate,
-with rollback to the current serving revision available.
-[PR validation](https://github.com/hushh-labs/hussh-matrix-dashboard/actions/runs/44795218415)
+revision with BigQuery off. PR #258 corrected standalone browser verification
+and merged as `18c737a6dcbd61ce0cc198db39681d856286db74`. The existing release on
+that commit passed browser tests from a clean checkout, built one image and
+passed the isolated renderer check. Revision `hushh-matrix-dashboard-00459-qim`
+is Ready at zero traffic with BigQuery off. The release stopped at the runtime
+configuration gate because 18 retained-report settings were inherited as plain
+values. The preceding revision `hushh-matrix-dashboard-uatmanual-66bf686d` still
+served 100%. Preserve the retained settings and correct their representation
+before running the existing release checks again. The documented release also
+requires a monitored staff Google sign-in on the canonical domain and an exact
+prior traffic split for rollback.
+[Canonical release](https://github.com/hushh-labs/hussh-matrix-dashboard/actions/runs/44874358483)
 
-Website Activity code is merged in Metrics and the source contract is deployed
-in One UAT with its gate off. Accept One first, then reconcile one closed website
-period before expanding agents, historical reports or scope. The operating-policy
+The candidate also disabled hosted PLG UAT because its release variable was
+unset. `ONE_PLG_HOSTED_UAT_VIEW_CONFIGURED=true` now restores the required
+setting for the next release. Both existing UAT read secrets have one enabled
+version, which matches the current serving references. The failed candidate is
+immutable and still has the UAT workspace disabled.
+
+Run the read-only recovery preflight with current Cloud Run service and revision
+metadata before commissioning another build. For this recovery the reviewed
+image and rollback split come from run `44874358483`. The check prints binding
+names and release state only. It does not fetch secret contents, create a
+revision or move traffic.
+
+```powershell
+$scope = @('--project=hushh-ai-prod', '--region=us-central1', '--format=json')
+$rawService = gcloud run services describe hushh-matrix-dashboard @scope
+if ($LASTEXITCODE -ne 0) { throw 'Could not read the Metrics service' }
+$service = ($rawService -join "`n") | ConvertFrom-Json
+$tag = @($service.status.traffic | Where-Object tag -eq 'release-candidate')
+if ($tag.Count -ne 1) { throw 'Expected one release candidate' }
+$rawRevision = gcloud run revisions describe $tag[0].revisionName @scope
+if ($LASTEXITCODE -ne 0) { throw 'Could not read the candidate revision' }
+@{
+  service = $service
+  candidate = ($rawRevision -join "`n") | ConvertFrom-Json
+  expectedImage = 'us-central1-docker.pkg.dev/hushh-ai-prod/website-images/hushh-matrix-dashboard@sha256:a5dff98506c2e5d34190d09919d9f3594d7459e6888fa2fd6441384a8ef86e58'
+  expectedTraffic = 'hushh-matrix-dashboard-uatmanual-66bf686d=100'
+} | ConvertTo-Json -Depth 100 -Compress | node scripts/check-metrics-production-recovery.mjs
+if ($LASTEXITCODE -ne 0) { throw 'Production recovery preflight failed' }
+```
+
+The preflight checks references and live traffic, so the release owner still
+needs to preserve the exact existing values, confirm Secret Manager access for
+the runtime and complete the canonical release checks. Use the captured serving
+split for rollback during staff sign-in verification.
+
+The existing pre-build check also detects inherited plain values for these
+retained report settings. It stops the run before Cloud Build. The final
+runtime verification, OAuth checks and traffic controls remain required.
+
+### Live recheck and candidate preflight
+
+- The first read after idle returned HTTP 503 in 7.23 s. For that request window,
+  the collector completed its read with HTTP 200 in 8.66 s, after the web
+  response. The next read returned the original 19 November publication with
+  the same counts and partial coverage. The retry's HTTP round trip took 1.04 s.
+  This is a cold-read failure to resolve before accepting the
+  private pilot's availability. Qualify the existing scale-to-zero image and
+  a bounded web-to-collector deadline within the web service's 15 s request
+  limit. Preserve the source-call allowance. Repeat cold and warm reads and
+  verify no collection, source call or publication replacement.
+- The private One policy rejected the tested 7-, 14-, 30- and 90-day periods
+  with HTTP 400. The separately gated Website report returned HTTP 503. The
+  recheck initiated zero job submissions, collection executions and One source
+  calls. Production historical-range controls passed against browser fixtures;
+  live historical totals need separate verification.
+- The unchanged runtime verifier rejected the deployed candidate with 18 plain
+  settings. In an in-memory preflight with the live service metadata, projected
+  Secret Manager references alone exposed the hosted-UAT mismatch. Projecting
+  both the references and the serving UAT settings made the verifier pass.
+  This validates the configuration shape. The new references, their values and
+  the replacement revision still need live owner-side validation.
+- The current serving site and zero-traffic candidate both passed anonymous
+  OAuth boundary checks. The hosted UAT page redirected to login and its
+  evidence API denied anonymous access. These checks establish access controls.
+  Staff Google sign-in and the signed dashboard gate still need verification.
+- The full local pass covered 107 browser tests and 1,186 unit tests (44
+  skipped). The source inventory accounted for all 64 dashboard feature rows and
+  12 capabilities. At Research commit `8bb6d7dab387adf2ad481e18f23f6c7a8035e928`,
+  15 rows had no matching web runtime reference in that inventory, including
+  Mail sign-in screen views, inbox views, receipt categorization and six KYC
+  actions. Deployed emitter and live report coverage remain separate checks.
+
+Website Activity code is merged in Metrics and the website source repository.
+The Website UAT service has rolled back from revision `rc4b84bf649b2-6426183e`.
+Its serving revision `rb01aafdbec73-8345876c` enables legacy telemetry and lacks
+the new capture settings. Reconcile one closed website period in an isolated
+pilot before expanding agents, historical reports or scope. The operating-policy
 review covers ongoing collection, source limits and any bounded warehouse work.
 [Release sequence](https://github.com/hushh-labs/hussh-matrix-dashboard/issues/184#issuecomment-7052503024)
 
