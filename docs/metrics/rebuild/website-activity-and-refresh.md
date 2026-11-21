@@ -10,8 +10,12 @@ BigQuery stays off; #179/#180 reservations and CI/CD remain unchanged.
 21 November 2026: Website UAT serves `rb01aafdbec73-8345876c` at 100% after
 rollback from later images, including `rc4b84bf649b2-6426183e`. Its current
 template has `TELEMETRY_ENABLED=true`, no `WEBSITE_METRICS_ENABLED` setting,
-and ingress configured as `all`. The warehouse-free source requires legacy
-telemetry off during new capture. Keep the serving traffic outside this pilot.
+ingress `all` and an `allUsers` invoker grant. The warehouse-free source requires
+legacy telemetry off during new capture. Keep the serving traffic outside this
+pilot. The current collector pins that public UAT origin and sends an HMAC
+signature. An IAM-protected source needs an independently reviewed UAT-only
+origin and an audience-bound invocation token in addition to the HMAC. The
+existing binding must refuse an arbitrary origin or production fallback.
 
 ### Proposed closed-period Website UAT pilot
 
