@@ -36,6 +36,35 @@ setting for the next release. Both existing UAT read secrets have one enabled
 version, which matches the current serving references. The failed candidate is
 immutable and still has the UAT workspace disabled.
 
+Run the read-only recovery preflight with current Cloud Run service and revision
+metadata before commissioning another build. For this recovery the reviewed
+image and rollback split come from run `44874358483`. The check prints binding
+names and release state only. It does not fetch secret contents, create a
+revision or move traffic.
+
+```powershell
+$scope = @('--project=hushh-ai-prod', '--region=us-central1', '--format=json')
+$rawService = gcloud run services describe hushh-matrix-dashboard @scope
+if ($LASTEXITCODE -ne 0) { throw 'Could not read the Metrics service' }
+$service = ($rawService -join "`n") | ConvertFrom-Json
+$tag = @($service.status.traffic | Where-Object tag -eq 'release-candidate')
+if ($tag.Count -ne 1) { throw 'Expected one release candidate' }
+$rawRevision = gcloud run revisions describe $tag[0].revisionName @scope
+if ($LASTEXITCODE -ne 0) { throw 'Could not read the candidate revision' }
+@{
+  service = $service
+  candidate = ($rawRevision -join "`n") | ConvertFrom-Json
+  expectedImage = 'us-central1-docker.pkg.dev/hushh-ai-prod/website-images/hushh-matrix-dashboard@sha256:a5dff98506c2e5d34190d09919d9f3594d7459e6888fa2fd6441384a8ef86e58'
+  expectedTraffic = 'hushh-matrix-dashboard-uatmanual-66bf686d=100'
+} | ConvertTo-Json -Depth 100 -Compress | node scripts/check-metrics-production-recovery.mjs
+if ($LASTEXITCODE -ne 0) { throw 'Production recovery preflight failed' }
+```
+
+The preflight checks references and live traffic, so the release owner still
+needs to preserve the exact existing values, confirm Secret Manager access for
+the runtime and complete the canonical release checks. Use the captured serving
+split for rollback during staff sign-in verification.
+
 ### Live recheck and candidate preflight
 
 - The first read after idle returned HTTP 503 in 7.23 s. For that request window,
